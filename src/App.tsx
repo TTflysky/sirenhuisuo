@@ -16,14 +16,19 @@ type View = 'office' | 'analytics' | 'autopilot';
 export default function App() {
   const { state, openDmChat, openTeamChat, startTeamDemo, dispatch } = useStore();
 
-  // 原生聊天窗口模式：#chat?type=...&id=... 时仅渲染聊天视图
-  if (typeof location !== 'undefined' && location.hash.startsWith('#chat')) {
-    return <ChatOnlyView hash={location.hash} />;
-  }
+  // ===== ALL hooks first (Rules of Hooks: return after hooks is forbidden) =====
   const [showSettings, setShowSettings] = useState(false);
   const [view, setView] = useState<View>('office');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const unsubRef = useRef<(() => void) | null>(null);
+
+  // Force re-render when hash changes (for #chat routing from openDmChat/openTeamChat)
+  const [, forceUpdate] = useState(0);
+  useEffect(() => {
+    const handler = () => forceUpdate((n) => n + 1);
+    window.addEventListener('hashchange', handler);
+    return () => window.removeEventListener('hashchange', handler);
+  }, []);
 
   // 监听自动更新状态（仅在 Electron 桌面端生效）
   useEffect(() => {
@@ -40,6 +45,11 @@ export default function App() {
       unsubRef.current?.();
     };
   }, []);
+
+  // ===== Hash check AFTER hooks =====
+  if (typeof location !== 'undefined' && location.hash.startsWith('#chat')) {
+    return <ChatOnlyView hash={location.hash} />;
+  }
 
   const handleStationClick = (emp: Employee) => openDmChat(emp.id);
 

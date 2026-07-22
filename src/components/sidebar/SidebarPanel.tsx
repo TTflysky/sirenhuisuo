@@ -6,6 +6,7 @@ import TeamList from './TeamList';
 import AddEmployeeModal from './AddEmployeeModal';
 import CreateTeamModal from './CreateTeamModal';
 import EditEmployeeModal from './EditEmployeeModal';
+import AssistantModelSelector from './AssistantModelSelector';
 
 type Filter = 'all' | 'online' | 'working' | 'idle';
 
@@ -30,6 +31,7 @@ export default function SidebarPanel() {
           <button className="btn btn-sm" onClick={openAssistantChat} title="打开 Hermes 通用助手" style={{ marginRight: 4 }}>
             🤖 助手
           </button>
+          <AssistantModelSelector />
           <button
             className="btn btn-sm"
             onClick={() => setCollapsed(!collapsed)}

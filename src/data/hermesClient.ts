@@ -37,6 +37,7 @@ export interface AppSettings {
   model?: string;     // 模型名，如 deepseek-chat / qwen-plus / glm-4-flash
   autoDiscuss?: boolean; // 是否在发消息/任务后自动触发团队 AI 讨论（默认 false=手动）
   autoPilot?: boolean;   // 自主模式：推荐项目后自动执行最佳项目（默认 false=手动点执行）
+  assistantModelConfig?: ModelConfig; // 助理机器人的独立模型配置（员工未配模型时默认使用此配置）
 }
 
 // ===== 服务商预设（国内主流大模型，OpenAI 兼容）=====
@@ -197,14 +198,34 @@ export function resolveApiBase(s: AppSettings = loadSettings()): string {
 }
 
 // ===== 合并员工模型配置与全局设置 =====
+/**
+ * 解析聊天用的模型配置，三阶回退：
+ * 1. 员工独立配置 (empConfig)
+ * 2. 助理机器人配置 (assistantModelConfig in AppSettings)
+ * 3. 全局设置 (loadSettings)
+ */
 export function resolveChatSettings(empConfig?: ModelConfig): AppSettings {
   const global = loadSettings();
-  if (!empConfig) return global;
+  const assistant = global.assistantModelConfig;
+  if (!empConfig) {
+    // 没有员工配置：回退到助理配置 → 全局
+    if (assistant) {
+      return {
+        provider: assistant.provider ?? global.provider,
+        apiHost: assistant.apiHost ?? global.apiHost,
+        apiKey: assistant.apiKey ?? global.apiKey,
+        model: assistant.model ?? global.model,
+        autoDiscuss: global.autoDiscuss,
+      };
+    }
+    return global;
+  }
+  // 有员工配置：员工优先 → 助理 → 全局
   return {
-    provider: empConfig.provider ?? global.provider,
-    apiHost: empConfig.apiHost ?? global.apiHost,
-    apiKey: empConfig.apiKey ?? global.apiKey,
-    model: empConfig.model ?? global.model,
+    provider: empConfig.provider ?? assistant?.provider ?? global.provider,
+    apiHost: empConfig.apiHost ?? assistant?.apiHost ?? global.apiHost,
+    apiKey: empConfig.apiKey ?? assistant?.apiKey ?? global.apiKey,
+    model: empConfig.model ?? assistant?.model ?? global.model,
     autoDiscuss: global.autoDiscuss,
   };
 }
