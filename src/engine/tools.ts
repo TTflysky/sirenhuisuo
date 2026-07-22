@@ -83,7 +83,7 @@ export const TOOLS: ToolDef[] = [
     type: 'function',
     function: {
       name: 'run_command',
-      description: `执行终端命令（仅 Electron 桌面版可用）。命令在项目根目录执行，最长 30 秒超时，输出上限 100KB。
+      description: `执行终端命令（仅 Electron 桌面版可用）。命令在自主代理工作区（workspace）内执行，最长 30 秒超时，输出上限 100KB。
 可用命令示例：
 - "npm install package-name" 安装依赖
 - "npm run build" 构建项目
@@ -126,6 +126,11 @@ function safePath(p: string): string {
 }
 
 // ===== 工具执行 =====
+// 真实文件系统桥（Electron 桌面版）：把文件落到自主代理工作区（userData/workspace）
+function getFsApi(): any {
+  return (typeof window !== 'undefined' && (window as any).electronAPI) ? (window as any).electronAPI : null;
+}
+
 export async function executeTool(call: ToolCall): Promise<ToolResult> {
   const { name, args, id } = call;
   try {
@@ -134,6 +139,19 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         const path = safePath(args.path ?? 'untitled.txt');
         const content = args.content ?? '';
         const ct = contentTypeFromFilename(path);
+        // 1) 落到真实工作区文件（桌面版可用；浏览器版跳过）
+        const fsApi = getFsApi();
+        let diskInfo = '';
+        if (fsApi?.fsWrite) {
+          try {
+            const r = await fsApi.fsWrite(path, content);
+            if (r?.ok) diskInfo = `（已写入磁盘工作区：${r.path}，${r.size} 字节）`;
+            else diskInfo = `（磁盘写入失败：${r?.error ?? '未知'}）`;
+          } catch (e: any) {
+            diskInfo = `（磁盘写入异常：${e?.message ?? '未知'}）`;
+          }
+        }
+        // 2) 同时在应用内产出物列表里留一份（便于预览/下载）
         addOutput({
           id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
           ts: Date.now(),
@@ -147,41 +165,64 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         } as any);
         return {
           toolCallId: id, name, success: true,
-          output: `文件已输出到 outputs/${path}（${content.split('\n').length} 行，${content.length} 字符）`,
+          output: `文件已写入：${path}（${content.split('\n').length} 行，${content.length} 字符）${diskInfo}`,
         };
       }
 
       case 'read_file': {
         const path = safePath(args.path ?? '');
+        // 优先读真实工作区文件
+        const fsApi = getFsApi();
+        if (fsApi?.fsRead) {
+          try {
+            const r = await fsApi.fsRead(path);
+            if (r?.ok) {
+              return { toolCallId: id, name, success: true, output: `文件 ${path} 内容：\n${r.content.slice(0, 6000)}` };
+            }
+          } catch {}
+        }
+        // 回退到应用内产出物
         const outputs = loadOutputs();
         const found = outputs.find((o: OutputRecord) => o.filename === path);
         if (!found) {
-          // 尝试模糊匹配
           const fuzzy = outputs.filter((o: OutputRecord) => o.filename.includes(path));
           if (fuzzy.length === 0) {
-            return { toolCallId: id, name, success: false, output: `未找到文件：${path}。可用 list_files 查看 outputs/ 目录。` };
+            return { toolCallId: id, name, success: false, output: `未找到文件：${path}。可用 list_files 查看工作区目录。` };
           }
           return {
             toolCallId: id, name, success: true,
             output: `找到 ${fuzzy.length} 个匹配文件：${fuzzy.map((f: OutputRecord) => f.filename).join('、')}\n\n最新文件内容：${fuzzy[fuzzy.length - 1].content.slice(0, 3000)}`,
           };
         }
-        return {
-          toolCallId: id, name, success: true,
-          output: `文件 ${path} 内容：\n${found.content.slice(0, 3000)}`,
-        };
+        return { toolCallId: id, name, success: true, output: `文件 ${path} 内容：\n${found.content.slice(0, 3000)}` };
       }
 
       case 'list_files': {
         const filter = (args.filter ?? '').toLowerCase();
-        const outputs = loadOutputs();
-        let files = outputs as OutputRecord[];
-        if (filter) files = files.filter((o: OutputRecord) => o.filename.toLowerCase().includes(filter));
-        if (files.length === 0) return { toolCallId: id, name, success: true, output: 'outputs/ 目录为空。可在讨论中使用 write_file 工具产出文件。' };
-        const lines = files.map((o: OutputRecord) =>
-          `- ${o.filename} (${new Date(o.ts).toLocaleString('zh-CN')} · ${(o.content.length / 1000).toFixed(1)}KB · ${o.kind})`
-        );
-        return { toolCallId: id, name, success: true, output: `outputs/ 目录（${files.length} 个文件）：\n${lines.join('\n')}` };
+        const fsApi = getFsApi();
+        // 优先列出真实工作区
+        let lines: string[] = [];
+        let source = '工作区';
+        if (fsApi?.fsList) {
+          try {
+            const r = await fsApi.fsList('', true);
+            if (r?.ok && r.items?.length) {
+              lines = r.items
+                .filter((it: any) => !filter || it.name.toLowerCase().includes(filter))
+                .map((it: any) => `- ${it.name}${it.type === 'dir' ? '/' : ''} (${it.type === 'dir' ? '目录' : `${(it.size / 1000).toFixed(1)}KB`})`);
+            }
+          } catch {}
+        }
+        // 应用内产出物补充
+        const outputs = loadOutputs() as OutputRecord[];
+        const outFiles = outputs
+          .filter((o) => !filter || o.filename.toLowerCase().includes(filter))
+          .map((o) => `- ${o.filename} (产出物 · ${(o.content.length / 1000).toFixed(1)}KB)`);
+        if (lines.length === 0 && outFiles.length === 0) {
+          return { toolCallId: id, name, success: true, output: '工作区为空。可用 write_file 产出文件，或用 run_command 创建目录。' };
+        }
+        const merged = [...lines, ...outFiles];
+        return { toolCallId: id, name, success: true, output: `${source}目录（${merged.length} 项）：\n${merged.join('\n')}` };
       }
 
       case 'web_search': {

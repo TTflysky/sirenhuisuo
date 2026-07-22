@@ -62,12 +62,14 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('');
   const [autoDiscuss, setAutoDiscuss] = useState(false);
+  const [autoPilot, setAutoPilot] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   useEffect(() => {
     const s = loadSettings();
     setAutoDiscuss(s.autoDiscuss ?? false);
+    setAutoPilot(s.autoPilot ?? false);
     const p = s.provider ?? 'deepseek';
     setProvider(p);
     setApiKey(s.apiKey ?? '');
@@ -98,6 +100,7 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
     apiKey: apiKey.trim() || undefined,
     model: model.trim() || undefined,
     autoDiscuss,
+    autoPilot,
   });
 
   const handleTest = async () => {
@@ -188,6 +191,23 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
           className={`toggle-switch ${autoDiscuss ? 'on' : ''}`}
           onClick={() => setAutoDiscuss(!autoDiscuss)}
           title={autoDiscuss ? '点击切换为手动' : '点击切换为自动'}
+        >
+          <span className="toggle-knob" />
+        </button>
+      </div>
+
+      <div className="form-group" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <label className="form-label" style={{ margin: 0, flex: 1 }}>
+          自主办公模式
+          <span className="form-hint" style={{ display: 'block', marginTop: 2 }}>
+            {autoPilot ? '开启：AI 推荐项目后自动执行最佳项目' : '关闭：推荐项目后需手动点「执行」'}
+          </span>
+        </label>
+        <button
+          type="button"
+          className={`toggle-switch ${autoPilot ? 'on' : ''}`}
+          onClick={() => setAutoPilot(!autoPilot)}
+          title={autoPilot ? '点击关闭自主模式' : '点击开启自主模式'}
         >
           <span className="toggle-knob" />
         </button>

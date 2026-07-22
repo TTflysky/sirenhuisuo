@@ -6,10 +6,11 @@ import SidebarPanel from './components/sidebar/SidebarPanel';
 import OfficeView from './components/office/OfficeView';
 import SettingsModal from './components/settings/SettingsModal';
 import Analytics from './components/analytics/Analytics';
+import AutopilotPanel from './components/autopilot/AutopilotPanel';
 import ChatOnlyView from './components/chat/ChatOnlyView';
 import { checkBackend } from './data/hermesClient';
 
-type View = 'office' | 'analytics';
+type View = 'office' | 'analytics' | 'autopilot';
 
 export default function App() {
   const { state, openDmChat, openTeamChat, startTeamDemo, dispatch } = useStore();
@@ -60,7 +61,7 @@ export default function App() {
       <div className="titlebar">
         <div className="titlebar-left">
           <span style={{ fontSize: 16 }}>🏢</span>
-          <span className="titlebar-title">Hermes 主动协作办公室</span>
+          <span className="titlebar-title">私人办公会所</span>
           {/* 视图切换 */}
           <div className="view-tabs">
             <button className={`view-tab ${view === 'office' ? 'active' : ''}`} onClick={() => setView('office')}>
@@ -68,6 +69,9 @@ export default function App() {
             </button>
             <button className={`view-tab ${view === 'analytics' ? 'active' : ''}`} onClick={() => setView('analytics')}>
               📊 数据分析
+            </button>
+            <button className={`view-tab ${view === 'autopilot' ? 'active' : ''}`} onClick={() => setView('autopilot')}>
+              🤖 自主办公
             </button>
           </div>
         </div>
@@ -133,6 +137,8 @@ export default function App() {
               onStationClick={handleStationClick}
             />
           </>
+        ) : view === 'autopilot' ? (
+          <AutopilotPanel />
         ) : (
           <Analytics />
         )}

@@ -368,7 +368,7 @@ export function buildDiscussionOutput(
     lines.push('');
   }
   lines.push('---');
-  lines.push(`_由 Hermes 主动协作办公室自动生成 · ${now.toISOString()}_`);
+  lines.push(`_由 私人办公会所 自动生成 · ${now.toISOString()}_`);
 
   const ts = now.getTime();
   const filename = `${team.name}-${formatDate(now)}-纪要.md`;

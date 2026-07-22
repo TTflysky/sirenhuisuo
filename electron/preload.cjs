@@ -11,6 +11,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 打开原生聊天窗口（真实桌面窗口，可自由拖动）
   openChat: (opts) => ipcRenderer.invoke('win:openChat', opts),
 
+  // ===== 自主代理工作区文件系统（沙箱到 userData/workspace）=====
+  getWorkspace: () => ipcRenderer.invoke('fs:getWorkspace'),
+  fsWrite: (filePath, content) => ipcRenderer.invoke('fs:write', { filePath, content }),
+  fsRead: (filePath) => ipcRenderer.invoke('fs:read', { filePath }),
+  fsMkdir: (dirPath) => ipcRenderer.invoke('fs:mkdir', { dirPath }),
+  fsList: (dirPath, recursive) => ipcRenderer.invoke('fs:list', { dirPath, recursive }),
+
+  // 在系统文件管理器中打开路径
+  openPath: (p: string) => ipcRenderer.invoke('sys:openPath', p),
+
   // ===== 窗口间广播总线 =====
   // broadcast: 向其他窗口广播一条消息（{ channel, payload }）
   broadcast: (channel, payload) => ipcRenderer.send('win:broadcast', { channel, payload }),

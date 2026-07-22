@@ -1030,3 +1030,44 @@ html, body, #root {
 .outputs-markdown-body a {
   color: #2563eb; text-decoration: underline;
 }
+
+/* ===== 自主办公（Autopilot）===== */
+.autopilot {
+  flex: 1; display: flex; flex-direction: column; gap: 14px;
+  padding: 20px 24px; overflow: auto; height: 100%;
+}
+.autopilot-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.autopilot-toggle {
+  display: flex; align-items: center; gap: 6px; font-size: 12px;
+  color: var(--text); cursor: pointer; white-space: nowrap;
+  background: var(--bg-deep); padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border-light);
+}
+.autopilot-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.autopilot-custom { display: flex; gap: 6px; flex: 1; min-width: 280px; }
+.autopilot-custom .form-input { flex: 1; }
+.autopilot-recos { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.autopilot-card {
+  background: var(--bg-deep); border: 1px solid var(--border-light); border-radius: 12px;
+  padding: 14px; display: flex; flex-direction: column; gap: 8px;
+}
+.autopilot-card-title { font-size: 15px; font-weight: 700; color: var(--text); }
+.autopilot-card-rationale { font-size: 12px; color: var(--text-muted); line-height: 1.5; }
+.autopilot-card-steps { margin: 0; padding-left: 18px; font-size: 12px; color: var(--text); line-height: 1.6; }
+.autopilot-card-out { font-size: 11px; color: var(--text-muted); }
+.autopilot-card-actions { display: flex; gap: 8px; margin-top: 4px; }
+.autopilot-log {
+  flex: 1; min-height: 220px; display: flex; flex-direction: column;
+  border: 1px solid var(--border-light); border-radius: 12px; overflow: hidden; background: #0f1117;
+}
+.autopilot-log-head {
+  display: flex; align-items: center; padding: 8px 14px; font-size: 12px; font-weight: 600;
+  color: #cbd5e1; background: #161922; border-bottom: 1px solid #232838;
+}
+.autopilot-log-body { flex: 1; overflow: auto; padding: 12px 14px; font-family: ui-monospace, Consolas, monospace; font-size: 12px; line-height: 1.6; }
+.autopilot-log-line { white-space: pre-wrap; word-break: break-word; margin-bottom: 6px; }
+.autopilot-phase { color: #7dd3fc; font-weight: 600; }
+.autopilot-thought { color: #a5b4fc; }
+.autopilot-tool { color: #fcd34d; }
+.autopilot-obs { color: #94a3b8; border-left: 2px solid #334155; padding-left: 8px; }
+.autopilot-msg { color: #e2e8f0; }
+.autopilot-err { color: #fca5a5; }

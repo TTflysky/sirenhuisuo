@@ -1,7 +1,27 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
+const fs = require('fs');
+const fsp = require('fs/promises');
 const { exec } = require('child_process');
 const { initAutoUpdater } = require('./autoUpdate.cjs');
+
+// ===== 自主代理工作区（沙箱目录，所有文件读写/命令执行都限制在此）=====
+const WORKSPACE = path.join(app.getPath('userData'), 'workspace');
+function ensureWorkspace() {
+  try { fs.mkdirSync(WORKSPACE, { recursive: true }); } catch {}
+  return WORKSPACE;
+}
+ensureWorkspace();
+
+// 路径安全：限制在 WORKSPACE 内，禁止 .. 穿越
+function safeJoin(...parts) {
+  const target = path.resolve(WORKSPACE, path.join(...parts));
+  const rel = path.relative(WORKSPACE, target);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) {
+    throw new Error('路径越界：不允许访问工作区以外的文件');
+  }
+  return target;
+}
 
 // 子窗口集合（原生聊天窗口），主窗口关闭时一并关闭
 const childWindows = new Set();
@@ -78,10 +98,9 @@ function createWindow() {
   });
 
   // ===== 命令执行 IPC（handle 模式，支持 async/await）=====
+  // 命令在自主代理工作区（WORKSPACE）内执行，便于写码-构建-运行闭环
   ipcMain.handle('exec:command', async (_event, cmd) => {
-    const projectRoot = app.isPackaged
-      ? path.dirname(app.getPath('exe'))
-      : path.join(__dirname, '..');
+    const projectRoot = WORKSPACE;
     const timeoutMs = 30000;
     const maxOutput = 100 * 1024; // 100KB 截断
 
@@ -110,6 +129,75 @@ function createWindow() {
       }, timeoutMs);
       child.on('close', () => clearTimeout(timer));
     });
+  });
+
+  // ===== 文件系统 IPC（自主代理工作区，沙箱到 WORKSPACE）=====
+  ipcMain.handle('fs:getWorkspace', async () => WORKSPACE);
+
+  ipcMain.handle('fs:write', async (_event, { filePath, content }) => {
+    try {
+      const target = safeJoin(filePath || '');
+      await fsp.mkdir(path.dirname(target), { recursive: true });
+      await fsp.writeFile(target, content ?? '', 'utf8');
+      const stat = await fsp.stat(target);
+      return { ok: true, path: target, size: stat.size };
+    } catch (e) {
+      return { ok: false, error: String(e?.message ?? e) };
+    }
+  });
+
+  ipcMain.handle('fs:read', async (_event, { filePath }) => {
+    try {
+      const target = safeJoin(filePath || '');
+      const content = await fsp.readFile(target, 'utf8');
+      return { ok: true, path: target, content };
+    } catch (e) {
+      return { ok: false, error: String(e?.message ?? e) };
+    }
+  });
+
+  ipcMain.handle('fs:mkdir', async (_event, { dirPath }) => {
+    try {
+      const target = safeJoin(dirPath || '');
+      await fsp.mkdir(target, { recursive: true });
+      return { ok: true, path: target };
+    } catch (e) {
+      return { ok: false, error: String(e?.message ?? e) };
+    }
+  });
+
+  ipcMain.handle('fs:list', async (_event, { dirPath, recursive } = {}) => {
+    try {
+      const root = safeJoin(dirPath || '');
+      const out = [];
+      const walk = async (dir, prefix) => {
+        let entries;
+        try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
+        for (const ent of entries) {
+          if (ent.name === 'node_modules' || ent.name.startsWith('.')) continue;
+          const full = path.join(dir, ent.name);
+          const rel = prefix ? `${prefix}/${ent.name}` : ent.name;
+          if (ent.isDirectory()) {
+            out.push({ name: rel, type: 'dir', size: 0 });
+            if (recursive) await walk(full, rel);
+          } else {
+            let size = 0;
+            try { size = (await fsp.stat(full)).size; } catch {}
+            out.push({ name: rel, type: 'file', size });
+          }
+        }
+      };
+      await walk(root, '');
+      out.sort((a, b) => (a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1));
+      return { ok: true, path: root, items: out };
+    } catch (e) {
+      return { ok: false, error: String(e?.message ?? e), items: [] };
+    }
+  });
+
+  // ===== 在文件管理器中打开路径（如工作区目录）=====
+  ipcMain.handle('sys:openPath', async (_event, p) => {
+    try { await shell.openPath(p); return { ok: true }; } catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
   });
 
   // ===== 自动更新（仅打包后生效）=====

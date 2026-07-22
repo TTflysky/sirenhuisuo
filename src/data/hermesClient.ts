@@ -36,6 +36,7 @@ export interface AppSettings {
   apiKey?: string;    // Bearer token
   model?: string;     // 模型名，如 deepseek-chat / qwen-plus / glm-4-flash
   autoDiscuss?: boolean; // 是否在发消息/任务后自动触发团队 AI 讨论（默认 false=手动）
+  autoPilot?: boolean;   // 自主模式：推荐项目后自动执行最佳项目（默认 false=手动点执行）
 }
 
 // ===== 服务商预设（国内主流大模型，OpenAI 兼容）=====
@@ -460,13 +461,14 @@ export interface AgentLoopOpts {
   scene: string;
   label: string;
   onToolCall?: (name: string, args: string) => void;
+  onToolResult?: (name: string, args: string, result: string) => void;
   modelConfig?: ModelConfig;  // 可选员工独立模型配置
   extraSystemContext?: string; // 额外的系统上下文（如 soul.md）
   scope?: OutputScope;        // 产出物作用域
   attachments?: Attachment[];  // 用户上传/粘贴的图片附件（多模态视觉）
 }
 export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: string; usage: TokenUsage; model: string }> {
-  const { turns, tools, scene, label, onToolCall, modelConfig, extraSystemContext, scope, attachments } = opts;
+  const { turns, tools, scene, label, onToolCall, onToolResult, modelConfig, extraSystemContext, scope, attachments } = opts;
   let currentTurns = [...turns];
 
   // 多模态：把最后一条 user 消息转为 [text, image_url] 数组
@@ -510,6 +512,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
           args: (() => { try { return JSON.parse(tc.arguments); } catch { return {}; } })(),
           scope,
         });
+        onToolResult?.(tc.name, tc.arguments, result.output);
         callLog.push({ name: tc.name, args: tc.arguments, result: result.output.slice(0, 200) });
         // 对 tool output 长度做上限，防止下游模型调用因上下文超长失败
         const truncated = result.output.slice(0, 1500);
