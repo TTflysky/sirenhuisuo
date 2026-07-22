@@ -20,7 +20,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fsExportZip: () => ipcRenderer.invoke('fs:exportZip'),
 
   // 在系统文件管理器中打开路径
-  openPath: (p: string) => ipcRenderer.invoke('sys:openPath', p),
+  openPath: (p) => ipcRenderer.invoke('sys:openPath', p),
 
   // ===== 窗口间广播总线 =====
   // broadcast: 向其他窗口广播一条消息（{ channel, payload }）

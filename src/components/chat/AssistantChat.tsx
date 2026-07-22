@@ -231,7 +231,7 @@ export default function AssistantChat() {
   return (
     <div className="chat-panel">
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
           {/* 消息流 */}
           <div className="chat-messages">
             {msgs.length === 0 && (

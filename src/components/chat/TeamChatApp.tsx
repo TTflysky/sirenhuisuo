@@ -58,9 +58,7 @@ export default function TeamChatApp({ teamId }: Props) {
   const progress = state.status.progress;
   const myProgress = progress && progress.teamId === teamId ? progress : null;
 
-  if (!team) return <div style={{ padding: 20 }}>团队不存在</div>;
-
-  const teamMembers = team.memberIds
+  const teamMembers = (team?.memberIds ?? [])
     .map((id) => state.employees.find((e) => e.id === id))
     .filter((e): e is Employee => !!e);
 
@@ -74,7 +72,9 @@ export default function TeamChatApp({ teamId }: Props) {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [team.chatMessages.length, myProgress?.step]);
+  }, [team?.chatMessages.length, myProgress?.step]);
+
+  if (!team) return <div style={{ padding: 20 }}>团队不存在</div>;
 
   const handleSend = () => {
     if (!text.trim() && attachments.length === 0) return;
@@ -231,7 +231,7 @@ export default function TeamChatApp({ teamId }: Props) {
   return (
     <div className="chat-panel">
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
           {/* 实时进度条（讨论中） */}
           {myProgress && (
             <div className="chat-progress">

@@ -216,7 +216,7 @@ export default function DmChatApp({ empId }: Props) {
     <div className="chat-panel">
       {/* 聊天主体 + 右侧产出物 */}
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
           {/* 对方信息条 */}
           <div className="dm-peer">
             <AgentAvatar employee={emp} size={30} />

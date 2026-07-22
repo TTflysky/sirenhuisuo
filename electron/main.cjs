@@ -197,7 +197,25 @@ function createWindow() {
 
   // ===== 在文件管理器中打开路径（如工作区目录）=====
   ipcMain.handle('sys:openPath', async (_event, p) => {
-    try { await shell.openPath(p); return { ok: true }; } catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+    try {
+      if (typeof p !== 'string' || !p.trim()) throw new Error('路径不能为空');
+      const target = path.resolve(p);
+      const rel = path.relative(WORKSPACE, target);
+      if (rel.startsWith('..') || path.isAbsolute(rel)) {
+        throw new Error('路径越界：不允许打开工作区以外的路径');
+      }
+      const realWorkspace = await fsp.realpath(WORKSPACE);
+      const realTarget = await fsp.realpath(target);
+      const realRel = path.relative(realWorkspace, realTarget);
+      if (realRel.startsWith('..') || path.isAbsolute(realRel)) {
+        throw new Error('路径越界：不允许打开工作区以外的路径');
+      }
+      const error = await shell.openPath(realTarget);
+      if (error) return { ok: false, error };
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String(e?.message ?? e) };
+    }
   });
 
   // ===== 导出工作区为 zip（方便交付，仅 Windows 打包目标可用）=====
