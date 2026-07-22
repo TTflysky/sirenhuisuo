@@ -441,11 +441,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const openTeamChat = (teamId: string) => {
     const team = state.teams.find((t) => t.id === teamId);
     if (!team) return;
-    // Electron 环境：打开为原生桌面聊天窗口；浏览器环境：fallback 到 hash 路由
+    // Electron 环境：打开为原生桌面聊天窗口（可拖动）。
+    // 浏览器环境：用 window.open 新标签页，绝不动 location.hash（会错误替换主窗口）
     if (window.electronAPI?.openChat) {
       window.electronAPI.openChat({ type: 'team-chat', refId: teamId });
     } else {
-      location.hash = `#chat?type=team-chat&id=${encodeURIComponent(teamId)}`;
+      const url = `${location.origin}${location.pathname}#chat?type=team-chat&id=${encodeURIComponent(teamId)}`;
+      window.open(url, '_blank', 'width=520,height=640');
     }
   };
 
@@ -455,7 +457,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (window.electronAPI?.openChat) {
       window.electronAPI.openChat({ type: 'dm-chat', refId: empId });
     } else {
-      location.hash = `#chat?type=dm-chat&id=${encodeURIComponent(empId)}`;
+      const url = `${location.origin}${location.pathname}#chat?type=dm-chat&id=${encodeURIComponent(empId)}`;
+      window.open(url, '_blank', 'width=520,height=640');
     }
   };
 
@@ -463,7 +466,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (window.electronAPI?.openChat) {
       window.electronAPI.openChat({ type: 'assistant-chat', refId: '' });
     } else {
-      location.hash = `#chat?type=assistant-chat`;
+      const url = `${location.origin}${location.pathname}#chat?type=assistant-chat`;
+      window.open(url, '_blank', 'width=520,height=640');
     }
   };
 

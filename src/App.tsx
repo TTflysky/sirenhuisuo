@@ -16,26 +16,24 @@ type View = 'office' | 'analytics' | 'autopilot';
 export default function App() {
   const { state, openDmChat, openTeamChat, startTeamDemo, dispatch } = useStore();
 
-  // ===== ALL hooks first (Rules of Hooks: return after hooks is forbidden) =====
+  // ===== ALL hooks first (Rules of Hooks) =====
   const [showSettings, setShowSettings] = useState(false);
   const [view, setView] = useState<View>('office');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const unsubRef = useRef<(() => void) | null>(null);
 
-  // Force re-render when hash changes (for #chat routing from openDmChat/openTeamChat)
-  const [, forceUpdate] = useState(0);
-  useEffect(() => {
-    const handler = () => forceUpdate((n) => n + 1);
-    window.addEventListener('hashchange', handler);
-    return () => window.removeEventListener('hashchange', handler);
-  }, []);
+  // 子窗口检测：原生聊天子窗口的 URL 附带 #chat 路由。
+  // 仅在首次渲染时读一次，之后永不监听 hashchange，
+  // 避免主窗口被意外替换为 ChatOnlyView。
+  const [isChatWindow] = useState(
+    () => typeof location !== 'undefined' && location.hash.startsWith('#chat'),
+  );
 
   // 监听自动更新状态（仅在 Electron 桌面端生效）
   useEffect(() => {
     if (window.electronAPI?.onUpdateStatus) {
       unsubRef.current = window.electronAPI.onUpdateStatus((status) => {
         setUpdateStatus(status);
-        // 非错误消息 8 秒后自动隐藏
         if (status.status === 'not-available' || status.status === 'downloaded' || status.status === 'error') {
           setTimeout(() => setUpdateStatus(null), 8000);
         }
@@ -46,8 +44,8 @@ export default function App() {
     };
   }, []);
 
-  // ===== Hash check AFTER hooks =====
-  if (typeof location !== 'undefined' && location.hash.startsWith('#chat')) {
+  // ===== 如果是原生聊天子窗口，只渲染聊天视图 =====
+  if (isChatWindow) {
     return <ChatOnlyView hash={location.hash} />;
   }
 
