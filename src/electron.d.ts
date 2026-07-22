@@ -19,6 +19,10 @@ export interface FsReadResult { ok: boolean; path?: string; content?: string; er
 export interface FsListResult { ok: boolean; path?: string; items?: FsEntry[]; error?: string; }
 export interface FsZipResult { ok: boolean; path?: string; error?: string; }
 
+export type ChatWindowType = 'dm-chat' | 'team-chat' | 'assistant-chat';
+export interface OpenChatOptions { type: ChatWindowType; refId: string; }
+export interface OpenChatResult { ok: boolean; reused?: boolean; error?: string; }
+
 export interface UpdateStatus {
   status: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
   version?: string;
@@ -46,7 +50,7 @@ declare global {
     openPath: (p: string) => Promise<{ ok: boolean; error?: string }>;
 
     // 打开原生聊天窗口（真实桌面窗口，可自由拖动）
-    openChat: (opts: { type: string; refId: string }) => Promise<{ ok: boolean }>;
+    openChat: (opts: OpenChatOptions) => Promise<OpenChatResult>;
 
     // 窗口间广播总线：broadcast 向其他窗口广播，onBroadcast 接收来自其他窗口的消息
     broadcast: (channel: string, payload: unknown) => void;

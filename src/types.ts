@@ -99,23 +99,6 @@ export interface AppState {
   status: AgentStatus;
 }
 
-// ===== 浮窗（扩展自 hermes-desktop）=====
-export type WinKind = 'team-chat' | 'dm-chat' | 'settings' | 'assistant-chat';
-
-export interface WinState {
-  id: string;          // 复合键 'team:'+teamId / 'dm:'+empId / 'settings'
-  kind: WinKind;
-  refId?: string;
-  title: string;
-  icon: string;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  z: number;
-  minimized: boolean;
-}
-
 // ===== 角色→围巾色映射 =====
 export const ROLE_SCARF: Record<OpcRoleId, string> = {
   pm: '#ef4444',

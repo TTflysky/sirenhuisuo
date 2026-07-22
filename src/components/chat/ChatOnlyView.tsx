@@ -38,18 +38,18 @@ export default function ChatOnlyView({ hash }: Props) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg)' }}>
+    <div className="chat-only-view">
       {/* 原生标题栏（可拖动） */}
       <div className="chat-only-titlebar">
         <span className="chat-only-title">{title}</span>
         <div className="chat-only-traffic">
-          <button className="titlebar-btn" title="最小化" onClick={() => window.electronAPI?.minimize()}>—</button>
-          <button className="titlebar-btn" title="关闭" onClick={() => window.electronAPI?.close()}>✕</button>
+          <button type="button" className="titlebar-btn" title="最小化" aria-label="最小化聊天窗口" onClick={() => window.electronAPI?.minimize()}>—</button>
+          <button type="button" className="titlebar-btn" title="关闭" aria-label="关闭聊天窗口" onClick={() => window.electronAPI?.close()}>✕</button>
         </div>
       </div>
 
       {/* 聊天主体 */}
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <div className="chat-only-body">
         {type === 'dm-chat' || type === 'dm' ? (
           <DmChatApp empId={id} />
         ) : type === 'team-chat' || type === 'team' ? (

@@ -72,10 +72,7 @@ export default function SidebarPanel() {
                   isWorking={state.status.demoRunning && emp.isWorking}
                   progress={state.status.progress}
                   teams={state.teams}
-                  onClick={() => {
-                    if (emp.currentTeamId) openTeamChat(emp.currentTeamId);
-                    else openDmChat(emp.id);
-                  }}
+                  onClick={() => openDmChat(emp.id)}
                   onEdit={setEditingEmployee}
                 />
               ))}

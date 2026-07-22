@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fsp = require('fs/promises');
@@ -23,8 +23,54 @@ function safeJoin(...parts) {
   return target;
 }
 
-// 子窗口集合（原生聊天窗口），主窗口关闭时一并关闭
-const childWindows = new Set();
+const chatWindows = new Map();
+const CHAT_WINDOW_WIDTH = 560;
+const CHAT_WINDOW_HEIGHT = 700;
+const CHAT_WINDOW_MIN_WIDTH = 420;
+const CHAT_WINDOW_MIN_HEIGHT = 420;
+const CHAT_WINDOW_OFFSET = 28;
+
+function normalizeChatOptions(opts) {
+  const type = opts?.type;
+  if (!['dm-chat', 'team-chat', 'assistant-chat'].includes(type)) return null;
+  if (type === 'assistant-chat') return { type, refId: '', key: 'assistant-chat' };
+  const refId = typeof opts?.refId === 'string' ? opts.refId.trim() : '';
+  if (!refId) return null;
+  return { type, refId, key: `${type}:${refId}` };
+}
+
+function bringToFront(win) {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.setAlwaysOnTop(true);
+  win.focus();
+  win.moveTop();
+  setTimeout(() => {
+    if (!win.isDestroyed()) win.setAlwaysOnTop(false);
+  }, 300);
+}
+
+function getChatWindowBounds() {
+  const sourceBounds = mainWindow && !mainWindow.isDestroyed()
+    ? mainWindow.getBounds()
+    : screen.getPrimaryDisplay().workArea;
+  const workArea = screen.getDisplayMatching(sourceBounds).workArea;
+  const width = CHAT_WINDOW_WIDTH;
+  const height = CHAT_WINDOW_HEIGHT;
+  const offset = chatWindows.size * CHAT_WINDOW_OFFSET;
+  const maxX = Math.max(workArea.x, workArea.x + workArea.width - width);
+  const maxY = Math.max(workArea.y, workArea.y + workArea.height - height);
+  return {
+    x: Math.max(workArea.x, Math.min(maxX, sourceBounds.x + offset)),
+    y: Math.max(workArea.y, Math.min(maxY, sourceBounds.y + offset)),
+    width,
+    height,
+  };
+}
+
+let mainWindow = null;
+let ipcHandlersRegistered = false;
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -41,21 +87,27 @@ function createWindow() {
     },
   });
 
+  mainWindow = win;
+
   if (!app.isPackaged) {
     win.loadURL('http://localhost:5173');
   } else {
     win.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 
+  if (!ipcHandlersRegistered) {
+    ipcHandlersRegistered = true;
+
   // ===== 窗口控制：始终作用于发起事件的窗口（支持原生聊天子窗口）=====
-  const senderWin = (event) => BrowserWindow.fromWebContents(event.sender) || win;
-  ipcMain.on('win:minimize', (event) => senderWin(event).minimize());
+  const senderWin = (event) => BrowserWindow.fromWebContents(event.sender);
+  ipcMain.on('win:minimize', (event) => senderWin(event)?.minimize());
   ipcMain.on('win:toggle-max', (event) => {
     const w = senderWin(event);
+    if (!w) return;
     if (w.isMaximized()) w.unmaximize();
     else w.maximize();
   });
-  ipcMain.on('win:close', (event) => senderWin(event).close());
+  ipcMain.on('win:close', (event) => senderWin(event)?.close());
 
   // ===== 窗口间广播（renderer 任意窗口发出，转发给除发送者外的所有窗口）=====
   // 用于主办公室窗口与原生聊天子窗口之间实时同步状态（聊天消息、任务、产出物等）
@@ -70,31 +122,48 @@ function createWindow() {
 
   // ===== 打开原生聊天窗口（真实桌面窗口，可在屏幕上自由拖动）=====
   ipcMain.handle('win:openChat', async (_event, opts) => {
-    const { type, refId } = opts || {};
-    if (!type) return { ok: false };
+    const normalized = normalizeChatOptions(opts);
+    if (!normalized) return { ok: false, error: '无效的聊天窗口参数' };
+    const { type, refId, key } = normalized;
+    const existing = chatWindows.get(key);
+    if (existing && !existing.isDestroyed()) {
+      bringToFront(existing);
+      return { ok: true, reused: true };
+    }
+    if (existing) chatWindows.delete(key);
+
+    const bounds = getChatWindowBounds();
     const child = new BrowserWindow({
-      width: 520,
-      height: 640,
-      minWidth: 360,
-      minHeight: 320,
-      frame: false,                 // 无边框：由 React 绘制标题栏，CSS app-region:drag 实现拖动
+      ...bounds,
+      minWidth: CHAT_WINDOW_MIN_WIDTH,
+      minHeight: CHAT_WINDOW_MIN_HEIGHT,
+      frame: false,
+      show: false,
       backgroundColor: '#ffffff',
-      // 注意：不设置 parent，保持为独立窗口，可拖到屏幕任意位置
       webPreferences: {
         preload: path.join(__dirname, 'preload.cjs'),
         contextIsolation: true,
         nodeIntegration: false,
       },
     });
-    const hash = `chat?type=${encodeURIComponent(type)}&id=${encodeURIComponent(refId || '')}`;
-    if (!app.isPackaged) {
-      await child.loadURL(`http://localhost:5173/#${hash}`);
-    } else {
-      await child.loadFile(path.join(__dirname, '../dist/index.html'), { hash });
+    chatWindows.set(key, child);
+    child.once('ready-to-show', () => bringToFront(child));
+    child.on('closed', () => {
+      if (chatWindows.get(key) === child) chatWindows.delete(key);
+    });
+
+    const hash = `chat?type=${encodeURIComponent(type)}&id=${encodeURIComponent(refId)}`;
+    try {
+      if (!app.isPackaged) {
+        await child.loadURL(`http://localhost:5173/#${hash}`);
+      } else {
+        await child.loadFile(path.join(__dirname, '../dist/index.html'), { hash });
+      }
+      return { ok: true, reused: false };
+    } catch (error) {
+      if (!child.isDestroyed()) child.destroy();
+      return { ok: false, error: String(error?.message ?? error) };
     }
-    childWindows.add(child);
-    child.on('closed', () => childWindows.delete(child));
-    return { ok: true };
   });
 
   // ===== 命令执行 IPC（handle 模式，支持 async/await）=====
@@ -240,13 +309,15 @@ function createWindow() {
 
   // ===== 自动更新（仅打包后生效）=====
   initAutoUpdater(win);
+  }
 
   // 主窗口关闭时，关闭所有原生聊天子窗口
   win.on('closed', () => {
-    for (const c of childWindows) {
-      try { c.close(); } catch {}
+    for (const child of [...chatWindows.values()]) {
+      try { child.close(); } catch {}
     }
-    childWindows.clear();
+    chatWindows.clear();
+    if (mainWindow === win) mainWindow = null;
   });
 }
 

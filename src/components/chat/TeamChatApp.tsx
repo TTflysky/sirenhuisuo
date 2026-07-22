@@ -230,8 +230,8 @@ export default function TeamChatApp({ teamId }: Props) {
 
   return (
     <div className="chat-panel">
-      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, minHeight: 0 }}>
+      <div className="chat-layout">
+        <div className="chat-main">
           {/* 实时进度条（讨论中） */}
           {myProgress && (
             <div className="chat-progress">

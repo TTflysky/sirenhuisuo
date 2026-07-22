@@ -52,7 +52,7 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 html, body, #root {
-  height: 100%;
+  width: 100%; height: 100%; min-width: 0; min-height: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   background: var(--bg);
   color: var(--text);
@@ -268,53 +268,45 @@ html, body, #root {
   position: absolute; bottom: 4px; right: 4px;
 }
 
-/* ===== 浮窗层（全屏覆盖，浮窗可拖到屏幕任意位置） ===== */
-.float-layer {
-  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-  pointer-events: none; z-index: 500;
-}
-.float-layer > * { pointer-events: auto; }
-
-/* 浮窗外壳复用 hermes-desktop */
-.appwin {
-  position: absolute;
-  background: var(--win-bg);
-  border-radius: 12px;
-  box-shadow: var(--win-shadow);
-  border: 1px solid var(--border-light);
-  overflow: hidden;
-  display: flex; flex-direction: column;
-  min-width: 300px; min-height: 200px;
-}
-.appwin-header {
-  height: 36px; background: var(--win-title-bg);
-  border-bottom: 1px solid var(--win-title-border);
-  display: flex; align-items: center; padding: 0 10px; gap: 8px;
-  cursor: default; flex-shrink: 0;
-}
-.appwin-dot {
-  width: 11px; height: 11px; border-radius: 50%;
-}
-.dot-close { background: #ff5f57; }
-.dot-minimize { background: #febc2e; }
-.dot-maximize { background: #28c840; }
-.appwin-title-text {
-  flex: 1; font-size: 12px; font-weight: 600; color: var(--text-secondary);
-  text-align: center;
-}
-.appwin-body {
-  flex: 1; min-height: 0; overflow: auto; background: var(--surface);
-  display: flex; flex-direction: column;
-}
-
 /* ===== 聊天 UI — 紧凑版（原风格回归）===== */
+.chat-only-view,
+.chat-only-body,
+.chat-panel,
+.chat-layout,
+.chat-main {
+  min-width: 0;
+  min-height: 0;
+}
+.chat-only-view,
+.chat-only-body,
+.chat-panel,
+.chat-main {
+  display: flex;
+  flex-direction: column;
+}
+.chat-only-view {
+  width: 100%;
+  height: 100%;
+  background: var(--bg);
+}
+.chat-only-body,
+.chat-panel,
+.chat-layout,
+.chat-main {
+  flex: 1 1 auto;
+}
 .chat-panel {
-  display: flex; flex-direction: column;
-  flex: 1; width: 100%; height: 100%; min-width: 0; min-height: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.chat-layout {
+  display: flex;
+  position: relative;
 }
 .chat-messages {
-  flex: 1; min-height: 0; overflow-y: auto; padding: 8px 12px;
-  display: flex; flex-direction: column; gap: 4px;
+  flex: 1 1 0; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain;
+  padding: 8px 12px; display: flex; flex-direction: column; gap: 4px;
 }
 .msg { max-width: 90%; }
 .msg.human { align-self: flex-end; }
@@ -338,19 +330,28 @@ html, body, #root {
   background: rgba(34, 211, 238, 0.1); padding: 0 3px; border-radius: 3px;
 }
 
+.chat-only-titlebar,
+.dm-peer,
+.chat-progress,
+.chat-toolbar,
 .chat-composer {
-  padding: 6px 12px 8px; border-top: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+.chat-composer {
+  min-width: 0; max-height: 45%; overflow-y: auto; padding: 6px 12px 8px;
+  border-top: 1px solid var(--border-light); background: var(--surface);
   display: flex; flex-direction: column; gap: 4px;
 }
 .chat-input {
-  width: 100%; border: 1px solid var(--border); border-radius: 8px;
-  padding: 6px 10px; font-size: 13px; resize: none; outline: none;
+  box-sizing: border-box; width: 100%; max-width: 100%; min-height: 40px; max-height: 120px;
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 6px 10px; font-size: 13px; resize: vertical; outline: none;
   font-family: inherit;
   transition: border-color 0.15s;
 }
 .chat-input:focus { border-color: var(--text-muted); }
 .chat-toolbar {
-  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap; flex-shrink: 0;
 }
 
 /* ===== 原生聊天窗口标题栏（可拖动） ===== */
@@ -684,14 +685,6 @@ html, body, #root {
 }
 .session-table td { padding: 8px; border-bottom: 1px solid var(--border-light); color: var(--text); }
 
-/* ===== 浮窗缩放手柄 ===== */
-.appwin-resize {
-  position: absolute; right: 0; bottom: 0; width: 16px; height: 16px;
-  cursor: nwse-resize; z-index: 2;
-  background: linear-gradient(135deg, transparent 50%, var(--border) 50%, var(--border) 60%, transparent 60%, transparent 70%, var(--border) 70%, var(--border) 80%, transparent 80%);
-}
-.appwin-resize:hover { background: linear-gradient(135deg, transparent 50%, var(--text-muted) 50%, var(--text-muted) 60%, transparent 60%, transparent 70%, var(--text-muted) 70%, var(--text-muted) 80%, transparent 80%); }
-
 /* ===== 全局进度条（标题栏）+ 聊天内进度条 ===== */
 .titlebar-progress {
   display: flex; align-items: center; gap: 8px;
@@ -902,6 +895,17 @@ html, body, #root {
   background: var(--surface);
   overflow: hidden;
   display: flex; flex-direction: column;
+}
+
+@media (max-width: 700px) {
+  .chat-outputs-wrap {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    min-width: 0;
+    height: 100%;
+    z-index: 20;
+  }
 }
 
 .chat-outputs-panel {

@@ -11,7 +11,6 @@ import type {
   ChatMessage,
   TeamTask,
   TaskLane,
-  WinState,
   AgentStatus,
   OpcRoleId,
   AppState,
@@ -41,32 +40,20 @@ type Action =
   | { type: 'ADVANCE_TASK'; teamId: string; taskId: string; lane: TaskLane }
   | { type: 'CLAIM_TASK'; teamId: string; taskId: string; claimerId: string }
   | { type: 'SET_STATUS'; partial: Partial<AgentStatus> }
-  | { type: 'SET_PROGRESS'; progress: DiscussionProgress | null }
-  // 浮窗
-  | { type: 'OPEN_WIN'; win: WinState }
-  | { type: 'FOCUS_WIN'; id: string }
-  | { type: 'CLOSE_WIN'; id: string }
-  | { type: 'MINIMIZE_WIN'; id: string }
-  | { type: 'MOVE_WIN'; id: string; x: number; y: number }
-  | { type: 'RESIZE_WIN'; id: string; w: number; h: number };
+  | { type: 'SET_PROGRESS'; progress: DiscussionProgress | null };
 
 // ===== State =====
-interface FullState extends AppState {
-  windows: WinState[];
-}
-
-const initialState: FullState = {
+const initialState: AppState = {
   employees: [],
   teams: [],
   status: { backendOnline: false, demoRunning: false },
-  windows: [],
 };
 
 // ===== Reducer =====
-function reducer(s: FullState, a: Action): FullState {
+function reducer(s: AppState, a: Action): AppState {
   switch (a.type) {
     case 'INIT':
-      return { ...a.state, windows: [] };
+      return a.state;
 
     case 'ADD_EMPLOYEE': {
       const next = client.upsertEmployee(a.emp, s.employees);
@@ -178,41 +165,6 @@ function reducer(s: FullState, a: Action): FullState {
     case 'SET_PROGRESS':
       return { ...s, status: { ...s.status, progress: a.progress ?? undefined } };
 
-    // 浮窗
-    case 'OPEN_WIN': {
-      const exists = s.windows.find((w) => w.id === a.win.id);
-      if (exists) {
-        // 已开则 focus + 取消最小化
-        const topZ = Math.max(0, ...s.windows.map((w) => w.z)) + 1;
-        const next = s.windows.map((w) =>
-          w.id === a.win.id ? { ...w, z: topZ, minimized: false } : w
-        );
-        return { ...s, windows: next };
-      }
-      const topZ = Math.max(0, ...s.windows.map((w) => w.z), 9) + 1;
-      return { ...s, windows: [...s.windows, { ...a.win, z: topZ }] };
-    }
-
-    case 'FOCUS_WIN': {
-      const topZ = Math.max(0, ...s.windows.map((w) => w.z)) + 1;
-      return {
-        ...s,
-        windows: s.windows.map((w) => (w.id === a.id ? { ...w, z: topZ, minimized: false } : w)),
-      };
-    }
-
-    case 'CLOSE_WIN':
-      return { ...s, windows: s.windows.filter((w) => w.id !== a.id) };
-
-    case 'MINIMIZE_WIN':
-      return { ...s, windows: s.windows.map((w) => (w.id === a.id ? { ...w, minimized: !w.minimized } : w)) };
-
-    case 'MOVE_WIN':
-      return { ...s, windows: s.windows.map((w) => (w.id === a.id ? { ...w, x: a.x, y: a.y } : w)) };
-
-    case 'RESIZE_WIN':
-      return { ...s, windows: s.windows.map((w) => (w.id === a.id ? { ...w, w: a.w, h: a.h } : w)) };
-
     default:
       return s;
   }
@@ -220,7 +172,7 @@ function reducer(s: FullState, a: Action): FullState {
 
 // ===== Context =====
 interface StoreCtx {
-  state: FullState;
+  state: AppState;
   dispatch: React.Dispatch<Action>;
   // 便捷方法
   sendMessage: (teamId: string, authorId: string, roleId: RoleId, content: string, mentions?: string[], attachments?: import('./data/hermesClient').Attachment[]) => void;
@@ -231,8 +183,6 @@ interface StoreCtx {
   openTeamChat: (teamId: string) => void;
   openDmChat: (empId: string) => void;
   openAssistantChat: () => void;
-  closeWin: (id: string) => void;
-  minimizeWin: (id: string) => void;
   advanceTask: (teamId: string, taskId: string, lane: TaskLane) => void;
   claimTask: (teamId: string, taskId: string, claimerId: string) => void;
   publishTask: (teamId: string, title: string, description?: string, acceptance?: string) => void;
@@ -241,13 +191,8 @@ interface StoreCtx {
 
 const StoreContext = createContext<StoreCtx | null>(null);
 
-// 这些 action 不应跨窗口广播：
-// - INIT 是各窗口自己的初始化加载
-// - 浮窗相关 action 是旧版 DOM 浮窗专用，原生聊天子窗口不参与
-const SKIP_BROADCAST = new Set<Action['type']>([
-  'INIT',
-  'OPEN_WIN', 'FOCUS_WIN', 'CLOSE_WIN', 'MINIMIZE_WIN', 'MOVE_WIN', 'RESIZE_WIN',
-]);
+// INIT 是各窗口自己的初始化加载，不应跨窗口广播。
+const SKIP_BROADCAST = new Set<Action['type']>(['INIT']);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, rawDispatch] = useReducer(reducer, initialState);
@@ -438,41 +383,40 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const openTeamChat = (teamId: string) => {
-    const team = state.teams.find((t) => t.id === teamId);
-    if (!team) return;
-    // Electron 环境：打开为原生桌面聊天窗口（可拖动）。
-    // 浏览器环境：用 window.open 新标签页，绝不动 location.hash（会错误替换主窗口）
-    if (window.electronAPI?.openChat) {
-      window.electronAPI.openChat({ type: 'team-chat', refId: teamId });
-    } else {
-      const url = `${location.origin}${location.pathname}#chat?type=team-chat&id=${encodeURIComponent(teamId)}`;
-      window.open(url, '_blank', 'width=520,height=640');
+  const openChatWindow = (type: 'team-chat' | 'dm-chat' | 'assistant-chat', refId = '') => {
+    const openBrowserWindow = () => {
+      const query = new URLSearchParams({ type });
+      if (refId) query.set('id', refId);
+      const url = `${location.origin}${location.pathname}#chat?${query.toString()}`;
+      window.open(url, '_blank', 'width=560,height=700,resizable=yes,scrollbars=no');
+    };
+
+    if (!window.electronAPI?.openChat) {
+      openBrowserWindow();
+      return;
     }
+
+    void window.electronAPI.openChat({ type, refId }).then((result) => {
+      if (result.ok) return;
+      console.error('[openChat] 打开聊天窗口失败:', result.error ?? type);
+      openBrowserWindow();
+    }).catch((error) => {
+      console.error('[openChat] 打开聊天窗口失败:', error);
+      openBrowserWindow();
+    });
+  };
+
+  const openTeamChat = (teamId: string) => {
+    if (!state.teams.some((team) => team.id === teamId)) return;
+    openChatWindow('team-chat', teamId);
   };
 
   const openDmChat = (empId: string) => {
-    const emp = state.employees.find((e) => e.id === empId);
-    if (!emp) return;
-    if (window.electronAPI?.openChat) {
-      window.electronAPI.openChat({ type: 'dm-chat', refId: empId });
-    } else {
-      const url = `${location.origin}${location.pathname}#chat?type=dm-chat&id=${encodeURIComponent(empId)}`;
-      window.open(url, '_blank', 'width=520,height=640');
-    }
+    if (!state.employees.some((employee) => employee.id === empId)) return;
+    openChatWindow('dm-chat', empId);
   };
 
-  const openAssistantChat = () => {
-    if (window.electronAPI?.openChat) {
-      window.electronAPI.openChat({ type: 'assistant-chat', refId: '' });
-    } else {
-      const url = `${location.origin}${location.pathname}#chat?type=assistant-chat`;
-      window.open(url, '_blank', 'width=520,height=640');
-    }
-  };
-
-  const closeWin = (id: string) => dispatch({ type: 'CLOSE_WIN', id });
-  const minimizeWin = (id: string) => dispatch({ type: 'MINIMIZE_WIN', id });
+  const openAssistantChat = () => openChatWindow('assistant-chat');
 
   const advanceTask = (teamId: string, taskId: string, lane: TaskLane) =>
     dispatch({ type: 'ADVANCE_TASK', teamId, taskId, lane });
@@ -621,8 +565,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         openTeamChat,
         openDmChat,
         openAssistantChat,
-        closeWin,
-        minimizeWin,
         advanceTask,
         claimTask,
         publishTask,
