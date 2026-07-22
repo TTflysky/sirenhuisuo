@@ -1,0 +1,65 @@
+{
+  "name": "hermes-office-pro",
+  "private": true,
+  "version": "0.1.7",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "start": "electron .",
+    "dist:win": "npm run build && electron-builder --win --publish=never",
+    "release:win": "npm run build && electron-builder --win --publish=always",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "dependencies": {
+    "electron-log": "^5.4.4",
+    "electron-updater": "^6.5.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
+    "oxlint": "^1.71.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.1"
+  },
+  "build": {
+    "appId": "com.hermes.office",
+    "productName": "Hermes 主动协作办公室",
+    "artifactName": "${productName} Setup ${version}.${ext}",
+    "files": [
+      "dist/**",
+      "electron/**"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Hermes 主动协作办公室"
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://hermes-update.example.com/releases",
+        "channel": "latest"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": null
+    }
+  }
+}

@@ -1,0 +1,128 @@
+// ===== 角色标识：沿用 OPC 铁律 4 角色 + 真人 + 自定义 =====
+export type OpcRoleId = 'pm' | 'planner' | 'coder' | 'checker' | 'custom';
+export type RoleId = OpcRoleId | 'human';
+
+// ===== 员工模型配置（可选，覆盖全局设置）=====
+export interface ModelConfig {
+  provider?: string;     // 服务商 key（对应 PROVIDER_PRESETS）
+  apiHost?: string;      // 完整 base_url
+  apiKey?: string;       // API Key
+  model?: string;        // 模型名
+}
+
+// ===== 员工（扩展自原 Role）=====
+export interface Employee {
+  id: string;
+  name: string;
+  title: string;
+  role: OpcRoleId;
+  avatar: string;        // 预设 key 或自定义 base64/dataURL
+  avatarKind: 'preset' | 'custom';
+  statusColor: string;   // 角色色
+  stationIndex: number;  // 0..MAX_STATIONS-1
+  prompt?: string;       // 个性提示词（人设/说话风格），用于私聊回应
+  soul?: string;         // 核心人格文件（soul.md），深度人设描述
+  currentTeamId?: string;
+  currentTask?: string;
+  isOnline: boolean;
+  isWorking: boolean;
+  modelConfig?: ModelConfig;  // 独立模型配置（留空则用全局设置）
+}
+
+// ===== 团队 =====
+export interface Team {
+  id: string;
+  name: string;
+  icon?: string;
+  memberIds: string[];
+  chatMessages: ChatMessage[];
+  tasks: TeamTask[];
+}
+
+// ===== 群聊消息 =====
+export interface ChatMessage {
+  id: string;
+  authorId: string;
+  roleId: RoleId;
+  content: string;
+  mentions: string[];
+  timestamp: number;
+  kind?: 'text' | 'task';
+  taskRef?: string;
+  tokens?: number;     // 本条 AI 回复消耗的 token 数（仅模型回复有）
+  attachments?: import('./data/hermesClient').Attachment[]; // 用户上传/粘贴的附件
+}
+
+// ===== 团队内任务卡 =====
+export type TaskLane = 'PLANNING' | 'CODING' | 'REVIEW' | 'DONE';
+
+export interface TeamTask {
+  id: string;
+  title: string;
+  lane: TaskLane;
+  assigneeId?: string;
+  description?: string;
+  acceptance?: string;
+  claimedBy?: string;
+}
+
+// ===== 应用状态 =====
+export const MAX_STATIONS = 12;
+
+export interface AgentStatus {
+  backendOnline: boolean;
+  demoRunning: boolean;
+  activeDemoTeamId?: string;
+  progress?: DiscussionProgress;  // 团队 AI 讨论实时进度
+}
+
+// ===== 团队讨论实时进度 =====
+export interface DiscussionProgress {
+  teamId: string;
+  teamName: string;
+  step: number;            // 当前是第几步（1-based）
+  totalSteps: number;      // 总步数
+  currentEmpId?: string;   // 当前发言员工
+  currentEmpName?: string;
+  currentRole?: OpcRoleId;
+  model?: string;          // 调用的模型
+  scene: 'discussion' | 'task';
+  startedAt: number;       // Date.now() 起始时间
+  estimatedMs: number;     // 预计总时长
+  lastUpdate: number;      // 最近更新时间（用于心跳）
+}
+
+export interface AppState {
+  employees: Employee[];
+  teams: Team[];
+  status: AgentStatus;
+}
+
+// ===== 浮窗（扩展自 hermes-desktop）=====
+export type WinKind = 'team-chat' | 'dm-chat' | 'settings' | 'assistant-chat';
+
+export interface WinState {
+  id: string;          // 复合键 'team:'+teamId / 'dm:'+empId / 'settings'
+  kind: WinKind;
+  refId?: string;
+  title: string;
+  icon: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  z: number;
+  minimized: boolean;
+}
+
+// ===== 角色→围巾色映射 =====
+export const ROLE_SCARF: Record<OpcRoleId, string> = {
+  pm: '#ef4444',
+  planner: '#22d3ee',
+  coder: '#22c55e',
+  checker: '#a855f7',
+  custom: '#64748b',
+};
+
+// ===== Lane 辅助 =====
+export const LANES: TaskLane[] = ['PLANNING', 'CODING', 'REVIEW', 'DONE'];
