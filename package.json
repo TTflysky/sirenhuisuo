@@ -1,7 +1,7 @@
 {
   "name": "hermes-office-pro",
   "private": true,
-  "version": "0.1.9",
+  "version": "0.1.10",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -15,6 +15,9 @@
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
+    "@ant-design/icons": "^6.3.2",
+    "@ant-design/v5-patch-for-react-19": "^1.0.3",
+    "antd": "^6.5.1",
     "electron-log": "^5.4.4",
     "electron-updater": "^6.5.0",
     "react": "^19.2.7",

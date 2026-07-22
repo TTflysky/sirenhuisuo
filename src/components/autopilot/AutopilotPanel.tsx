@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { Switch, Button, Input, Space } from 'antd';
 import { useStore } from '../../store';
 import {
   recommendProjects, runAutopilot,
@@ -121,39 +122,38 @@ export default function AutopilotPanel() {
             AI 团队基于你的画像与现状自主思考、推荐项目，并自动写代码 / 跑命令 / 验证，直到完成。
           </p>
         </div>
-        <label className="autopilot-toggle">
-          <input type="checkbox" checked={autoPilot} onChange={toggleAuto} disabled={running} />
+        <label className="autopilot-toggle" style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
+          <Switch checked={autoPilot} onChange={toggleAuto} disabled={running} />
           <span>🚀 自主模式（推荐后自动执行）</span>
         </label>
       </div>
 
       {/* 控制区 */}
       <div className="autopilot-controls">
-        <button className="btn btn-primary" onClick={doRecommend} disabled={loading || running}>
-          {loading ? '分析中…' : '✨ 让 AI 推荐项目'}
-        </button>
-        <div className="autopilot-custom">
-          <input
-            className="form-input"
+        <Button type="primary" onClick={doRecommend} loading={loading} disabled={running}>
+          ✨ 让 AI 推荐项目
+        </Button>
+        <Space.Compact style={{ flex: 1, minWidth: 240 }}>
+          <Input
             value={customGoal}
             onChange={(e) => setCustomGoal(e.target.value)}
+            onPressEnter={runCustom}
             placeholder="或直接使用我的需求，例如：做一个计算房贷的网页小工具"
             disabled={running}
-            onKeyDown={(e) => { if (e.key === 'Enter') runCustom(); }}
           />
-          <button className="btn" onClick={runCustom} disabled={running || !customGoal.trim()}>▶ 执行</button>
-        </div>
+          <Button onClick={runCustom} disabled={running || !customGoal.trim()}>▶ 执行</Button>
+        </Space.Compact>
         {running && (
-          <button className="btn btn-sm btn-danger" onClick={() => { stopRef.current = true; push('phase', '⛔ 正在停止…'); }} title="停止当前自主执行">
+          <Button danger onClick={() => { stopRef.current = true; push('phase', '⛔ 正在停止…'); }} title="停止当前自主执行">
             🛑 停止
-          </button>
+          </Button>
         )}
         {workspace && (
           <>
-            <button className="btn btn-sm" onClick={exportZip} disabled={running} title="把工作区打包成 zip，方便交付">📦 导出工作区</button>
-            <button className="btn btn-sm" onClick={() => window.electronAPI?.openPath(workspace)} title={workspace}>
+            <Button size="small" onClick={exportZip} disabled={running} title="把工作区打包成 zip，方便交付">📦 导出工作区</Button>
+            <Button size="small" onClick={() => window.electronAPI?.openPath(workspace)} title={workspace}>
               📂 打开工作区
-            </button>
+            </Button>
           </>
         )}
       </div>
@@ -174,8 +174,8 @@ export default function AutopilotPanel() {
                 <div className="autopilot-card-out">预期产出：{p.expectedOutputs.join('、')}</div>
               )}
               <div className="autopilot-card-actions">
-                <button className="btn btn-sm btn-primary" onClick={() => runProject(p)}>🚀 执行</button>
-                <button className="btn btn-sm" onClick={() => { setCustomGoal(p.title); }}>📝 改成我的需求</button>
+                <Button size="small" type="primary" onClick={() => runProject(p)}>🚀 执行</Button>
+                <Button size="small" onClick={() => { setCustomGoal(p.title); }}>📝 改成我的需求</Button>
               </div>
             </div>
           ))}

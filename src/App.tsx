@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { Segmented, Button } from 'antd';
 import type { Employee } from './types';
 import type { UpdateStatus } from './electron.d';
 import { useStore } from './store';
@@ -63,16 +64,16 @@ export default function App() {
           <span style={{ fontSize: 16 }}>🏢</span>
           <span className="titlebar-title">私人办公会所</span>
           {/* 视图切换 */}
-          <div className="view-tabs">
-            <button className={`view-tab ${view === 'office' ? 'active' : ''}`} onClick={() => setView('office')}>
-              🏢 办公室
-            </button>
-            <button className={`view-tab ${view === 'analytics' ? 'active' : ''}`} onClick={() => setView('analytics')}>
-              📊 数据分析
-            </button>
-            <button className={`view-tab ${view === 'autopilot' ? 'active' : ''}`} onClick={() => setView('autopilot')}>
-              🤖 自主办公
-            </button>
+          <div className="view-tabs" style={{ marginLeft: 14 }}>
+            <Segmented
+              value={view}
+              onChange={(v) => setView(v as View)}
+              options={[
+                { label: '🏢 办公室', value: 'office' },
+                { label: '📊 数据分析', value: 'analytics' },
+                { label: '🤖 自主办公', value: 'autopilot' },
+              ]}
+            />
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -106,12 +107,12 @@ export default function App() {
           <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
             {state.status.backendOnline ? '🟢 模型在线' : '🔵 本地模式'}
           </span>
-          <button className="btn btn-sm" onClick={handleDemo} disabled={state.status.demoRunning}>
+          <Button size="small" onClick={handleDemo} disabled={state.status.demoRunning}>
             ▶ 演示 OPC 协作
-          </button>
-          <button className="btn btn-sm" onClick={() => setShowSettings(true)} title="API 接口配置">
+          </Button>
+          <Button size="small" onClick={() => setShowSettings(true)} title="API 接口配置">
             ⚙️ 设置
-          </button>
+          </Button>
           <div className="titlebar-actions">
             <button className="titlebar-btn" title="最小化" onClick={() => window.electronAPI?.minimize()}>
               —

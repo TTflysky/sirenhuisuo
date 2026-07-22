@@ -1,5 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { ConfigProvider, App as AntApp } from 'antd';
 import './theme.css';
 import App from './App';
 import { StoreProvider } from './store';
@@ -14,11 +15,34 @@ if (typeof window !== 'undefined' && window.electronAPI?.onBroadcast) {
   });
 }
 
+// antd 主题：贴合现有「白调极简办公室」配色，圆角/字体与 theme.css 一致
+const antdTheme = {
+  token: {
+    colorPrimary: '#1a1f36',
+    colorInfo: '#1a1f36',
+    borderRadius: 8,
+    fontFamily:
+      "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif",
+    colorBgContainer: '#ffffff',
+    colorBorder: '#e2e6ef',
+    colorBorderSecondary: '#eef0f6',
+    colorText: '#1a1f36',
+    colorTextSecondary: '#5c6b8a',
+    colorTextTertiary: '#9aa4c2',
+    controlHeight: 32,
+  },
+};
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <StoreProvider>
-      <App />
-    </StoreProvider>
+    <ConfigProvider theme={antdTheme}>
+      <AntApp>
+        <StoreProvider>
+          <App />
+        </StoreProvider>
+      </AntApp>
+    </ConfigProvider>
   </StrictMode>,
 );
+
 
