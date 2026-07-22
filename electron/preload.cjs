@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fsRead: (filePath) => ipcRenderer.invoke('fs:read', { filePath }),
   fsMkdir: (dirPath) => ipcRenderer.invoke('fs:mkdir', { dirPath }),
   fsList: (dirPath, recursive) => ipcRenderer.invoke('fs:list', { dirPath, recursive }),
+  fsExportZip: () => ipcRenderer.invoke('fs:exportZip'),
 
   // 在系统文件管理器中打开路径
   openPath: (p: string) => ipcRenderer.invoke('sys:openPath', p),

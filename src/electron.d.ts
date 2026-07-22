@@ -17,6 +17,7 @@ export interface FsEntry {
 export interface FsWriteResult { ok: boolean; path?: string; size?: number; error?: string; }
 export interface FsReadResult { ok: boolean; path?: string; content?: string; error?: string; }
 export interface FsListResult { ok: boolean; path?: string; items?: FsEntry[]; error?: string; }
+export interface FsZipResult { ok: boolean; path?: string; error?: string; }
 
 export interface UpdateStatus {
   status: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
@@ -41,6 +42,7 @@ declare global {
     fsRead: (filePath: string) => Promise<FsReadResult>;
     fsMkdir: (dirPath: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
     fsList: (dirPath?: string, recursive?: boolean) => Promise<FsListResult>;
+    fsExportZip: () => Promise<FsZipResult>;
     openPath: (p: string) => Promise<{ ok: boolean; error?: string }>;
 
     // 打开原生聊天窗口（真实桌面窗口，可自由拖动）

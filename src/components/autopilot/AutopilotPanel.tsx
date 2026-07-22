@@ -96,6 +96,22 @@ export default function AutopilotPanel() {
     saveSettings({ ...s, autoPilot: next });
   };
 
+  const exportZip = async () => {
+    if (!workspace) return;
+    push('phase', '📦 正在打包工作区为 zip…');
+    try {
+      const res = await window.electronAPI?.fsExportZip();
+      if (res?.ok && res.path) {
+        push('msg', `✅ 已导出到：${res.path}`);
+        await window.electronAPI?.openPath(res.path);
+      } else {
+        push('err', `导出失败：${res?.error ?? '未知错误'}`);
+      }
+    } catch (e: any) {
+      push('err', `导出失败：${e?.message ?? '未知错误'}`);
+    }
+  };
+
   return (
     <div className="autopilot">
       <div className="autopilot-head">
@@ -127,10 +143,18 @@ export default function AutopilotPanel() {
           />
           <button className="btn" onClick={runCustom} disabled={running || !customGoal.trim()}>▶ 执行</button>
         </div>
-        {workspace && (
-          <button className="btn btn-sm" onClick={() => window.electronAPI?.openPath(workspace)} title={workspace}>
-            📂 打开工作区
+        {running && (
+          <button className="btn btn-sm btn-danger" onClick={() => { stopRef.current = true; push('phase', '⛔ 正在停止…'); }} title="停止当前自主执行">
+            🛑 停止
           </button>
+        )}
+        {workspace && (
+          <>
+            <button className="btn btn-sm" onClick={exportZip} disabled={running} title="把工作区打包成 zip，方便交付">📦 导出工作区</button>
+            <button className="btn btn-sm" onClick={() => window.electronAPI?.openPath(workspace)} title={workspace}>
+              📂 打开工作区
+            </button>
+          </>
         )}
       </div>
 

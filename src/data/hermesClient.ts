@@ -466,9 +466,10 @@ export interface AgentLoopOpts {
   extraSystemContext?: string; // 额外的系统上下文（如 soul.md）
   scope?: OutputScope;        // 产出物作用域
   attachments?: Attachment[];  // 用户上传/粘贴的图片附件（多模态视觉）
+  shouldStop?: () => boolean;  // 自主执行中断信号（如用户点「停止」）
 }
 export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: string; usage: TokenUsage; model: string }> {
-  const { turns, tools, scene, label, onToolCall, onToolResult, modelConfig, extraSystemContext, scope, attachments } = opts;
+  const { turns, tools, scene, label, onToolCall, onToolResult, modelConfig, extraSystemContext, scope, attachments, shouldStop } = opts;
   let currentTurns = [...turns];
 
   // 多模态：把最后一条 user 消息转为 [text, image_url] 数组
@@ -493,8 +494,10 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   let finalModel = '';
   const maxIter = 6; // 最多6轮工具调用循环
   const callLog: Array<{ name: string; args: string; result: string }> = [];
+  let stopped = false;
 
   for (let iter = 0; iter < maxIter; iter++) {
+    if (shouldStop?.()) { stopped = true; break; } // 用户停止：本轮前中止
     const r = await chatCompletion(currentTurns, scene, label, tools, modelConfig, extraSystemContext);
     totalUsage.promptTokens += r.usage.promptTokens;
     totalUsage.completionTokens += r.usage.completionTokens;
@@ -518,7 +521,9 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         const truncated = result.output.slice(0, 1500);
         currentTurns.push({ role: 'assistant', content: null, tool_calls: [{ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments } }] } as any);
         currentTurns.push({ role: 'tool', content: truncated, tool_call_id: tc.id } as any);
+        if (shouldStop?.()) { stopped = true; break; } // 用户停止：工具执行后中止
       }
+      if (stopped) break;
     } else if (r.content) {
       // 模型返回了文本：完成
       finalContent = r.content;
@@ -530,7 +535,9 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
 
   // 工具循环用尽但模型未产出最终文本 → 构造简洁的摘要
   if (!finalContent) {
-    if (callLog.length > 0) {
+    if (stopped) {
+      finalContent = '⛔ 已手动停止执行。已完成的部分已保存在工作区，可重新执行继续。';
+    } else if (callLog.length > 0) {
       const blocks = callLog.map((c, i) => {
         // 从 result 中提取有用的结论摘要
         let status = '✅ 成功';

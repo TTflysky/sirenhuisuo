@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fsp = require('fs/promises');
-const { exec } = require('child_process');
+const { exec, execFile } = require('child_process');
 const { initAutoUpdater } = require('./autoUpdate.cjs');
 
 // ===== 自主代理工作区（沙箱目录，所有文件读写/命令执行都限制在此）=====
@@ -198,6 +198,26 @@ function createWindow() {
   // ===== 在文件管理器中打开路径（如工作区目录）=====
   ipcMain.handle('sys:openPath', async (_event, p) => {
     try { await shell.openPath(p); return { ok: true }; } catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+
+  // ===== 导出工作区为 zip（方便交付，仅 Windows 打包目标可用）=====
+  ipcMain.handle('fs:exportZip', async () => {
+    try {
+      const outPath = path.join(app.getPath('userData'), `workspace-export-${Date.now()}.zip`);
+      try { fs.unlinkSync(outPath); } catch {}
+      // 单引号在 PowerShell 中为字面量，路径中的反斜杠/中文均安全
+      const script = `Compress-Archive -Path '${WORKSPACE}' -DestinationPath '${outPath}' -Force`;
+      await new Promise((resolve, reject) => {
+        execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], { windowsHide: true, maxBuffer: 8 * 1024 * 1024 },
+          (err, _stdout, stderr) => {
+            if (err) reject(new Error((stderr || err.message || '').toString()));
+            else resolve(undefined);
+          });
+      });
+      return { ok: true, path: outPath };
+    } catch (e) {
+      return { ok: false, error: String(e?.message ?? e) };
+    }
   });
 
   // ===== 自动更新（仅打包后生效）=====

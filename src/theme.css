@@ -1071,3 +1071,9 @@ html, body, #root {
 .autopilot-obs { color: #94a3b8; border-left: 2px solid #334155; padding-left: 8px; }
 .autopilot-msg { color: #e2e8f0; }
 .autopilot-err { color: #fca5a5; }
+
+/* 危险/停止按钮 */
+.btn-danger {
+  background: #ef4444; color: #fff; border-color: #dc2626;
+}
+.btn-danger:hover:not(:disabled) { background: #dc2626; }

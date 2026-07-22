@@ -166,8 +166,9 @@ export async function runAutopilot(
       onToolResult: (name, _args, result) => {
         cb.onObservation(`${name} → ${result.slice(0, 600)}`);
       },
+      shouldStop: cb.shouldStop,
     });
-    cb.onPhase('✅ 项目执行完毕');
+    cb.onPhase('🏁 执行结束');
     cb.onMessage(r.content || '（无总结）');
     cb.onDone(r.content || '项目已完成，但未返回总结。');
   } catch (e: any) {
