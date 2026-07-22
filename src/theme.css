@@ -68,12 +68,16 @@ html, body, #root {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 14px;
-  -webkit-app-region: drag;
+  padding: 0 14px 0 0;
   z-index: 100;
 }
-.titlebar button, .titlebar .btn, .titlebar .view-tab, .titlebar select, .titlebar input { -webkit-app-region: no-drag; }
-.titlebar-left { display: flex; align-items: center; gap: 10px; -webkit-app-region: no-drag; }
+/* 拖拽区域 = 左侧从 padding 开始到 Segmented 结束 */
+.titlebar-left { display: flex; align-items: center; gap: 10px; -webkit-app-region: drag; padding-left: 14px; flex: 1; }
+/* 右侧区域（按钮区）禁止拖拽 */
+.titlebar-right { display: flex; align-items: center; gap: 10px; -webkit-app-region: no-drag; }
+.titlebar button, .titlebar-right button { -webkit-app-region: no-drag; }
+.titlebar-title { font-size: 13px; font-weight: 600; color: var(--text); letter-spacing: 0.3px; }
+.titlebar-actions { display: flex; gap: 8px; }
 .titlebar-title { font-size: 13px; font-weight: 600; color: var(--text); letter-spacing: 0.3px; }
 .titlebar-actions { display: flex; gap: 8px; -webkit-app-region: no-drag; }
 .titlebar-btn {

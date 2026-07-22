@@ -88,10 +88,12 @@ function createWindow() {
     });
     const hash = `chat?type=${encodeURIComponent(type)}&id=${encodeURIComponent(refId || '')}`;
     if (!app.isPackaged) {
-      child.loadURL(`http://localhost:5173/#${hash}`);
+      await child.loadURL(`http://localhost:5173/#${hash}`);
     } else {
-      child.loadFile(path.join(__dirname, '../dist/index.html'), { hash });
+      await child.loadFile(path.join(__dirname, '../dist/index.html'), { hash });
     }
+    // 标记为子聊天窗口，防止主窗口因遗留 hash 错误替换
+    try { await child.webContents.executeJavaScript('sessionStorage.setItem("chatChild","1")'); } catch {}
     childWindows.add(child);
     child.on('closed', () => childWindows.delete(child));
     return { ok: true };

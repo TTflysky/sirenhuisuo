@@ -258,7 +258,36 @@ export default function TeamChatApp({ teamId }: Props) {
 
           {/* 消息流 */}
           <div className="chat-messages">
-            {(team.chatMessages ?? []).map((msg) => {
+            {(team.chatMessages ?? []).length === 0 ? (
+              /* 空状态：显示团队成员 */
+              <div style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                height: '100%', color: 'var(--text-muted)', gap: 12, padding: 40,
+              }}>
+                <span style={{ fontSize: 40 }}>{team.icon ?? '👥'}</span>
+                <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text)' }}>{team.name}</div>
+                <div style={{ fontSize: 12, textAlign: 'center', maxWidth: 300 }}>
+                  {teamMembers.length > 0
+                    ? `团队有 ${teamMembers.length} 名成员`
+                    : '暂无成员，先给团队添加员工或发一条消息吧'}
+                </div>
+                {teamMembers.length > 0 && (
+                  <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', justifyContent: 'center', marginTop: 4 }}>
+                    {teamMembers.map((emp) => (
+                      <div key={emp.id} style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        background: 'var(--bg-deep)', borderRadius: 20, padding: '4px 12px', fontSize: 12,
+                      }}>
+                        <span>{emp.avatar ?? (emp.role === 'pm' ? '👔' : emp.role === 'planner' ? '📋' : emp.role === 'coder' ? '💻' : '🔍')}</span>
+                        <span style={{ color: 'var(--text)' }}>{emp.name}</span>
+                        <span style={{ color: emp.statusColor }}>{emp.title}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ fontSize: 11, marginTop: 8 }}>💬 在下方输入消息开始团队协作</div>
+              </div>
+            ) : (team.chatMessages ?? []).map((msg) => {
               const author = state.employees.find((e: Employee) => e.id === msg.authorId);
               const isHuman = msg.roleId === 'human';
 
