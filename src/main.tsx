@@ -40,7 +40,7 @@ const antdTheme = {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ConfigProvider theme={antdTheme}>
-      <AntApp>
+      <AntApp className="app-root">
         <StoreProvider>
           <App />
         </StoreProvider>

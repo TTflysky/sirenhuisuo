@@ -43,34 +43,86 @@ function bringToFront(win) {
   if (!win || win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
   win.show();
-  win.setAlwaysOnTop(true);
   win.focus();
   win.moveTop();
-  setTimeout(() => {
-    if (!win.isDestroyed()) win.setAlwaysOnTop(false);
-  }, 300);
 }
 
-function getChatWindowBounds() {
-  const sourceBounds = mainWindow && !mainWindow.isDestroyed()
-    ? mainWindow.getBounds()
+function getRootOwner(win) {
+  if (!win || win.isDestroyed()) return null;
+  let owner = win;
+  let parent = owner.getParentWindow();
+  while (parent && !parent.isDestroyed()) {
+    owner = parent;
+    parent = owner.getParentWindow();
+  }
+  return owner;
+}
+
+function getChatWindowBounds(sourceWindow) {
+  const sourceBounds = sourceWindow && !sourceWindow.isDestroyed()
+    ? sourceWindow.getBounds()
     : screen.getPrimaryDisplay().workArea;
   const workArea = screen.getDisplayMatching(sourceBounds).workArea;
-  const width = CHAT_WINDOW_WIDTH;
-  const height = CHAT_WINDOW_HEIGHT;
-  const offset = chatWindows.size * CHAT_WINDOW_OFFSET;
+  const width = Math.min(CHAT_WINDOW_WIDTH, workArea.width);
+  const height = Math.min(CHAT_WINDOW_HEIGHT, workArea.height);
   const maxX = Math.max(workArea.x, workArea.x + workArea.width - width);
   const maxY = Math.max(workArea.y, workArea.y + workArea.height - height);
-  return {
-    x: Math.max(workArea.x, Math.min(maxX, sourceBounds.x + offset)),
-    y: Math.max(workArea.y, Math.min(maxY, sourceBounds.y + offset)),
-    width,
-    height,
+  const clampX = (value) => Math.max(workArea.x, Math.min(maxX, value));
+  const clampY = (value) => Math.max(workArea.y, Math.min(maxY, value));
+  const baseX = clampX(sourceBounds.x);
+  const baseY = clampY(sourceBounds.y);
+  const candidates = [];
+  const candidateKeys = new Set();
+  const addCandidate = (x, y) => {
+    const key = `${x},${y}`;
+    if (candidateKeys.has(key)) return;
+    candidateKeys.add(key);
+    candidates.push({ x, y });
   };
+
+  const xSlots = Math.floor((maxX - workArea.x) / CHAT_WINDOW_OFFSET) + 2;
+  const ySlots = Math.floor((maxY - workArea.y) / CHAT_WINDOW_OFFSET) + 2;
+  const diagonalSlots = Math.max(xSlots, ySlots);
+  for (let index = 0; index < diagonalSlots; index += 1) {
+    addCandidate(
+      clampX(baseX + index * CHAT_WINDOW_OFFSET),
+      clampY(baseY + index * CHAT_WINDOW_OFFSET),
+    );
+  }
+
+  const xCandidates = [];
+  const yCandidates = [];
+  for (let x = workArea.x; x <= maxX; x += CHAT_WINDOW_OFFSET) xCandidates.push(x);
+  for (let y = workArea.y; y <= maxY; y += CHAT_WINDOW_OFFSET) yCandidates.push(y);
+  if (xCandidates.at(-1) !== maxX) xCandidates.push(maxX);
+  if (yCandidates.at(-1) !== maxY) yCandidates.push(maxY);
+  for (const y of yCandidates) {
+    for (const x of xCandidates) addCandidate(x, y);
+  }
+
+  const occupied = new Set();
+  for (const chatWindow of chatWindows.values()) {
+    if (!chatWindow || chatWindow.isDestroyed()) continue;
+    const bounds = chatWindow.getBounds();
+    occupied.add(`${bounds.x},${bounds.y}`);
+  }
+  const position = candidates.find(({ x, y }) => !occupied.has(`${x},${y}`)) ?? candidates[0];
+  return { ...position, width, height };
 }
 
 let mainWindow = null;
+let lastActiveWindow = null;
 let ipcHandlersRegistered = false;
+
+function trackActiveWindow(win) {
+  lastActiveWindow = win;
+  win.on('focus', () => {
+    lastActiveWindow = win;
+  });
+  win.on('closed', () => {
+    if (lastActiveWindow === win) lastActiveWindow = null;
+  });
+}
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -88,6 +140,7 @@ function createWindow() {
   });
 
   mainWindow = win;
+  trackActiveWindow(win);
 
   if (!app.isPackaged) {
     win.loadURL('http://localhost:5173');
@@ -121,7 +174,7 @@ function createWindow() {
   });
 
   // ===== 打开原生聊天窗口（真实桌面窗口，可在屏幕上自由拖动）=====
-  ipcMain.handle('win:openChat', async (_event, opts) => {
+  ipcMain.handle('win:openChat', async (event, opts) => {
     const normalized = normalizeChatOptions(opts);
     if (!normalized) return { ok: false, error: '无效的聊天窗口参数' };
     const { type, refId, key } = normalized;
@@ -132,11 +185,15 @@ function createWindow() {
     }
     if (existing) chatWindows.delete(key);
 
-    const bounds = getChatWindowBounds();
+    const requester = BrowserWindow.fromWebContents(event.sender);
+    const owner = getRootOwner(requester) ?? (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
+    const bounds = getChatWindowBounds(requester ?? owner);
     const child = new BrowserWindow({
       ...bounds,
       minWidth: CHAT_WINDOW_MIN_WIDTH,
       minHeight: CHAT_WINDOW_MIN_HEIGHT,
+      parent: owner ?? undefined,
+      modal: false,
       frame: false,
       show: false,
       backgroundColor: '#ffffff',
@@ -146,6 +203,7 @@ function createWindow() {
         nodeIntegration: false,
       },
     });
+    trackActiveWindow(child);
     chatWindows.set(key, child);
     child.once('ready-to-show', () => bringToFront(child));
     child.on('closed', () => {
@@ -321,12 +379,25 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(() => {
-  createWindow();
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    const target = lastActiveWindow && !lastActiveWindow.isDestroyed()
+      ? lastActiveWindow
+      : mainWindow;
+    bringToFront(target);
   });
-});
+
+  app.whenReady().then(() => {
+    createWindow();
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+    });
+  });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
