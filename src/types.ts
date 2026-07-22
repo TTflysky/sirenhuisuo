@@ -37,6 +37,7 @@ export interface Team {
   memberIds: string[];
   chatMessages: ChatMessage[];
   tasks: TeamTask[];
+  archived?: boolean;     // 归档后不出现在活跃列表，可恢复
 }
 
 // ===== 群聊消息 =====
