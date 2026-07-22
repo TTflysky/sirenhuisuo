@@ -23,18 +23,11 @@ export default function App() {
   const unsubRef = useRef<(() => void) | null>(null);
 
   // 子窗口检测：原生聊天子窗口的 URL 附带 #chat 路由。
-  // 仅在首次渲染时读一次，之后永不监听 hashchange。
-  // 需要 sessionStorage 标记确认——防止之前版本遗留的 #chat hash 错误替换主窗口。
-  const [isChatWindow] = useState(() => {
-    if (typeof location !== 'undefined' && location.hash.startsWith('#chat')) {
-      // 有 sessionStorage 标记的才是真正的子聊天窗口
-      if (sessionStorage.getItem('chatChild') === '1') return true;
-      // 否则是主窗口遗留的 hash（v0.1.12 及之前的 Bug），清除它
-      history.replaceState(null, '', location.pathname + location.search);
-      return false;
-    }
-    return false;
-  });
+  // 仅在首次渲染时读一次 location.hash——主窗口永远不带 #chat（v0.1.13 已移除 hash fallback），
+  // 只有 win:openChat 创建的子窗口才有 #chat hash。不需要 sessionStorage 验证。
+  const [isChatWindow] = useState(
+    () => typeof location !== 'undefined' && location.hash.startsWith('#chat'),
+  );
 
   // 监听自动更新状态（仅在 Electron 桌面端生效）
   useEffect(() => {

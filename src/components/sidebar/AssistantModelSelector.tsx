@@ -1,157 +1,91 @@
 import { useState, useEffect } from 'react';
-import { Select, Input, Button, Popover, Space, App } from 'antd';
-import type { ModelConfig } from '../../types';
+import { Select, Popover, App } from 'antd';
 import {
   loadSettings, saveSettings,
-  PROVIDER_PRESETS, getProvider,
+  getProvider, getAssistantModel, getActiveModel,
+  type ModelEntry,
 } from '../../data/hermesClient';
 
-/** 助理机器人模型选择器：办公页侧栏可直接为助手切换模型 */
+/** 助理机器人模型选择器：侧栏只显示模型名 + 下拉切换 */
 export default function AssistantModelSelector() {
   const { message } = App.useApp();
-  const [open, setOpen] = useState(false);
+  const [settings, setSettings] = useState(() => loadSettings());
 
-  // 本地编辑状态
-  const [provider, setProvider] = useState('deepseek');
-  const [apiHost, setApiHost] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [modelName, setModelName] = useState('');
-
-  // 从 AppSettings.assistantModelConfig 加载
+  // 从 AppSettings.modelLibrary 加载
   useEffect(() => {
-    if (!open) return;
+    setSettings(loadSettings());
+  }, []);
+
+  const library: ModelEntry[] = settings.modelLibrary ?? [];
+  const assistantId = settings.assistantModelId ?? '__global__';
+
+  // 当前显示的模型名
+  const assistantMc = getAssistantModel();
+  const activeMc = getActiveModel();
+  const displayModel = assistantMc.model || activeMc.model || getProvider(assistantMc.provider).defaultModel || '未配置';
+
+  const handleChange = (value: string) => {
     const s = loadSettings();
-    const mc = s.assistantModelConfig;
-    if (!mc) {
-      // 未设置助理模型 → 预填全局设置的值
-      setProvider(s.provider ?? 'deepseek');
-      setApiHost(s.apiHost ?? '');
-      setApiKey(s.apiKey ?? '');
-      setModelName(s.model ?? '');
+    if (value === '__global__') {
+      s.assistantModelId = undefined;
+      // 清除旧字段
+      delete s.assistantModelConfig;
     } else {
-      setProvider(mc.provider ?? s.provider ?? 'deepseek');
-      setApiHost(mc.apiHost ?? s.apiHost ?? '');
-      setApiKey(mc.apiKey ?? s.apiKey ?? '');
-      setModelName(mc.model ?? s.model ?? '');
+      s.assistantModelId = value;
+      const entry = s.modelLibrary?.find(m => m.id === value);
+      if (entry) {
+        s.assistantModelConfig = { provider: entry.provider, apiHost: entry.apiHost, apiKey: entry.apiKey, model: entry.model };
+      }
     }
-  }, [open]);
-
-  const getLabel = (): string => {
-    const s = loadSettings();
-    const mc = s.assistantModelConfig;
-    const m = mc?.model || s.model || '';
-    if (m) return m;
-    const p = mc?.provider || s.provider || 'deepseek';
-    return getProvider(p).defaultModel || p;
-  };
-
-  const handleProviderChange = (key: string) => {
-    setProvider(key);
-    if (key === 'custom') return;
-    const preset = getProvider(key);
-    if (!apiHost || apiHost === getProvider(provider).baseUrl) {
-      setApiHost(preset.baseUrl);
-    }
-    if (!modelName || modelName === getProvider(provider).defaultModel) {
-      setModelName(preset.defaultModel);
-    }
-  };
-
-  const handleSave = () => {
-    const config: ModelConfig = {};
-    if (provider) config.provider = provider;
-    if (apiHost.trim()) config.apiHost = apiHost.trim();
-    if (apiKey.trim()) config.apiKey = apiKey.trim();
-    if (modelName.trim()) config.model = modelName.trim();
-
-    const s = loadSettings();
-    s.assistantModelConfig = config;
     saveSettings(s);
-    message.success('助理模型已更新');
-    setOpen(false);
+    setSettings({ ...s });
+    message.success(value === '__global__' ? '助理已跟随全局模型' : '助理模型已切换');
   };
 
-  const handleReset = () => {
-    const s = loadSettings();
-    delete s.assistantModelConfig;
-    saveSettings(s);
-    message.success('已恢复为全局模型');
-    setOpen(false);
-  };
-
-  const currentLabel = getLabel();
+  // 没有模型库时不显示选择器
+  if (library.length === 0) {
+    return (
+      <button
+        className="btn btn-sm"
+        style={{ display: 'inline-flex', alignItems: 'center', gap: 4, maxWidth: 140, overflow: 'hidden' }}
+        title="点击右上角 ⚙️ 设置添加模型"
+        onClick={() => message.info('请先在设置中添加模型')}
+      >
+        <span style={{ fontSize: 11 }}>🧠</span>
+        <span style={{ fontSize: 11, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>
+          {displayModel}
+        </span>
+      </button>
+    );
+  }
 
   const content = (
-    <div style={{ width: 280, padding: 4 }}>
-      <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 12 }}>🤖 助理机器人模型配置</div>
-
-      <div style={{ marginBottom: 10 }}>
-        <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 4 }}>服务商</div>
-        <Select
-          value={provider}
-          onChange={handleProviderChange}
-          style={{ width: '100%' }}
-          size="small"
-          options={PROVIDER_PRESETS.map((p) => ({ value: p.key, label: p.label }))}
-        />
-      </div>
-
-      <div style={{ marginBottom: 10 }}>
-        <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 4 }}>API 地址</div>
-        <Input
-          size="small"
-          value={apiHost}
-          onChange={(e) => setApiHost(e.target.value)}
-          placeholder="如 https://api.deepseek.com"
-        />
-      </div>
-
-      <div style={{ marginBottom: 10 }}>
-        <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 4 }}>API Key</div>
-        <Input.Password
-          size="small"
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          placeholder="助理专用 Key（留空用全局）"
-        />
-      </div>
-
-      <div style={{ marginBottom: 12 }}>
-        <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 4 }}>模型名</div>
-        <Input
-          size="small"
-          value={modelName}
-          onChange={(e) => setModelName(e.target.value)}
-          placeholder="如 deepseek-chat / qwen-plus"
-        />
-      </div>
-
-      <div style={{ textAlign: 'right', borderTop: '1px solid var(--border-light)', paddingTop: 10 }}>
-        <Space>
-          <Button size="small" onClick={handleReset} danger type="text">恢复全局</Button>
-          <Button size="small" onClick={() => setOpen(false)}>取消</Button>
-          <Button size="small" type="primary" onClick={handleSave}>保存</Button>
-        </Space>
+    <div style={{ width: 240, padding: 4 }}>
+      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>🤖 助理模型</div>
+      <Select
+        value={assistantId}
+        onChange={handleChange}
+        style={{ width: '100%' }}
+        options={[
+          { value: '__global__', label: '跟随全局默认' },
+          ...library.map(m => ({ value: m.id, label: `${m.label}${m.tested === 'ok' ? ' ✓' : ''}` })),
+        ]}
+      />
+      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6 }}>
+        员工未配模型时默认使用此模型
       </div>
     </div>
   );
 
   return (
-    <Popover
-      open={open}
-      onOpenChange={setOpen}
-      content={content}
-      trigger="click"
-      placement="bottomLeft"
-      overlayStyle={{ zIndex: 200 }}
-    >
+    <Popover content={content} trigger="click" placement="bottomLeft" overlayStyle={{ zIndex: 200 }}>
       <button
         className="btn btn-sm"
         style={{
           display: 'inline-flex', alignItems: 'center', gap: 4,
           maxWidth: 140, overflow: 'hidden',
         }}
-        title="助理机器人模型配置（员工未设模型时默认使用此模型）"
+        title="点击切换助理模型"
       >
         <span style={{ fontSize: 11 }}>🧠</span>
         <span
@@ -160,7 +94,7 @@ export default function AssistantModelSelector() {
             textOverflow: 'ellipsis', minWidth: 0,
           }}
         >
-          {currentLabel}
+          {displayModel}
         </span>
         <span style={{ fontSize: 8, color: 'var(--text-muted)' }}>▼</span>
       </button>

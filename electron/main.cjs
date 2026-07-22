@@ -92,8 +92,6 @@ function createWindow() {
     } else {
       await child.loadFile(path.join(__dirname, '../dist/index.html'), { hash });
     }
-    // 标记为子聊天窗口，防止主窗口因遗留 hash 错误替换
-    try { await child.webContents.executeJavaScript('sessionStorage.setItem("chatChild","1")'); } catch {}
     childWindows.add(child);
     child.on('closed', () => childWindows.delete(child));
     return { ok: true };

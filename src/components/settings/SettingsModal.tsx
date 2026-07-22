@@ -1,11 +1,14 @@
-import { useState, useEffect } from 'react';
-import { Modal, Tabs, Switch, Input, Select, Button, Alert, Space, App } from 'antd';
+import { useState } from 'react';
+import { Modal, Tabs, Switch, Input, Select, Button, Space, App, Tag, Tooltip } from 'antd';
 import {
-  loadSettings, saveSettings, testConnection,
-  PROVIDER_PRESETS, getProvider, resolveApiBase, type AppSettings,
+  loadSettings, saveSettings,
+  PROVIDER_PRESETS, getProvider, type AppSettings,
+  type ModelEntry,
+  testModelConnection, migrateToModelLibrary,
   loadUserProfile, saveUserProfile,
   loadUserMemory, saveUserMemory, type UserMemoryItem,
 } from '../../data/hermesClient';
+import type { ModelConfig } from '../../types';
 
 type Tab = 'model' | 'profile' | 'memory';
 
@@ -18,7 +21,7 @@ export default function SettingsModal({ onClose, onSaved }: Props) {
   const [tab, setTab] = useState<Tab>('model');
 
   const items = [
-    { key: 'model', label: '🧠 模型配置', children: <ModelSettingsTab onSaved={onSaved} onClose={onClose} /> },
+    { key: 'model', label: '🧠 模型库', children: <ModelSettingsTab onSaved={onSaved} onClose={onClose} /> },
     { key: 'profile', label: '👤 用户画像', children: <ProfileTab /> },
     { key: 'memory', label: '📝 长期记忆', children: <MemoryTab /> },
   ];
@@ -28,7 +31,7 @@ export default function SettingsModal({ onClose, onSaved }: Props) {
       open
       onCancel={onClose}
       footer={null}
-      width={560}
+      width={580}
       title="⚙️ 设置"
       destroyOnClose
       styles={{ body: { paddingTop: 8 } }}
@@ -38,159 +41,327 @@ export default function SettingsModal({ onClose, onSaved }: Props) {
   );
 }
 
-// ===== 模型配置标签 =====
+// ===== 模型库标签 =====
 function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?: () => void }) {
-  const [provider, setProvider] = useState('deepseek');
-  const [host, setHost] = useState('');
-  const [apiKey, setApiKey] = useState('');
-  const [model, setModel] = useState('');
-  const [autoDiscuss, setAutoDiscuss] = useState(false);
-  const [autoPilot, setAutoPilot] = useState(false);
-  const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const { message } = App.useApp();
+  const [settings, setSettings] = useState<AppSettings>(() => {
+    migrateToModelLibrary();
+    return loadSettings();
+  });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [testing, setTesting] = useState<string | null>(null);
 
-  useEffect(() => {
-    const s = loadSettings();
-    setAutoDiscuss(s.autoDiscuss ?? false);
-    setAutoPilot(s.autoPilot ?? false);
-    const p = s.provider ?? 'deepseek';
-    setProvider(p);
-    setApiKey(s.apiKey ?? '');
-    if (p === 'custom') {
-      setHost(s.apiHost ?? '');
-      setModel(s.model ?? '');
-    } else {
-      const preset = getProvider(p);
-      setHost(s.apiHost || preset.baseUrl);
-      setModel(s.model || preset.defaultModel);
-    }
-  }, []);
+  // 编辑状态
+  const [editLabel, setEditLabel] = useState('');
+  const [editProvider, setEditProvider] = useState('deepseek');
+  const [editHost, setEditHost] = useState('');
+  const [editApiKey, setEditApiKey] = useState('');
+  const [editModel, setEditModel] = useState('');
 
-  const onProviderChange = (key: string) => {
-    setProvider(key);
-    setTestResult(null);
+  const library = settings.modelLibrary ?? [];
+  const activeId = settings.activeModelId;
+  const assistantId = settings.assistantModelId;
+
+  const startAdd = () => {
+    setEditingId('__new__');
+    setEditLabel('');
+    setEditProvider('deepseek');
+    const preset = getProvider('deepseek');
+    setEditHost(preset.baseUrl);
+    setEditModel(preset.defaultModel);
+    setEditApiKey('');
+  };
+
+  const startEdit = (entry: ModelEntry) => {
+    setEditingId(entry.id);
+    setEditLabel(entry.label);
+    setEditProvider(entry.provider ?? 'deepseek');
+    setEditHost(entry.apiHost ?? '');
+    setEditApiKey(entry.apiKey ?? '');
+    setEditModel(entry.model ?? '');
+  };
+
+  const handleProviderChange = (key: string) => {
+    setEditProvider(key);
     if (key === 'custom') return;
     const preset = getProvider(key);
-    setHost(preset.baseUrl);
-    setModel(preset.defaultModel);
+    setEditHost(preset.baseUrl);
+    setEditModel(preset.defaultModel);
   };
 
-  const isCustom = provider === 'custom';
+  const handleSaveEntry = () => {
+    if (!editHost.trim()) {
+      message.warning('请填写 API 地址');
+      return;
+    }
+    const config: ModelConfig = {
+      provider: editProvider,
+      apiHost: editHost.trim(),
+      apiKey: editApiKey.trim() || undefined,
+      model: editModel.trim() || undefined,
+    };
 
-  const buildSettings = (): AppSettings => ({
-    provider,
-    apiHost: host.trim(),
-    apiKey: apiKey.trim() || undefined,
-    model: model.trim() || undefined,
-    autoDiscuss,
-    autoPilot,
-  });
+    const s = loadSettings();
+    if (!s.modelLibrary) s.modelLibrary = [];
 
-  const handleTest = async () => {
-    setTesting(true);
-    setTestResult(null);
-    saveSettings(buildSettings());
-    const r = await testConnection();
-    setTestResult(r);
-    setTesting(false);
+    if (editingId === '__new__') {
+      const entry: ModelEntry = {
+        ...config,
+        id: `model-${Date.now()}`,
+        label: editLabel.trim() || editModel.trim() || getProvider(editProvider).label,
+      };
+      s.modelLibrary.push(entry);
+      if (!s.activeModelId) s.activeModelId = entry.id;
+    } else {
+      const idx = s.modelLibrary.findIndex(m => m.id === editingId);
+      if (idx >= 0) {
+        s.modelLibrary[idx] = {
+          ...s.modelLibrary[idx],
+          ...config,
+          label: editLabel.trim() || editModel.trim() || s.modelLibrary[idx].label,
+        };
+      }
+    }
+
+    saveSettings(s);
+    setSettings({ ...s });
+    setEditingId(null);
+    message.success(editingId === '__new__' ? '模型已添加' : '模型已更新');
   };
 
-  const handleSave = () => {
-    saveSettings(buildSettings());
+  const handleDelete = (id: string) => {
+    const s = loadSettings();
+    if (!s.modelLibrary) return;
+    s.modelLibrary = s.modelLibrary.filter(m => m.id !== id);
+    if (s.activeModelId === id) {
+      s.activeModelId = s.modelLibrary[0]?.id;
+    }
+    if (s.assistantModelId === id) {
+      s.assistantModelId = undefined;
+    }
+    saveSettings(s);
+    setSettings({ ...s });
+    message.success('已删除');
+  };
+
+  const handleSetActive = (id: string) => {
+    const s = loadSettings();
+    s.activeModelId = id;
+    // 同步旧字段以兼容
+    const entry = s.modelLibrary?.find(m => m.id === id);
+    if (entry) {
+      s.provider = entry.provider;
+      s.apiHost = entry.apiHost;
+      s.apiKey = entry.apiKey;
+      s.model = entry.model;
+    }
+    saveSettings(s);
+    setSettings({ ...s });
     onSaved?.();
-    onClose();
+    message.success('已设为全局默认');
   };
 
-  const preview = resolveApiBase(buildSettings()) || '（未填写地址）';
+  const handleSetAssistant = (id: string) => {
+    const s = loadSettings();
+    s.assistantModelId = id;
+    // 同步旧字段
+    const entry = s.modelLibrary?.find(m => m.id === id);
+    if (entry) {
+      s.assistantModelConfig = { provider: entry.provider, apiHost: entry.apiHost, apiKey: entry.apiKey, model: entry.model };
+    }
+    saveSettings(s);
+    setSettings({ ...s });
+    message.success('已设为助理模型');
+  };
+
+  const handleTest = async (entry: ModelEntry) => {
+    setTesting(entry.id);
+    const r = await testModelConnection(entry);
+    const s = loadSettings();
+    if (s.modelLibrary) {
+      const idx = s.modelLibrary.findIndex(m => m.id === entry.id);
+      if (idx >= 0) {
+        s.modelLibrary[idx] = {
+          ...s.modelLibrary[idx],
+          tested: r.ok ? 'ok' : 'fail',
+          lastTested: Date.now(),
+        };
+        saveSettings(s);
+        setSettings({ ...s });
+      }
+    }
+    setTesting(null);
+    if (r.ok) message.success(`✓ ${entry.label} 连接正常`);
+    else message.error(`✗ ${entry.label}：${r.message}`);
+  };
 
   return (
     <div>
-      <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 16 }}>大模型接口配置</h3>
-
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6, color: 'var(--text)' }}>服务商</div>
-        <Select
-          value={provider}
-          onChange={onProviderChange}
-          style={{ width: '100%' }}
-          options={PROVIDER_PRESETS.map((p) => ({ value: p.key, label: p.label }))}
-        />
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>模型库</h3>
+        <Button size="small" type="primary" onClick={startAdd}>➕ 添加模型</Button>
       </div>
 
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6, color: 'var(--text)' }}>
-          API 地址（base_url）{!isCustom && <span style={{ color: 'var(--text-muted)' }}>（已按服务商自动填入，可改）</span>}
+      {/* 模型列表 */}
+      <div style={{ maxHeight: 260, overflowY: 'auto', marginBottom: 12, border: '1px solid var(--border-light)', borderRadius: 8 }}>
+        {library.length === 0 && (
+          <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+            模型库为空，点击「➕ 添加模型」开始配置
+          </div>
+        )}
+        {library.map((entry) => (
+          <div
+            key={entry.id}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px',
+              borderBottom: '1px solid var(--border-light)',
+              background: entry.id === activeId ? 'rgba(26,31,54,0.04)' : 'transparent',
+            }}
+          >
+            {/* 测试状态指示灯 */}
+            <Tooltip title={entry.tested === 'ok' ? '连接正常' : entry.tested === 'fail' ? '连接失败' : '未测试'}>
+              <span style={{
+                width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+                background: entry.tested === 'ok' ? '#52c41a' : entry.tested === 'fail' ? '#ff4d4f' : '#d9d9d9',
+                boxShadow: entry.tested === 'ok' ? '0 0 6px #52c41a' : 'none',
+              }} />
+            </Tooltip>
+
+            {/* 名称 + 模型 */}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                {entry.label}
+                {entry.id === activeId && <Tag color="blue" style={{ fontSize: 10, margin: 0, lineHeight: '18px' }}>全局</Tag>}
+                {entry.id === assistantId && <Tag color="purple" style={{ fontSize: 10, margin: 0, lineHeight: '18px' }}>助理</Tag>}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {entry.model ?? '未设置模型名'} · {getProvider(entry.provider).label}
+              </div>
+            </div>
+
+            {/* 操作按钮 */}
+            <Space size="small">
+              <Button size="small" onClick={() => handleTest(entry)} loading={testing === entry.id}>测试</Button>
+              <Button size="small" onClick={() => startEdit(entry)}>编辑</Button>
+              <Button size="small" type="text" danger onClick={() => handleDelete(entry.id)}>删除</Button>
+            </Space>
+          </div>
+        ))}
+      </div>
+
+      {/* 设置为默认/助理 */}
+      {library.length > 0 && (
+        <Space style={{ marginBottom: 16 }}>
+          <span style={{ fontSize: 12, fontWeight: 500 }}>全局默认：</span>
+          <Select
+            size="small"
+            value={activeId}
+            onChange={handleSetActive}
+            style={{ width: 160 }}
+            options={library.map(m => ({ value: m.id, label: m.label }))}
+          />
+          <span style={{ fontSize: 12, fontWeight: 500, marginLeft: 8 }}>助理：</span>
+          <Select
+            size="small"
+            value={assistantId ?? '__none__'}
+            onChange={(v) => v === '__none__' ? null : handleSetAssistant(v)}
+            style={{ width: 160 }}
+            options={[
+              { value: '__none__', label: '跟随全局' },
+              ...library.map(m => ({ value: m.id, label: m.label })),
+            ]}
+          />
+        </Space>
+      )}
+
+      {/* 编辑/添加表单 */}
+      {editingId && (
+        <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+            {editingId === '__new__' ? '➕ 添加新模型' : '✏️ 编辑模型'}
+          </div>
+          <Space.Compact style={{ width: '100%', marginBottom: 8 }}>
+            <Input
+              value={editLabel}
+              onChange={(e) => setEditLabel(e.target.value)}
+              placeholder="模型显示名（如 DeepSeek 主力）"
+              style={{ width: '100%' }}
+            />
+          </Space.Compact>
+          <div style={{ marginBottom: 8 }}>
+            <Select
+              value={editProvider}
+              onChange={handleProviderChange}
+              style={{ width: '100%' }}
+              options={PROVIDER_PRESETS.map((p) => ({ value: p.key, label: p.label }))}
+            />
+          </div>
+          <Input
+            value={editHost}
+            onChange={(e) => setEditHost(e.target.value)}
+            placeholder="API 地址，如 https://api.deepseek.com"
+            style={{ marginBottom: 8 }}
+          />
+          <Space.Compact style={{ width: '100%', marginBottom: 8 }}>
+            <Input
+              value={editModel}
+              onChange={(e) => setEditModel(e.target.value)}
+              placeholder="模型名，如 deepseek-chat"
+              style={{ width: '50%' }}
+            />
+            <Input.Password
+              value={editApiKey}
+              onChange={(e) => setEditApiKey(e.target.value)}
+              placeholder="API Key"
+              style={{ width: '50%' }}
+            />
+          </Space.Compact>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <Button size="small" onClick={() => setEditingId(null)}>取消</Button>
+            <Button size="small" type="primary" onClick={handleSaveEntry}>保存</Button>
+          </div>
         </div>
-        <Input
-          value={host}
-          onChange={(e) => setHost(e.target.value)}
-          placeholder="如 https://api.deepseek.com 或 http://localhost:8000/v1"
-        />
-      </div>
+      )}
 
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6, color: 'var(--text)' }}>模型名</div>
-        <Input
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          placeholder="如 deepseek-chat / qwen-plus / glm-4-flash"
-        />
-      </div>
-
-      <div style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6, color: 'var(--text)' }}>
-          API Key{getProvider(provider).needsKey ? '' : '（可选）'}
-        </div>
-        <Input.Password
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          placeholder={getProvider(provider).needsKey ? '填入该服务商的 API Key' : '留空则不携带鉴权头'}
-        />
-      </div>
-
-      <Alert
-        type="info"
-        showIcon
-        style={{ marginBottom: 16, fontSize: 12 }}
-        message={<span>请求地址：<code style={{ fontSize: 12 }}>{preview}</code></span>}
-      />
-
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+      {/* 开关 */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, borderTop: '1px solid var(--border-light)', paddingTop: 12 }}>
         <div>
           <div style={{ fontSize: 13, fontWeight: 500 }}>团队协作触发方式</div>
           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-            {autoDiscuss ? '自动：发消息/任务后 AI 团队自动讨论（消耗较多 token）' : '手动：点「发起讨论」按钮才触发（省 token）'}
+            {settings.autoDiscuss ? '自动：发消息/任务后 AI 团队自动讨论' : '手动：点「发起讨论」按钮才触发'}
           </div>
         </div>
-        <Switch checked={autoDiscuss} onChange={(c) => setAutoDiscuss(c)} />
+        <Switch
+          checked={settings.autoDiscuss ?? false}
+          onChange={(c) => {
+            const s = loadSettings();
+            s.autoDiscuss = c;
+            saveSettings(s);
+            setSettings({ ...s });
+          }}
+        />
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
         <div>
           <div style={{ fontSize: 13, fontWeight: 500 }}>自主办公模式</div>
           <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-            {autoPilot ? '开启：AI 推荐项目后自动执行最佳项目' : '关闭：推荐项目后需手动点「执行」'}
+            {settings.autoPilot ? '开启：AI 推荐项目后自动执行' : '关闭：推荐项目后需手动点「执行」'}
           </div>
         </div>
-        <Switch checked={autoPilot} onChange={(c) => setAutoPilot(c)} />
+        <Switch
+          checked={settings.autoPilot ?? false}
+          onChange={(c) => {
+            const s = loadSettings();
+            s.autoPilot = c;
+            saveSettings(s);
+            setSettings({ ...s });
+          }}
+        />
       </div>
 
-      {testResult && (
-        <Alert
-          type={testResult.ok ? 'success' : 'error'}
-          showIcon
-          style={{ marginBottom: 16, fontSize: 12 }}
-          message={testResult.message}
-        />
-      )}
-
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-        <Button onClick={handleTest} loading={testing} disabled={!host.trim()}>
-          🔌 测试连接
-        </Button>
-        <Button type="primary" onClick={handleSave} disabled={!host.trim()}>
-          保存设置
-        </Button>
+      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+        <Button onClick={onClose}>关闭</Button>
       </div>
     </div>
   );

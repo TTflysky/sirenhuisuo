@@ -30,14 +30,25 @@ export const PORT_PRESETS: PortPreset[] = [
 ];
 
 // ===== 设置 =====
+export interface ModelEntry extends ModelConfig {
+  id: string;          // 唯一标识
+  label: string;       // 显示名称（如"DeepSeek 主力"）
+  tested?: 'ok' | 'fail' | undefined;  // 连接测试结果
+  lastTested?: number; // 上次测试时间戳
+}
+
 export interface AppSettings {
-  provider?: string;  // 服务商 key（对应 PROVIDER_PRESETS），'custom' 为自定义
-  apiHost?: string;   // 完整 base_url（可含路径），如 https://api.deepseek.com 或 https://dashscope.aliyuncs.com/compatible-mode/v1
-  apiKey?: string;    // Bearer token
-  model?: string;     // 模型名，如 deepseek-chat / qwen-plus / glm-4-flash
+  provider?: string;  // 服务商 key（对应 PROVIDER_PRESETS），'custom' 为自定义（向后兼容）
+  apiHost?: string;   // 完整 base_url（向后兼容）
+  apiKey?: string;    // Bearer token（向后兼容）
+  model?: string;     // 模型名（向后兼容）
   autoDiscuss?: boolean; // 是否在发消息/任务后自动触发团队 AI 讨论（默认 false=手动）
   autoPilot?: boolean;   // 自主模式：推荐项目后自动执行最佳项目（默认 false=手动点执行）
   assistantModelConfig?: ModelConfig; // 助理机器人的独立模型配置（员工未配模型时默认使用此配置）
+  // ===== 多模型库 =====
+  modelLibrary?: ModelEntry[];  // 所有已配置的模型列表
+  activeModelId?: string;       // 当前全局使用的模型 ID（对应 modelLibrary 中的 entry.id）
+  assistantModelId?: string;    // 助理机器人使用的模型 ID
 }
 
 // ===== 服务商预设（国内主流大模型，OpenAI 兼容）=====
@@ -76,6 +87,69 @@ export function saveSettings(s: AppSettings): void {
   try {
     localStorage.setItem(LS_SETTINGS, JSON.stringify(s));
   } catch {}
+}
+
+// ===== 多模型库辅助 =====
+/** 获取当前激活的全局模型配置（优先从 modelLibrary 查找，回退到旧字段） */
+export function getActiveModel(): ModelConfig {
+  const s = loadSettings();
+  if (s.modelLibrary && s.modelLibrary.length > 0) {
+    const active = s.modelLibrary.find(m => m.id === s.activeModelId) ?? s.modelLibrary[0];
+    return { provider: active.provider, apiHost: active.apiHost, apiKey: active.apiKey, model: active.model };
+  }
+  // 向后兼容：旧版直接用 provider/apiHost/apiKey/model 字段
+  return { provider: s.provider, apiHost: s.apiHost, apiKey: s.apiKey, model: s.model };
+}
+
+/** 获取助理机器人模型配置（优先从 modelLibrary 查找，回退到 assistantModelConfig，再回退到全局） */
+export function getAssistantModel(): ModelConfig {
+  const s = loadSettings();
+  if (s.modelLibrary && s.modelLibrary.length > 0) {
+    const am = s.modelLibrary.find(m => m.id === s.assistantModelId);
+    if (am) return { provider: am.provider, apiHost: am.apiHost, apiKey: am.apiKey, model: am.model };
+    // 回退到全局激活模型
+    return getActiveModel();
+  }
+  // 向后兼容
+  if (s.assistantModelConfig) return s.assistantModelConfig;
+  return { provider: s.provider, apiHost: s.apiHost, apiKey: s.apiKey, model: s.model };
+}
+
+/** 测试指定模型配置的连通性（不影响全局设置） */
+export async function testModelConnection(mc: ModelConfig): Promise<{ ok: boolean; message: string }> {
+  const base = (mc.apiHost ?? '').trim().replace(/\/+$/, '');
+  if (!base) return { ok: false, message: '请先填写 API 地址' };
+  try {
+    const url = endpointUrl(base, '/models');
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (mc.apiKey) headers['Authorization'] = `Bearer ${mc.apiKey}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(url, { method: 'GET', headers, signal: controller.signal });
+    clearTimeout(timer);
+    if (res.ok) return { ok: true, message: `连接成功 ✓` };
+    return { ok: false, message: `服务器响应 ${res.status}` };
+  } catch (e: any) {
+    return { ok: false, message: `无法连接：${e?.message ?? '网络错误'}` };
+  }
+}
+
+/** 迁移旧设置到 modelLibrary（如果还没有） */
+export function migrateToModelLibrary(): void {
+  const s = loadSettings();
+  if (s.modelLibrary && s.modelLibrary.length > 0) return; // 已有库，不迁移
+  if (!s.apiHost && !s.model) return; // 旧字段也空，不需要迁移
+  const entry: ModelEntry = {
+    id: `model-${Date.now()}`,
+    label: s.model || getProvider(s.provider).defaultModel || '默认模型',
+    provider: s.provider,
+    apiHost: s.apiHost,
+    apiKey: s.apiKey,
+    model: s.model,
+  };
+  s.modelLibrary = [entry];
+  s.activeModelId = entry.id;
+  saveSettings(s);
 }
 
 // ===== 用户长期记忆 =====
@@ -201,20 +275,22 @@ export function resolveApiBase(s: AppSettings = loadSettings()): string {
 /**
  * 解析聊天用的模型配置，三阶回退：
  * 1. 员工独立配置 (empConfig)
- * 2. 助理机器人配置 (assistantModelConfig in AppSettings)
- * 3. 全局设置 (loadSettings)
+ * 2. 助理机器人配置 (getAssistantModel)
+ * 3. 全局设置 (getActiveModel)
  */
 export function resolveChatSettings(empConfig?: ModelConfig): AppSettings {
   const global = loadSettings();
-  const assistant = global.assistantModelConfig;
+  const activeMc = getActiveModel();
+  const assistantMc = getAssistantModel();
+
   if (!empConfig) {
     // 没有员工配置：回退到助理配置 → 全局
-    if (assistant) {
+    if (assistantMc.apiHost || assistantMc.model) {
       return {
-        provider: assistant.provider ?? global.provider,
-        apiHost: assistant.apiHost ?? global.apiHost,
-        apiKey: assistant.apiKey ?? global.apiKey,
-        model: assistant.model ?? global.model,
+        provider: assistantMc.provider ?? global.provider,
+        apiHost: assistantMc.apiHost ?? global.apiHost,
+        apiKey: assistantMc.apiKey ?? global.apiKey,
+        model: assistantMc.model ?? global.model,
         autoDiscuss: global.autoDiscuss,
       };
     }
@@ -222,10 +298,10 @@ export function resolveChatSettings(empConfig?: ModelConfig): AppSettings {
   }
   // 有员工配置：员工优先 → 助理 → 全局
   return {
-    provider: empConfig.provider ?? assistant?.provider ?? global.provider,
-    apiHost: empConfig.apiHost ?? assistant?.apiHost ?? global.apiHost,
-    apiKey: empConfig.apiKey ?? assistant?.apiKey ?? global.apiKey,
-    model: empConfig.model ?? assistant?.model ?? global.model,
+    provider: empConfig.provider ?? assistantMc.provider ?? activeMc.provider ?? global.provider,
+    apiHost: empConfig.apiHost ?? assistantMc.apiHost ?? activeMc.apiHost ?? global.apiHost,
+    apiKey: empConfig.apiKey ?? assistantMc.apiKey ?? activeMc.apiKey ?? global.apiKey,
+    model: empConfig.model ?? assistantMc.model ?? activeMc.model ?? global.model,
     autoDiscuss: global.autoDiscuss,
   };
 }
