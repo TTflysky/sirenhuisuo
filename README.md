@@ -45,6 +45,32 @@ npm run dist:win
 
 打包产物在 `release/私人办公会所 Setup x.x.x.exe`。
 
+## 换电脑继续开发
+
+```bash
+# 克隆完整项目（包含源代码、版本历史、README、CHANGELOG 和全部历史安装包）
+git clone https://github.com/TTflysky/sirenhuisuo.git
+cd hermes-office-pro
+npm install
+```
+
+开发前需要准备：
+
+- Windows 10/11，Node.js 22+，Git。
+- 在应用设置中填写自己的模型 API，不要把 API Key 写入代码或提交到 Git。
+- 若要使用技能库，需要在新电脑安装 WorkBuddy 技能到 `%USERPROFILE%\\.workbuddy\\skills\\`；应用会自动扫描 `SKILL.md`。
+- 本地开发：先运行 `npm run dev`，再运行 `npm start`。
+- 生成新安装包：先将 `package.json` 和 `package-lock.json` 的版本号升级，再运行 `npm run dist:win`。
+- 每次实质性修改后执行：
+
+```bash
+git add -A
+git commit -m "描述本次修改"
+git push origin master:main
+```
+
+当前远端：`https://github.com/TTflysky/sirenhuisuo`。本地开发分支是 `master`，远端发布分支是 `main`。
+
 ## 项目结构
 
 ```
