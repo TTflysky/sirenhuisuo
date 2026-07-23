@@ -10,7 +10,11 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
-release
+release/win-unpacked/
+release/*.blockmap
+release/builder-*.yml
+release/builder-*.yaml
+release/latest.yml
 outputs
 .edge-cdp/
 *.local
