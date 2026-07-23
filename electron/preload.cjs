@@ -25,7 +25,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 在系统文件管理器中打开路径
   openPath: (p) => ipcRenderer.invoke('sys:openPath', p),
 
-  // ===== 窗口间广播总线 =====
+  // ===== 连接器 API 调用（主进程代理）=====
+  connectorCall: (opts) => ipcRenderer.invoke('connector:call', opts),
   // broadcast: 向其他窗口广播一条消息（{ channel, payload }）
   broadcast: (channel, payload) => ipcRenderer.send('win:broadcast', { channel, payload }),
   // onBroadcast: 监听来自其他窗口的广播，返回取消订阅函数

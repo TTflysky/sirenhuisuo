@@ -753,8 +753,8 @@ html, body, #root, .app-root {
 
 /* ===== @ 提及弹窗 ===== */
 .mention-popup {
-  position: absolute; bottom: 100%; left: -8px; right: -8px; margin-bottom: 4px;
-  box-sizing: border-box; min-height: 160px; max-height: min(400px, calc(100vh - 80px));
+  position: absolute; bottom: 100%; left: -16px; right: -16px; margin-bottom: 4px;
+  box-sizing: border-box; min-height: 300px; max-height: min(600px, calc(100vh - 80px));
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 12px; box-shadow: 0 8px 28px rgba(31,41,55,0.15);
   overflow: hidden; z-index: 10; display: flex; flex-direction: column;
@@ -795,13 +795,13 @@ html, body, #root, .app-root {
 
 /* 技能候选卡片 grid */
 .mention-popup-grid {
-  flex: 1; overflow-y: auto; padding: 8px;
-  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+  flex: 1; overflow-y: auto; padding: 10px;
+  display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;
 }
 .mention-card {
-  display: flex; flex-direction: column; gap: 4px;
-  padding: 10px 12px; border: 1px solid var(--border-light);
-  border-radius: 10px; background: var(--bg); cursor: pointer;
+  display: flex; flex-direction: column; gap: 5px; position: relative;
+  padding: 12px 14px; border: 1px solid var(--border-light);
+  border-radius: 12px; background: var(--bg); cursor: pointer;
   text-align: left; font-family: inherit; color: inherit;
   transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
   min-width: 0; position: relative;
@@ -811,11 +811,11 @@ html, body, #root, .app-root {
   border-color: #6366f1; background: rgba(99,102,241,0.06);
   box-shadow: 0 0 0 1px #6366f1;
 }
-.mention-card-icon { font-size: 22px; }
+.mention-card-icon { font-size: 28px; }
 .mention-card-body { min-width: 0; }
-.mention-card-name { font-size: 12px; font-weight: 600; color: var(--text);
+.mention-card-name { font-size: 13px; font-weight: 600; color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mention-card-desc { font-size: 10px; color: var(--text-muted); margin-top: 2px;
+.mention-card-desc { font-size: 11px; color: var(--text-muted); margin-top: 3px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mention-card-badge {
   position: absolute; top: 6px; right: 6px;

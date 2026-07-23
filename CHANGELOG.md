@@ -1,5 +1,27 @@
 # 更新日志
 
+## v0.2.9 (2026-07-23)
+
+### 重大改进
+- **连接器系统从空壳到真正可用**：
+  - 连接器数据结构大幅升级，支持 baseUrl、认证配置（API Key/Bearer/无认证）、自定义 headers 等完整配置
+  - 每个连接器预设自带操作定义（ConnectorAction），含 HTTP 请求模板和参数 JSON Schema
+  - 新增 `ConnectorConfigModal` 配置界面：设置服务地址、认证方式、Token，支持一键测试连接
+  - 连接器面板新增 ⚙ 配置按钮、🔍 测试按钮，每个连接器显示 已连接/断开/未配置 状态标签
+  - 新增 `connector:call` IPC 桥：Electron 主进程代理 HTTP 请求，绕过渲染进程 CORS 限制
+  - **IMA 知识库**：预设 3 个操作（搜索知识/列出知识/添加知识），配置 IMA API Key 后即可使用
+  - **QQ 邮箱**：预设 2 个操作（发送邮件/搜索邮件），配置 SMTP 服务后可用
+  - **GitHub**：预设搜索仓库操作，配置 GitHub Token 后可用
+  - **自定义 HTTP**：通用 REST API 连接器，支持 GET/POST，可对接任何 HTTP 服务
+  - 连接器工具自动注入聊天 agent 循环——助手可直接调用外部服务（如 `connector_ima_search_knowledge`）
+- **聊天 @ 技能弹窗大幅放大**：高度范围从 160-400px 扩至 300-600px，默认 380px；从左-8px/右-8px 扩至 16px；卡片网格从 2 列改为 3 列；卡片字号图标都加大，技能信息一目了然
+
+### 技术改进
+- 新增 `src/engine/connectorTools.ts`：从已启用连接器生成 OpenAI 工具定义，执行连接器 API 调用
+- `executeTool` 新增动态分发：以 `connector_` 开头的工具调用自动路由到连接器引擎
+- `AssistantChat` 聊天合并内置工具和连接器工具，System Prompt 更新提及连接器能力
+- `electron/preload.cjs` 暴露 `connectorCall` API，`electron/main.cjs` 注册 `connector:call` IPC handler
+
 ## v0.2.8 (2026-07-23)
 
 ### 新增功能

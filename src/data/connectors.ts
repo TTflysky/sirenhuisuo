@@ -1,38 +1,267 @@
 const LS_CONNECTORS = 'hermes_office_connectors';
 
+/* ===== 类型定义 ===== */
+
+/** 连接器认证配置 */
+export interface ConnectorAuth {
+  type: 'apikey' | 'bearer' | 'oauth2' | 'none';
+  /** API Key / Bearer Token / OAuth access_token */
+  token?: string;
+  /** OAuth2 特有：刷新令牌 */
+  refreshToken?: string;
+  /** 认证头名称，默认 Authorization */
+  headerName?: string;
+  /** 认证值前缀，如 'Bearer ' */
+  prefix?: string;
+}
+
 /** 连接器定义 */
 export interface Connector {
   id: string;
-  label: string;         // 显示名称，如"ima 知识库"
-  icon: string;          // 图标 emoji，如"📚"
-  type: 'mcp' | 'custom'; // 连接类型
-  mcpServerName?: string; // MCP 服务名（type='mcp'时填）
+  label: string;
+  icon: string;
+  type: 'mcp' | 'custom';
+  mcpServerName?: string;
   status: 'connected' | 'disconnected' | 'unknown';
+  enabled: boolean;
   lastChecked?: number;
   error?: string;
-  // 自定义连接器的配置
-  apiHost?: string;
-  apiKey?: string;
-  model?: string;
-  // 关联的模型（可选，如 ima 用某个模型做语义搜索）
-  refModelId?: string;
+  /** 服务基础 URL */
+  baseUrl?: string;
+  /** 认证配置 */
+  auth?: ConnectorAuth;
+  /** 自定义 headers */
+  headers?: Record<string, string>;
 }
 
-/** 预设连接器模板 */
-export const CONNECTOR_PRESETS: Array<{
+/** 连接器操作（工具）定义 */
+export interface ConnectorAction {
+  name: string;
+  description: string;
+  /** JSON Schema for tool parameters */
+  parameters: {
+    type: 'object';
+    properties: Record<string, {
+      type: string;
+      description: string;
+      enum?: string[];
+    }>;
+    required?: string[];
+  };
+  /** HTTP 请求配置 */
+  http?: {
+    method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
+    /** 相对于 connector.baseUrl 的路径，支持 {param} 占位符 */
+    path: string;
+    /** 请求体模板，支持 {param} 占位符 */
+    bodyTemplate?: string;
+    /** 参数传递方式 */
+    paramStyle?: 'path' | 'query' | 'body';
+  };
+}
+
+/* ===== 预设连接器 ===== */
+
+export interface ConnectorPreset {
   label: string;
   icon: string;
   type: 'mcp' | 'custom';
   mcpServerName?: string;
   desc: string;
-}> = [
-  { label: 'ima 知识库', icon: '📚', type: 'mcp', mcpServerName: 'ima-mcp', desc: '腾讯 IMA 知识库搜索与笔记管理' },
-  { label: '微信助理', icon: '💬', type: 'mcp', mcpServerName: 'wecom', desc: '企业微信消息与联系人管理' },
-  { label: '飞书文档', icon: '📄', type: 'mcp', mcpServerName: 'feishu', desc: '飞书文档与表格协作' },
-  { label: '腾讯文档', icon: '📝', type: 'mcp', mcpServerName: 'tencent-docs', desc: '腾讯文档在线协作' },
-  { label: 'GitHub', icon: '🐙', type: 'mcp', mcpServerName: 'github', desc: 'GitHub 仓库与代码管理' },
-  { label: '钉钉', icon: '🔔', type: 'mcp', mcpServerName: 'dingtalk', desc: '钉钉消息与审批' },
+  baseUrl?: string;
+  authType?: ConnectorAuth['type'];
+  actions: ConnectorAction[];
+}
+
+export const CONNECTOR_PRESETS: ConnectorPreset[] = [
+  {
+    label: 'ima 知识库', icon: '📚', type: 'custom', mcpServerName: 'ima-mcp',
+    desc: '腾讯 IMA 知识库搜索与笔记管理',
+    baseUrl: 'https://ima.qq.com/openapi',
+    authType: 'apikey',
+    actions: [
+      {
+        name: 'ima_search_knowledge',
+        description: '在 IMA 知识库中搜索知识内容',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: '搜索关键词' },
+            kbId: { type: 'string', description: '知识库 ID（可选，留空搜全部）' },
+          },
+          required: ['query'],
+        },
+        http: {
+          method: 'POST',
+          path: '/wiki/v1/search',
+          bodyTemplate: '{"query":"{query}","knowledge_base_id":"{kbId}","limit":10}',
+          paramStyle: 'body',
+        },
+      },
+      {
+        name: 'ima_list_knowledge',
+        description: '列出 IMA 知识库中的知识列表',
+        parameters: {
+          type: 'object',
+          properties: {
+            kbId: { type: 'string', description: '知识库 ID（可选）' },
+          },
+          required: [],
+        },
+        http: {
+          method: 'POST',
+          path: '/wiki/v1/list',
+          bodyTemplate: '{"knowledge_base_id":"{kbId}"}',
+          paramStyle: 'body',
+        },
+      },
+      {
+        name: 'ima_add_knowledge',
+        description: '向 IMA 知识库中添加新知识',
+        parameters: {
+          type: 'object',
+          properties: {
+            kbId: { type: 'string', description: '目标知识库 ID' },
+            title: { type: 'string', description: '知识标题' },
+            content: { type: 'string', description: '知识内容（Markdown 格式）' },
+          },
+          required: ['kbId', 'title', 'content'],
+        },
+        http: {
+          method: 'POST',
+          path: '/wiki/v1/add',
+          bodyTemplate: '{"knowledge_base_id":"{kbId}","title":"{title}","content":"{content}"}',
+          paramStyle: 'body',
+        },
+      },
+    ],
+  },
+  {
+    label: 'QQ 邮箱', icon: '📧', type: 'custom', mcpServerName: 'qq-mail',
+    desc: 'QQ 邮箱收发与管理',
+    baseUrl: '',
+    authType: 'apikey',
+    actions: [
+      {
+        name: 'qmail_send',
+        description: '通过 QQ 邮箱发送邮件',
+        parameters: {
+          type: 'object',
+          properties: {
+            to: { type: 'string', description: '收件人邮箱地址' },
+            subject: { type: 'string', description: '邮件主题' },
+            body: { type: 'string', description: '邮件正文（支持 Markdown）' },
+          },
+          required: ['to', 'subject', 'body'],
+        },
+        http: {
+          method: 'POST',
+          path: '/api/mail/send',
+          bodyTemplate: '{"to":"{to}","subject":"{subject}","body":"{body}"}',
+          paramStyle: 'body',
+        },
+      },
+      {
+        name: 'qmail_search',
+        description: '搜索 QQ 邮箱中的邮件',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: '搜索关键词' },
+            limit: { type: 'string', description: '返回数量上限，默认 10' },
+          },
+          required: ['query'],
+        },
+        http: {
+          method: 'POST',
+          path: '/api/mail/search',
+          bodyTemplate: '{"query":"{query}","limit":"{limit}"}',
+          paramStyle: 'body',
+        },
+      },
+    ],
+  },
+  {
+    label: '腾讯文档', icon: '📝', type: 'mcp', mcpServerName: 'tencent-docs',
+    desc: '腾讯文档在线协作（需要腾讯文档 MCP 连接器）',
+    actions: [],
+  },
+  {
+    label: '企业微信', icon: '💬', type: 'mcp', mcpServerName: 'wecom',
+    desc: '企业微信消息与联系人管理',
+    actions: [],
+  },
+  {
+    label: 'GitHub', icon: '🐙', type: 'custom', mcpServerName: 'github',
+    desc: 'GitHub 仓库与代码管理',
+    baseUrl: 'https://api.github.com',
+    authType: 'bearer',
+    actions: [
+      {
+        name: 'github_search_repos',
+        description: '搜索 GitHub 仓库',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: '搜索关键词' },
+            language: { type: 'string', description: '编程语言（可选）' },
+            sort: { type: 'string', description: '排序方式', enum: ['stars', 'forks', 'updated'] },
+          },
+          required: ['query'],
+        },
+        http: {
+          method: 'GET',
+          path: '/search/repositories?q={query}+language:{language}&sort={sort}&per_page=5',
+          paramStyle: 'path',
+        },
+      },
+    ],
+  },
+  {
+    label: '自定义 HTTP', icon: '🔌', type: 'custom',
+    desc: '自定义 HTTP API 连接器，支持任何 REST API',
+    baseUrl: '',
+    authType: 'apikey',
+    actions: [
+      {
+        name: 'custom_get',
+        description: '发送 GET 请求到自定义 API',
+        parameters: {
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: 'API 路径（相对 baseUrl）' },
+          },
+          required: ['path'],
+        },
+        http: {
+          method: 'GET',
+          path: '{path}',
+          paramStyle: 'path',
+        },
+      },
+      {
+        name: 'custom_post',
+        description: '发送 POST 请求到自定义 API',
+        parameters: {
+          type: 'object',
+          properties: {
+            path: { type: 'string', description: 'API 路径（相对 baseUrl）' },
+            body: { type: 'string', description: '请求体 JSON 字符串' },
+          },
+          required: ['path'],
+        },
+        http: {
+          method: 'POST',
+          path: '{path}',
+          bodyTemplate: '{body}',
+          paramStyle: 'body',
+        },
+      },
+    ],
+  },
 ];
+
+/* ===== 持久化 ===== */
 
 export function loadConnectors(): Connector[] {
   try {
@@ -64,15 +293,105 @@ export function updateConnector(id: string, partial: Partial<Connector>): void {
   saveConnectors(list);
 }
 
-/** 探测连接器状态（发 ping 或检查配置是否完整） */
-export function checkConnector(c: Connector): { status: Connector['status']; error?: string } {
+/* ===== 连接测试 ===== */
+
+/** 快速 ping 检测连接器是否可达 */
+export async function checkConnector(c: Connector): Promise<{ status: Connector['status']; error?: string }> {
+  // MCP 类型：需要外部 WorkBuddy MCP 运行时
   if (c.type === 'mcp') {
-    // MCP 类型：检查有没有对应的 MCP 服务注册
-    // 这里简化为检查是否配置了对应的 server。实际需要 IPC 桥接
-    // 由于当前应用没有 MCP 运行时，标记为 "connected"（已配置）或 "unknown"
-    return { status: 'unknown', error: 'MCP 服务需在 WorkBuddy 中启用' };
+    return { status: 'unknown', error: 'MCP 连接器需在设置中配置后启用' };
   }
-  // 自定义类型：检查配置是否完整
-  if (c.apiHost) return { status: 'connected' };
-  return { status: 'disconnected', error: '未配置 API 地址' };
+
+  // 自定义类型：检查配置完整性
+  if (!c.baseUrl) {
+    return { status: 'disconnected', error: '未配置服务地址' };
+  }
+  if (c.auth?.type !== 'none' && !c.auth?.token) {
+    return { status: 'disconnected', error: '未配置认证凭据' };
+  }
+
+  // 尝试轻量 ping（通过 Electron IPC 或 fetch）
+  try {
+    const res = await callConnectorApi(c, { method: 'GET', path: '/', timeout: 5000 });
+    return { status: 'connected' };
+  } catch (e: any) {
+    return { status: 'disconnected', error: e?.message ?? '连接失败' };
+  }
+}
+
+/* ===== API 调用 ===== */
+
+/** 调用连接器 API（渲染进程 → Electron 主进程 IPC） */
+export async function callConnectorApi(
+  connector: Connector,
+  opts: { method: string; path: string; body?: string; timeout?: number },
+): Promise<{ status: number; data: string }> {
+  const url = `${(connector.baseUrl ?? '').replace(/\/$/, '')}/${opts.path.replace(/^\//, '')}`;
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (connector.auth?.token) {
+    const prefix = connector.auth.prefix ?? (connector.auth.type === 'bearer' ? 'Bearer ' : '');
+    const headerName = connector.auth.headerName ?? 'Authorization';
+    headers[headerName] = `${prefix}${connector.auth.token}`;
+  }
+  if (connector.headers) {
+    Object.assign(headers, connector.headers);
+  }
+
+  // 优先使用 Electron IPC（主进程可绕过 CORS）
+  if (typeof window !== 'undefined' && (window as any).electronAPI?.connectorCall) {
+    return (window as any).electronAPI.connectorCall({
+      url, method: opts.method, headers, body: opts.body, timeout: opts.timeout ?? 15000,
+    });
+  }
+
+  // 回退：浏览器 fetch（受 CORS 限制）
+  const res = await fetch(url, {
+    method: opts.method,
+    headers,
+    body: opts.body ?? undefined,
+    signal: AbortSignal.timeout(opts.timeout ?? 15000),
+  });
+  const text = await res.text();
+  return { status: res.status, data: text };
+}
+
+/** 执行某个连接器的某个操作 */
+export async function executeConnectorAction(
+  connector: Connector,
+  action: ConnectorAction,
+  args: Record<string, string>,
+): Promise<string> {
+  if (!action.http) {
+    return '此操作暂不支持直接调用，需通过 MCP 连接器使用。';
+  }
+
+  let path = action.http.path;
+  let body: string | undefined;
+
+  if (action.http.paramStyle === 'body') {
+    body = action.http.bodyTemplate ?? JSON.stringify(args);
+    for (const [k, v] of Object.entries(args)) {
+      body = body.replaceAll(`{${k}}`, v ?? '');
+    }
+  } else {
+    for (const [k, v] of Object.entries(args)) {
+      path = path.replaceAll(`{${k}}`, encodeURIComponent(v ?? ''));
+    }
+  }
+
+  try {
+    const res = await callConnectorApi(connector, {
+      method: action.http.method,
+      path,
+      body,
+      timeout: 20000,
+    });
+    if (res.status >= 400) {
+      return `API 返回错误 ${res.status}: ${res.data.slice(0, 2000)}`;
+    }
+    return res.data.slice(0, 8000);
+  } catch (e: any) {
+    return `连接器调用失败: ${e?.message ?? '未知错误'}`;
+  }
 }

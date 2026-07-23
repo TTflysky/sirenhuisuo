@@ -67,6 +67,26 @@ declare global {
     checkUpdate: () => Promise<{ ok: boolean; error?: string }>;
     installUpdate: () => Promise<{ ok: boolean }>;
     onUpdateStatus: (callback: (status: UpdateStatus) => void) => () => void;
+
+    // 连接器 API 调用（主进程代理 HTTP 请求）
+    connectorCall: (opts: ConnectorCallOpts) => Promise<ConnectorCallResult>;
+  }
+  interface Window {
+    electronAPI?: ElectronAPI;
+  }
+
+  interface ConnectorCallOpts {
+    url: string;
+    method?: string;
+    headers?: Record<string, string>;
+    body?: string;
+    timeout?: number;
+  }
+  interface ConnectorCallResult {
+    ok: boolean;
+    status: number;
+    data: string;
+    error?: string;
   }
   interface Window {
     electronAPI?: ElectronAPI;

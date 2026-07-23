@@ -242,6 +242,26 @@ function createWindow() {
     catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
   });
 
+  // ===== 连接器 API 调用（主进程代理 HTTP 请求，避免渲染进程 CORS）=====
+  ipcMain.handle('connector:call', async (_event, opts) => {
+    const { url, method, headers, body, timeout } = opts;
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeout ?? 15000);
+      const res = await fetch(url, {
+        method: method ?? 'GET',
+        headers: headers ?? { 'Content-Type': 'application/json' },
+        body: body ?? undefined,
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      const text = await res.text();
+      return { ok: true, status: res.status, data: text };
+    } catch (e) {
+      return { ok: false, status: 0, data: '', error: String(e?.message ?? e) };
+    }
+  });
+
   ipcMain.handle('exec:command', async (_event, cmd) => {
     const projectRoot = WORKSPACE;
     const timeoutMs = 30000;

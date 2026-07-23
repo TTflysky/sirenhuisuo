@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import type { ChatMessage } from '../../types';
 import { runAgentLoop, resolveApiBase, extractUserInsights, type ChatTurn, type Attachment } from '../../data/hermesClient';
 import { TOOLS } from '../../engine/tools';
+import { getConnectorTools } from '../../engine/connectorTools';
 import { addOutput } from '../../data/outputs';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
 import { copyToClipboard, messagesToMarkdown } from '../../utils/clipboard';
@@ -21,7 +22,7 @@ function isDialogMessage(m: ChatMessage): boolean {
 }
 
 const SYSTEM_PROMPT = `你是 Hermes 助手——一个全能 AI 助手，驻扎在私人办公会所应用中。
-你可以做任何事情：回答日常问题、写代码、查资料、创建文件、搜索互联网、执行命令（桌面版）。
+你可以做任何事情：回答日常问题、写代码、查资料、创建文件、搜索互联网、执行命令（桌面版）、调用外部服务（连接器）。
 
 你的工具：
 - write_file(文件名, 内容) —— 把文件真正写入工作区（代码/文档都落盘，可运行）
@@ -29,9 +30,11 @@ const SYSTEM_PROMPT = `你是 Hermes 助手——一个全能 AI 助手，驻扎
 - list_files(过滤词) —— 列出工作区目录
 - web_search(查询) —— 搜索互联网
 - run_command(命令) —— 在工作区内执行终端命令（仅 Electron 桌面版可用）
+- connector_* —— 已配置的外部服务连接器（如 IMA 知识库搜索、GitHub 仓库查询等）
 
 当用户需要产出实际文件时，直接调 write_file，然后把文件路径和摘要告诉用户。
 当用户问需要最新信息的事，调 web_search。
+当用户提到知识库、GitHub、邮件等外部服务时，优先使用对应的连接器工具。
 回复简洁、专业、友好，用中文。`;
 
 function loadHistory(): ChatMessage[] {
@@ -150,13 +153,17 @@ export default function AssistantChat() {
         content: m.roleId === 'human' ? m.content : `助手: ${m.content}`,
       }));
 
+      // 合并内置工具和连接器工具
+      const connectorTools = getConnectorTools();
+      const allTools = [...TOOLS, ...connectorTools];
+
       const r = await runAgentLoop({
         turns: [
           { role: 'system', content: SYSTEM_PROMPT },
           ...history,
           { role: 'user', content: enriched },
         ],
-        tools: TOOLS,
+        tools: allTools,
         scene: 'assistant',
         label: 'Hermes助手',
         scope: 'assistant',

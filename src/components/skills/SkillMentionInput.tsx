@@ -9,10 +9,10 @@ export async function resolveSkillContext(refs: SkillReference[]): Promise<strin
   const bodies = await Promise.all(chosen.map(async (ref) => { try { return await readSkill(ref.id); } catch { return null; } }));
   return bodies.filter(Boolean).map((skill) => `--- SKILL ${skill!.name} (${skill!.id}) ---\n${skill!.content.slice(0, 32000)}\n--- END SKILL ---`).join('\n');
 }
-const MIN_POPUP_HEIGHT = 160;
-const MAX_POPUP_HEIGHT = 400;
+const MIN_POPUP_HEIGHT = 300;
+const MAX_POPUP_HEIGHT = 600;
 export default function SkillMentionInput({ value, onChange, onChangeEvent, selected, onSelectedChange, onKeyDown, onPaste, disabled, placeholder, rows = 2, className = 'chat-input', ref }: Props) {
-  const [skills, setSkills] = useState<Skill[]>([]); const [open, setOpen] = useState(false); const [query, setQuery] = useState(''); const [idx, setIdx] = useState(0); const [popupHeight, setPopupHeight] = useState(260);
+  const [skills, setSkills] = useState<Skill[]>([]); const [open, setOpen] = useState(false); const [query, setQuery] = useState(''); const [idx, setIdx] = useState(0); const [popupHeight, setPopupHeight] = useState(380);
   const localRef = useRef<HTMLTextAreaElement>(null); const inputRef = ref ?? localRef;
   const dragRef = useRef<{ y: number; height: number } | null>(null);
   useEffect(() => { listSkills().then(setSkills).catch(() => setSkills([])); }, []);

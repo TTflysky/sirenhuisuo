@@ -295,6 +295,16 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
       }
 
       default:
+        // 连接器工具（以 connector_ 开头）
+        if (name.startsWith('connector_')) {
+          try {
+            const { executeConnectorTool } = await import('./connectorTools');
+            const result = await executeConnectorTool(name, args as Record<string, string>);
+            return { toolCallId: id, name, success: result.success, output: result.output.slice(0, 6000) };
+          } catch (e: any) {
+            return { toolCallId: id, name, success: false, output: `连接器工具执行错误：${e?.message ?? '未知'}` };
+          }
+        }
         return { toolCallId: id, name, success: false, output: `未知工具：${name}` };
     }
   } catch (e: any) {
