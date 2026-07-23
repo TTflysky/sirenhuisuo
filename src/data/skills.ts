@@ -14,6 +14,12 @@ export async function readSkill(id: string): Promise<{ id: string; name: string;
   return result.skill;
 }
 
+export async function deleteSkill(id: string): Promise<void> {
+  if (!window.electronAPI?.skillsDelete) throw new Error('当前环境不支持技能删除');
+  const result = await window.electronAPI.skillsDelete(id);
+  if (!result.ok) throw new Error(result.error ?? '技能删除失败');
+}
+
 export function skillReference(skill: Skill): SkillReference {
   return { id: skill.id, name: skill.name };
 }

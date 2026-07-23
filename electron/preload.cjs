@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   execCommand: (cmd) => ipcRenderer.invoke('exec:command', cmd),
   skillsList: () => ipcRenderer.invoke('skills:list'),
   skillsRead: (id) => ipcRenderer.invoke('skills:read', id),
+  skillsDelete: (id) => ipcRenderer.invoke('skills:delete', id),
 
   // 打开原生聊天窗口（真实桌面窗口，可自由拖动）
   openChat: (opts) => ipcRenderer.invoke('win:openChat', opts),

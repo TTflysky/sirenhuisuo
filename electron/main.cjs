@@ -4,7 +4,7 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const { exec, execFile } = require('child_process');
 const { initAutoUpdater } = require('./autoUpdate.cjs');
-const { listSkills, readSkill } = require('./skills.cjs');
+const { listSkills, readSkill, deleteSkill } = require('./skills.cjs');
 
 // ===== 自主代理工作区（沙箱目录，所有文件读写/命令执行都限制在此）=====
 const WORKSPACE = path.join(app.getPath('userData'), 'workspace');
@@ -236,6 +236,10 @@ function createWindow() {
       if (typeof id !== 'string') throw new Error('无效技能 ID');
       return { ok: true, skill: await readSkill(path.resolve(__dirname, '..'), id) };
     } catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+  ipcMain.handle('skills:delete', async (_event, id) => {
+    try { return await deleteSkill(path.resolve(__dirname, '..'), id); }
+    catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
   });
 
   ipcMain.handle('exec:command', async (_event, cmd) => {

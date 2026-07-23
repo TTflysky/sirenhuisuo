@@ -776,6 +776,66 @@ html, body, #root, .app-root {
 .mention-popup-head span { font-size: 9px; text-transform: none; letter-spacing: 0; opacity: 0.75; }
 .mention-popup .mention-option { flex: 0 0 auto; }
 .skill-picker-resizing, .skill-picker-resizing * { cursor: ns-resize !important; user-select: none !important; }
+
+/* ===== 技能库卡片列表 ===== */
+.skill-card-wrap { margin-bottom: 2px; }
+.skill-card {
+  display: flex; align-items: center;
+  border: 1px solid var(--border-light); border-radius: 10px;
+  background: var(--bg); transition: border-color 0.15s, background 0.15s;
+}
+.skill-card--open {
+  border-color: var(--text-muted);
+  border-bottom-left-radius: 0; border-bottom-right-radius: 0;
+  border-bottom-color: transparent;
+}
+.skill-card-main {
+  flex: 1; display: flex; align-items: center; gap: 12px;
+  padding: 14px 16px; border: none; background: none; cursor: pointer;
+  text-align: left; font-family: inherit; color: inherit;
+  min-width: 0;
+}
+.skill-card-main:hover { background: rgba(0,0,0,0.025); }
+.skill-card--open .skill-card-main { background: rgba(0,0,0,0.035); }
+.skill-card-icon { font-size: 20px; flex-shrink: 0; }
+.skill-card-info { flex: 1; min-width: 0; }
+.skill-card-name { font-size: 14px; font-weight: 600; color: var(--text); }
+.skill-card-desc {
+  font-size: 12px; color: var(--text-secondary); margin-top: 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.skill-card-meta { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.skill-card-arrow {
+  font-size: 14px; color: var(--text-muted); flex-shrink: 0;
+  transition: transform 0.2s;
+}
+.skill-card-actions {
+  display: flex; align-items: center; gap: 4px; padding-right: 10px; flex-shrink: 0;
+}
+.skill-del-btn {
+  width: 30px; height: 30px; border: none; border-radius: 6px;
+  background: transparent; cursor: pointer; font-size: 15px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-muted); transition: background 0.15s, color 0.15s;
+}
+.skill-del-btn:hover { background: rgba(239,68,68,0.12); color: #ef4444; }
+.skill-del-btn--confirm {
+  width: auto; padding: 0 10px; font-size: 12px; font-weight: 600;
+  color: #fff; background: #ef4444; border-radius: 6px;
+}
+.skill-del-btn--confirm:hover { background: #dc2626; color: #fff; }
+.skill-detail {
+  border: 1px solid var(--text-muted); border-top: none;
+  border-radius: 0 0 10px 10px; background: var(--bg-deep);
+  max-height: 55vh; overflow: hidden;
+}
+.skill-detail-body {
+  margin: 0; padding: 16px 20px;
+  white-space: pre-wrap; font: 12px/1.6 var(--font-mono, monospace);
+  max-height: 50vh; overflow: auto;
+  color: var(--text);
+}
+
 .mention-option {
   display: flex; align-items: center; gap: 10px; width: 100%;
   padding: 8px 12px; border: none; background: transparent;

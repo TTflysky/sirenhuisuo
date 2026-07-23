@@ -94,4 +94,30 @@ async function readSkill(projectRoot, id) {
   return { id: found.id, name: found.name, content: content.slice(0, MAX_BODY_BYTES) };
 }
 
-module.exports = { listSkills, readSkill, MAX_BODY_BYTES };
+async function deleteSkill(projectRoot, id) {
+  if (typeof id !== 'string' || id.length > 200) throw new Error('无效技能 ID');
+  const all = await scanSkills(projectRoot);
+  const found = all.find((item) => item.id === id);
+  if (!found) throw new Error('技能不存在或已移除');
+  let allowed = false;
+  for (const root of uniqueRoots(projectRoot)) {
+    try { if (await insideRealRoot(root, found._path)) { allowed = true; break; } } catch {}
+  }
+  if (!allowed) throw new Error('技能路径不安全');
+  const dir = path.dirname(found._path);
+  const rel = await (async () => {
+    for (const root of uniqueRoots(projectRoot)) {
+      try {
+        if (!(await insideRealRoot(root, dir))) continue;
+        const r = path.relative(root, dir);
+        if (!r.startsWith('..') && !path.isAbsolute(r)) return r;
+      } catch {}
+    }
+    return null;
+  })();
+  if (!rel) throw new Error('无法定位技能目录');
+  await fs.rm(dir, { recursive: true, force: true });
+  return { ok: true, id: found.id };
+}
+
+module.exports = { listSkills, readSkill, deleteSkill, MAX_BODY_BYTES };

@@ -25,6 +25,7 @@ export interface OpenChatResult { ok: boolean; reused?: boolean; error?: string;
 
 export interface SkillListResult { ok: boolean; skills?: import('./types').Skill[]; error?: string; }
 export interface SkillReadResult { ok: boolean; skill?: { id: string; name: string; content: string }; error?: string; }
+export interface SkillDeleteResult { ok: boolean; error?: string; }
 
 export interface UpdateStatus {
   status: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
@@ -44,6 +45,7 @@ declare global {
     execCommand: (cmd: string) => Promise<ExecCommandResult>;
     skillsList: () => Promise<SkillListResult>;
     skillsRead: (id: string) => Promise<SkillReadResult>;
+    skillsDelete: (id: string) => Promise<SkillDeleteResult>;
 
     // 自主代理工作区文件系统（沙箱到 userData/workspace）
     getWorkspace: () => Promise<string>;
