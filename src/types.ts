@@ -8,6 +8,7 @@ export interface ModelConfig {
   apiHost?: string;      // 完整 base_url
   apiKey?: string;       // API Key
   model?: string;        // 模型名
+  refModelId?: string;   // 引用模型库中的模型 ID（优先，不为空时忽略上面字段）
 }
 
 // ===== 员工（扩展自原 Role）=====

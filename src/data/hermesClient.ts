@@ -283,6 +283,20 @@ export function resolveChatSettings(empConfig?: ModelConfig): AppSettings {
   const activeMc = getActiveModel();
   const assistantMc = getAssistantModel();
 
+  // 如果员工配置是引用模式，从 modelLibrary 解析
+  if (empConfig?.refModelId && global.modelLibrary) {
+    const ref = global.modelLibrary.find(m => m.id === empConfig.refModelId);
+    if (ref) {
+      return {
+        provider: ref.provider ?? global.provider,
+        apiHost: ref.apiHost ?? global.apiHost,
+        apiKey: ref.apiKey ?? global.apiKey,
+        model: ref.model ?? global.model,
+        autoDiscuss: global.autoDiscuss,
+      };
+    }
+  }
+
   if (!empConfig) {
     // 没有员工配置：回退到助理配置 → 全局
     if (assistantMc.apiHost || assistantMc.model) {

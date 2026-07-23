@@ -7,6 +7,7 @@ import AddEmployeeModal from './AddEmployeeModal';
 import CreateTeamModal from './CreateTeamModal';
 import EditEmployeeModal from './EditEmployeeModal';
 import AssistantModelSelector from './AssistantModelSelector';
+import ConnectorPanel from './ConnectorPanel';
 
 type Filter = 'all' | 'online' | 'working' | 'idle';
 
@@ -83,6 +84,9 @@ export default function SidebarPanel() {
 
             {/* 团队列表 */}
             <TeamList onTeamClick={openTeamChat} onNewTeam={() => setShowNewTeam(true)} />
+
+            {/* 连接器区域 */}
+            <ConnectorPanel />
 
             {/* 底部操作 */}
             <div style={{ padding: '10px 14px', display: 'flex', gap: 8 }}>

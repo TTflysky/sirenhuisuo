@@ -3,7 +3,8 @@ import { Modal, Select, Switch, Input, Button, App } from 'antd';
 import type { Employee, OpcRoleId, ModelConfig } from '../../types';
 import { ROLE_SCARF } from '../../types';
 import { useStore } from '../../store';
-import { PROVIDER_PRESETS, getProvider } from '../../data/hermesClient';
+import { PROVIDER_PRESETS, getProvider, loadSettings } from '../../data/hermesClient';
+import type { ModelEntry } from '../../data/hermesClient';
 import AgentAvatar from '../office/AgentAvatar';
 
 interface Props {
@@ -25,10 +26,23 @@ export default function EditEmployeeModal({ employee, onClose }: Props) {
   // 模型配置
   const mc = employee.modelConfig;
   const [useCustomModel, setUseCustomModel] = useState(!!mc);
+
+  // 模式选择：'manual' = 手动填写全部，'ref' = 引用模型库已有模型
+  const [modelMode, setModelMode] = useState<'manual' | 'ref'>(
+    mc && !mc.refModelId ? 'manual' : 'ref'
+  );
+  const [refModelId, setRefModelId] = useState(mc?.refModelId ?? '');
+
   const [provider, setProvider] = useState(mc?.provider ?? 'deepseek');
   const [apiHost, setApiHost] = useState(mc?.apiHost ?? '');
   const [apiKey, setApiKey] = useState(mc?.apiKey ?? '');
   const [modelName, setModelName] = useState(mc?.model ?? '');
+
+  // 模型库列表
+  const modelLibrary: ModelEntry[] = loadSettings().modelLibrary ?? [];
+
+  // 引用的模型显示名
+  const refEntry = modelLibrary.find(m => m.id === refModelId);
 
   const onProviderChange = (key: string) => {
     setProvider(key);
@@ -42,6 +56,28 @@ export default function EditEmployeeModal({ employee, onClose }: Props) {
     }
   };
 
+  const handleModelModeChange = (mode: 'manual' | 'ref') => {
+    setModelMode(mode);
+    if (mode === 'ref' && modelLibrary.length > 0 && !refModelId) {
+      setRefModelId(modelLibrary[0].id);
+    }
+    if (mode === 'manual' && refModelId) {
+      setRefModelId('');
+    }
+  };
+
+  const handleRefModelChange = (id: string) => {
+    setRefModelId(id);
+    // 自动填充引用的模型配置到输入框（方便视觉确认）
+    const entry = modelLibrary.find(m => m.id === id);
+    if (entry) {
+      setProvider(entry.provider ?? 'deepseek');
+      setApiHost(entry.apiHost ?? '');
+      setApiKey(entry.apiKey ?? '');
+      setModelName(entry.model ?? '');
+    }
+  };
+
   const handleSave = () => {
     if (!name.trim()) {
       message.warning('请输入名字');
@@ -50,15 +86,20 @@ export default function EditEmployeeModal({ employee, onClose }: Props) {
 
     let modelConfig: ModelConfig | undefined;
     if (useCustomModel) {
-      modelConfig = {
-        provider: provider || undefined,
-        apiHost: apiHost.trim() || undefined,
-        apiKey: apiKey.trim() || undefined,
-        model: modelName.trim() || undefined,
-      };
-      // 如果所有配置都为空，等同于使用全局
-      if (!modelConfig.provider && !modelConfig.apiHost && !modelConfig.apiKey && !modelConfig.model) {
-        modelConfig = undefined;
+      if (modelMode === 'ref' && refModelId) {
+        // 引用模式：只存 refModelId，不存具体配置
+        modelConfig = { refModelId };
+      } else {
+        modelConfig = {
+          provider: provider || undefined,
+          apiHost: apiHost.trim() || undefined,
+          apiKey: apiKey.trim() || undefined,
+          model: modelName.trim() || undefined,
+        };
+        // 如果所有配置都为空，等同于使用全局
+        if (!modelConfig.provider && !modelConfig.apiHost && !modelConfig.apiKey && !modelConfig.model) {
+          modelConfig = undefined;
+        }
       }
     }
 
@@ -183,47 +224,98 @@ export default function EditEmployeeModal({ employee, onClose }: Props) {
 
       {useCustomModel && (
         <>
+          {/* 模式选择：引用已有模型 vs 手动配置 */}
           <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6 }}>服务商</div>
+            <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6 }}>配置方式</div>
             <Select
-              value={provider}
-              onChange={onProviderChange}
+              value={modelMode}
+              onChange={handleModelModeChange}
               style={{ width: '100%' }}
-              options={PROVIDER_PRESETS.map((p) => ({ value: p.key, label: p.label }))}
+              options={[
+                { value: 'ref', label: '📦 引用模型库中已配置的模型' },
+                { value: 'manual', label: '✏️ 手动填写模型配置' },
+              ]}
             />
           </div>
 
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6 }}>API 地址（base_url）</div>
-            <Input
-              value={apiHost}
-              onChange={(e) => setApiHost(e.target.value)}
-              placeholder="如 https://api.deepseek.com"
-            />
-          </div>
+          {modelMode === 'ref' ? (
+            <>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6 }}>选择模型</div>
+                {modelLibrary.length === 0 ? (
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', padding: '8px 0' }}>
+                    模型库为空，请先在 ⚙️ 设置中添加模型
+                  </div>
+                ) : (
+                  <Select
+                    value={refModelId}
+                    onChange={handleRefModelChange}
+                    style={{ width: '100%' }}
+                    options={modelLibrary.map(m => ({
+                      value: m.id,
+                      label: `${m.label} ${m.tested === 'ok' ? '✓' : m.tested === 'fail' ? '✗' : ''} · ${m.model ?? ''}`,
+                    }))}
+                  />
+                )}
+              </div>
 
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6 }}>API Key</div>
-            <Input.Password
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="该员工专用的 API Key（留空则用全局）"
-            />
-          </div>
+              {refEntry && (
+                <div style={{
+                  padding: '10px 12px', background: 'var(--bg-deep)', borderRadius: 8,
+                  fontSize: 11, color: 'var(--text-secondary)', lineHeight: 1.6,
+                }}>
+                  引用: <strong>{refEntry.label}</strong><br />
+                  服务商: {refEntry.provider ? getProvider(refEntry.provider).label : '默认'}<br />
+                  模型: {refEntry.model ?? '默认'}<br />
+                  API: {(refEntry.apiKey ?? '').slice(0, 8)}...
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6 }}>服务商</div>
+                <Select
+                  value={provider}
+                  onChange={onProviderChange}
+                  style={{ width: '100%' }}
+                  options={PROVIDER_PRESETS.map((p) => ({ value: p.key, label: p.label }))}
+                />
+              </div>
 
-          <div style={{ marginBottom: 6 }}>
-            <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6 }}>模型名</div>
-            <Input
-              value={modelName}
-              onChange={(e) => setModelName(e.target.value)}
-              placeholder="如 deepseek-chat / gpt-4o-mini"
-            />
-          </div>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6 }}>API 地址（base_url）</div>
+                <Input
+                  value={apiHost}
+                  onChange={(e) => setApiHost(e.target.value)}
+                  placeholder="如 https://api.deepseek.com"
+                />
+              </div>
 
-          {provider !== 'custom' && modelName && (
-            <div style={{ marginTop: 12, fontSize: 12, color: 'var(--text-muted)' }}>
-              模型：<code>{getProvider(provider).label} / {modelName}</code>
-            </div>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6 }}>API Key</div>
+                <Input.Password
+                  value={apiKey}
+                  onChange={(e) => setApiKey(e.target.value)}
+                  placeholder="该员工专用的 API Key（留空则用全局）"
+                />
+              </div>
+
+              <div style={{ marginBottom: 6 }}>
+                <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6 }}>模型名</div>
+                <Input
+                  value={modelName}
+                  onChange={(e) => setModelName(e.target.value)}
+                  placeholder="如 deepseek-chat / gpt-4o-mini"
+                />
+              </div>
+
+              {provider !== 'custom' && modelName && (
+                <div style={{ marginTop: 12, fontSize: 12, color: 'var(--text-muted)' }}>
+                  模型：<code>{getProvider(provider).label} / {modelName}</code>
+                </div>
+              )}
+            </>
           )}
         </>
       )}
