@@ -7,6 +7,8 @@ import { addOutput } from '../../data/outputs';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
 import { copyToClipboard, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
+import SkillMentionInput, { resolveSkillContext } from '../skills/SkillMentionInput';
+import type { SkillReference } from '../../types';
 import { linkify } from '../../utils/linkify';
 import {
   fileToAttachment, attachmentsFromClipboard, formatFileSize,
@@ -57,6 +59,7 @@ export default function DmChatApp({ empId }: Props) {
   const [typing, setTyping] = useState(false);
   const [showOutputs, setShowOutputs] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [skillRefs, setSkillRefs] = useState<SkillReference[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -94,6 +97,9 @@ export default function DmChatApp({ empId }: Props) {
     const content = text.trim();
     if (!content && attachments.length === 0) return;
     const atts = attachments;
+    const refs = skillRefs;
+    const skillContext = await resolveSkillContext(refs);
+    setSkillRefs([]);
     setText('');
     setAttachments([]);
     // 展示内容：文本 + 附件名
@@ -106,10 +112,11 @@ export default function DmChatApp({ empId }: Props) {
       mentions: [],
       timestamp: Date.now(),
       kind: 'text',
+      skillRefs: refs,
     });
 
     setTyping(true);
-    const { text: reply, usage } = await generateReply(content, atts);
+    const { text: reply, usage } = await generateReply(content, atts, skillContext);
     setTyping(false);
     push({
       id: `dm-${Date.now()}-${empId}`,
@@ -134,7 +141,7 @@ export default function DmChatApp({ empId }: Props) {
   };
 
   // 优先真调 OpenAI 兼容模型（带员工提示词），失败/未配置则回落本地剧本
-  const generateReply = async (userText: string, atts: Attachment[] = []): Promise<{ text: string; usage?: number }> => {
+  const generateReply = async (userText: string, atts: Attachment[] = [], skillContext = ''): Promise<{ text: string; usage?: number }> => {
     // 文本类附件：直接拼进用户文本作为上下文
     let enriched = userText;
     const textAtts = atts.filter((a) => a.kind === 'text' && a.dataUrl);
@@ -184,7 +191,7 @@ export default function DmChatApp({ empId }: Props) {
         ...history,
         { role: 'user', content: enriched },
       ];
-      const r = await chatCompletion(turns, 'dm', emp.name, undefined, emp.modelConfig, emp.soul, imageAtts);
+      const r = await chatCompletion(turns, 'dm', emp.name, undefined, emp.modelConfig, [emp.soul, skillContext].filter(Boolean).join('\n\n'), imageAtts);
       return { text: r.content ?? '（无回复）', usage: r.usage.totalTokens };
     } catch (e: any) {
       return { text: `⚠️ 模型调用失败（${e?.message ?? '未知错误'}），已切换本地回复：\n\n${craftReply(emp.role, enriched)}` };
@@ -305,15 +312,7 @@ export default function DmChatApp({ empId }: Props) {
                 ))}
               </div>
             )}
-            <textarea
-              className="chat-input"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={onKeyDown}
-              onPaste={handlePaste}
-              rows={2}
-              placeholder={`发消息给 ${emp.name}...（可直接粘贴图片/文件）`}
-            />
+            <SkillMentionInput value={text} onChange={setText} selected={skillRefs} onSelectedChange={setSkillRefs} onKeyDown={onKeyDown} onPaste={handlePaste} rows={2} placeholder={`发消息给 ${emp.name}...（输入 @ 选择技能）`} />
             <button className="btn btn-primary btn-sm" style={{ alignSelf: 'flex-end' }} onClick={handleSend}>
               发送
             </button>

@@ -60,7 +60,8 @@ async function memberSpeak(
   employees: Employee[],
   extraInstruction: string,
   onToolCall: (toolName: string, toolArgs: string, result: string) => void,
-  attachments?: import('../data/hermesClient').Attachment[]
+  attachments?: import('../data/hermesClient').Attachment[],
+  skillContext = ''
 ): Promise<{ text: string; tokens?: number }> {
   if (!resolveApiBase()) return { text: '' }; // 外部处理兜底
 
@@ -87,7 +88,7 @@ async function memberSpeak(
       scene: 'team',
       label: `${team.name}/${emp.name}`,
       modelConfig: emp.modelConfig,
-      extraSystemContext: emp.soul,
+      extraSystemContext: [emp.soul, skillContext].filter(Boolean).join('\n\n'),
       scope: `team:${team.id}` as any,
       onToolCall(name, args) {
         onToolCall(name, args, '');
@@ -104,7 +105,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 export async function runTeamDiscussion(
   team: Team,
   employees: Employee[],
-  opts: { task?: TeamTask; userText?: string; attachments?: import('../data/hermesClient').Attachment[] },
+  opts: { task?: TeamTask; userText?: string; attachments?: import('../data/hermesClient').Attachment[]; extraSystemContext?: string },
   handlers: DiscussionHandlers
 ): Promise<void> {
   const useAI = !!resolveApiBase();
@@ -134,7 +135,8 @@ export async function runTeamDiscussion(
           handlers.onToolCall(emp, toolName, argsStr, '🔄 执行中…');
         },
         // 仅首轮（PM）携带用户上传的图片附件
-        role === 'pm' ? opts.attachments : undefined
+        role === 'pm' ? opts.attachments : undefined,
+        opts.extraSystemContext
       );
       content = r.text;
       tokens = r.tokens;

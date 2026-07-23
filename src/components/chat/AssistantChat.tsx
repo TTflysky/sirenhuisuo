@@ -6,6 +6,8 @@ import { addOutput } from '../../data/outputs';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
 import { copyToClipboard, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
+import SkillMentionInput, { resolveSkillContext } from '../skills/SkillMentionInput';
+import type { SkillReference } from '../../types';
 import { linkify } from '../../utils/linkify';
 import { fileToAttachment, attachmentsFromClipboard, formatFileSize } from '../../utils/attachments';
 
@@ -52,6 +54,7 @@ export default function AssistantChat() {
   const [status, setStatus] = useState('');
   const [showOutputs, setShowOutputs] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [skillRefs, setSkillRefs] = useState<SkillReference[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -91,8 +94,10 @@ export default function AssistantChat() {
     const content = text.trim();
     if ((!content && attachments.length === 0) || busy) return;
     const atts = attachments;
-    setText('');
-    setAttachments([]);
+    const refs = skillRefs;
+    const skillContext = await resolveSkillContext(refs);
+    setSkillRefs([]);
+    setText('');    setAttachments([]);
     setBusy(true);
     setStatus('思考中…');
 
@@ -121,7 +126,7 @@ export default function AssistantChat() {
     const display = [content, ...atts.map((a) => `[📎 ${a.name}]`)].filter(Boolean).join('\n');
     push({
       id: `h-${Date.now()}-me`, authorId: 'me', roleId: 'human',
-      content: display, mentions: [], timestamp: Date.now(), kind: 'text',
+      content: display, mentions: [], timestamp: Date.now(), kind: 'text', skillRefs: refs,
       attachments: atts,
     });
 
@@ -156,6 +161,7 @@ export default function AssistantChat() {
         label: 'Hermes助手',
         scope: 'assistant',
         attachments: imageAtts,
+        extraSystemContext: skillContext,
         onToolCall(name, args) {
           const argsStr = args ? (args.length > 100 ? args.slice(0, 100) + '…' : args) : '';
           setStatus(`🔧 调用 ${name}${argsStr ? `(${argsStr})` : ''}`);
@@ -319,17 +325,7 @@ export default function AssistantChat() {
                 ))}
               </div>
             )}
-            <textarea
-              ref={textareaRef}
-              className="chat-input"
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={onKeyDown}
-              onPaste={handlePaste}
-              rows={2}
-              disabled={busy}
-              placeholder={busy ? '助手正在思考…' : '输入任何问题或需求…（可直接粘贴图片/文件）'}
-            />
+            <SkillMentionInput ref={textareaRef} value={text} onChange={setText} selected={skillRefs} onSelectedChange={setSkillRefs} onKeyDown={onKeyDown} onPaste={handlePaste} rows={2} disabled={busy} placeholder={busy ? '助手正在思考…' : '输入任何问题或需求…（输入 @ 选择技能）'} />
             <div style={{ display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'flex-end', marginTop: 4 }}>
               <ModelSelector />
               <div style={{ flex: 1 }} />

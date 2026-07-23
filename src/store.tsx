@@ -175,7 +175,7 @@ interface StoreCtx {
   state: AppState;
   dispatch: React.Dispatch<Action>;
   // 便捷方法
-  sendMessage: (teamId: string, authorId: string, roleId: RoleId, content: string, mentions?: string[], attachments?: import('./data/hermesClient').Attachment[]) => void;
+  sendMessage: (teamId: string, authorId: string, roleId: RoleId, content: string, mentions?: string[], attachments?: import('./data/hermesClient').Attachment[], skillRefs?: import('./types').SkillReference[]) => void;
   startTeamDemo: (teamId: string) => void;
   resetDemo: () => void;
   addEmployee: (name: string, title: string, role: OpcRoleId, avatar: string, avatarKind: 'preset' | 'custom', statusColor?: string, prompt?: string) => void;
@@ -186,7 +186,7 @@ interface StoreCtx {
   advanceTask: (teamId: string, taskId: string, lane: TaskLane) => void;
   claimTask: (teamId: string, taskId: string, claimerId: string) => void;
   publishTask: (teamId: string, title: string, description?: string, acceptance?: string) => void;
-  triggerDiscussion: (teamId: string, opts?: { task?: TeamTask; userText?: string; attachments?: import('./data/hermesClient').Attachment[] }) => void;
+  triggerDiscussion: (teamId: string, opts?: { task?: TeamTask; userText?: string; extraSystemContext?: string; attachments?: import('./data/hermesClient').Attachment[] }) => void;
 }
 
 const StoreContext = createContext<StoreCtx | null>(null);
@@ -237,7 +237,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     roleId: RoleId,
     content: string,
     mentions: string[] = [],
-    attachments?: import('./data/hermesClient').Attachment[]
+    attachments?: import('./data/hermesClient').Attachment[],
+    skillRefs?: import('./types').SkillReference[]
   ) => {
     const msg: ChatMessage = {
       id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -248,6 +249,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       timestamp: Date.now(),
       kind: 'text',
       attachments,
+      skillRefs,
     };
     dispatch({ type: 'APPEND_CHAT', teamId, msgs: [msg] });
   };
@@ -444,7 +446,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const stateRef = React.useRef(state);
   stateRef.current = state;
 
-  const triggerDiscussion = (teamId: string, opts?: { task?: TeamTask; userText?: string }) => {
+  const triggerDiscussion = (teamId: string, opts?: { task?: TeamTask; userText?: string; extraSystemContext?: string; attachments?: import('./data/hermesClient').Attachment[] }) => {
     if (discussingRef.current.has(teamId)) return; // 防止并发重复触发
     const team = state.teams.find((t) => t.id === teamId);
     if (!team) return;

@@ -7,6 +7,8 @@ import { addOutput } from '../../data/outputs';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
 import { copyToClipboard, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
+import SkillMentionInput, { resolveSkillContext } from '../skills/SkillMentionInput';
+import type { SkillReference } from '../../types';
 import { linkify } from '../../utils/linkify';
 import { fileToAttachment, attachmentsFromClipboard, formatFileSize } from '../../utils/attachments';
 
@@ -29,6 +31,7 @@ export default function TeamChatApp({ teamId }: Props) {
   const [taskDesc, setTaskDesc] = useState('');
   const [showOutputs, setShowOutputs] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [skillRefs, setSkillRefs] = useState<SkillReference[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const addFiles = async (files: FileList | File[]) => {
@@ -76,9 +79,12 @@ export default function TeamChatApp({ teamId }: Props) {
 
   if (!team) return <div style={{ padding: 20 }}>团队不存在</div>;
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!text.trim() && attachments.length === 0) return;
     const content = text.trim();
+    const refs = skillRefs;
+    const skillContext = await resolveSkillContext(refs);
+    setSkillRefs([]);
     // 解析 @ 提及：找出消息里 @name 形式
     const mentions: string[] = [];
     const parts = content.split(/(@\S+)/g);
@@ -112,11 +118,11 @@ export default function TeamChatApp({ teamId }: Props) {
     const imageAtts = attachments.filter((a) => a.kind === 'image');
     // 展示：文本 + 附件名；图片也存到消息上用于展示
     const display = [enriched, ...attachments.map((a) => `[📎 ${a.name}]`)].filter(Boolean).join('\n');
-    sendMessage(teamId, 'emp-me', 'human', display, mentions, attachments);
+    sendMessage(teamId, 'emp-me', 'human', display, mentions, attachments, refs);
     setText('');
     setAttachments([]);
     if (loadSettings().autoDiscuss) {
-      setTimeout(() => triggerDiscussion(teamId, { userText: enriched, attachments: imageAtts }), 400);
+      setTimeout(() => triggerDiscussion(teamId, { userText: enriched, attachments: imageAtts, extraSystemContext: skillContext }), 400);
     }
   };
 
@@ -442,16 +448,7 @@ export default function TeamChatApp({ teamId }: Props) {
                 ))}
               </div>
             )}
-            <textarea
-              ref={textareaRef}
-              className="chat-input"
-              value={text}
-              onChange={handleTextChange}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              rows={2}
-              placeholder="输入消息... 输入 @ 弹员工选择（可直接粘贴图片/文件）"
-            />
+            <SkillMentionInput ref={textareaRef} value={text} onChange={setText} onChangeEvent={handleTextChange} selected={skillRefs} onSelectedChange={setSkillRefs} onKeyDown={handleKeyDown} onPaste={handlePaste} rows={2} placeholder="输入消息... 输入 @ 选择技能或提及员工" />
             {/* @ 弹窗 */}
             {mentionOpen && mentionCandidates.length > 0 && (
               <div className="mention-popup">

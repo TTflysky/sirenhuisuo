@@ -9,9 +9,10 @@ import SettingsModal from './components/settings/SettingsModal';
 import Analytics from './components/analytics/Analytics';
 import AutopilotPanel from './components/autopilot/AutopilotPanel';
 import ChatOnlyView from './components/chat/ChatOnlyView';
+import SkillLibraryView from './components/skills/SkillLibraryView';
 import { checkBackend } from './data/hermesClient';
 
-type View = 'office' | 'analytics' | 'autopilot';
+type View = 'office' | 'analytics' | 'autopilot' | 'skill-library';
 
 export default function App() {
   const { state, openDmChat, openTeamChat, startTeamDemo, dispatch } = useStore();
@@ -80,6 +81,7 @@ export default function App() {
                 { label: '🏢 办公室', value: 'office' },
                 { label: '📊 数据分析', value: 'analytics' },
                 { label: '🤖 自主办公', value: 'autopilot' },
+                { label: '🧩 技能库', value: 'skill-library' },
               ]}
             />
           </div>
@@ -148,6 +150,8 @@ export default function App() {
           </>
         ) : view === 'autopilot' ? (
           <AutopilotPanel />
+        ) : view === 'skill-library' ? (
+          <SkillLibraryView />
         ) : (
           <Analytics />
         )}

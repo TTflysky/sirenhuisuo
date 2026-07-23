@@ -4,6 +4,7 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const { exec, execFile } = require('child_process');
 const { initAutoUpdater } = require('./autoUpdate.cjs');
+const { listSkills, readSkill } = require('./skills.cjs');
 
 // ===== 自主代理工作区（沙箱目录，所有文件读写/命令执行都限制在此）=====
 const WORKSPACE = path.join(app.getPath('userData'), 'workspace');
@@ -226,6 +227,17 @@ function createWindow() {
 
   // ===== 命令执行 IPC（handle 模式，支持 async/await）=====
   // 命令在自主代理工作区（WORKSPACE）内执行，便于写码-构建-运行闭环
+  ipcMain.handle('skills:list', async () => {
+    try { return { ok: true, skills: await listSkills(path.resolve(__dirname, '..')) }; }
+    catch (e) { return { ok: false, skills: [], error: String(e?.message ?? e) }; }
+  });
+  ipcMain.handle('skills:read', async (_event, id) => {
+    try {
+      if (typeof id !== 'string') throw new Error('无效技能 ID');
+      return { ok: true, skill: await readSkill(path.resolve(__dirname, '..'), id) };
+    } catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+
   ipcMain.handle('exec:command', async (_event, cmd) => {
     const projectRoot = WORKSPACE;
     const timeoutMs = 30000;

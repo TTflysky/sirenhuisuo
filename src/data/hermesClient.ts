@@ -472,7 +472,7 @@ export async function chatCompletion(
       // 系统提示内容仅支持 string 形式注入
       let sys = typeof sysContent === 'string' ? sysContent : '';
       if (extraSystemContext) {
-        sys += `\n\n## 你的核心人格\n${extraSystemContext}`;
+        sys += `\n\n## 扩展上下文\n${extraSystemContext.slice(0, 160000)}`;
       }
       if (userCtx) {
         sys += `\n\n## 关于当前用户\n${userCtx}\n（注意：每次对话后系统会自动更新用户画像和记忆。如果你注意到用户的新习惯或偏好，可以在回复末尾悄悄提醒「📝 已记录」）`;
@@ -481,7 +481,7 @@ export async function chatCompletion(
     } else {
       // 没有 system 消息则新建一条
       let content = '';
-      if (extraSystemContext) content += `## 你的核心人格\n${extraSystemContext}\n\n`;
+      if (extraSystemContext) content += `## 扩展上下文\n${extraSystemContext.slice(0, 160000)}\n\n`;
       if (userCtx) content += `## 关于当前用户\n${userCtx}\n`;
       if (content) finalTurns.unshift({ role: 'system', content });
     }
