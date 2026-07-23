@@ -1,37 +1,54 @@
 import { useState, useRef, useEffect } from 'react';
-import { loadSettings, saveSettings, getProvider } from '../../data/hermesClient';
+import { loadSettings, saveSettings, getProvider, resolveChatSettings } from '../../data/hermesClient';
+import type { ModelEntry } from '../../data/hermesClient';
 
-// 为每个服务商提供常用的模型选项
-const PROVIDER_MODELS: Record<string, string[]> = {
-  deepseek: ['deepseek-chat', 'deepseek-reasoner'],
-  qwen: ['qwen-plus', 'qwen-max', 'qwen-turbo', 'qwen-long'],
-  zhipu: ['glm-4-flash', 'glm-4-plus', 'glm-4-long'],
-  kimi: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'],
-  doubao: ['doubao-1.5-pro', 'doubao-1.5-lite', 'doubao-1.5-pro-256k'],
-  hunyuan: ['hunyuan-pro', 'hunyuan-standard', 'hunyuan-lite'],
-  openai: ['gpt-4o-mini', 'gpt-4o', 'o3-mini', 'gpt-4.1-mini', 'gpt-4.1-nano'],
-  custom: [''],
-};
-
-/** 获取当前可用的模型选择列表 */
-function getModelOptions(): { label: string; value: string }[] {
-  const s = loadSettings();
-  const provider = s.provider ?? 'custom';
-  const models = PROVIDER_MODELS[provider] ?? [];
-  return models.map((m) => ({
-    label: m || '输入模型名…',
-    value: m,
-  }));
+interface Props {
+  /** 'assistant' | 'dm' (员工私聊) | 'team' (团队) */
+  scene?: 'assistant' | 'dm' | 'team';
+  /** DM 场景下传入员工 ID，以正确读取员工独立模型 */
+  employeeId?: string;
 }
 
-export default function ModelSelector() {
+export default function ModelSelector({ scene = 'assistant', employeeId }: Props) {
   const [open, setOpen] = useState(false);
   const [customInput, setCustomInput] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // 读取当前实际使用的模型
   const settings = loadSettings();
-  const currentModel = settings.model || getProvider(settings.provider).defaultModel || '未设置';
-  const currentProvider = getProvider(settings.provider);
+  const resolved = resolveChatSettings();  // 解析助理配置
+
+  // 确定当前模型显示名
+  let currentModel: string;
+  let currentProviderLabel: string;
+  let usingLibrary: boolean = false;
+
+  if (scene === 'assistant' && settings.modelLibrary && settings.modelLibrary.length > 0 && settings.assistantModelId) {
+    // 助理场景：仅在明确选择 assistantModelId 时使用模型库
+    const entry = settings.modelLibrary.find(e => e.id === settings.assistantModelId);
+    if (entry) {
+      currentModel = entry.model || entry.label;
+      currentProviderLabel = entry.label;
+      usingLibrary = true;
+    } else {
+      currentModel = settings.model || getProvider().defaultModel || '未设置';
+      currentProviderLabel = getProvider().label;
+    }
+  } else if (settings.modelLibrary && settings.modelLibrary.length > 0 && settings.activeModelId) {
+    const entry = settings.modelLibrary.find(e => e.id === settings.activeModelId);
+    if (entry) {
+      currentModel = entry.model || entry.label;
+      currentProviderLabel = entry.label;
+      usingLibrary = true;
+    } else {
+      currentModel = settings.model || getProvider().defaultModel || '未设置';
+      currentProviderLabel = getProvider().label;
+    }
+  } else {
+    currentModel = settings.model || resolved.model || getProvider().defaultModel || '未设置';
+    currentProviderLabel = getProvider().label;
+  }
 
   // 点击外部关闭
   useEffect(() => {
@@ -45,63 +62,118 @@ export default function ModelSelector() {
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
 
-  const switchModel = (model: string) => {
+  // 自动聚焦输入框
+  useEffect(() => {
+    if (open) {
+      setTimeout(() => inputRef.current?.focus(), 50);
+    }
+  }, [open]);
+
+  const switchToLibraryModel = (entry: ModelEntry) => {
+    const s = loadSettings();
+    if (scene === 'assistant') {
+      s.assistantModelId = entry.id;
+    } else {
+      s.activeModelId = entry.id;
+    }
+    saveSettings(s);
+    setOpen(false);
+  };
+
+  const switchManualModel = (model: string) => {
     if (!model) return;
     const s = loadSettings();
-    s.model = model;
+    if (scene === 'assistant') {
+      s.assistantModelId = undefined;
+      s.assistantModelConfig = {
+        provider: s.provider,
+        apiHost: s.apiHost,
+        apiKey: s.apiKey,
+        model,
+      };
+    } else {
+      s.activeModelId = undefined;
+      s.model = model;
+    }
     saveSettings(s);
     setOpen(false);
   };
 
   const handleCustomSubmit = () => {
     const m = customInput.trim();
-    if (m) switchModel(m);
+    if (m) switchManualModel(m);
   };
 
-  const options = getModelOptions();
+  const libraryModels = settings.modelLibrary ?? [];
+  // 将 modelLibrary 按 provider 分组
+  const groupedLibrary = libraryModels.reduce((acc, e) => {
+    const g = e.label;
+    if (!acc[g]) acc[g] = [];
+    acc[g].push(e);
+    return acc;
+  }, {} as Record<string, ModelEntry[]>);
 
   return (
     <div className="model-selector" ref={menuRef}>
       <button
         className="model-selector-btn"
         onClick={() => setOpen(!open)}
-        title={`当前模型：${currentModel}（${currentProvider.label}）`}
+        title={`当前模型：${currentModel}（${currentProviderLabel}）`}
       >
         <span className="model-selector-icon">🧠</span>
         <span className="model-selector-name">{currentModel}</span>
+        {usingLibrary && <span className="model-selector-badge">库</span>}
         <span className="model-selector-arrow">{open ? '▲' : '▼'}</span>
       </button>
 
       {open && (
         <div className="model-selector-dropdown">
           <div className="model-selector-header">
-            {currentProvider.label} · 切换模型
+            {currentProviderLabel} · 切换模型
+            <span style={{ fontSize: 9, fontWeight: 400, marginLeft: 'auto' }}>
+              {libraryModels.length > 0 ? `${libraryModels.length} 个已配置` : ''}
+            </span>
           </div>
 
-          {options.length > 0 && (
-            <div className="model-selector-list">
-              {options.map((opt) => (
-                <button
-                  key={opt.value}
-                  className={`model-selector-option ${currentModel === opt.value ? 'active' : ''}`}
-                  onClick={() => opt.value && switchModel(opt.value)}
-                >
-                  {opt.value === currentModel && <span className="model-selector-check">✓ </span>}
-                  {opt.label}
-                </button>
+          {/* 模型库中的模型（优先展示） */}
+          {Object.keys(groupedLibrary).length > 0 && (
+            <div className="model-selector-section">
+              <div className="model-selector-section-title">📦 模型库</div>
+              {Object.entries(groupedLibrary).map(([groupLabel, entries]) => (
+                <div key={groupLabel}>
+                  <div className="model-selector-group-label">{groupLabel}</div>
+                  {entries.map((entry) => (
+                    <button
+                      key={entry.id}
+                      className={`model-selector-option ${currentModel === (entry.model || entry.label) ? 'active' : ''}`}
+                      onClick={() => switchToLibraryModel(entry)}
+                    >
+                      <span className="model-lib-icon">📦</span>
+                      <span className="model-lib-name">{entry.model || entry.label}</span>
+                      {entry.apiHost && <span className="model-lib-host" title={entry.apiHost}>{new URL(entry.apiHost).hostname}</span>}
+                    </button>
+                  ))}
+                </div>
               ))}
             </div>
           )}
 
-          <div className="model-selector-custom">
-            <input
-              ref={inputRef}
-              className="form-input"
-              placeholder="输入自定义模型名回车…"
-              value={customInput}
-              onChange={(e) => setCustomInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleCustomSubmit(); }}
-            />
+          {/* 手动模式（兼容旧版） */}
+          <div className="model-selector-section">
+            <div className="model-selector-section-title">
+              ✏️ 手动输入
+              {libraryModels.length > 0 && <span className="model-selector-section-hint">（覆盖模型库选择）</span>}
+            </div>
+            <div className="model-selector-custom">
+              <input
+                ref={inputRef}
+                className="form-input"
+                placeholder="输入模型名回车…"
+                value={customInput}
+                onChange={(e) => setCustomInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleCustomSubmit(); }}
+              />
+            </div>
           </div>
         </div>
       )}

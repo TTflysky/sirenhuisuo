@@ -44,8 +44,13 @@ function bringToFront(win) {
   if (!win || win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
   win.show();
+  // Windows 上子窗口 moveTop 可能不生效——短暂置顶再取消，强制弹到最前
+  win.setAlwaysOnTop(true);
   win.focus();
   win.moveTop();
+  setTimeout(() => {
+    if (!win.isDestroyed()) win.setAlwaysOnTop(false);
+  }, 100);
 }
 
 function getRootOwner(win) {
@@ -207,6 +212,10 @@ function createWindow() {
     trackActiveWindow(child);
     chatWindows.set(key, child);
     child.once('ready-to-show', () => bringToFront(child));
+    // 点击窗口时确保置顶
+    child.on('focus', () => {
+      if (!child.isDestroyed()) bringToFront(child);
+    });
     child.on('closed', () => {
       if (chatWindows.get(key) === child) chatWindows.delete(key);
     });

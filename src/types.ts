@@ -28,6 +28,7 @@ export interface Employee {
   isOnline: boolean;
   isWorking: boolean;
   modelConfig?: ModelConfig;  // 独立模型配置（留空则用全局设置）
+  showThoughtChain?: boolean; // 是否显示思维链（可视化推理过程）
 }
 
 // ===== 团队 =====
@@ -64,6 +65,16 @@ export interface ChatMessage {
   tokens?: number;     // 本条 AI 回复消耗的 token 数（仅模型回复有）
   attachments?: import('./data/hermesClient').Attachment[]; // 用户上传/粘贴的附件
   skillRefs?: SkillReference[];
+  thoughtChain?: ThoughtChainStep[]; // 思维链步骤（AI 推理过程记录）
+}
+
+/** 思维链单步——记录 AI 工具调用的完整推理过程 */
+export interface ThoughtChainStep {
+  toolName: string;
+  args: string;
+  result: string;
+  success: boolean;
+  timestamp: number;
 }
 
 // ===== 团队内任务卡 =====

@@ -22,6 +22,7 @@ export default function EditEmployeeModal({ employee, onClose }: Props) {
   const [prompt, setPrompt] = useState(employee.prompt ?? '');
   const [soul, setSoul] = useState(employee.soul ?? '');
   const [isOnline, setIsOnline] = useState(employee.isOnline);
+  const [showThoughtChain, setShowThoughtChain] = useState(employee.showThoughtChain ?? true);
 
   // 模型配置
   const mc = employee.modelConfig;
@@ -114,6 +115,7 @@ export default function EditEmployeeModal({ employee, onClose }: Props) {
         soul: soul.trim() || undefined,
         isOnline,
         modelConfig,
+        showThoughtChain,
       },
     });
     onClose();
@@ -173,6 +175,16 @@ export default function EditEmployeeModal({ employee, onClose }: Props) {
           onChange={(c) => setIsOnline(c)}
           checkedChildren="在线 🟢"
           unCheckedChildren="离线"
+        />
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+        <span style={{ fontSize: 12, fontWeight: 500 }}>🧠 显示思维链</span>
+        <Switch
+          checked={showThoughtChain}
+          onChange={(c) => setShowThoughtChain(c)}
+          checkedChildren="开"
+          unCheckedChildren="关"
         />
       </div>
 

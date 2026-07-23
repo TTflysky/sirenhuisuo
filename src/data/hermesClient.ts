@@ -49,6 +49,7 @@ export interface AppSettings {
   modelLibrary?: ModelEntry[];  // 所有已配置的模型列表
   activeModelId?: string;       // 当前全局使用的模型 ID（对应 modelLibrary 中的 entry.id）
   assistantModelId?: string;    // 助理机器人使用的模型 ID
+  showThoughtChain?: boolean;   // 助理是否显示思维链（默认 true）
 }
 
 // ===== 服务商预设（国内主流大模型，OpenAI 兼容）=====
@@ -104,13 +105,11 @@ export function getActiveModel(): ModelConfig {
 /** 获取助理机器人模型配置（优先从 modelLibrary 查找，回退到 assistantModelConfig，再回退到全局） */
 export function getAssistantModel(): ModelConfig {
   const s = loadSettings();
-  if (s.modelLibrary && s.modelLibrary.length > 0) {
+  if (s.modelLibrary && s.modelLibrary.length > 0 && s.assistantModelId) {
     const am = s.modelLibrary.find(m => m.id === s.assistantModelId);
     if (am) return { provider: am.provider, apiHost: am.apiHost, apiKey: am.apiKey, model: am.model };
-    // 回退到全局激活模型
-    return getActiveModel();
   }
-  // 向后兼容
+  // 助理手动配置优先于全局激活模型
   if (s.assistantModelConfig) return s.assistantModelConfig;
   return { provider: s.provider, apiHost: s.apiHost, apiKey: s.apiKey, model: s.model };
 }

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import type { ChatMessage } from '../../types';
-import { runAgentLoop, resolveApiBase, extractUserInsights, type ChatTurn, type Attachment } from '../../data/hermesClient';
+import type { ChatMessage, ThoughtChainStep } from '../../types';
+import { runAgentLoop, resolveApiBase, resolveChatSettings, extractUserInsights, loadSettings, type ChatTurn, type Attachment } from '../../data/hermesClient';
 import { TOOLS } from '../../engine/tools';
 import { getConnectorTools } from '../../engine/connectorTools';
 import { addOutput } from '../../data/outputs';
@@ -11,6 +11,7 @@ import SkillMentionInput, { resolveSkillContext } from '../skills/SkillMentionIn
 import type { SkillReference } from '../../types';
 import { linkify } from '../../utils/linkify';
 import { fileToAttachment, attachmentsFromClipboard, formatFileSize } from '../../utils/attachments';
+import AssistantSettingsModal, { getAssistantPrompt } from '../settings/AssistantSettingsModal';
 
 const LS_KEY = 'hermes_office_assistant_chat';
 
@@ -20,22 +21,6 @@ const NON_DIALOG_PREFIXES = ['🔧 调用工具', '⚠️ 出错了'];
 function isDialogMessage(m: ChatMessage): boolean {
   return !NON_DIALOG_PREFIXES.some((p) => m.content.startsWith(p));
 }
-
-const SYSTEM_PROMPT = `你是 Hermes 助手——一个全能 AI 助手，驻扎在私人办公会所应用中。
-你可以做任何事情：回答日常问题、写代码、查资料、创建文件、搜索互联网、执行命令（桌面版）、调用外部服务（连接器）。
-
-你的工具：
-- write_file(文件名, 内容) —— 把文件真正写入工作区（代码/文档都落盘，可运行）
-- read_file(文件名) —— 读取工作区文件
-- list_files(过滤词) —— 列出工作区目录
-- web_search(查询) —— 搜索互联网
-- run_command(命令) —— 在工作区内执行终端命令（仅 Electron 桌面版可用）
-- connector_* —— 已配置的外部服务连接器（如 IMA 知识库搜索、GitHub 仓库查询等）
-
-当用户需要产出实际文件时，直接调 write_file，然后把文件路径和摘要告诉用户。
-当用户问需要最新信息的事，调 web_search。
-当用户提到知识库、GitHub、邮件等外部服务时，优先使用对应的连接器工具。
-回复简洁、专业、友好，用中文。`;
 
 function loadHistory(): ChatMessage[] {
   try {
@@ -58,6 +43,8 @@ export default function AssistantChat() {
   const [showOutputs, setShowOutputs] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [skillRefs, setSkillRefs] = useState<SkillReference[]>([]);
+  const [showAssistantSettings, setShowAssistantSettings] = useState(false);
+  const [, refreshSettings] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -133,8 +120,9 @@ export default function AssistantChat() {
       attachments: atts,
     });
 
-    // 无 API 时本地回复
-    if (!resolveApiBase()) {
+    // 无当前助理 API 时本地回复（支持助理独立模型配置）
+    const assistantSettings = resolveChatSettings();
+    if (!resolveApiBase(assistantSettings)) {
       push({
         id: `h-${Date.now()}-ai`, authorId: 'assistant', roleId: 'custom',
         content: '我是 Hermes 助手。当前未配置 AI 接口，请在 ⚙️ 设置中填入模型服务地址和 API Key 后重试。',
@@ -157,9 +145,14 @@ export default function AssistantChat() {
       const connectorTools = getConnectorTools();
       const allTools = [...TOOLS, ...connectorTools];
 
+      // 思维链采集
+      const settings = loadSettings();
+      const showCoT = settings.showThoughtChain !== false; // 默认开启
+      const cotSteps: ThoughtChainStep[] = [];
+
       const r = await runAgentLoop({
         turns: [
-          { role: 'system', content: SYSTEM_PROMPT },
+          { role: 'system', content: getAssistantPrompt() },
           ...history,
           { role: 'user', content: enriched },
         ],
@@ -173,17 +166,30 @@ export default function AssistantChat() {
           const argsStr = args ? (args.length > 100 ? args.slice(0, 100) + '…' : args) : '';
           setStatus(`🔧 调用 ${name}${argsStr ? `(${argsStr})` : ''}`);
         },
+        onToolResult(name, args, result) {
+          if (showCoT) {
+            cotSteps.push({
+              toolName: name,
+              args: args ?? '',
+              result: result.slice(0, 2000),  // 限制单步结果
+              success: !result.startsWith('工具执行错误') && !result.startsWith('未知工具'),
+              timestamp: Date.now(),
+            });
+          }
+        },
       });
 
+      const ts = Date.now();
       push({
-        id: `h-${Date.now()}-ai`, authorId: 'assistant', roleId: 'custom',
-        content: r.content, mentions: [], timestamp: Date.now(), kind: 'text',
+        id: `h-${ts}-ai`, authorId: 'assistant', roleId: 'custom',
+        content: r.content, mentions: [], timestamp: ts, kind: 'text',
         tokens: r.usage.totalTokens,
+        thoughtChain: showCoT && cotSteps.length > 0 ? cotSteps : undefined,
       });
 
       // 自动提炼用户洞察（每 2 次对话触发）
       const userMsgCount = msgs.filter(m => m.roleId === 'human' && isDialogMessage(m)).length;
-      if (userMsgCount > 0 && userMsgCount % 2 === 0 && resolveApiBase()) {
+      if (userMsgCount > 0 && userMsgCount % 2 === 0 && resolveApiBase(assistantSettings)) {
         const chatText = msgs.slice(-6).map(m => {
           const who = m.roleId === 'human' ? '用户' : '助手';
           return `${who}: ${m.content.slice(0, 200)}`;
@@ -280,6 +286,10 @@ export default function AssistantChat() {
                       📋
                     </button>
                   </div>
+                  {/* 思维链展示 */}
+                  {msg.thoughtChain && msg.thoughtChain.length > 0 && (
+                    <ThoughtChainView steps={msg.thoughtChain} />
+                  )}
                   {msg.tokens != null && (
                     <div className="msg-tokens">≈ {msg.tokens.toLocaleString()} tokens</div>
                   )}
@@ -314,6 +324,14 @@ export default function AssistantChat() {
                 📁{showOutputs ? ' ✕' : ''}
               </button>
               <button className="btn btn-sm" onClick={() => fileInputRef.current?.click()} title="上传文件/图片">📎</button>
+              <div style={{ flex: 1 }} />
+              <button
+                className="btn btn-sm"
+                onClick={() => setShowAssistantSettings(true)}
+                title="助理设置"
+              >
+                ⚙️ 设置
+              </button>
             </div>
             {/* 附件预览 */}
             {attachments.length > 0 && (
@@ -369,6 +387,52 @@ export default function AssistantChat() {
           </div>
         )}
       </div>
+
+      {/* 助理设置模态框 */}
+      {showAssistantSettings && (
+        <AssistantSettingsModal
+          onClose={() => setShowAssistantSettings(false)}
+          onSaved={() => {
+            refreshSettings((value) => value + 1);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** 思维链可视化组件——展示 AI 的推理步骤 */
+function ThoughtChainView({ steps }: { steps: ThoughtChainStep[] }) {
+  const [open, setOpen] = useState(false);
+  if (steps.length === 0) return null;
+
+  return (
+    <div className="cot-wrap">
+      <button className="cot-toggle" onClick={() => setOpen(!open)}>
+        🧠 思维链 ({steps.length} 步) {open ? '▲' : '▼'}
+      </button>
+      {open && (
+        <div className="cot-steps">
+          {steps.map((s, i) => (
+            <div key={i} className={`cot-step ${s.success ? 'cot-ok' : 'cot-err'}`}>
+              <div className="cot-step-head">
+                <span className="cot-step-icon">{s.success ? '✅' : '❌'}</span>
+                <code className="cot-step-tool">{s.toolName}</code>
+              </div>
+              {s.args && (
+                <div className="cot-step-args">
+                  <span className="cot-label">参数：</span>
+                  <code>{s.args.length > 200 ? s.args.slice(0, 200) + '…' : s.args}</code>
+                </div>
+              )}
+              <div className="cot-step-result">
+                <span className="cot-label">结果：</span>
+                <pre>{s.result.length > 800 ? s.result.slice(0, 800) + '…' : s.result}</pre>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
