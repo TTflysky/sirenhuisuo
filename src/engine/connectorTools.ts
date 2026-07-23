@@ -2,53 +2,38 @@ import type { ToolDef } from './tools';
 import type { Connector, ConnectorAction } from '../data/connectors';
 import { loadConnectors, executeConnectorAction, CONNECTOR_PRESETS } from '../data/connectors';
 
-/** 根据已启用的连接器生成 OpenAI 工具定义 */
-export function getConnectorTools(): ToolDef[] {
-  const connectors = loadConnectors().filter(c => c.enabled && c.status === 'connected');
-  if (connectors.length === 0) return [];
-
-  const tools: ToolDef[] = [];
-  for (const conn of connectors) {
-    const preset = CONNECTOR_PRESETS.find(p => p.mcpServerName === conn.mcpServerName);
-    if (!preset || !preset.actions.length) continue;
-
-    for (const action of preset.actions) {
-      tools.push({
-        type: 'function' as const,
-        function: {
-          name: `connector_${action.name}`,
-          description: `[${conn.label}] ${action.description}`,
-          parameters: action.parameters,
-        },
-      });
-    }
-  }
-  return tools;
+function actionsFor(conn: Connector): ConnectorAction[] {
+  const presetActions = CONNECTOR_PRESETS.find(p => p.mcpServerName === conn.mcpServerName)?.actions ?? [];
+  const discoveredActions = conn.discoveredActions ?? [];
+  const actions = [...presetActions.filter(action => action.http), ...discoveredActions];
+  return actions.filter((action, index) => actions.findIndex(item => (item.mcpToolName ?? item.name) === (action.mcpToolName ?? action.name)) === index);
 }
 
-/** 执行连接器工具调用 */
-export async function executeConnectorTool(
-  toolName: string,
-  args: Record<string, string>,
-): Promise<{ success: boolean; output: string }> {
-  // 去掉 connector_ 前缀
-  const actionName = toolName.replace(/^connector_/, '');
-  const connectors = loadConnectors().filter(c => c.enabled);
+function toolName(conn: Connector, action: ConnectorAction): string {
+  return `connector_${conn.id}_${action.mcpToolName ?? action.name}`;
+}
 
-  // 查找匹配的连接器和操作
-  for (const conn of connectors) {
-    const preset = CONNECTOR_PRESETS.find(p => p.mcpServerName === conn.mcpServerName);
-    if (!preset) continue;
-    const action = preset.actions.find(a => a.name === actionName);
-    if (!action) continue;
+export function getConnectorTools(): ToolDef[] {
+  const connectors = loadConnectors().filter(c => c.enabled && c.status === 'connected');
+  return connectors.flatMap(conn => actionsFor(conn).map(action => ({
+    type: 'function' as const,
+    function: { name: toolName(conn, action), description: `[${conn.label}] ${action.description}`, parameters: { ...action.parameters, required: action.parameters.required ?? [] } },
+  })));
+}
 
-    try {
-      const output = await executeConnectorAction(conn, action, args);
-      return { success: true, output };
-    } catch (e: any) {
-      return { success: false, output: `连接器 "${conn.label}" 执行失败: ${e?.message ?? '未知错误'}` };
-    }
-  }
-
-  return { success: false, output: `未找到匹配的连接器操作: ${actionName}` };
+export async function executeConnectorTool(toolNameInput: string, args: Record<string, string>): Promise<{ success: boolean; output: string }> {
+  const prefix = 'connector_';
+  if (!toolNameInput.startsWith(prefix)) return { success: false, output: `未找到匹配的连接器操作: ${toolNameInput}` };
+  const raw = toolNameInput.slice(prefix.length);
+  const connectors = loadConnectors().filter(c => c.enabled && c.status === 'connected');
+  const conn = connectors
+    .filter(c => raw.startsWith(`${c.id}_`))
+    .sort((a, b) => b.id.length - a.id.length)[0];
+  if (!conn) return { success: false, output: `连接器未启用或不可执行: ${raw}` };
+  const actionName = raw.slice(conn.id.length + 1);
+  const action = actionsFor(conn).find(a => (a.mcpToolName ?? a.name) === actionName);
+  if (!action) return { success: false, output: `连接器 ${conn.label} 未发现工具: ${actionName}` };
+  if (!action.http) return { success: false, output: `连接器 ${conn.label} 未配置可执行 HTTP action，且项目内 MCP runtime 不可用` };
+  try { return { success: true, output: await executeConnectorAction(conn, action, args) }; }
+  catch (e: any) { return { success: false, output: `连接器 "${conn.label}" 执行失败: ${e?.message ?? '未知错误'}` }; }
 }

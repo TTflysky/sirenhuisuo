@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { loadSettings, saveSettings, getProvider, resolveChatSettings } from '../../data/hermesClient';
 import type { ModelEntry } from '../../data/hermesClient';
 
@@ -9,11 +10,13 @@ interface Props {
   employeeId?: string;
 }
 
-export default function ModelSelector({ scene = 'assistant', employeeId }: Props) {
+export default function ModelSelector({ scene = 'assistant', employeeId: _employeeId }: Props) {
   const [open, setOpen] = useState(false);
   const [customInput, setCustomInput] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [menuStyle, setMenuStyle] = useState<React.CSSProperties>({});
 
   // 读取当前实际使用的模型
   const settings = loadSettings();
@@ -50,16 +53,38 @@ export default function ModelSelector({ scene = 'assistant', employeeId }: Props
     currentProviderLabel = getProvider().label;
   }
 
-  // 点击外部关闭
-  useEffect(() => {
+  const updateMenuPosition = () => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const width = Math.min(360, window.innerWidth - 16);
+    const gap = 6;
+    const estimatedHeight = Math.min(520, window.innerHeight - 24);
+    const top = rect.top >= estimatedHeight + gap
+      ? rect.top - estimatedHeight - gap
+      : Math.min(rect.bottom + gap, window.innerHeight - estimatedHeight - 12);
+    const left = Math.min(Math.max(8, rect.left), window.innerWidth - width - 8);
+    setMenuStyle({ top, left, width, maxHeight: Math.max(180, window.innerHeight - top - 12) });
+  };
+
+  useLayoutEffect(() => {
     if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+    updateMenuPosition();
+    const handler = () => updateMenuPosition();
+    const outside = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node) && !triggerRef.current?.contains(e.target as Node)) setOpen(false);
     };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    window.addEventListener('resize', handler);
+    window.addEventListener('scroll', handler, true);
+    document.addEventListener('mousedown', outside);
+    const escape = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('keydown', escape);
+    return () => {
+      window.removeEventListener('resize', handler);
+      window.removeEventListener('scroll', handler, true);
+      document.removeEventListener('mousedown', outside);
+      document.removeEventListener('keydown', escape);
+    };
   }, [open]);
 
   // 自动聚焦输入框
@@ -114,8 +139,9 @@ export default function ModelSelector({ scene = 'assistant', employeeId }: Props
   }, {} as Record<string, ModelEntry[]>);
 
   return (
-    <div className="model-selector" ref={menuRef}>
+    <div className="model-selector">
       <button
+        ref={triggerRef}
         className="model-selector-btn"
         onClick={() => setOpen(!open)}
         title={`当前模型：${currentModel}（${currentProviderLabel}）`}
@@ -126,8 +152,8 @@ export default function ModelSelector({ scene = 'assistant', employeeId }: Props
         <span className="model-selector-arrow">{open ? '▲' : '▼'}</span>
       </button>
 
-      {open && (
-        <div className="model-selector-dropdown">
+      {open && createPortal(
+        <div ref={menuRef} className="model-selector-dropdown" style={menuStyle}>
           <div className="model-selector-header">
             {currentProviderLabel} · 切换模型
             <span style={{ fontSize: 9, fontWeight: 400, marginLeft: 'auto' }}>
@@ -175,7 +201,7 @@ export default function ModelSelector({ scene = 'assistant', employeeId }: Props
               />
             </div>
           </div>
-        </div>
+        </div>, document.body
       )}
     </div>
   );

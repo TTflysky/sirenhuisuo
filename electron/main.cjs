@@ -40,14 +40,19 @@ function normalizeChatOptions(opts) {
   return { type, refId, key: `${type}:${refId}` };
 }
 
-function bringToFront(win) {
+function focusChatWindow(win) {
   if (!win || win.isDestroyed()) return;
   if (win.isMinimized()) win.restore();
   win.show();
-  // Windows 上子窗口 moveTop 可能不生效——短暂置顶再取消，强制弹到最前
-  win.setAlwaysOnTop(true);
   win.focus();
   win.moveTop();
+}
+
+function bringToFront(win) {
+  // 仅作为显式打开入口保留短暂置顶，不由窗口 focus 事件调用。
+  if (!win || win.isDestroyed()) return;
+  focusChatWindow(win);
+  win.setAlwaysOnTop(true);
   setTimeout(() => {
     if (!win.isDestroyed()) win.setAlwaysOnTop(false);
   }, 100);
@@ -186,7 +191,7 @@ function createWindow() {
     const { type, refId, key } = normalized;
     const existing = chatWindows.get(key);
     if (existing && !existing.isDestroyed()) {
-      bringToFront(existing);
+      focusChatWindow(existing);
       return { ok: true, reused: true };
     }
     if (existing) chatWindows.delete(key);
@@ -212,10 +217,7 @@ function createWindow() {
     trackActiveWindow(child);
     chatWindows.set(key, child);
     child.once('ready-to-show', () => bringToFront(child));
-    // 点击窗口时确保置顶
-    child.on('focus', () => {
-      if (!child.isDestroyed()) bringToFront(child);
-    });
+    // focus 仅由 trackActiveWindow 记录，避免触发置顶/焦点循环。
     child.on('closed', () => {
       if (chatWindows.get(key) === child) chatWindows.delete(key);
     });
@@ -433,7 +435,7 @@ if (!hasSingleInstanceLock) {
     const target = lastActiveWindow && !lastActiveWindow.isDestroyed()
       ? lastActiveWindow
       : mainWindow;
-    bringToFront(target);
+    focusChatWindow(target);
   });
 
   app.whenReady().then(() => {

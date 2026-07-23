@@ -251,6 +251,11 @@ export default function AssistantChat() {
     <div className="chat-panel">
       <div className="chat-layout">
         <div className="chat-main">
+          <div className="assistant-chat-toolbar">
+            <strong>Hermes 助手</strong>
+            <div style={{ flex: 1 }} />
+            <button className="btn btn-sm" onClick={() => setShowAssistantSettings(true)} title="助理设置" aria-label="打开助理设置">⚙️ 设置</button>
+          </div>
           {/* 消息流 */}
           <div className="chat-messages">
             {msgs.length === 0 && (
@@ -325,13 +330,7 @@ export default function AssistantChat() {
               </button>
               <button className="btn btn-sm" onClick={() => fileInputRef.current?.click()} title="上传文件/图片">📎</button>
               <div style={{ flex: 1 }} />
-              <button
-                className="btn btn-sm"
-                onClick={() => setShowAssistantSettings(true)}
-                title="助理设置"
-              >
-                ⚙️ 设置
-              </button>
+              <span />
             </div>
             {/* 附件预览 */}
             {attachments.length > 0 && (

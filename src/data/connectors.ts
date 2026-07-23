@@ -21,8 +21,11 @@ export interface Connector {
   label: string;
   icon: string;
   type: 'mcp' | 'custom';
+  runtime?: 'native-mcp' | 'http';
   mcpServerName?: string;
   status: 'connected' | 'disconnected' | 'unknown';
+  runtimeStatus?: 'available' | 'unavailable' | 'unknown';
+  discoveredActions?: ConnectorAction[];
   enabled: boolean;
   lastChecked?: number;
   error?: string;
@@ -48,6 +51,8 @@ export interface ConnectorAction {
     }>;
     required?: string[];
   };
+  source?: 'preset-http' | 'mcp-discovered';
+  mcpToolName?: string;
   /** HTTP 请求配置 */
   http?: {
     method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
@@ -266,7 +271,13 @@ export const CONNECTOR_PRESETS: ConnectorPreset[] = [
 export function loadConnectors(): Connector[] {
   try {
     const raw = localStorage.getItem(LS_CONNECTORS);
-    if (raw) return JSON.parse(raw) as Connector[];
+    if (raw) {
+      return (JSON.parse(raw) as Connector[]).map(c => ({
+        ...c,
+        runtime: c.runtime ?? (c.type === 'mcp' ? 'native-mcp' : 'http'),
+        runtimeStatus: c.runtimeStatus ?? (c.type === 'mcp' ? 'unknown' : undefined),
+      }));
+    }
   } catch {}
   return [];
 }
@@ -296,10 +307,9 @@ export function updateConnector(id: string, partial: Partial<Connector>): void {
 /* ===== 连接测试 ===== */
 
 /** 快速 ping 检测连接器是否可达 */
-export async function checkConnector(c: Connector): Promise<{ status: Connector['status']; error?: string }> {
-  // MCP 类型：需要外部 WorkBuddy MCP 运行时
+export async function checkConnector(c: Connector): Promise<{ status: Connector['status']; error?: string; runtimeStatus?: Connector['runtimeStatus']; actions?: ConnectorAction[] }> {
   if (c.type === 'mcp') {
-    return { status: 'unknown', error: 'MCP 连接器需在设置中配置后启用' };
+    return { status: 'unknown', runtimeStatus: 'unavailable', actions: [], error: `未发现项目内 MCP runtime 或 ${c.mcpServerName ?? '目标服务'} 工具` };
   }
 
   // 自定义类型：检查配置完整性
@@ -312,7 +322,7 @@ export async function checkConnector(c: Connector): Promise<{ status: Connector[
 
   // 尝试轻量 ping（通过 Electron IPC 或 fetch）
   try {
-    const res = await callConnectorApi(c, { method: 'GET', path: '/', timeout: 5000 });
+    await callConnectorApi(c, { method: 'GET', path: '/', timeout: 5000 });
     return { status: 'connected' };
   } catch (e: any) {
     return { status: 'disconnected', error: e?.message ?? '连接失败' };

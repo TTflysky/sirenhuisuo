@@ -600,12 +600,12 @@ html, body, #root, .app-root {
 }
 .model-selector-arrow { font-size: 8px; flex-shrink: 0; color: var(--text-muted); }
 .model-selector-dropdown {
-  position: absolute; left: 0; bottom: 100%; margin-bottom: 4px;
-  width: 320px; max-width: calc(100vw - 32px); max-height: 480px;
+  position: fixed;
+  max-width: calc(100vw - 16px);
   overflow-y: auto;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 12px; box-shadow: 0 8px 28px rgba(31,41,55,0.16);
-  z-index: 50; overflow: hidden;
+  z-index: 1000;
 }
 .model-selector-header {
   padding: 8px 12px; font-size: 11px; font-weight: 600;

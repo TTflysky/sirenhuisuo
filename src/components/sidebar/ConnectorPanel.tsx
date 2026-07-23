@@ -51,17 +51,11 @@ export default function ConnectorPanel() {
     refresh();
   };
 
-  /** 切换启用 */
-  const handleToggle = (id: string, enabled: boolean) => {
-    updateConnector(id, { enabled });
-    refresh();
-  };
-
   /** 测试连接 */
   const handleTest = async (c: Connector) => {
     message.loading({ content: `正在测试 ${c.label}...`, key: 'test' });
     const result = await checkConnector(c);
-    updateConnector(c.id, { status: result.status, error: result.error, lastChecked: Date.now() });
+    updateConnector(c.id, { status: result.status, runtimeStatus: result.runtimeStatus, discoveredActions: result.actions, error: result.error, lastChecked: Date.now() });
     refresh();
     if (result.status === 'connected') {
       message.success({ content: `${c.label} 连接成功`, key: 'test' });
@@ -149,7 +143,7 @@ export default function ConnectorPanel() {
                   >⚙</button>
 
                   {/* 快速测试 */}
-                  {c.type === 'custom' && (
+                  {(
                     <button
                       onClick={() => handleTest(c)}
                       style={{
