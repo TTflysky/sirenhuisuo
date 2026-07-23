@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import type { Skill } from '../../types';
 import { listSkills, readSkill, deleteSkill } from '../../data/skills';
 
@@ -37,8 +37,7 @@ export default function SkillLibraryView() {
     if (deleting === skill.id) {
       try {
         await deleteSkill(skill.id);
-        setExpanded(null);
-        setBody('');
+        if (expanded === skill.id) { setExpanded(null); setBody(''); }
         setDeleting(null);
         setSkills((prev) => prev.filter((s) => s.id !== skill.id));
       } catch (e) {
@@ -82,60 +81,53 @@ export default function SkillLibraryView() {
         </div>
       )}
 
-      <div style={{ flex: 1, overflow: 'auto' }}>
+      <div className="skill-grid">
         {filtered.map((skill) => (
-          <div key={skill.id} className="skill-card-wrap">
-            <div className={`skill-card ${expanded === skill.id ? 'skill-card--open' : ''}`}>
+          <React.Fragment key={skill.id}>
+            <div className={`skill-grid-card ${expanded === skill.id ? 'skill-grid-card--open' : ''}`}>
               <button
-                className="skill-card-main"
-                onClick={() => toggle(skill)}
+                className="skill-grid-card-actions"
+                onClick={(e) => { e.stopPropagation(); confirmDelete(skill); }}
+                title="删除技能"
+                style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 14, color: 'var(--text-muted)', padding: 2, lineHeight: 1 }}
                 type="button"
               >
-                <span className="skill-card-icon">🧩</span>
-                <div className="skill-card-info">
-                  <div className="skill-card-name">{skill.name}</div>
-                  <div className="skill-card-desc">{skill.description || '暂无说明'}</div>
-                  <div className="skill-card-meta">
-                    {skill.source}{skill.version ? ` · v${skill.version}` : ''}
-                  </div>
-                </div>
-                <span className="skill-card-arrow">
-                  {expanded === skill.id ? '▾' : '▸'}
-                </span>
-              </button>
-              <div className="skill-card-actions">
                 {deleting === skill.id ? (
-                  <>
-                    <button
-                      className="skill-del-btn skill-del-btn--confirm"
-                      onClick={(e) => { e.stopPropagation(); confirmDelete(skill); }}
-                      title="确认删除"
-                    >
-                      确认删除
-                    </button>
-                    <button className="skill-del-btn" onClick={cancelDelete} title="取消">
-                      ✕
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    className="skill-del-btn"
-                    onClick={(e) => { e.stopPropagation(); confirmDelete(skill); }}
-                    title="删除技能"
-                  >
-                    🗑
-                  </button>
-                )}
-              </div>
+                  <span style={{ color: '#ef4444', fontWeight: 600, fontSize: 11 }}>确认</span>
+                ) : '🗑'}
+              </button>
+              {deleting === skill.id && (
+                <button
+                  onClick={cancelDelete}
+                  style={{ position: 'absolute', top: 8, right: 38, border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-muted)', padding: 2, lineHeight: 1 }}
+                  title="取消"
+                  type="button"
+                >
+                  ✕
+                </button>
+              )}
+              <button
+                onClick={() => toggle(skill)}
+                style={{ border: 'none', background: 'none', cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', color: 'inherit', padding: 0, width: '100%', minWidth: 0 }}
+                type="button"
+              >
+                <div className="skill-grid-card-icon">🧩</div>
+                <div className="skill-grid-card-name">{skill.name}</div>
+                <div className="skill-grid-card-desc">{skill.description || '暂无说明'}</div>
+                <div className="skill-grid-card-meta">
+                  {skill.source}{skill.version ? ` · v${skill.version}` : ''}
+                </div>
+              </button>
             </div>
             {expanded === skill.id && (
-              <div className="skill-detail">
-                <pre className="skill-detail-body">{body || '加载中…'}</pre>
+              <div className="skill-grid-detail">
+                <pre className="skill-grid-detail-body">{body || '加载中…'}</pre>
               </div>
             )}
-          </div>
+          </React.Fragment>
         ))}
       </div>
     </div>
   );
 }
+

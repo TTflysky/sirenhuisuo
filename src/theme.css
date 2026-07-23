@@ -753,10 +753,10 @@ html, body, #root, .app-root {
 
 /* ===== @ 提及弹窗 ===== */
 .mention-popup {
-  position: absolute; bottom: 100%; left: 0; right: 0; margin-bottom: 4px;
-  box-sizing: border-box; min-height: 140px; max-height: min(360px, calc(100vh - 120px));
+  position: absolute; bottom: 100%; left: -8px; right: -8px; margin-bottom: 4px;
+  box-sizing: border-box; min-height: 160px; max-height: min(400px, calc(100vh - 80px));
   background: var(--surface); border: 1px solid var(--border);
-  border-radius: 10px; box-shadow: 0 8px 24px rgba(31,41,55,0.12);
+  border-radius: 12px; box-shadow: 0 8px 28px rgba(31,41,55,0.15);
   overflow: hidden; z-index: 10; display: flex; flex-direction: column;
 }
 .mention-popup-resize {
@@ -769,15 +769,107 @@ html, body, #root, .app-root {
 }
 .mention-popup-head {
   flex: 0 0 auto; display: flex; justify-content: space-between; align-items: center;
-  padding: 6px 12px; font-size: 10px; color: var(--text-muted);
+  padding: 6px 14px; font-size: 10px; color: var(--text-muted);
   background: var(--bg-deep); border-bottom: 1px solid var(--border-light);
   text-transform: uppercase; letter-spacing: 0.5px;
 }
 .mention-popup-head span { font-size: 9px; text-transform: none; letter-spacing: 0; opacity: 0.75; }
-.mention-popup .mention-option { flex: 0 0 auto; }
+
+/* 已选技能行 */
+.mention-selected-row {
+  display: flex; flex-wrap: wrap; gap: 5px; padding: 4px 0 6px;
+}
+.mention-selected-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px 2px 6px; border-radius: 16px; font-size: 11px;
+  background: rgba(99,102,241,0.1); border: 1px solid rgba(99,102,241,0.25);
+  color: var(--text); white-space: nowrap;
+}
+.mention-selected-chip .attach-del {
+  width: 14px; height: 14px; border: none; background: none; cursor: pointer;
+  font-size: 10px; color: var(--text-muted);
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+}
+.mention-selected-chip .attach-del:hover { background: rgba(239,68,68,0.15); color: #ef4444; }
+
+/* 技能候选卡片 grid */
+.mention-popup-grid {
+  flex: 1; overflow-y: auto; padding: 8px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+}
+.mention-card {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 10px 12px; border: 1px solid var(--border-light);
+  border-radius: 10px; background: var(--bg); cursor: pointer;
+  text-align: left; font-family: inherit; color: inherit;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  min-width: 0; position: relative;
+}
+.mention-card:hover { border-color: var(--text-muted); background: var(--surface); }
+.mention-card.active {
+  border-color: #6366f1; background: rgba(99,102,241,0.06);
+  box-shadow: 0 0 0 1px #6366f1;
+}
+.mention-card-icon { font-size: 22px; }
+.mention-card-body { min-width: 0; }
+.mention-card-name { font-size: 12px; font-weight: 600; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mention-card-desc { font-size: 10px; color: var(--text-muted); margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mention-card-badge {
+  position: absolute; top: 6px; right: 6px;
+  font-size: 9px; padding: 0 5px; border-radius: 4px;
+  background: var(--bg-deep); color: var(--text-muted);
+}
 .skill-picker-resizing, .skill-picker-resizing * { cursor: ns-resize !important; user-select: none !important; }
 
-/* ===== 技能库卡片列表 ===== */
+/* ===== 技能库 - 九宫格卡片 ===== */
+.skill-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+  padding: 4px 0;
+}
+.skill-grid-card {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 16px; border: 1px solid var(--border-light);
+  border-radius: 12px; background: var(--bg);
+  cursor: pointer; text-align: left; font-family: inherit; color: inherit;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+  position: relative; min-width: 0;
+}
+.skill-grid-card:hover {
+  border-color: var(--text-muted); box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+  background: var(--surface);
+}
+.skill-grid-card-icon { font-size: 28px; margin-bottom: 4px; }
+.skill-grid-card-name { font-size: 14px; font-weight: 600; color: var(--text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-grid-card-desc { font-size: 11px; color: var(--text-secondary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-grid-card-meta { font-size: 10px; color: var(--text-muted); margin-top: auto;
+  padding-top: 6px; }
+.skill-grid-card-actions {
+  position: absolute; top: 8px; right: 8px;
+}
+.skill-grid-card--open {
+  border-color: #6366f1; box-shadow: 0 0 0 1px #6366f1;
+}
+.skill-grid-detail {
+  grid-column: 1 / -1;
+  border: 1px solid #6366f1; border-radius: 12px;
+  background: var(--bg-deep); overflow: hidden;
+  margin-bottom: 4px;
+}
+.skill-grid-detail-body {
+  margin: 0; padding: 16px 20px;
+  white-space: pre-wrap; font: 12px/1.6 var(--font-mono, monospace);
+  max-height: 50vh; overflow: auto;
+  color: var(--text);
+}
+
+/* 旧卡片样式保留用于过渡 -- 下面保留原 .skill-card* 以备兼容，不影响新样式 */
 .skill-card-wrap { margin-bottom: 2px; }
 .skill-card {
   display: flex; align-items: center;
