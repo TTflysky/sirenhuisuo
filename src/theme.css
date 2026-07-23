@@ -754,15 +754,28 @@ html, body, #root, .app-root {
 /* ===== @ 提及弹窗 ===== */
 .mention-popup {
   position: absolute; bottom: 100%; left: 0; right: 0; margin-bottom: 4px;
+  box-sizing: border-box; min-height: 140px; max-height: min(360px, calc(100vh - 120px));
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 10px; box-shadow: 0 8px 24px rgba(31,41,55,0.12);
-  overflow: hidden; z-index: 10; max-height: 220px; overflow-y: auto;
+  overflow: hidden; z-index: 10; display: flex; flex-direction: column;
+}
+.mention-popup-resize {
+  flex: 0 0 8px; cursor: ns-resize; touch-action: none; position: relative;
+  background: var(--bg-deep); border-bottom: 1px solid var(--border-light);
+}
+.mention-popup-resize::after {
+  content: ''; position: absolute; width: 36px; height: 3px; border-radius: 3px;
+  left: 50%; top: 2px; transform: translateX(-50%); background: var(--text-muted); opacity: 0.7;
 }
 .mention-popup-head {
+  flex: 0 0 auto; display: flex; justify-content: space-between; align-items: center;
   padding: 6px 12px; font-size: 10px; color: var(--text-muted);
   background: var(--bg-deep); border-bottom: 1px solid var(--border-light);
   text-transform: uppercase; letter-spacing: 0.5px;
 }
+.mention-popup-head span { font-size: 9px; text-transform: none; letter-spacing: 0; opacity: 0.75; }
+.mention-popup .mention-option { flex: 0 0 auto; }
+.skill-picker-resizing, .skill-picker-resizing * { cursor: ns-resize !important; user-select: none !important; }
 .mention-option {
   display: flex; align-items: center; gap: 10px; width: 100%;
   padding: 8px 12px; border: none; background: transparent;
