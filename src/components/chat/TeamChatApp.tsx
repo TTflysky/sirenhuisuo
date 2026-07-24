@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import type { Team, Employee } from '../../types';
 import { useStore } from '../../store';
-import { loadSettings, type Attachment } from '../../data/hermesClient';
+import { type Attachment } from '../../data/hermesClient';
 import AgentAvatar from '../office/AgentAvatar';
 import { addOutput } from '../../data/outputs';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
@@ -83,7 +83,7 @@ export default function TeamChatApp({ teamId }: Props) {
     if (!text.trim() && attachments.length === 0) return;
     const content = text.trim();
     const refs = skillRefs;
-    const skillContext = await resolveSkillContext(refs);
+    await resolveSkillContext(refs);
     setSkillRefs([]);
     // 解析 @ 提及：找出消息里 @name 形式
     const mentions: string[] = [];
@@ -91,7 +91,7 @@ export default function TeamChatApp({ teamId }: Props) {
     for (const p of parts) {
       if (p.startsWith('@')) {
         const name = p.slice(1);
-        const found = state.employees.find((e) => e.name === name);
+        const found = teamMembers.find((e) => e.name === name);
         if (found) mentions.push(found.id);
       }
     }
@@ -115,30 +115,25 @@ export default function TeamChatApp({ teamId }: Props) {
         content: `已上传附件 ${f.name}（${formatFileSize(f.size)}）`,
       } as any);
     }
-    const imageAtts = attachments.filter((a) => a.kind === 'image');
     // 展示：文本 + 附件名；图片也存到消息上用于展示
     const display = [enriched, ...attachments.map((a) => `[📎 ${a.name}]`)].filter(Boolean).join('\n');
     sendMessage(teamId, 'emp-me', 'human', display, mentions, attachments, refs);
     setText('');
     setAttachments([]);
-    if (loadSettings().autoDiscuss) {
-      setTimeout(() => triggerDiscussion(teamId, { userText: enriched, attachments: imageAtts, extraSystemContext: skillContext }), 400);
-    }
   };
 
   const insertMention = (emp: Employee) => {
     const ta = textareaRef.current;
     if (!ta) return;
     const cur = text;
-    // 找到最后一个 @ 的位置
-    const atIdx = cur.lastIndexOf('@');
-    let next: string;
-    if (atIdx >= 0 && cur.slice(atIdx).indexOf(' ') === -1) {
-      // 还没输入空格，@query 部分替换
-      next = cur.slice(0, atIdx) + `@${emp.name} `;
-    } else {
-      next = cur + `@${emp.name} `;
-    }
+    const cursor = ta.selectionStart ?? cur.length;
+    const before = cur.slice(0, cursor);
+    const after = cur.slice(cursor);
+    const match = before.match(/(^|\s)@([^@\s]*)$/u);
+    const atIdx = match ? cursor - (match[2]?.length ?? 0) - 1 : -1;
+    const next = atIdx >= 0
+      ? cur.slice(0, atIdx) + `@${emp.name} ` + after
+      : cur.slice(0, cursor) + `@${emp.name} ` + after;
     setText(next);
     setMentionOpen(false);
     setMentionQuery('');
@@ -238,6 +233,17 @@ export default function TeamChatApp({ teamId }: Props) {
     <div className="chat-panel">
       <div className="chat-layout">
         <div className="chat-main">
+          <div className="team-chat-header">
+            <div className="team-chat-title"><span>{team.icon ?? '👥'}</span><strong>{team.name}</strong></div>
+            <div className="team-avatar-strip" aria-label="团队成员">
+              {teamMembers.map((emp) => <button key={emp.id} className="team-avatar-btn" onClick={() => insertMention(emp)} title={`${emp.name} · ${emp.isWorking ? '工作中' : emp.isOnline ? '在线' : '离线'}`}><AgentAvatar employee={emp} size={30} /></button>)}
+            </div>
+          </div>
+          <div className="team-chat-body">
+            <aside className="team-member-sidebar" aria-label="团队成员列表">
+              {teamMembers.map((emp) => <button key={emp.id} className="team-member-item" onClick={() => insertMention(emp)} title={`@${emp.name}`}><AgentAvatar employee={emp} size={34} /><span className="team-member-info"><strong>{emp.name}</strong><small>{emp.title}</small><small className={emp.isWorking ? 'is-working' : ''}>{emp.isWorking ? '工作中' : emp.isOnline ? '在线' : '离线'}</small></span></button>)}
+            </aside>
+            <div className="team-chat-content">
           {/* 实时进度条（讨论中） */}
           {myProgress && (
             <div className="chat-progress">
@@ -483,6 +489,8 @@ export default function TeamChatApp({ teamId }: Props) {
               style={{ display: 'none' }}
               onChange={(e) => { if (e.target.files) addFiles(e.target.files); e.target.value = ''; }}
             />
+          </div>
+            </div>
           </div>
         </div>
 

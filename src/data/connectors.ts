@@ -309,7 +309,26 @@ export function updateConnector(id: string, partial: Partial<Connector>): void {
 /** 快速 ping 检测连接器是否可达 */
 export async function checkConnector(c: Connector): Promise<{ status: Connector['status']; error?: string; runtimeStatus?: Connector['runtimeStatus']; actions?: ConnectorAction[] }> {
   if (c.type === 'mcp') {
-    return { status: 'unknown', runtimeStatus: 'unavailable', actions: [], error: `未发现项目内 MCP runtime 或 ${c.mcpServerName ?? '目标服务'} 工具` };
+    if (!c.baseUrl) return { status: 'disconnected', runtimeStatus: 'unavailable', actions: [], error: '未配置 MCP endpoint' };
+    try {
+      await mcpRequest(c, 'initialize', {
+        protocolVersion: '2025-03-26',
+        capabilities: {},
+        clientInfo: { name: 'hermes-office-pro', version: '1.0.0' },
+      }, 5000);
+      const listed = await mcpRequest(c, 'tools/list', {}, 10000);
+      const tools = Array.isArray(listed?.tools) ? listed.tools : [];
+      const actions = tools.filter((tool: any) => typeof tool?.name === 'string').map((tool: any) => ({
+        name: tool.name,
+        mcpToolName: tool.name,
+        description: typeof tool.description === 'string' ? tool.description : `MCP 工具 ${tool.name}`,
+        parameters: (tool.inputSchema && tool.inputSchema.type === 'object') ? tool.inputSchema : { type: 'object', properties: {}, required: [] },
+        source: 'mcp-discovered' as const,
+      }));
+      return { status: 'connected', runtimeStatus: 'available', actions };
+    } catch (e: any) {
+      return { status: 'disconnected', runtimeStatus: 'unavailable', actions: [], error: `MCP endpoint 不可用: ${e?.message ?? '请求失败'}` };
+    }
   }
 
   // 自定义类型：检查配置完整性
@@ -322,11 +341,37 @@ export async function checkConnector(c: Connector): Promise<{ status: Connector[
 
   // 尝试轻量 ping（通过 Electron IPC 或 fetch）
   try {
-    await callConnectorApi(c, { method: 'GET', path: '/', timeout: 5000 });
+    const response = await callConnectorApi(c, { method: 'GET', path: '/', timeout: 5000 });
+    if (response.status < 200 || response.status >= 300) {
+      return { status: 'disconnected', error: `服务返回 HTTP ${response.status}` };
+    }
     return { status: 'connected' };
   } catch (e: any) {
     return { status: 'disconnected', error: e?.message ?? '连接失败' };
   }
+}
+
+async function mcpRequest(connector: Connector, method: string, params: Record<string, unknown>, timeout = 15000): Promise<any> {
+  const response = await callConnectorApi(connector, {
+    method: 'POST',
+    path: '',
+    body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params }),
+    timeout,
+  });
+  if (response.status < 200 || response.status >= 300) throw new Error(`HTTP ${response.status}`);
+  const raw = response.data.trim();
+  let parsed: any;
+  try { parsed = JSON.parse(raw); } catch {
+    const eventData = raw.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trim()).join('');
+    if (!eventData) throw new Error('响应不是有效 JSON-RPC');
+    parsed = JSON.parse(eventData);
+  }
+  if (parsed?.error) throw new Error(parsed.error.message ?? 'JSON-RPC 错误');
+  if (!Object.prototype.hasOwnProperty.call(parsed ?? {}, 'result')) throw new Error('JSON-RPC 响应缺少 result');
+  if (parsed.result && typeof parsed.result === 'object' && parsed.result.isError === true) {
+    throw new Error(typeof parsed.result.content === 'string' ? parsed.result.content : 'MCP 工具返回错误');
+  }
+  return parsed.result;
 }
 
 /* ===== API 调用 ===== */
@@ -373,7 +418,15 @@ export async function executeConnectorAction(
   args: Record<string, string>,
 ): Promise<string> {
   if (!action.http) {
-    return '此操作暂不支持直接调用，需通过 MCP 连接器使用。';
+    if (connector.type !== 'mcp' || !connector.baseUrl || !action.mcpToolName) {
+      throw new Error('连接器 endpoint/runtime 不可用，无法执行此操作。');
+    }
+    try {
+      const result = await mcpRequest(connector, 'tools/call', { name: action.mcpToolName, arguments: args }, 20000);
+      return typeof result === 'string' ? result : JSON.stringify(result).slice(0, 8000);
+    } catch (e: any) {
+      throw new Error(`MCP 工具调用失败: ${e?.message ?? '未知错误'}`);
+    }
   }
 
   let path = action.http.path;
@@ -382,7 +435,8 @@ export async function executeConnectorAction(
   if (action.http.paramStyle === 'body') {
     body = action.http.bodyTemplate ?? JSON.stringify(args);
     for (const [k, v] of Object.entries(args)) {
-      body = body.replaceAll(`{${k}}`, v ?? '');
+      const escaped = JSON.stringify(v ?? '').slice(1, -1);
+      body = body.replaceAll(`{${k}}`, escaped);
     }
   } else {
     for (const [k, v] of Object.entries(args)) {

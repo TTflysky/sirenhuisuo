@@ -1,10 +1,10 @@
-import type { Employee, Team, ChatMessage, TeamTask, TaskLane } from '../types';
+import type { Employee, Team, ChatMessage, TeamTask, TaskLane, DiscussionParticipantPlan } from '../types';
 import { runAgentLoop, resolveApiBase, extractUserInsights, type ChatTurn } from '../data/hermesClient';
 import { TOOLS } from './tools';
 
 // ===== 讨论回调 =====
 export interface DiscussionHandlers {
-  onMessage: (emp: Employee, content: string, mentions: string[], tokens?: number) => void;
+  onMessage: (emp: Employee, content: string, mentions: string[], tokens?: number, discussionRound?: number, inReplyToMessageId?: string) => void;
   onToolCall: (emp: Employee, toolName: string, toolArgs: string, result: string) => void;
   onTaskAdvance: (taskId: string, lane: TaskLane) => void;
   onStatus: (text: string) => void;
@@ -102,23 +102,46 @@ async function memberSpeak(
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+function parseMentionIds(content: string, team: Team, employees: Employee[]): string[] {
+  const names = new Set(team.memberIds.map((id) => employees.find((employee) => employee.id === id)?.name).filter(Boolean));
+  return [...content.matchAll(/@([^@\s，。！？!?]+)/g)].map((match) => {
+    const employee = employees.find((item) => names.has(item.name) && item.name === match[1]);
+    return employee?.id;
+  }).filter((id): id is string => !!id);
+}
+
 export async function runTeamDiscussion(
   team: Team,
   employees: Employee[],
-  opts: { task?: TeamTask; userText?: string; attachments?: import('../data/hermesClient').Attachment[]; extraSystemContext?: string },
+  opts: { task?: TeamTask; userText?: string; attachments?: import('../data/hermesClient').Attachment[]; extraSystemContext?: string; participantPlan?: DiscussionParticipantPlan[]; triggerMessageId?: string; discussionId?: string; maxRounds?: number; forcedMemberIds?: string[] },
   handlers: DiscussionHandlers
 ): Promise<void> {
   const useAI = !!resolveApiBase();
-  const roles = ['pm', 'planner', 'coder', 'checker'] as const;
   const task = opts.task;
+  const plannedMembers = opts.participantPlan?.map((plan) => employees.find((employee) => employee.id === plan.memberId)).filter((employee): employee is Employee => !!employee);
+  const participants = plannedMembers?.length ? plannedMembers : (['pm', 'planner', 'coder', 'checker'] as const).map((role) => memberByRole(team, employees, role)).filter((employee): employee is Employee => !!employee);
+  const responseCounts = new Map<string, number>();
+  const responded = new Set<string>();
+  const planById = new Map((opts.participantPlan ?? []).map((plan) => [plan.memberId, plan]));
+  const pending = [...new Set([
+    ...(opts.forcedMemberIds ?? []),
+    ...(opts.participantPlan ?? []).map((plan) => plan.memberId),
+  ])];
+  const maxRounds = opts.maxRounds ?? 8;
 
   const laneOf: Record<string, TaskLane | null> = {
     pm: null, planner: 'PLANNING', coder: 'CODING', checker: 'REVIEW',
   };
 
-  for (const role of roles) {
-    const emp = memberByRole(team, employees, role);
+  let round = 0;
+  const queue = pending.length > 0 ? pending : participants.map((employee) => employee.id);
+  while (queue.length > 0 && round < maxRounds) {
+    const memberId = queue.shift()!;
+    const emp = employees.find((employee) => employee.id === memberId) ?? participants.find((employee) => employee.id === memberId);
     if (!emp) continue;
+    const role = emp.role;
+    const maxResponses = planById.get(emp.id)?.maxResponses ?? 1;
+    if ((responseCounts.get(emp.id) ?? 0) >= maxResponses) continue;
 
     handlers.onStatus(`${emp.name} 正在思考…`);
     let content = '';
@@ -145,7 +168,15 @@ export async function runTeamDiscussion(
       content = pick(FALLBACK_LINES[role] ?? FALLBACK_LINES.custom);
     }
 
-    handlers.onMessage(emp, content, [], tokens);
+    const mentions = parseMentionIds(content, team, employees);
+    round += 1;
+    handlers.onMessage(emp, content, mentions, tokens, round, opts.triggerMessageId);
+    responseCounts.set(emp.id, (responseCounts.get(emp.id) ?? 0) + 1);
+    responded.add(emp.id);
+    for (const mentionedId of mentions) {
+      const limit = planById.get(mentionedId)?.maxResponses ?? 1;
+      if ((!responded.has(mentionedId) || (responseCounts.get(mentionedId) ?? 0) < limit) && !queue.includes(mentionedId)) queue.push(mentionedId);
+    }
 
     if (task) {
       const lane = laneOf[role];
@@ -172,7 +203,7 @@ export async function runTeamDiscussion(
         await sleep(600);
         closing = '验收通过，任务交付 🎉 大家辛苦。';
       }
-      handlers.onMessage(pm, closing, [], pmTokens);
+      handlers.onMessage(pm, closing, parseMentionIds(closing, team, employees), pmTokens, Math.min(maxRounds, round + 1), opts.triggerMessageId);
       handlers.onTaskAdvance(task.id, 'DONE');
     }
   }

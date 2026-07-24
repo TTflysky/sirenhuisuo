@@ -294,6 +294,24 @@ html, body, #root, .app-root {
   position: absolute; bottom: 4px; right: 4px;
 }
 
+/* ===== 团队聊天成员布局 ===== */
+.team-chat-header { display:flex; align-items:center; gap:12px; min-height:48px; padding:6px 12px; border-bottom:1px solid var(--border-light); background:var(--surface); flex-shrink:0; }
+.team-chat-title { display:flex; align-items:center; gap:7px; min-width:0; white-space:nowrap; }
+.team-chat-title strong { overflow:hidden; text-overflow:ellipsis; }
+.team-avatar-strip { display:flex; align-items:center; gap:4px; overflow-x:auto; min-width:0; }
+.team-avatar-btn { border:0; background:transparent; padding:2px; cursor:pointer; border-radius:50%; flex:0 0 auto; }
+.team-avatar-btn:hover { background:var(--bg-deep); }
+.team-chat-body { display:flex; flex:1; min-height:0; min-width:0; }
+.team-member-sidebar { width:190px; min-width:190px; padding:8px 4px; border-right:1px solid var(--border-light); background:var(--surface); overflow-y:auto; }
+.team-member-item { display:flex; align-items:center; gap:8px; width:100%; padding:7px 6px; border:0; background:transparent; text-align:left; cursor:pointer; border-radius:6px; color:var(--text); }
+.team-member-item:hover { background:var(--bg-deep); }
+.team-member-info { min-width:0; display:flex; flex-direction:column; gap:1px; }
+.team-member-info strong,.team-member-info small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.team-member-info strong { font-size:12px; }
+.team-member-info small { font-size:10px; color:var(--text-muted); }
+.team-member-info .is-working { color:var(--busy); }
+.team-chat-content { display:flex; flex:1; min-width:0; min-height:0; flex-direction:column; }
+
 /* ===== 聊天 UI — 紧凑版（原风格回归）===== */
 .chat-only-view,
 .chat-only-body,
@@ -1163,6 +1181,15 @@ html, body, #root, .app-root {
   display: flex; flex-direction: column;
 }
 
+@media (max-width: 899px) {
+  .team-member-sidebar { width:150px; min-width:150px; }
+}
+@media (max-width: 599px) {
+  .team-member-sidebar { width:44px; min-width:44px; padding:6px 3px; }
+  .team-member-info { display:none; }
+  .team-member-item { justify-content:center; padding:6px 2px; }
+  .team-chat-header { min-height:44px; }
+}
 @media (max-width: 700px) {
   .chat-outputs-wrap {
     position: absolute;

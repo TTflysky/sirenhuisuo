@@ -33,7 +33,9 @@ export async function executeConnectorTool(toolNameInput: string, args: Record<s
   const actionName = raw.slice(conn.id.length + 1);
   const action = actionsFor(conn).find(a => (a.mcpToolName ?? a.name) === actionName);
   if (!action) return { success: false, output: `连接器 ${conn.label} 未发现工具: ${actionName}` };
-  if (!action.http) return { success: false, output: `连接器 ${conn.label} 未配置可执行 HTTP action，且项目内 MCP runtime 不可用` };
-  try { return { success: true, output: await executeConnectorAction(conn, action, args) }; }
-  catch (e: any) { return { success: false, output: `连接器 "${conn.label}" 执行失败: ${e?.message ?? '未知错误'}` }; }
+  try {
+    const output = await executeConnectorAction(conn, action, args);
+    const failed = /^(连接器调用失败|MCP 工具调用失败|API 返回错误|连接器 endpoint\/runtime 不可用)/u.test(output);
+    return { success: !failed, output };
+  } catch (e: any) { return { success: false, output: `连接器 "${conn.label}" 执行失败: ${e?.message ?? '未知错误'}` }; }
 }

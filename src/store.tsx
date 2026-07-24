@@ -16,12 +16,14 @@ import type {
   AppState,
   RoleId,
   DiscussionProgress,
+  DiscussionTriggerInput,
 } from './types';
 import { ROLE_SCARF } from './types';
 import * as client from './data/hermesClient';
 import { runScript, cancelDemo as cancelScript, type ScriptHandlers } from './engine/simulationEngine';
 import { PROACTIVE_SCRIPT } from './engine/proactiveScript';
 import { runTeamDiscussion } from './engine/teamDiscussion';
+import { buildParticipantPlan, evaluateDiscussionTrigger } from './engine/discussionTrigger';
 import { findFreeStation } from './data/hermesClient';
 import { addOutput, buildDiscussionOutput, buildTaskOutput } from './data/outputs';
 import { sendBus, onBus, BUS_CHANNELS } from './ipcBus';
@@ -186,7 +188,7 @@ interface StoreCtx {
   advanceTask: (teamId: string, taskId: string, lane: TaskLane) => void;
   claimTask: (teamId: string, taskId: string, claimerId: string) => void;
   publishTask: (teamId: string, title: string, description?: string, acceptance?: string) => void;
-  triggerDiscussion: (teamId: string, opts?: { task?: TeamTask; userText?: string; extraSystemContext?: string; attachments?: import('./data/hermesClient').Attachment[] }) => void;
+  triggerDiscussion: (teamId: string, opts?: { task?: TeamTask; userText?: string; extraSystemContext?: string; attachments?: import('./data/hermesClient').Attachment[]; participantPlan?: import('./types').DiscussionParticipantPlan[]; triggerMessageId?: string; discussionId?: string; forcedMemberIds?: string[]; maxRounds?: number }) => void;
 }
 
 const StoreContext = createContext<StoreCtx | null>(null);
@@ -252,6 +254,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       skillRefs,
     };
     dispatch({ type: 'APPEND_CHAT', teamId, msgs: [msg] });
+    if (roleId === 'human') {
+      enqueueAutoDiscussion(teamId, msg.id, content, mentions, attachments);
+    }
   };
 
   const startTeamDemo = (teamId: string) => {
@@ -435,26 +440,39 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       acceptance,
     };
     dispatch({ type: 'ADD_TASK', teamId, task });
-    // 发任务后，若开启自动讨论则触发团队 AI 讨论并推进该任务
-    if (client.loadSettings().autoDiscuss) {
-      setTimeout(() => triggerDiscussion(teamId, { task }), 400);
+    const settings = client.loadSettings();
+    const autoDiscussEnabled = settings.autoDiscussMode === undefined
+      ? !!settings.autoDiscuss
+      : settings.autoDiscussMode !== 'off';
+    if (autoDiscussEnabled) {
+      enqueueDiscussion(teamId, { task, userText: `新任务：${title}${description ? `\n${description}` : ''}`, triggerMessageId: task.id, discussionId: `discussion-${task.id}`, maxRounds: settings.autoDiscussMaxRounds });
     }
   };
 
   // 团队 AI 讨论：成员依次用真模型发言，联动推进任务
+  type DiscussionOpts = Parameters<typeof runTeamDiscussion>[2];
   const discussingRef = React.useRef<Set<string>>(new Set());
+  const schedulerRef = React.useRef(new Map<string, {
+    timer?: ReturnType<typeof setTimeout>;
+    running: boolean;
+    queued?: DiscussionOpts;
+    scheduled?: DiscussionOpts;
+    lastStartedAt?: number;
+    keys: Set<string>;
+  }>());
+  const lastAutoTriggerRef = React.useRef<Map<string, { dedupeKey: string; triggeredAt: number }>>(new Map());
   const stateRef = React.useRef(state);
   stateRef.current = state;
 
-  const triggerDiscussion = (teamId: string, opts?: { task?: TeamTask; userText?: string; extraSystemContext?: string; attachments?: import('./data/hermesClient').Attachment[] }) => {
-    if (discussingRef.current.has(teamId)) return; // 防止并发重复触发
-    const team = state.teams.find((t) => t.id === teamId);
-    if (!team) return;
+  const runDiscussion = (teamId: string, opts?: DiscussionOpts): boolean => {
+    if (discussingRef.current.has(teamId)) return false;
+    const team = stateRef.current.teams.find((t) => t.id === teamId);
+    if (!team) return false;
     discussingRef.current.add(teamId);
 
     // 预计算总步数：实际参与讨论的角色数
     const roleCount = ['pm', 'planner', 'coder', 'checker'].filter(
-      (r) => team.memberIds.some((id) => state.employees.find((e) => e.id === id)?.role === r)
+      (r) => team.memberIds.some((id) => stateRef.current.employees.find((e) => e.id === id)?.role === r)
     ).length;
     const totalSteps = opts?.task ? roleCount + 1 : roleCount;
     const startedAt = Date.now();
@@ -483,12 +501,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'SET_STATUS', partial: { demoRunning: true, activeDemoTeamId: teamId } });
 
     let stepCounter = 0;
-    runTeamDiscussion(
+    Promise.resolve().then(() => runTeamDiscussion(
       team,
-      state.employees,
+      stateRef.current.employees,
       opts ?? {},
       {
-        onMessage(emp, content, mentions, tokens) {
+        onMessage(emp, content, mentions, tokens, discussionRound, inReplyToMessageId) {
           stepCounter += 1;
           const s = client.loadSettings();
           updateProgress(stepCounter, emp.id, emp.name, emp.role, s.model ?? undefined);
@@ -501,6 +519,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             timestamp: Date.now(),
             kind: 'text',
             tokens,
+            discussionId: opts?.discussionId,
+            discussionRound,
+            triggeredBy: opts?.task ? 'task' : 'message',
+            inReplyToMessageId,
           };
           dispatch({ type: 'APPEND_CHAT', teamId, msgs: [msg] });
         },
@@ -522,7 +544,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         },
         onStatus() {},
         onDone() {
-          discussingRef.current.delete(teamId);
           // 清掉进度
           dispatch({ type: 'SET_PROGRESS', progress: null });
           dispatch({ type: 'SET_STATUS', partial: { demoRunning: false, activeDemoTeamId: undefined } });
@@ -547,10 +568,103 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }
         },
       }
-    ).catch(() => {
+    )).finally(() => {
       discussingRef.current.delete(teamId);
+      const scheduler = schedulerRef.current.get(teamId);
+      if (scheduler) {
+        scheduler.running = false;
+        const queued = scheduler.queued;
+        scheduler.queued = undefined;
+        if (queued) {
+          scheduler.lastStartedAt = Date.now();
+          scheduler.running = runDiscussion(teamId, queued);
+        }
+      }
       dispatch({ type: 'SET_PROGRESS', progress: null });
       dispatch({ type: 'SET_STATUS', partial: { demoRunning: false, activeDemoTeamId: undefined } });
+    });
+    return true;
+  };
+
+  const enqueueDiscussion = (teamId: string, opts: DiscussionOpts, delay = 0) => {
+    const scheduler = schedulerRef.current.get(teamId) ?? { running: false, keys: new Set<string>() };
+    schedulerRef.current.set(teamId, scheduler);
+    const key = opts.discussionId ?? opts.triggerMessageId ?? opts.task?.id ?? String(Date.now());
+    if (scheduler.keys.has(key)) return;
+    scheduler.keys.add(key);
+    if (scheduler.running || discussingRef.current.has(teamId)) {
+      scheduler.queued = scheduler.queued ? {
+        ...opts,
+        userText: [scheduler.queued.userText, opts.userText].filter(Boolean).join('\n'),
+        attachments: [...(scheduler.queued.attachments ?? []), ...(opts.attachments ?? [])],
+        participantPlan: [...(scheduler.queued.participantPlan ?? []), ...(opts.participantPlan ?? [])].filter((plan, index, plans) => plans.findIndex((item) => item.memberId === plan.memberId) === index),
+        forcedMemberIds: [...new Set([...(scheduler.queued.forcedMemberIds ?? []), ...(opts.forcedMemberIds ?? [])])],
+      } : opts;
+      return;
+    }
+    if (scheduler.timer) clearTimeout(scheduler.timer);
+    scheduler.scheduled = scheduler.scheduled ? {
+      ...opts,
+      userText: [scheduler.scheduled.userText, opts.userText].filter(Boolean).join('\n'),
+      participantPlan: [...(scheduler.scheduled.participantPlan ?? []), ...(opts.participantPlan ?? [])].filter((plan, index, plans) => plans.findIndex((item) => item.memberId === plan.memberId) === index),
+      attachments: [...(scheduler.scheduled.attachments ?? []), ...(opts.attachments ?? [])],
+      forcedMemberIds: [...new Set([...(scheduler.scheduled.forcedMemberIds ?? []), ...(opts.forcedMemberIds ?? [])])],
+    } : opts;
+    scheduler.timer = setTimeout(() => {
+      scheduler.timer = undefined;
+      const scheduled = scheduler.scheduled;
+      scheduler.scheduled = undefined;
+      if (!scheduled) return;
+      scheduler.lastStartedAt = Date.now();
+      scheduler.running = runDiscussion(teamId, scheduled);
+    }, delay);
+  };
+
+  const enqueueAutoDiscussion = (teamId: string, messageId: string, content: string, mentions: string[], attachments?: import('./data/hermesClient').Attachment[]) => {
+    const current = stateRef.current;
+    const team = current.teams.find((item) => item.id === teamId);
+    if (!team) return;
+    const settings = client.loadSettings();
+    const input: DiscussionTriggerInput = {
+      teamId, messageId, userText: content, mentions,
+      hasAttachments: !!attachments?.length, recentMessages: team.chatMessages.slice(-12),
+      activeTaskCount: (team.tasks ?? []).filter((task) => task.lane !== 'DONE').length,
+      manual: false, now: Date.now(),
+    };
+    const decision = evaluateDiscussionTrigger(input, settings, team.memberIds, lastAutoTriggerRef.current.get(teamId));
+    if (!decision.shouldStart) return;
+    lastAutoTriggerRef.current.set(teamId, { dedupeKey: decision.dedupeKey, triggeredAt: Date.now() });
+    enqueueDiscussion(teamId, {
+      userText: content,
+      attachments,
+      participantPlan: buildParticipantPlan(team.memberIds, current.employees, content, team.tasks ?? [], decision.forcedMemberIds),
+      triggerMessageId: messageId,
+      discussionId: `discussion-${messageId}`,
+      maxRounds: settings.autoDiscussMaxRounds,
+      forcedMemberIds: decision.forcedMemberIds,
+    }, 400);
+  };
+
+  const triggerDiscussion = (teamId: string, opts?: DiscussionOpts) => {
+    const current = stateRef.current;
+    const team = current.teams.find((item) => item.id === teamId);
+    if (!team) return;
+    const settings = client.loadSettings();
+    const triggerText = opts?.userText?.trim() || '请团队协作讨论当前事项';
+    const input: DiscussionTriggerInput = {
+      teamId, messageId: opts?.triggerMessageId ?? `manual-${Date.now()}`, userText: triggerText,
+      mentions: [], hasAttachments: !!opts?.attachments?.length, recentMessages: team.chatMessages.slice(-12),
+      activeTaskCount: (team.tasks ?? []).filter((task) => task.lane !== 'DONE').length,
+      manual: true, now: Date.now(),
+    };
+    const decision = evaluateDiscussionTrigger(input, settings, team.memberIds);
+    if (!decision.shouldStart) return;
+    const discussionId = opts?.discussionId ?? `discussion-${opts?.triggerMessageId ?? opts?.task?.id ?? Date.now()}`;
+    enqueueDiscussion(teamId, {
+      ...opts,
+      discussionId,
+      participantPlan: opts?.participantPlan ?? buildParticipantPlan(team.memberIds, current.employees, opts?.userText ?? '', team.tasks ?? [], decision.forcedMemberIds),
+      forcedMemberIds: opts?.forcedMemberIds ?? decision.forcedMemberIds,
     });
   };
 

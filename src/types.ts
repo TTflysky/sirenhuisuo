@@ -53,6 +53,40 @@ export interface Skill {
 }
 export interface SkillReference { id: string; name: string; }
 
+export type DiscussionUrgency = 'low' | 'normal' | 'high' | 'critical';
+export type DiscussionTriggerSource = 'manual' | 'message' | 'task' | 'mention-followup';
+
+export interface DiscussionTriggerInput {
+  teamId: string;
+  messageId: string;
+  userText: string;
+  mentions: string[];
+  hasAttachments: boolean;
+  recentMessages: ChatMessage[];
+  activeTaskCount: number;
+  manual: boolean;
+  now: number;
+}
+
+export interface DiscussionTriggerDecision {
+  shouldStart: boolean;
+  score: number;
+  urgency: DiscussionUrgency;
+  needsCollaboration: boolean;
+  reasonCodes: string[];
+  forcedMemberIds: string[];
+  dedupeKey: string;
+  cooldownUntil: number;
+}
+
+export interface DiscussionParticipantPlan {
+  memberId: string;
+  priority: 'forced' | 'high' | 'normal';
+  relevanceScore: number;
+  reason: 'mentioned' | 'role-match' | 'keyword-match' | 'task-lane' | 'fallback';
+  maxResponses: number;
+}
+
 export interface ChatMessage {
   id: string;
   authorId: string;
@@ -60,6 +94,10 @@ export interface ChatMessage {
   content: string;
   mentions: string[];
   timestamp: number;
+  discussionId?: string;
+  discussionRound?: number;
+  triggeredBy?: DiscussionTriggerSource;
+  inReplyToMessageId?: string;
   kind?: 'text' | 'task';
   taskRef?: string;
   tokens?: number;     // 本条 AI 回复消耗的 token 数（仅模型回复有）

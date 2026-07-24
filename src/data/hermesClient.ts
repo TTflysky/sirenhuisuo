@@ -43,6 +43,10 @@ export interface AppSettings {
   apiKey?: string;    // Bearer token（向后兼容）
   model?: string;     // 模型名（向后兼容）
   autoDiscuss?: boolean; // 是否在发消息/任务后自动触发团队 AI 讨论（默认 false=手动）
+  autoDiscussMode?: 'off' | 'smart' | 'always';
+  autoDiscussMinScore?: number;
+  autoDiscussCooldownMs?: number;
+  autoDiscussMaxRounds?: number;
   autoPilot?: boolean;   // 自主模式：推荐项目后自动执行最佳项目（默认 false=手动点执行）
   assistantModelConfig?: ModelConfig; // 助理机器人的独立模型配置（员工未配模型时默认使用此配置）
   // ===== 多模型库 =====
@@ -80,7 +84,11 @@ export function getProvider(key?: string): ProviderPreset {
 export function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem(LS_SETTINGS);
-    if (raw) return JSON.parse(raw) as AppSettings;
+    if (raw) {
+      const settings = JSON.parse(raw) as AppSettings;
+      if (settings.autoDiscussMode === undefined) settings.autoDiscussMode = settings.autoDiscuss ? 'smart' : 'off';
+      return settings;
+    }
   } catch {}
   return {};
 }
