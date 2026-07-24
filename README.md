@@ -66,7 +66,12 @@
 
 ### 使用安装包
 
-安装程序生成在：
+最新安装包可从 GitHub Releases 下载：
+
+- [直接下载私人办公会所 Setup 0.5.6.exe](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.5.6/Setup.0.5.6.exe)
+- [查看 v0.5.6 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.5.6)
+
+本地构建的安装程序生成在：
 
 ```text
 release/私人办公会所 Setup 0.5.6.exe
