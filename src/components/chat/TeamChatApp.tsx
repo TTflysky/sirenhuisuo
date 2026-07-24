@@ -82,6 +82,7 @@ export default function TeamChatApp({ teamId }: Props) {
 
   const progress = state.status.progress;
   const myProgress = progress && progress.teamId === teamId ? progress : null;
+  const [progressNow, setProgressNow] = useState(Date.now());
 
   const teamMembers = (team?.memberIds ?? [])
     .map((id) => state.employees.find((e) => e.id === id))
@@ -99,6 +100,12 @@ export default function TeamChatApp({ teamId }: Props) {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [team?.chatMessages.length, myProgress?.step]);
+
+  useEffect(() => {
+    if (!myProgress) return;
+    const timer = window.setInterval(() => setProgressNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [myProgress]);
 
   if (!team) return <div style={{ padding: 20 }}>团队不存在</div>;
 
@@ -288,6 +295,7 @@ export default function TeamChatApp({ teamId }: Props) {
                   </div>
                   <div className="chat-progress-sub">
                     正在调用 <strong>{myProgress.model ?? '模型'}</strong> · 团队 {myProgress.teamName}
+                    · 已用 {Math.max(1, Math.floor((progressNow - myProgress.startedAt) / 1000))}s
                     · 预计 {Math.ceil(myProgress.estimatedMs / 1000)}s
                   </div>
                 </div>
@@ -339,14 +347,14 @@ export default function TeamChatApp({ teamId }: Props) {
 
               return (
                 <div key={msg.id} className={`msg ${isHuman ? 'human' : ''}`}>
-                  {!isHuman && (
+                  {!isHuman ? (
                     <div className="msg-meta">
                       <span className="msg-author" style={{ color: author?.statusColor ?? 'var(--text-secondary)' }}>
                         {author?.name ?? msg.authorId}
                       </span>
                       <span className="msg-time">{new Date(msg.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
-                  )}
+                  ) : <div className="msg-meta msg-human-time"><span className="msg-time">{new Date(msg.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span></div>}
                   {msg.kind === 'task' ? (
                     <div className="task-card-msg" style={isHuman ? { marginLeft: 'auto', maxWidth: '85%' } : {}}>
                       <div className="task-card-title">📋 {msg.content.replace('[新任务] ', '')}</div>

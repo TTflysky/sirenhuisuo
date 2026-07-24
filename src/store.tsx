@@ -490,11 +490,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (!team) return false;
     discussingRef.current.add(teamId);
 
-    // 预计算总步数：实际参与讨论的角色数
+    // Prefer the actual scheduled participants over generic role counts.
     const roleCount = ['pm', 'planner', 'coder', 'checker'].filter(
       (r) => team.memberIds.some((id) => stateRef.current.employees.find((e) => e.id === id)?.role === r)
     ).length;
-    const totalSteps = opts?.task ? roleCount + 1 : roleCount;
+    const scheduledMemberIds = [...new Set([
+      ...(opts?.forcedMemberIds ?? []),
+      ...(opts?.participantPlan ?? []).map((plan) => plan.memberId),
+    ])];
+    const totalSteps = Math.max(1, scheduledMemberIds.length || (opts?.task ? roleCount + 1 : roleCount));
     const startedAt = Date.now();
     const estimatedMs = totalSteps * 4000; // 每步预估 4s（API 调用）
 
@@ -562,11 +566,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             }],
           });
         },
-        onStatus() {},
+        onStatus(statusText) {
+          const emp = stateRef.current.employees.find((employee) => statusText.startsWith(employee.name));
+          if (emp) {
+            updateProgress(Math.min(totalSteps, stepCounter + 1), emp.id, emp.name, emp.role);
+            dispatch({ type: 'UPDATE_EMPLOYEE', id: emp.id, partial: { isWorking: true } });
+          }
+        },
         onDone() {
           // 清掉进度
           dispatch({ type: 'SET_PROGRESS', progress: null });
           dispatch({ type: 'SET_STATUS', partial: { demoRunning: false, activeDemoTeamId: undefined } });
+          for (const memberId of scheduledMemberIds) {
+            dispatch({ type: 'UPDATE_EMPLOYEE', id: memberId, partial: { isWorking: false } });
+          }
           // 落盘产出物：取最新 state（讨论后消息已追加）
           try {
             const cur = stateRef.current;
@@ -694,7 +707,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const turns: client.ChatTurn[] = [
         {
           role: 'system',
-          content: `${configuredPrompt ? `## 助理配置\n${configuredPrompt}\n\n` : ''}${userContext ? `${userContext}\n` : ''}你是私人办公会所的监工助理，负责监督团队进度、调度成员和理解老板的工作习惯。\n\n## 当前团队（唯一可调度范围）\n团队名称：${team.name}\n${teamRoster || '暂无成员'}\n\n先直接回应老板，再决定是否需要团队参与。${mayDelegate ? '老板已明确授权你推进团队工作；需要成员处理时，使用准确姓名格式@姓名点名并给出具体命令。对于报数、在线、职责汇报等场景，你只能派发任务，绝不能代替员工编造他们的汇报结果。你只负责拆解、分派、跟进和验收：禁止输出脚本、代码、长文正文、分镜或任何最终产物；你的回复最多 180 个汉字，仅输出任务拆分与指派。' : '老板尚未授权启动团队。禁止@任何成员、禁止分派任务；遇到项目型需求，只需简短说明判断并询问“要我现在推进并分派给成员吗？”。'} 你自己 Hermes 助理不是团队成员，绝对不能在成员名单中出现，也不能@自己。`,
+          content: `${configuredPrompt ? `## 助理配置\n${configuredPrompt}\n\n` : ''}${userContext ? `${userContext}\n` : ''}你是私人办公会所的监工助理，负责监督团队进度、调度成员和理解老板的工作习惯。\n\n## 当前团队（唯一可调度范围）\n团队名称：${team.name}\n${teamRoster || '暂无成员'}\n\n先直接回应老板，再决定是否需要团队参与。无论是否授权，监工都禁止输出脚本、代码、长文正文、分镜或任何最终产物，绝不能替成员完成工作。${mayDelegate ? '老板已明确授权你推进团队工作；需要成员处理时，使用准确姓名格式@姓名点名并给出具体命令。对于报数、在线、职责汇报等场景，你只能派发任务，绝不能代替员工编造他们的汇报结果。你只负责拆解、分派、跟进和验收；回复最多 180 个汉字，仅输出任务拆分与指派。' : '老板尚未授权启动团队。禁止@任何成员、禁止分派任务；遇到项目型需求，只需简短说明判断并询问“要我现在推进并分派给成员吗？”。'} 你自己 Hermes 助理不是团队成员，绝对不能在成员名单中出现，也不能@自己。`,
         },
         ...team.chatMessages.slice(-12).map((message) => ({
           role: message.roleId === 'human' ? 'user' as const : 'assistant' as const,
@@ -730,10 +743,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     void (async () => {
       const directMentions = mentions.filter((id) => team.memberIds.includes(id));
       const supervisorMentioned = mentions.includes('assistant');
+      const recentSupervisorPlan = team.chatMessages.slice(-6).some((message) =>
+        message.authorId === 'assistant' && /交给|分派|安排|负责|编剧|推进/.test(message.content),
+      );
+      const continuesSupervisorPlan = recentSupervisorPlan && /^(再|继续|按|那就|开始|出一)/.test(content.trim());
       // A roll-call/status request is harmless coordination and should be
       // actioned immediately by the supervisor without a second confirmation.
       const teamCheckRequested = /报数|报个数|数数|汇报.*(?:职责|职能|状态)|(?:职责|职能).*汇报|在线情况/u.test(content);
-      const mayDelegate = supervisorMentioned || directMentions.length > 0 || teamCheckRequested;
+      const mayDelegate = supervisorMentioned || directMentions.length > 0 || teamCheckRequested || continuesSupervisorPlan;
       const supervisorReply = await enqueueAssistantSupervisor(team, content, mayDelegate);
       const mentionedBySupervisor = supervisorReply
         && mayDelegate
@@ -742,13 +759,39 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // A supervisor-approved task must reach real employees even if the model
       // forgot to format its assignment as @姓名. Scope is always this team only.
       const initiallyRequestedMemberIds = [...new Set([...directMentions, ...mentionedBySupervisor])];
-      const scheduledBySupervisor = supervisorMentioned && initiallyRequestedMemberIds.length === 0
-        ? team.memberIds.filter((id) => current.employees.some((employee) => employee.id === id && employee.isOnline))
+      const creativeTask = /脚本|剧本|故事|文案|分镜|创作|写一篇|再出一篇/u.test(content);
+      const teamWorkAuthorized = supervisorMentioned || continuesSupervisorPlan;
+      const scheduledBySupervisor = teamWorkAuthorized && initiallyRequestedMemberIds.length === 0
+        ? (() => {
+          const onlineMembers = team.memberIds
+            .map((id) => current.employees.find((employee) => employee.id === id))
+            .filter((employee): employee is Employee => !!employee && employee.isOnline);
+          const specialist = creativeTask
+            ? onlineMembers.filter((employee) => /编剧|文案|创作|脚本|故事/u.test(`${employee.title} ${employee.prompt ?? ''} ${employee.soul ?? ''}`))
+            : [];
+          return (specialist.length ? specialist : onlineMembers).map((employee) => employee.id);
+        })()
         : [];
       const requestedMemberIds = [...new Set([...initiallyRequestedMemberIds, ...scheduledBySupervisor])];
       // The supervisor is the default speaker. Do not start the employee group
       // until the owner explicitly calls the supervisor to proceed or names staff.
       if (!mayDelegate) return;
+      if (requestedMemberIds.length > 0) {
+        const names = requestedMemberIds
+          .map((id) => current.employees.find((employee) => employee.id === id)?.name)
+          .filter(Boolean)
+          .join('、');
+        dispatch({
+          type: 'APPEND_CHAT',
+          teamId,
+          msgs: [{
+            id: `msg-dispatch-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            authorId: 'assistant', roleId: 'custom',
+            content: `执行已启动：已分派给 ${names}。执行进度会在顶部状态栏和成员状态中实时显示。`,
+            mentions: requestedMemberIds, timestamp: Date.now(), kind: 'text',
+          }],
+        });
+      }
       const discussionText = [content, supervisorReply].filter(Boolean).join('\n\n');
       const settings = client.loadSettings();
       const input: DiscussionTriggerInput = {

@@ -1274,6 +1274,12 @@ html, body, #root, .app-root {
   color: #a4a6ad !important;
   box-shadow: none;
 }
+:root[data-theme='dark'] .btn.btn-primary:not(:disabled) {
+  background: #0a84ff;
+  border-color: #0a84ff;
+  color: #ffffff;
+}
+:root[data-theme='dark'] .btn.btn-primary:not(:disabled):hover { background: #0074e8; }
 :root[data-theme='dark'] .connector-panel {
   background: #242529;
   border-top-color: #393a40 !important;
@@ -1293,6 +1299,7 @@ html, body, #root, .app-root {
   border-color: #4b4d55 !important;
   color: #e4e5e8 !important;
 }
+.msg-human-time { justify-content: flex-end; margin-top: 3px; }
 
 body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
 .chat-toolbar, .chat-composer, .dm-peer {
