@@ -1,4 +1,4 @@
-import type { Employee, SkillReference, TaskRun, TaskRunMemberSnapshot, TaskRunStatus, TaskRunStep, Team } from '../types';
+import type { Employee, SkillReference, TaskPlanStep, TaskRun, TaskRunMemberSnapshot, TaskRunStatus, TaskRunStep, Team } from '../types';
 
 const LS_TASK_RUNS = 'hermes_office_task_runs_v1';
 const MAX_RUNS = 120;
@@ -7,7 +7,7 @@ export function loadTaskRuns(): TaskRun[] {
   try {
     const raw = localStorage.getItem(LS_TASK_RUNS);
     const runs = raw ? JSON.parse(raw) as TaskRun[] : [];
-    return runs.map((run) => ({ ...run, steps: run.steps ?? [], memberSnapshot: run.memberSnapshot ?? [] }));
+    return runs.map((run) => ({ ...run, revisionCount: run.revisionCount ?? 0, maxRevisions: run.maxRevisions ?? 2, steps: (run.steps ?? []).map((step, index) => ({ ...step, order: step.order ?? index + 1, kind: step.kind ?? 'work', assignment: step.assignment ?? step.title, dependsOnStepIds: step.dependsOnStepIds ?? [] })), memberSnapshot: run.memberSnapshot ?? [] }));
   } catch {
     return [];
   }
@@ -17,23 +17,18 @@ export function saveTaskRuns(runs: TaskRun[]): void {
   try { localStorage.setItem(LS_TASK_RUNS, JSON.stringify(runs.slice(-MAX_RUNS))); } catch {}
 }
 
-export function createTaskRun(team: Team, employees: Employee[], request: string, employeeIds: string[], sourceMessageId?: string, skillRefs?: SkillReference[]): TaskRun {
+export function createTaskRun(team: Team, employees: Employee[], request: string, plan: TaskPlanStep[], sourceMessageId?: string, skillRefs?: SkillReference[]): TaskRun {
   const now = Date.now();
   const teamMembers = team.memberIds
     .map((id) => employees.find((employee) => employee.id === id))
     .filter((employee): employee is Employee => !!employee);
-  const selected = employeeIds.length
-    ? teamMembers.filter((employee) => employeeIds.includes(employee.id))
-    : teamMembers.filter((employee) => employee.isOnline);
   const memberSnapshot: TaskRunMemberSnapshot[] = teamMembers.map((employee) => ({
     id: employee.id, name: employee.name, title: employee.title, role: employee.role,
     prompt: employee.prompt, soul: employee.soul,
     model: employee.modelConfig?.model ?? employee.modelConfig?.refModelId,
   }));
-  const steps: TaskRunStep[] = selected.map((employee) => ({
-    id: `step-${now}-${employee.id}`,
-    employeeId: employee.id,
-    title: `${employee.name} · ${employee.title}`,
+  const steps: TaskRunStep[] = plan.map((item) => ({
+    ...item,
     status: 'queued',
     attempts: 0,
     events: [{ ts: now, type: 'status', detail: '等待执行' }],
@@ -50,6 +45,8 @@ export function createTaskRun(team: Team, employees: Employee[], request: string
     steps,
     skillRefs,
     sourceMessageId,
+    revisionCount: 0,
+    maxRevisions: 2,
   };
 }
 

@@ -1,4 +1,4 @@
-import type { Employee, Team } from '../types';
+import type { Employee, TaskPlanStep, Team } from '../types';
 
 const ROLE_TERMS: Record<string, string[]> = {
   pm: ['规划', '拆解', '协调', '管理', '需求', '方案', '安排', '项目'],
@@ -50,4 +50,35 @@ export function matchTeamMembers(team: Team, employees: Employee[], request: str
 
 export function requiresValidation(request: string): boolean {
   return DELIVERABLE_RE.test(request);
+}
+
+function isReviewer(employee: Employee): boolean {
+  return employee.role === 'checker' || /审查|审核|验收|测试|质检|校对/u.test(`${employee.title} ${employee.prompt ?? ''}`);
+}
+
+export function buildTaskPlan(team: Team, employees: Employee[], request: string, explicitIds: string[] = []): TaskPlanStep[] {
+  const selectedIds = matchTeamMembers(team, employees, request, explicitIds);
+  const selected = selectedIds.map((id) => employees.find((item) => item.id === id)).filter((item): item is Employee => !!item);
+  const ordered = [...selected.filter((item) => !isReviewer(item)), ...selected.filter(isReviewer)];
+  const stamp = Date.now();
+  const steps: TaskPlanStep[] = [];
+  for (const employee of ordered) {
+    const review = isReviewer(employee) && requiresValidation(request);
+    const previous = steps.at(-1);
+    const assignment = review
+      ? `审查本任务所有已有产出，必须实际读取前序成员提交的文件或结果。逐项检查是否满足老板原始要求。最后严格输出 REVIEW_RESULT: PASS；若不通过则输出 REVIEW_RESULT: REJECT、RESPONSIBLE: 责任员工姓名、REASON: 具体问题。`
+      : previous
+        ? `读取并继承「${previous.title}」的真实产出，在此基础上完成你负责的部分。不得只回复“收到”或描述计划，必须调用合适工具形成可交接结果。你的职责：${employee.title}。`
+        : `作为第一责任人理解老板的完整要求，先主动检索可用 Skill，再完成主要产出。不得只描述计划，必须调用合适工具形成可交接结果。你的职责：${employee.title}。`;
+    steps.push({
+      id: `step-${stamp}-${steps.length + 1}-${employee.id}`,
+      employeeId: employee.id,
+      order: steps.length + 1,
+      kind: review ? 'review' : 'work',
+      title: review ? `${employee.name} · 最终审查` : `${employee.name} · ${employee.title}`,
+      assignment,
+      dependsOnStepIds: previous ? [previous.id] : [],
+    });
+  }
+  return steps;
 }

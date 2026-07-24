@@ -6,7 +6,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   close: () => ipcRenderer.send('win:close'),
 
   // 命令执行：renderer 调用，main 进程 exec，返回 { success, stdout, stderr, exitCode, cwd }
-  execCommand: (cmd) => ipcRenderer.invoke('exec:command', cmd),
+  execCommand: (cmd, scope) => ipcRenderer.invoke('exec:command', { cmd, scope }),
   skillsList: () => ipcRenderer.invoke('skills:list'),
   skillsRead: (id) => ipcRenderer.invoke('skills:read', id),
   skillsDelete: (id) => ipcRenderer.invoke('skills:delete', id),

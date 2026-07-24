@@ -1,14 +1,18 @@
-import type { Employee, Team, ChatMessage, TeamTask, TaskLane, DiscussionParticipantPlan } from '../types';
+import type { Employee, Team, ChatMessage, TeamTask, TaskLane, DiscussionParticipantPlan, TaskRunStep, TaskPlanStep } from '../types';
 import { runAgentLoop, resolveApiBase, extractUserInsights, type ChatTurn } from '../data/hermesClient';
-import { TOOLS } from './tools';
+import { TOOLS, executeTool } from './tools';
 
 // ===== 讨论回调 =====
 export interface DiscussionHandlers {
-  onMessage: (emp: Employee, content: string, mentions: string[], tokens?: number, discussionRound?: number, inReplyToMessageId?: string) => void;
-  onToolCall: (emp: Employee, toolName: string, toolArgs: string, result: string) => void;
+  onMessage: (emp: Employee, content: string, mentions: string[], tokens?: number, discussionRound?: number, inReplyToMessageId?: string, stepId?: string) => void;
+  onToolCall: (emp: Employee, toolName: string, toolArgs: string, result: string, stepId?: string) => void;
   onTaskAdvance: (taskId: string, lane: TaskLane) => void;
   onStatus: (text: string) => void;
   onDone: () => void;
+  onStepStart?: (stepId: string, emp: Employee) => void;
+  onStepAdded?: (step: TaskPlanStep) => void;
+  onReviewDecision?: (stepId: string, approved: boolean, reason?: string, responsibleEmployeeId?: string) => void;
+  onRunFailed?: (error: string) => void;
 }
 
 export interface TeamDiscussionOptions {
@@ -22,6 +26,7 @@ export interface TeamDiscussionOptions {
   maxRounds?: number;
   forcedMemberIds?: string[];
   runId?: string;
+  runSteps?: TaskRunStep[];
 }
 
 // 角色在讨论中的职责描述（系统提示词扩展）
@@ -93,6 +98,36 @@ async function memberSpeak(
     : { role: 'user', content: `[指令] ${extraInstruction}` };
 
   try {
+    const searchArgs = JSON.stringify({ query: extraInstruction.slice(0, 240) });
+    onToolCall('search_skills', searchArgs, '');
+    const searched = await executeTool({ id: `skill-search-${Date.now()}-${emp.id}`, name: 'search_skills', args: { query: extraInstruction.slice(0, 240) }, scope: `team:${team.id}` });
+    onToolCall('search_skills', searchArgs, searched.output);
+    const firstSkillId = searched.output.match(/ID:\s*([^\n]+)/u)?.[1]?.trim();
+    let discoveredSkillContext = '';
+    if (firstSkillId) {
+      const readArgs = JSON.stringify({ id: firstSkillId });
+      onToolCall('read_skill', readArgs, '');
+      const read = await executeTool({ id: `skill-read-${Date.now()}-${emp.id}`, name: 'read_skill', args: { id: firstSkillId }, scope: `team:${team.id}` });
+      onToolCall('read_skill', readArgs, read.output);
+      if (read.success) discoveredSkillContext = read.output;
+    }
+    let handoffContext = '';
+    if (/读取并继承|审查|修订/u.test(extraInstruction)) {
+      const listArgs = JSON.stringify({ filter: '' });
+      onToolCall('list_files', listArgs, '');
+      const listed = await executeTool({ id: `handoff-list-${Date.now()}-${emp.id}`, name: 'list_files', args: { filter: '' }, scope: `team:${team.id}` });
+      onToolCall('list_files', listArgs, listed.output);
+      const filenames = [...listed.output.matchAll(/^- ([^/\n]+?) \(/gmu)].map((match) => match[1]).slice(-3);
+      const fileContents: string[] = [];
+      for (const filename of filenames) {
+        const readArgs = JSON.stringify({ path: filename });
+        onToolCall('read_file', readArgs, '');
+        const read = await executeTool({ id: `handoff-read-${Date.now()}-${emp.id}-${filename}`, name: 'read_file', args: { path: filename }, scope: `team:${team.id}` });
+        onToolCall('read_file', readArgs, read.output);
+        if (read.success) fileContents.push(read.output);
+      }
+      handoffContext = `前序成员的团队工作区清单：\n${listed.output}\n\n已读取的最新产出：\n${fileContents.join('\n\n') || '暂无可读文件，必须要求前序步骤形成真实产出。'}`;
+    }
     const r = await runAgentLoop({
       turns: [
         { role: 'system', content: system },
@@ -103,10 +138,13 @@ async function memberSpeak(
       scene: 'team',
       label: `${team.name}/${emp.name}`,
       modelConfig: emp.modelConfig,
-      extraSystemContext: [emp.soul, skillContext].filter(Boolean).join('\n\n'),
+      extraSystemContext: [emp.soul, skillContext, discoveredSkillContext, handoffContext].filter(Boolean).join('\n\n'),
       scope: `team:${team.id}` as any,
       onToolCall(name, args) {
         onToolCall(name, args, '');
+      },
+      onToolResult(name, args, result) {
+        onToolCall(name, args, result);
       },
       shouldStop,
     });
@@ -137,10 +175,7 @@ export async function runTeamDiscussion(
   const task = opts.task;
   const plannedMembers = opts.participantPlan?.map((plan) => employees.find((employee) => employee.id === plan.memberId)).filter((employee): employee is Employee => !!employee);
   const participants = plannedMembers?.length ? plannedMembers : (['pm', 'planner', 'coder', 'checker'] as const).map((role) => memberByRole(team, employees, role)).filter((employee): employee is Employee => !!employee);
-  const responseCounts = new Map<string, number>();
-  const responded = new Set<string>();
   const contextMessages: ChatMessage[] = [...team.chatMessages];
-  const planById = new Map((opts.participantPlan ?? []).map((plan) => [plan.memberId, plan]));
   const pending = [...new Set([
     ...(opts.forcedMemberIds ?? []),
     ...(opts.participantPlan ?? []).map((plan) => plan.memberId),
@@ -152,32 +187,41 @@ export async function runTeamDiscussion(
   };
 
   let round = 0;
-  const queue = pending.length > 0 ? pending : participants.map((employee) => employee.id);
-  while (queue.length > 0 && round < maxRounds) {
+  let revisionCount = 0;
+  let runFailed = false;
+  const maxRevisions = 2;
+  const fallbackSteps: TaskPlanStep[] = (pending.length > 0 ? pending : participants.map((employee) => employee.id)).map((employeeId, index) => ({
+    id: `legacy-step-${Date.now()}-${index}-${employeeId}`, employeeId, order: index + 1, kind: 'work',
+    title: employees.find((item) => item.id === employeeId)?.name ?? '团队成员',
+    assignment: '直接完成老板交代的任务并提交真实结果。', dependsOnStepIds: [],
+  }));
+  const queue: TaskPlanStep[] = (opts.runSteps?.length ? opts.runSteps : fallbackSteps).map((step) => ({
+    id: step.id, employeeId: step.employeeId, order: step.order, kind: step.kind, title: step.title,
+    assignment: step.assignment, dependsOnStepIds: step.dependsOnStepIds, revisionOfStepId: step.revisionOfStepId,
+  }));
+  const completedWorkSteps: TaskPlanStep[] = [];
+  const executionLimit = Math.max(maxRounds, queue.length) + maxRevisions * 2;
+  while (queue.length > 0 && round < executionLimit) {
     if (control?.shouldStop?.()) break;
-    const memberId = queue.shift()!;
-    const emp = employees.find((employee) => employee.id === memberId) ?? participants.find((employee) => employee.id === memberId);
+    const step = queue.shift()!;
+    const emp = employees.find((employee) => employee.id === step.employeeId) ?? participants.find((employee) => employee.id === step.employeeId);
     if (!emp) continue;
     const role = emp.role;
-    const maxResponses = planById.get(emp.id)?.maxResponses ?? 1;
-    if ((responseCounts.get(emp.id) ?? 0) >= maxResponses) continue;
 
+    handlers.onStepStart?.(step.id, emp);
     handlers.onStatus(`${emp.name} 正在思考…`);
     let content = '';
     let tokens: number | undefined;
 
     if (useAI) {
-      const assignment = opts.forcedMemberIds?.includes(emp.id)
-        ? `监工已经明确点名由你处理。你必须直接完成或回答这条命令，不要只回复“在线”“收到”或介绍自己的状态。`
-        : '';
+      const assignment = `${step.assignment}\n\n执行规则：开始工作前必须先调用 search_skills 检索当前任务可用技能；找到合适技能后调用 read_skill 阅读，再使用文件、搜索或命令工具完成实际工作。禁止只口头描述安排。`;
       const r = await memberSpeak(emp, team, employees, contextMessages,
         task
           ? `团队接到新任务「${task.title}」${task.description ? `：${task.description}` : ''}。如有必要，可调工具产出文件或用 web_search 查资料。`
-          : `${assignment}\n老板与监工在群里的完整指令：\n「${opts.userText ?? ''}」\n如需产出或查资料可调工具。`,
-        (toolName, toolArgs) => {
-          // 先发工具调用消息
+          : `${assignment}\n老板的原始要求：\n「${opts.userText ?? ''}」`,
+        (toolName, toolArgs, result) => {
           const argsStr = toolArgs ? (toolArgs.length > 80 ? toolArgs.slice(0, 80) + '…' : toolArgs) : '';
-          handlers.onToolCall(emp, toolName, argsStr, '🔄 执行中…');
+          handlers.onToolCall(emp, toolName, argsStr, result || '🔄 执行中…', step.id);
         },
         // 仅首轮（PM）携带用户上传的图片附件
         role === 'pm' ? opts.attachments : undefined,
@@ -188,7 +232,9 @@ export async function runTeamDiscussion(
       tokens = r.tokens;
     } else {
       await sleep(700 + Math.random() * 600);
-      content = pick(FALLBACK_LINES[role] ?? FALLBACK_LINES.custom);
+      content = step.kind === 'review'
+        ? '已检查当前产出，结构与要求一致。\nREVIEW_RESULT: PASS'
+        : pick(FALLBACK_LINES[role] ?? FALLBACK_LINES.custom);
     }
 
     const mentions = parseMentionIds(content, team, employees);
@@ -202,12 +248,41 @@ export async function runTeamDiscussion(
       timestamp: Date.now(),
       discussionRound: round,
     });
-    handlers.onMessage(emp, content, mentions, tokens, round, opts.triggerMessageId);
-    responseCounts.set(emp.id, (responseCounts.get(emp.id) ?? 0) + 1);
-    responded.add(emp.id);
-    for (const mentionedId of mentions) {
-      const limit = planById.get(mentionedId)?.maxResponses ?? 1;
-      if ((!responded.has(mentionedId) || (responseCounts.get(mentionedId) ?? 0) < limit) && !queue.includes(mentionedId)) queue.push(mentionedId);
+    handlers.onMessage(emp, content, mentions, tokens, round, opts.triggerMessageId, step.id);
+
+    if (step.kind !== 'review') completedWorkSteps.push(step);
+    if (step.kind === 'review') {
+      const rejected = /REVIEW_RESULT\s*:\s*REJECT|验收不通过|退回修改/iu.test(content);
+      const passed = !rejected && /REVIEW_RESULT\s*:\s*PASS|验收通过/iu.test(content);
+      const reason = content.match(/REASON\s*:\s*([^\n]+)/iu)?.[1]?.trim() ?? (passed ? '验收通过' : '审查未给出明确通过结论');
+      const responsibleName = content.match(/RESPONSIBLE\s*:\s*([^\n]+)/iu)?.[1]?.trim();
+      const responsibleEmployee = responsibleName ? employees.find((item) => responsibleName.includes(item.name)) : undefined;
+      const targetStep = [...completedWorkSteps].reverse().find((item) => item.employeeId === responsibleEmployee?.id)
+        ?? [...completedWorkSteps].reverse().find((item) => item.kind !== 'review' && item.employeeId !== emp.id);
+      const targetEmployeeId = responsibleEmployee?.id ?? targetStep?.employeeId;
+      handlers.onReviewDecision?.(step.id, passed, reason, targetEmployeeId);
+      if (!passed) {
+        if (!targetEmployeeId || revisionCount >= maxRevisions) {
+          runFailed = true;
+          handlers.onRunFailed?.(revisionCount >= maxRevisions ? `审查连续退回 ${maxRevisions} 次，任务已暂停等待人工处理。` : '审查未通过，但无法定位责任步骤。');
+          break;
+        }
+        revisionCount += 1;
+        const targetEmployee = employees.find((item) => item.id === targetEmployeeId)!;
+        const revisionStep: TaskPlanStep = {
+          id: `revision-${Date.now()}-${revisionCount}-${targetEmployeeId}`, employeeId: targetEmployeeId,
+          order: round + 1, kind: 'revision', title: `${targetEmployee.name} · 第 ${revisionCount} 次修订`,
+          assignment: `审查未通过。问题：${reason}。读取你之前的产出和审查意见，只修改责任范围内的问题并重新提交，不要重做无关步骤。`,
+          dependsOnStepIds: [step.id], revisionOfStepId: targetStep?.id,
+        };
+        const reviewAgain: TaskPlanStep = {
+          ...step, id: `review-${Date.now()}-${revisionCount}-${emp.id}`, order: round + 2,
+          title: `${emp.name} · 修订后复审`, dependsOnStepIds: [revisionStep.id],
+        };
+        handlers.onStepAdded?.(revisionStep);
+        handlers.onStepAdded?.(reviewAgain);
+        queue.unshift(revisionStep, reviewAgain);
+      }
     }
 
     if (task) {
@@ -218,7 +293,7 @@ export async function runTeamDiscussion(
   }
 
   // 任务收尾
-  if (task && !control?.shouldStop?.()) {
+  if (task && !runFailed && !control?.shouldStop?.()) {
     const pm = memberByRole(team, employees, 'pm');
     if (pm) {
       handlers.onStatus(`${pm.name} 验收中…`);

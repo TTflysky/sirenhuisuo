@@ -9,6 +9,7 @@ import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
 import { copyToClipboard, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
 import SkillMentionInput, { resolveSkillContext } from '../skills/SkillMentionInput';
+import SkillPickerButton from '../skills/SkillPickerButton';
 import type { SkillReference } from '../../types';
 import { linkify } from '../../utils/linkify';
 import { fileToAttachment, attachmentsFromClipboard, formatFileSize } from '../../utils/attachments';
@@ -284,7 +285,7 @@ export default function TeamChatApp({ teamId }: Props) {
           <div className="team-chat-body">
             <aside className="team-member-sidebar" aria-label="团队成员列表">
               <button key={supervisorMention.id} className="team-member-item team-supervisor-item" onClick={() => insertMention(supervisorMention)} title={`@${supervisorMention.name}`}><SupervisorAvatar size={34} /><span className="team-member-info"><strong>{supervisorMention.name}</strong><small>{supervisorMention.title}</small><small className="is-working">随时可联系</small></span></button>
-              {teamMembers.map((emp) => <button key={emp.id} className="team-member-item" onClick={() => insertMention(emp)} title={`@${emp.name}`}><AgentAvatar employee={emp} size={34} /><span className="team-member-info"><strong>{emp.name}</strong><small>{emp.title}</small><small className={emp.isWorking ? 'is-working' : ''}>{emp.isWorking ? '工作中' : emp.isOnline ? '在线' : '离线'}</small></span></button>)}
+              {teamMembers.map((emp) => <button key={emp.id} className="team-member-item" onClick={() => insertMention(emp)} title={`@${emp.name}`}><span className="team-member-avatar"><AgentAvatar employee={emp} size={34} /><span className={`team-member-status ${!emp.isOnline ? 'offline' : emp.isWorking ? 'working' : 'idle'}`} /></span><span className="team-member-info"><strong>{emp.name}</strong><small style={{ color: emp.statusColor }}>{emp.title}</small><small className={emp.isWorking ? 'is-working' : ''}>{emp.isWorking ? '工作中' : emp.isOnline ? '在线' : '离线'}</small></span></button>)}
             </aside>
             <div className="team-chat-content">
           {/* 实时进度条（讨论中） */}
@@ -328,7 +329,8 @@ export default function TeamChatApp({ teamId }: Props) {
                   {!!run.skillRefs?.length && <div className="task-run-skills"><strong>Skills</strong>{run.skillRefs.map((skill) => <span key={skill.id}>{skill.name}</span>)}</div>}
                   {run.steps.map((step) => {
                     const emp = state.employees.find((item) => item.id === step.employeeId);
-                    return <div key={step.id} className="task-run-step"><div><strong>{emp?.name ?? step.title}</strong><span className={`task-step-status status-${step.status}`}>{step.status}</span><small>尝试 {step.attempts} 次</small></div>{step.lastError && <p className="task-step-error">{step.lastError}</p>}{step.events.slice(-4).map((event, index) => <p key={`${event.ts}-${index}`} className="task-step-event">{new Date(event.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} {event.detail}</p>)}</div>;
+                    const model = run.memberSnapshot.find((item) => item.id === step.employeeId)?.model;
+                    return <div key={step.id} className="task-run-step"><div><span className="task-step-order">{step.order}</span><strong>{emp?.name ?? step.title}</strong><span className={`task-step-kind kind-${step.kind}`}>{step.kind === 'review' ? '审查' : step.kind === 'revision' ? '修订' : '执行'}</span><span className={`task-step-status status-${step.status}`}>{step.status}</span><small>{model || '默认模型'} · 尝试 {step.attempts} 次</small></div><p className="task-step-assignment">{step.assignment}</p>{step.reviewDecision && <p className={`task-review-decision ${step.reviewDecision}`}>{step.reviewDecision === 'pass' ? '审查通过' : `退回：${step.reviewReason ?? '需要修改'}`}</p>}{step.lastError && <p className="task-step-error">{step.lastError}</p>}{step.events.slice(-6).map((event, index) => <p key={`${event.ts}-${index}`} className="task-step-event">{new Date(event.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} {event.detail}</p>)}</div>;
                   })}
                   <div className="task-run-actions">{active && <button className="btn btn-sm" onClick={() => pauseTaskRun(run.id)}>暂停</button>}{(run.status === 'paused' || run.status === 'failed') && <button className="btn btn-sm btn-primary" onClick={() => resumeTaskRun(run.id)}>继续执行</button>}</div>
                 </div>}
@@ -373,6 +375,8 @@ export default function TeamChatApp({ teamId }: Props) {
               const isHuman = msg.roleId === 'human';
               const isExecution = msg.kind === 'execution';
               const isFailure = /^⚠️|无法响应|执行失败|已手动停止/u.test(msg.content);
+              const toolName = isExecution ? msg.content.match(/`([^`]+)`/u)?.[1] : undefined;
+              const toolSummary = toolName === 'search_skills' ? '正在检索技能库' : toolName === 'read_skill' ? '正在读取技能说明' : toolName ? `正在调用 ${toolName}` : '正在调用工具';
 
               return (
                 <div key={msg.id} className={`msg ${isHuman ? 'human' : ''}`}>
@@ -395,7 +399,7 @@ export default function TeamChatApp({ teamId }: Props) {
                       })}
                     >
                       <span className="execution-event-icon">...</span>
-                      <span className="execution-event-summary">{author?.name ?? '成员'} 正在调用工具</span>
+                      <span className="execution-event-summary">{author?.name ?? '成员'} {toolSummary}</span>
                       <span className="execution-event-action">{expandedExecutionIds.has(msg.id) ? '收起' : '查看'}</span>
                       {expandedExecutionIds.has(msg.id) && <pre className="execution-event-detail">{msg.content}</pre>}
                     </button>
@@ -484,6 +488,7 @@ export default function TeamChatApp({ teamId }: Props) {
             <button className="btn btn-sm" onClick={handleCopyAll} title="复制全部对话">📋</button>
             <button className="btn btn-sm" onClick={handleExport} title="导出为 markdown">📤</button>
             <button className="btn btn-sm" onClick={() => fileInputRef.current?.click()} title="上传文件/图片">📎</button>
+            <SkillPickerButton selected={skillRefs} onSelectedChange={setSkillRefs} />
             <button
               className="btn btn-sm"
               onClick={() => triggerDiscussion(teamId)}

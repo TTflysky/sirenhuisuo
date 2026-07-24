@@ -1,15 +1,17 @@
 import type { AvatarFrameConfig } from '../../types';
 import { AVATAR_FRAME_PRESETS, resolveAvatarFrame } from '../../data/avatarFrames';
 import { ColorPicker } from 'antd';
+import { generateDistinctEmployeeColor } from '../../data/employeeColors';
 
 interface Props {
   statusColor: string;
   onStatusColorChange: (color: string) => void;
   frame: AvatarFrameConfig;
   onFrameChange: (frame: AvatarFrameConfig) => void;
+  usedColors?: string[];
 }
 
-export default function EmployeeAppearanceFields({ statusColor, onStatusColorChange, frame, onFrameChange }: Props) {
+export default function EmployeeAppearanceFields({ statusColor, onStatusColorChange, frame, onFrameChange, usedColors = [] }: Props) {
   const current = resolveAvatarFrame(frame);
   return <>
     <div className="form-group">
@@ -18,6 +20,7 @@ export default function EmployeeAppearanceFields({ statusColor, onStatusColorCha
         <ColorPicker value={statusColor} showText onChangeComplete={(color) => onStatusColorChange(color.toHexString())} />
         <span className="employee-color-preview" style={{ background: statusColor }} />
         <code>{statusColor.toUpperCase()}</code>
+        <button type="button" className="btn btn-sm" onClick={() => onStatusColorChange(generateDistinctEmployeeColor(usedColors))}>随机不重复</button>
       </div>
     </div>
     <div className="form-group">

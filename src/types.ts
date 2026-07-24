@@ -139,6 +139,18 @@ export interface AvatarFrameConfig {
 // ===== 可恢复任务运行（v0.4 调度内核） =====
 export type TaskRunStatus = 'queued' | 'running' | 'paused' | 'failed' | 'completed';
 export type TaskStepStatus = 'queued' | 'running' | 'paused' | 'failed' | 'completed';
+export type TaskStepKind = 'work' | 'review' | 'revision';
+
+export interface TaskPlanStep {
+  id: string;
+  employeeId: string;
+  order: number;
+  kind: TaskStepKind;
+  title: string;
+  assignment: string;
+  dependsOnStepIds: string[];
+  revisionOfStepId?: string;
+}
 
 export interface TaskRunMemberSnapshot {
   id: string;
@@ -154,6 +166,14 @@ export interface TaskRunStep {
   id: string;
   employeeId: string;
   title: string;
+  order: number;
+  kind: TaskStepKind;
+  assignment: string;
+  dependsOnStepIds: string[];
+  revisionOfStepId?: string;
+  reviewDecision?: 'pass' | 'reject';
+  reviewReason?: string;
+  responsibleEmployeeId?: string;
   status: TaskStepStatus;
   attempts: number;
   startedAt?: number;
@@ -175,6 +195,8 @@ export interface TaskRun {
   skillRefs?: SkillReference[];
   sourceMessageId?: string;
   lastError?: string;
+  revisionCount?: number;
+  maxRevisions?: number;
 }
 
 // ===== 应用状态 =====

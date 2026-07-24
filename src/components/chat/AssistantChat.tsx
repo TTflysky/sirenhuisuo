@@ -8,6 +8,7 @@ import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
 import { copyToClipboard, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
 import SkillMentionInput, { resolveSkillContext } from '../skills/SkillMentionInput';
+import SkillPickerButton from '../skills/SkillPickerButton';
 import type { SkillReference } from '../../types';
 import { linkify } from '../../utils/linkify';
 import { fileToAttachment, attachmentsFromClipboard, formatFileSize } from '../../utils/attachments';
@@ -329,6 +330,7 @@ export default function AssistantChat() {
                 📁{showOutputs ? ' ✕' : ''}
               </button>
               <button className="btn btn-sm" onClick={() => fileInputRef.current?.click()} title="上传文件/图片">📎</button>
+              <SkillPickerButton selected={skillRefs} onSelectedChange={setSkillRefs} disabled={busy} />
               <div style={{ flex: 1 }} />
               <span />
             </div>

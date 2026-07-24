@@ -29,7 +29,7 @@ import { findFreeStation } from './data/hermesClient';
 import { addOutput, buildDiscussionOutput, buildTaskOutput } from './data/outputs';
 import { sendBus, onBus, BUS_CHANNELS } from './ipcBus';
 import { createTaskRun, saveTaskRuns, updateTaskRun } from './data/taskRuns';
-import { matchTeamMembers } from './engine/taskMatcher';
+import { buildTaskPlan, matchTeamMembers } from './engine/taskMatcher';
 import { buildSkillContext, listSkills, matchSkills } from './data/skills';
 
 // ===== Action =====
@@ -521,7 +521,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       ...(opts?.forcedMemberIds ?? []),
       ...(opts?.participantPlan ?? []).map((plan) => plan.memberId),
     ])];
-    const totalSteps = Math.max(1, scheduledMemberIds.length || (opts?.task ? roleCount + 1 : roleCount));
+    let totalSteps = Math.max(1, opts?.runSteps?.length || scheduledMemberIds.length || (opts?.task ? roleCount + 1 : roleCount));
     const startedAt = Date.now();
     const estimatedMs = totalSteps * 4000; // 每步预估 4s（API 调用）
 
@@ -548,10 +548,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'SET_STATUS', partial: { demoRunning: true, activeDemoTeamId: teamId } });
 
     let stepCounter = 0;
+    let liveRun = opts?.runId ? stateRef.current.taskRuns.find((item) => item.id === opts.runId) : undefined;
     const updateRun = (mutate: (run: TaskRun) => void) => {
-      if (!opts?.runId) return;
-      const run = stateRef.current.taskRuns.find((item) => item.id === opts.runId);
-      if (run) dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, mutate) });
+      if (!liveRun) return;
+      liveRun = updateTaskRun(liveRun, mutate);
+      dispatch({ type: 'UPDATE_TASK_RUN', run: liveRun });
     };
     updateRun((run) => { run.status = 'running'; run.lastError = undefined; });
     Promise.resolve().then(() => runTeamDiscussion(
@@ -559,7 +560,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       stateRef.current.employees,
       opts ?? {},
       {
-        onMessage(emp, content, mentions, tokens, discussionRound, inReplyToMessageId) {
+        onMessage(emp, content, mentions, tokens, discussionRound, inReplyToMessageId, stepId) {
           stepCounter += 1;
           const s = client.loadSettings();
           updateProgress(stepCounter, emp.id, emp.name, emp.role, s.model ?? undefined);
@@ -579,7 +580,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           };
           dispatch({ type: 'APPEND_CHAT', teamId, msgs: [msg] });
           updateRun((run) => {
-            const step = run.steps.find((item) => item.employeeId === emp.id);
+            const step = run.steps.find((item) => item.id === stepId) ?? run.steps.find((item) => item.employeeId === emp.id && item.status === 'running');
             if (!step) return;
             step.status = /^⚠️|无法响应|执行失败/u.test(content) ? 'failed' : 'completed';
             step.completedAt = Date.now();
@@ -590,7 +591,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         onTaskAdvance(taskId, lane) {
           dispatch({ type: 'ADVANCE_TASK', teamId, taskId, lane });
         },
-        onToolCall(emp, toolName, toolArgs, result) {
+        onToolCall(emp, toolName, toolArgs, result, stepId) {
           // ⚠️ onToolCall 在工具执行前回调 arg=调用参数，执行后回调 arg=执行中。工具执行由 agentLoop 异步完成，结果在后续 onMessage 中体现。
           const toolMsg = `🔧 **${emp.name}** 调用工具 **\`${toolName}\`**(${toolArgs || ''})\n⟳ ${result}`;
           dispatch({
@@ -603,8 +604,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             }],
           });
           updateRun((run) => {
-            const step = run.steps.find((item) => item.employeeId === emp.id);
-            if (step) step.events.push({ ts: Date.now(), type: 'tool', detail: `${toolName} ${toolArgs}`.slice(0, 220) });
+            const step = run.steps.find((item) => item.id === stepId) ?? run.steps.find((item) => item.employeeId === emp.id && item.status === 'running');
+            if (step) step.events.push({ ts: Date.now(), type: 'tool', detail: `${toolName} ${toolArgs}${result && result !== '🔄 执行中…' ? ` → ${result}` : ''}`.slice(0, 360) });
           });
         },
         onStatus(statusText) {
@@ -612,14 +613,43 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (emp) {
             updateProgress(Math.min(totalSteps, stepCounter + 1), emp.id, emp.name, emp.role);
             dispatch({ type: 'UPDATE_EMPLOYEE', id: emp.id, partial: { isWorking: true } });
-            updateRun((run) => {
-              const step = run.steps.find((item) => item.employeeId === emp.id);
-              if (step && step.status === 'queued') {
-                step.status = 'running'; step.startedAt = Date.now(); step.attempts += 1;
-                step.events.push({ ts: Date.now(), type: 'status', detail: '正在执行' });
-              }
-            });
           }
+        },
+        onStepStart(stepId, emp) {
+          updateProgress(Math.min(totalSteps, stepCounter + 1), emp.id, emp.name, emp.role, emp.modelConfig?.model ?? emp.modelConfig?.refModelId);
+          dispatch({ type: 'UPDATE_EMPLOYEE', id: emp.id, partial: { isWorking: true } });
+          updateRun((run) => {
+            const step = run.steps.find((item) => item.id === stepId);
+            if (step) {
+              step.status = 'running'; step.startedAt = Date.now(); step.attempts += 1;
+              step.events.push({ ts: Date.now(), type: 'status', detail: `开始第 ${step.order} 步：${step.assignment}` });
+            }
+          });
+        },
+        onStepAdded(step) {
+          totalSteps += 1;
+          updateRun((run) => {
+            if (run.steps.some((item) => item.id === step.id)) return;
+            run.steps.push({ ...step, status: 'queued', attempts: 0, events: [{ ts: Date.now(), type: 'status', detail: '审查退回后新增步骤' }] });
+            run.revisionCount = (run.revisionCount ?? 0) + (step.kind === 'revision' ? 1 : 0);
+          });
+        },
+        onReviewDecision(stepId, approved, reason, responsibleEmployeeId) {
+          updateRun((run) => {
+            const step = run.steps.find((item) => item.id === stepId);
+            if (!step) return;
+            step.reviewDecision = approved ? 'pass' : 'reject';
+            step.reviewReason = reason;
+            step.responsibleEmployeeId = responsibleEmployeeId;
+            step.events.push({ ts: Date.now(), type: approved ? 'result' : 'error', detail: approved ? '审查通过' : `审查退回：${reason ?? '未说明原因'}` });
+          });
+        },
+        onRunFailed(error) {
+          updateRun((run) => {
+            run.status = 'failed'; run.lastError = error;
+            const activeReview = [...run.steps].reverse().find((step) => step.kind === 'review' && step.reviewDecision === 'reject');
+            if (activeReview) { activeReview.status = 'failed'; activeReview.lastError = error; }
+          });
         },
         onDone() {
           // 清掉进度
@@ -649,7 +679,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }
           updateRun((run) => {
             const paused = pausedRunIdsRef.current.has(run.id);
-            const hasFailed = run.steps.some((step) => step.status === 'failed');
+            const hasFailed = run.steps.some((step) => step.status === 'failed') || !!run.lastError;
             const hasUnfinished = run.steps.some((step) => step.status !== 'completed' && step.status !== 'failed');
             run.status = paused ? 'paused' : hasFailed || hasUnfinished ? 'failed' : 'completed';
             if (!paused && hasUnfinished) {
@@ -673,6 +703,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       discussingRef.current.delete(teamId);
       const scheduler = schedulerRef.current.get(teamId);
       if (scheduler) {
+        const completedKey = opts?.discussionId ?? opts?.triggerMessageId ?? opts?.task?.id;
+        if (completedKey) scheduler.keys.delete(completedKey);
         scheduler.running = false;
         const queued = scheduler.queued;
         scheduler.queued = undefined;
@@ -815,15 +847,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const current = stateRef.current;
     const team = current.teams.find((item) => item.id === teamId);
     if (!team) return;
-    const selectedIds = matchTeamMembers(team, current.employees, request, employeeIds);
+    const plan = buildTaskPlan(team, current.employees, request, employeeIds);
     const skillRefs = explicitSkillRefs.length ? explicitSkillRefs : await matchSkills(request);
     const skillContext = await buildSkillContext(skillRefs);
-    const run = createTaskRun(team, current.employees, request, selectedIds, sourceMessageId, skillRefs);
+    const run = createTaskRun(team, current.employees, request, plan, sourceMessageId, skillRefs);
     if (!run.steps.length) return;
     dispatch({ type: 'CREATE_TASK_RUN', run });
     enqueueDiscussion(teamId, {
       userText: request, attachments, triggerMessageId: sourceMessageId, discussionId: run.id,
-      forcedMemberIds: run.steps.map((step) => step.employeeId), maxRounds: run.steps.length, runId: run.id, extraSystemContext: skillContext,
+      forcedMemberIds: run.steps.map((step) => step.employeeId), runSteps: run.steps, maxRounds: run.steps.length, runId: run.id, extraSystemContext: skillContext,
     }, 120);
   };
 
@@ -839,13 +871,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     pausedRunIdsRef.current.delete(runId);
     const run = stateRef.current.taskRuns.find((item) => item.id === runId);
     if (!run) return;
-    const pending = run.steps.filter((step) => step.status === 'paused' || step.status === 'failed' || step.status === 'queued').map((step) => step.employeeId);
-    if (!pending.length) return;
+    const pendingSteps = run.steps.filter((step) => step.status === 'paused' || step.status === 'failed' || step.status === 'queued');
+    const pending = pendingSteps.map((step) => step.employeeId);
+    const pendingStepIds = new Set(pendingSteps.map((step) => step.id));
+    if (!pendingSteps.length) return;
     dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
       next.status = 'queued'; next.lastError = undefined;
-      next.steps.forEach((step) => { if (pending.includes(step.employeeId)) step.status = 'queued'; });
+      next.steps.forEach((step) => { if (pendingStepIds.has(step.id)) step.status = 'queued'; });
     }) });
-    void buildSkillContext(run.skillRefs ?? []).then((skillContext) => enqueueDiscussion(run.teamId, { userText: run.request, triggerMessageId: run.sourceMessageId, discussionId: run.id, forcedMemberIds: pending, maxRounds: pending.length, runId, extraSystemContext: skillContext }, 50));
+    void buildSkillContext(run.skillRefs ?? []).then((skillContext) => enqueueDiscussion(run.teamId, { userText: run.request, triggerMessageId: run.sourceMessageId, discussionId: run.id, forcedMemberIds: pending, runSteps: pendingSteps, maxRounds: pendingSteps.length, runId, extraSystemContext: skillContext }, 50));
   };
 
   const enqueueAutoDiscussion = (teamId: string, messageId: string, content: string, mentions: string[], attachments?: import('./data/hermesClient').Attachment[], skillRefs: import('./types').SkillReference[] = []) => {
@@ -866,23 +900,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // A roll-call/status request is harmless coordination and should be
       // actioned immediately by the supervisor without a second confirmation.
       const teamCheckRequested = /报数|报个数|数数|汇报.*(?:职责|职能|状态)|(?:职责|职能).*汇报|在线情况/u.test(content);
-      const actionableRequest = /帮|请|安排|制作|写|生成|开发|设计|分析|优化|修复|检查|审核|测试|整理|调研|创建|完成|执行|做|出一份|各位/u.test(content);
+      const actionableRequest = /帮|请|安排|制作|起草|重写|改写|重新|写|生成|开发|设计|分析|优化|修复|检查|审核|测试|整理|调研|创建|完成|执行|做|出一份|产出|输出|脚本|剧本|文案|方案|报告|各位/u.test(content);
       const mayDelegate = supervisorMentioned || directMentions.length > 0 || teamCheckRequested || continuesSupervisorPlan || actionableRequest;
-      const supervisorReply = await enqueueAssistantSupervisor(team, content, mayDelegate);
       const requestedMemberIds = mayDelegate ? matchTeamMembers(team, current.employees, content, directMentions) : [];
+      const supervisorReply = await enqueueAssistantSupervisor(team, content, mayDelegate);
       if (!mayDelegate) return;
       if (requestedMemberIds.length > 0) {
-        const names = requestedMemberIds
-          .map((id) => current.employees.find((employee) => employee.id === id)?.name)
-          .filter(Boolean)
-          .join('、');
+        const planned = buildTaskPlan(team, current.employees, content, requestedMemberIds);
+        const sequence = planned.map((step) => `${step.order}. ${step.title}`).join(' → ');
         dispatch({
           type: 'APPEND_CHAT',
           teamId,
           msgs: [{
             id: `msg-dispatch-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             authorId: 'assistant', roleId: 'custom',
-            content: `执行已启动：已分派给 ${names}。执行进度会在顶部状态栏和成员状态中实时显示。`,
+            content: `执行计划已启动：${sequence}。每一步完成后自动交接；审查不通过时只退回责任步骤修改。`,
             mentions: requestedMemberIds, timestamp: Date.now(), kind: 'text',
           }],
         });

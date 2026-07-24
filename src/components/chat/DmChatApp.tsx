@@ -1,21 +1,55 @@
 import { useState, useRef, useEffect } from 'react';
+import { ReloadOutlined, SettingOutlined, CloseOutlined } from '@ant-design/icons';
 import type { ChatMessage } from '../../types';
 import { useStore } from '../../store';
-import { loadDm, appendDm, chatCompletion, resolveApiBase, extractUserInsights, type ChatTurn, type Attachment } from '../../data/hermesClient';
+import { loadDm, appendDm, runAgentLoop, resolveApiBase, extractUserInsights, type ChatTurn, type Attachment } from '../../data/hermesClient';
 import AgentAvatar from '../office/AgentAvatar';
 import { addOutput } from '../../data/outputs';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
 import { copyToClipboard, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
 import SkillMentionInput, { resolveSkillContext } from '../skills/SkillMentionInput';
+import SkillPickerButton from '../skills/SkillPickerButton';
 import type { SkillReference } from '../../types';
 import { linkify } from '../../utils/linkify';
 import {
   fileToAttachment, attachmentsFromClipboard, formatFileSize,
 } from '../../utils/attachments';
+import { TOOLS } from '../../engine/tools';
 
 interface Props {
   empId: string;
+}
+
+interface DmRetrySettings { autoRetry: boolean; intervalSeconds: number; maxAttempts: number }
+interface DmRetryJob {
+  id: string;
+  userText: string;
+  attachments: Attachment[];
+  skillContext: string;
+  history: ChatTurn[];
+  attempt: number;
+  status: 'waiting' | 'failed';
+  nextRetryAt?: number;
+  lastError: string;
+}
+
+const DM_RETRY_SETTINGS_KEY = 'hermes_office_dm_retry_settings_v1';
+const retryJobKey = (empId: string) => `hermes_office_dm_retry_job_v1_${empId}`;
+const defaultRetrySettings: DmRetrySettings = { autoRetry: true, intervalSeconds: 10, maxAttempts: 5 };
+function loadRetrySettings(): DmRetrySettings {
+  try { return { ...defaultRetrySettings, ...JSON.parse(localStorage.getItem(DM_RETRY_SETTINGS_KEY) ?? '{}') }; } catch { return defaultRetrySettings; }
+}
+function loadRetryJob(empId: string): DmRetryJob | null {
+  try {
+    const raw = localStorage.getItem(retryJobKey(empId));
+    if (!raw) return null;
+    const job = JSON.parse(raw) as DmRetryJob;
+    return job.status === 'waiting' && !job.nextRetryAt ? { ...job, status: 'failed' } : job;
+  } catch { return null; }
+}
+function saveRetryJob(empId: string, job: DmRetryJob | null) {
+  try { if (job) localStorage.setItem(retryJobKey(empId), JSON.stringify(job)); else localStorage.removeItem(retryJobKey(empId)); } catch {}
 }
 
 // 本地剧本回落（无 API 或调用失败时用）
@@ -60,6 +94,11 @@ export default function DmChatApp({ empId }: Props) {
   const [showOutputs, setShowOutputs] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [skillRefs, setSkillRefs] = useState<SkillReference[]>([]);
+  const [retrySettings, setRetrySettings] = useState<DmRetrySettings>(() => loadRetrySettings());
+  const [showRetrySettings, setShowRetrySettings] = useState(false);
+  const [retryJob, setRetryJob] = useState<DmRetryJob | null>(() => loadRetryJob(empId));
+  const [retryNow, setRetryNow] = useState(Date.now());
+  const runJobRef = useRef<(job: DmRetryJob) => Promise<void>>(async () => {});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -85,6 +124,14 @@ export default function DmChatApp({ empId }: Props) {
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [msgs.length, typing]);
+
+  useEffect(() => {
+    if (!retryJob || retryJob.status !== 'waiting' || !retryJob.nextRetryAt) return;
+    const delay = Math.max(0, retryJob.nextRetryAt - Date.now());
+    const timer = window.setTimeout(() => void runJobRef.current({ ...retryJob, status: 'waiting', nextRetryAt: undefined }), delay);
+    const ticker = window.setInterval(() => setRetryNow(Date.now()), 500);
+    return () => { window.clearTimeout(timer); window.clearInterval(ticker); };
+  }, [retryJob]);
 
   if (!emp) return <div style={{ padding: 20 }}>员工不存在</div>;
 
@@ -115,19 +162,8 @@ export default function DmChatApp({ empId }: Props) {
       skillRefs: refs,
     });
 
-    setTyping(true);
-    const { text: reply, usage } = await generateReply(content, atts, skillContext);
-    setTyping(false);
-    push({
-      id: `dm-${Date.now()}-${empId}`,
-      authorId: empId,
-      roleId: emp.role,
-      content: reply,
-      mentions: [],
-      timestamp: Date.now(),
-      kind: 'text',
-      tokens: usage,
-    });
+    const history: ChatTurn[] = msgs.slice(-8).map((m) => ({ role: m.roleId === 'human' ? 'user' : 'assistant', content: m.content }));
+    void runDmJob({ id: `dm-retry-${Date.now()}`, userText: content, attachments: atts, skillContext, history, attempt: 0, status: 'waiting', lastError: '' });
 
     // 自动提炼用户洞察（每 3 条用户消息触发一次）
     const userMsgCount = msgs.filter(m => m.roleId === 'human').length;
@@ -140,8 +176,46 @@ export default function DmChatApp({ empId }: Props) {
     }
   };
 
+  const runDmJob = async (job: DmRetryJob) => {
+    setTyping(true);
+    try {
+      const { text: reply, usage } = await generateReply(job.userText, job.attachments, job.skillContext, job.history);
+      push({ id: `dm-${Date.now()}-${empId}`, authorId: empId, roleId: emp.role, content: reply, mentions: [], timestamp: Date.now(), kind: 'text', tokens: usage });
+      setRetryJob(null);
+      saveRetryJob(empId, null);
+    } catch (error) {
+      const attempt = job.attempt + 1;
+      const lastError = error instanceof Error ? error.message : String(error);
+      const canRetry = retrySettings.autoRetry && attempt < retrySettings.maxAttempts;
+      const next: DmRetryJob = {
+        ...job, attempt, lastError,
+        status: canRetry ? 'waiting' : 'failed',
+        nextRetryAt: canRetry ? Date.now() + retrySettings.intervalSeconds * 1000 : undefined,
+      };
+      setRetryJob(next);
+      saveRetryJob(empId, next);
+    } finally {
+      setTyping(false);
+    }
+  };
+  runJobRef.current = runDmJob;
+
+  const restartDmJob = () => {
+    if (!retryJob) return;
+    const restarted = { ...retryJob, attempt: 0, status: 'waiting' as const, nextRetryAt: undefined, lastError: '' };
+    setRetryJob(restarted);
+    saveRetryJob(empId, restarted);
+    void runDmJob(restarted);
+  };
+
+  const updateRetrySettings = (partial: Partial<DmRetrySettings>) => {
+    const next = { ...retrySettings, ...partial };
+    setRetrySettings(next);
+    localStorage.setItem(DM_RETRY_SETTINGS_KEY, JSON.stringify(next));
+  };
+
   // 优先真调 OpenAI 兼容模型（带员工提示词），失败/未配置则回落本地剧本
-  const generateReply = async (userText: string, atts: Attachment[] = [], skillContext = ''): Promise<{ text: string; usage?: number }> => {
+  const generateReply = async (userText: string, atts: Attachment[] = [], skillContext = '', historyOverride?: ChatTurn[]): Promise<{ text: string; usage?: number }> => {
     // 文本类附件：直接拼进用户文本作为上下文
     let enriched = userText;
     const textAtts = atts.filter((a) => a.kind === 'text' && a.dataUrl);
@@ -175,27 +249,14 @@ export default function DmChatApp({ empId }: Props) {
         : craftReply(emp.role, enriched);
       return { text: t };
     }
-    try {
-      // 组装对话：员工提示词当 system，最近几条历史当上下文，最后是用户消息
-      const systemPrompt =
-        emp.prompt?.trim() ||
-        `你是「${emp.name}」，一名${emp.title}。用简洁、专业的中文回复，语气贴合你的角色。`;
-      const history: ChatTurn[] = msgs
-        .slice(-8)
-        .map((m): ChatTurn => ({
-          role: m.roleId === 'human' ? 'user' : 'assistant',
-          content: m.content,
-        }));
-      const turns: ChatTurn[] = [
-        { role: 'system', content: systemPrompt },
-        ...history,
-        { role: 'user', content: enriched },
-      ];
-      const r = await chatCompletion(turns, 'dm', emp.name, undefined, emp.modelConfig, [emp.soul, skillContext].filter(Boolean).join('\n\n'), imageAtts);
-      return { text: r.content ?? '（无回复）', usage: r.usage.totalTokens };
-    } catch (e: any) {
-      return { text: `⚠️ 模型调用失败（${e?.message ?? '未知错误'}），已切换本地回复：\n\n${craftReply(emp.role, enriched)}` };
-    }
+    const systemPrompt = emp.prompt?.trim() || `你是「${emp.name}」，一名${emp.title}。用简洁、专业的中文回复，语气贴合你的角色。需要产出文件时直接调用工具完成。`;
+    const history = historyOverride ?? msgs.slice(-8).map((m): ChatTurn => ({ role: m.roleId === 'human' ? 'user' : 'assistant', content: m.content }));
+    const r = await runAgentLoop({
+      turns: [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content: enriched }],
+      tools: TOOLS, scene: 'dm', label: emp.name, modelConfig: emp.modelConfig,
+      extraSystemContext: [emp.soul, skillContext].filter(Boolean).join('\n\n'), scope: `dm:${empId}`, attachments: imageAtts,
+    });
+    return { text: r.content ?? '（无回复）', usage: r.usage.totalTokens };
   };
 
   const handleCopyMsg = async (content: string) => { await copyToClipboard(content); };
@@ -231,8 +292,8 @@ export default function DmChatApp({ empId }: Props) {
               <div style={{ fontSize: 13, fontWeight: 600 }}>{emp.name}</div>
               <div style={{ fontSize: 11, color: emp.statusColor }}>{emp.title}</div>
             </div>
-            <span className={`dm-peer-status ${emp.isWorking ? 'busy' : 'online'}`}>
-              {emp.isWorking ? '● 工作中' : '● 在线'}
+            <span className={`dm-peer-status ${!emp.isOnline ? 'offline' : emp.isWorking ? 'busy' : 'online'}`}>
+              {!emp.isOnline ? '● 离线' : emp.isWorking ? '● 工作中' : '● 空闲'}
             </span>
             <button
               className={`btn btn-sm ${showOutputs ? 'btn-primary' : ''}`}
@@ -288,10 +349,30 @@ export default function DmChatApp({ empId }: Props) {
 
           {/* 输入区 */}
           <div className="chat-composer">
+            {retryJob && <div className={`dm-retry-panel ${retryJob.status}`}>
+              <ReloadOutlined spin={retryJob.status === 'waiting'} />
+              <div className="dm-retry-copy">
+                <strong>{retryJob.status === 'waiting' ? '模型调用失败，等待自动重试' : '自动重试已停止'}</strong>
+                <small>
+                  {retryJob.status === 'waiting'
+                    ? `第 ${retryJob.attempt} 次失败，${Math.max(0, Math.ceil(((retryJob.nextRetryAt ?? retryNow) - retryNow) / 1000))} 秒后重试（最多 ${retrySettings.maxAttempts} 次）`
+                    : `已尝试 ${retryJob.attempt}/${retrySettings.maxAttempts} 次：${retryJob.lastError}`}
+                </small>
+              </div>
+              {retryJob.status === 'failed' && <button className="btn btn-sm btn-primary" onClick={restartDmJob}><ReloadOutlined />重新执行</button>}
+              <button className="icon-btn" title="取消重试" onClick={() => { setRetryJob(null); saveRetryJob(empId, null); }}><CloseOutlined /></button>
+            </div>}
+            {showRetrySettings && <div className="dm-retry-settings">
+              <label><input type="checkbox" checked={retrySettings.autoRetry} onChange={(event) => updateRetrySettings({ autoRetry: event.target.checked })} /> 自动重试</label>
+              <label>间隔 <input type="number" min={3} max={60} value={retrySettings.intervalSeconds} onChange={(event) => updateRetrySettings({ intervalSeconds: Math.max(3, Math.min(60, Number(event.target.value) || 10)) })} /> 秒</label>
+              <label>机会 <input type="number" min={1} max={10} value={retrySettings.maxAttempts} onChange={(event) => updateRetrySettings({ maxAttempts: Math.max(1, Math.min(10, Number(event.target.value) || 5)) })} /> 次</label>
+            </div>}
             <div style={{ display: 'flex', gap: 6, marginBottom: 4, alignItems: 'center' }}>
               <button className="btn btn-sm" onClick={handleCopyAll} disabled={msgs.length === 0}>📋 复制全部</button>
               <button className="btn btn-sm" onClick={handleExport} disabled={msgs.length === 0}>📤 导出</button>
               <button className="btn btn-sm" onClick={() => fileInputRef.current?.click()} title="上传文件/图片">📎</button>
+              <SkillPickerButton selected={skillRefs} onSelectedChange={setSkillRefs} disabled={typing || !!retryJob} />
+              <button className={`btn btn-sm ${showRetrySettings ? 'btn-primary' : ''}`} onClick={() => setShowRetrySettings((value) => !value)} title="模型重试设置"><SettingOutlined />重试</button>
               <div style={{ flex: 1 }} />
               <ModelSelector />
             </div>
@@ -312,8 +393,8 @@ export default function DmChatApp({ empId }: Props) {
                 ))}
               </div>
             )}
-            <SkillMentionInput value={text} onChange={setText} selected={skillRefs} onSelectedChange={setSkillRefs} onKeyDown={onKeyDown} onPaste={handlePaste} rows={2} placeholder={`发消息给 ${emp.name}...（输入 @ 选择技能）`} />
-            <button className="btn btn-primary btn-sm" style={{ alignSelf: 'flex-end' }} onClick={handleSend}>
+            <SkillMentionInput value={text} onChange={setText} selected={skillRefs} onSelectedChange={setSkillRefs} onKeyDown={onKeyDown} onPaste={handlePaste} rows={2} disabled={typing || !!retryJob} placeholder={`发消息给 ${emp.name}...（输入 @ 选择技能）`} />
+            <button className="btn btn-primary btn-sm" style={{ alignSelf: 'flex-end' }} onClick={handleSend} disabled={typing || !!retryJob}>
               发送
             </button>
             <input

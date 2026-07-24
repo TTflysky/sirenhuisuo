@@ -2,22 +2,22 @@ import React, { useState, useRef } from 'react';
 import type { OpcRoleId, AvatarFrameConfig } from '../../types';
 import { useStore } from '../../store';
 import { AVATAR_PRESETS, renderPresetAvatar } from '../../data/avatarPresets';
-import { ROLE_SCARF } from '../../types';
 import EmployeeAppearanceFields from './EmployeeAppearanceFields';
+import { generateDistinctEmployeeColor } from '../../data/employeeColors';
 
 interface Props {
   onClose: () => void;
 }
 
 export default function AddEmployeeModal({ onClose }: Props) {
-  const { addEmployee } = useStore();
+  const { addEmployee, state } = useStore();
   const [name, setName] = useState('');
   const [title, setTitle] = useState('');
   const [role, setRole] = useState<OpcRoleId>('custom');
   const [avatarKey, setAvatarKey] = useState('a06');
   const [customAvatar, setCustomAvatar] = useState('');
   const [prompt, setPrompt] = useState('');
-  const [statusColor, setStatusColor] = useState(ROLE_SCARF.custom);
+  const [statusColor, setStatusColor] = useState(() => generateDistinctEmployeeColor(state.employees.map((employee) => employee.statusColor)));
   const [avatarFrame, setAvatarFrame] = useState<AvatarFrameConfig>({ presetId: 'standard' });
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -69,7 +69,7 @@ export default function AddEmployeeModal({ onClose }: Props) {
           </div>
           <div className="form-group" style={{ flex: 1 }}>
             <label className="form-label">角色</label>
-            <select className="form-select" value={role} onChange={(e) => { const next = e.target.value as OpcRoleId; setRole(next); setStatusColor(ROLE_SCARF[next]); }}>
+            <select className="form-select" value={role} onChange={(e) => setRole(e.target.value as OpcRoleId)}>
               <option value="pm">PM 协调者</option>
               <option value="planner">Planner 规划者</option>
               <option value="coder">Coder 编码者</option>
@@ -120,7 +120,7 @@ export default function AddEmployeeModal({ onClose }: Props) {
         </div>
 
         {/* 角色色预览 */}
-        <EmployeeAppearanceFields statusColor={statusColor} onStatusColorChange={setStatusColor} frame={avatarFrame} onFrameChange={setAvatarFrame} />
+        <EmployeeAppearanceFields statusColor={statusColor} onStatusColorChange={setStatusColor} frame={avatarFrame} onFrameChange={setAvatarFrame} usedColors={state.employees.map((employee) => employee.statusColor)} />
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
           <button className="btn" onClick={onClose}>取消</button>

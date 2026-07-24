@@ -42,7 +42,7 @@ declare global {
     minimize: () => void;
     toggleMax: () => void;
     close: () => void;
-    execCommand: (cmd: string) => Promise<ExecCommandResult>;
+    execCommand: (cmd: string, scope?: string) => Promise<ExecCommandResult>;
     skillsList: () => Promise<SkillListResult>;
     skillsRead: (id: string) => Promise<SkillReadResult>;
     skillsDelete: (id: string) => Promise<SkillDeleteResult>;

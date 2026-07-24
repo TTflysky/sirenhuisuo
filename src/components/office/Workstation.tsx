@@ -25,9 +25,9 @@ export default function Workstation({ stationIndex, employee, isWorking, onClick
       {hasEmp ? (
         <>
           {/* 头像 + 角色色环 + 状态点 */}
-          <div className="station-avatar-ring" style={{ borderColor: employee.statusColor }}>
+          <div className="station-avatar-ring">
             <AgentAvatar employee={employee} size={72} />
-            <span className={`station-status ${isWorking ? 'busy' : 'idle'}`} />
+            <span className={`station-status ${!employee.isOnline ? 'offline' : isWorking || employee.isWorking ? 'busy' : 'idle'}`} />
           </div>
           <div className="station-name">{employee.name}</div>
           <div className="station-title" style={{ color: employee.statusColor }}>{employee.title}</div>

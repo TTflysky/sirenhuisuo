@@ -4,6 +4,7 @@ import { seedEmployees } from './defaultEmployees';
 import { seedTeams } from './defaultTeams';
 import type { OutputScope } from './outputs';
 import { loadTaskRuns } from './taskRuns';
+import { ensureDistinctEmployeeColors } from './employeeColors';
 
 const LS_EMPLOYEES = 'hermes_office_employees';
 const LS_TEAMS = 'hermes_office_teams';
@@ -613,6 +614,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   let finalModel = '';
   const maxIter = 6; // 最多6轮工具调用循环
   const callLog: Array<{ name: string; args: string; result: string }> = [];
+  const toolResultCache = new Map<string, string>();
   let stopped = false;
 
   for (let iter = 0; iter < maxIter; iter++) {
@@ -628,12 +630,12 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       const { executeTool } = await import('../engine/tools');
       for (const tc of r.toolCalls) {
         onToolCall?.(tc.name, tc.arguments);
-        const result = await executeTool({
-          id: tc.id,
-          name: tc.name,
-          args: (() => { try { return JSON.parse(tc.arguments); } catch { return {}; } })(),
-          scope,
-        });
+        const cacheKey = `${tc.name}:${tc.arguments}`;
+        const cached = toolResultCache.get(cacheKey);
+        const result = cached !== undefined
+          ? { toolCallId: tc.id, name: tc.name, success: true, output: `相同工具调用已执行过，复用结果：\n${cached}` }
+          : await executeTool({ id: tc.id, name: tc.name, args: (() => { try { return JSON.parse(tc.arguments); } catch { return {}; } })(), scope });
+        if (cached === undefined) toolResultCache.set(cacheKey, result.output.slice(0, 6000));
         onToolResult?.(tc.name, tc.arguments, result.output);
         callLog.push({ name: tc.name, args: tc.arguments, result: result.output.slice(0, 200) });
         // 对 tool output 长度做上限，防止下游模型调用因上下文超长失败
@@ -692,6 +694,9 @@ export function fetchInitial(): AppState {
     employees = [...seedEmployees];
     saveEmployees(employees);
   }
+  const distinctColors = ensureDistinctEmployeeColors(employees);
+  employees = distinctColors.employees;
+  if (distinctColors.changed) saveEmployees(employees);
 
   // Teams (不含 chatMessages)
   let teams: Team[] = [];

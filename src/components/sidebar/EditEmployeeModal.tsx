@@ -13,7 +13,7 @@ interface Props {
 }
 
 export default function EditEmployeeModal({ employee, onClose }: Props) {
-  const { dispatch } = useStore();
+  const { dispatch, state } = useStore();
   const { message } = App.useApp();
 
   const [name, setName] = useState(employee.name);
@@ -234,7 +234,7 @@ export default function EditEmployeeModal({ employee, onClose }: Props) {
         />
       </div>
 
-      <EmployeeAppearanceFields statusColor={statusColor} onStatusColorChange={setStatusColor} frame={avatarFrame} onFrameChange={setAvatarFrame} />
+      <EmployeeAppearanceFields statusColor={statusColor} onStatusColorChange={setStatusColor} frame={avatarFrame} onFrameChange={setAvatarFrame} usedColors={state.employees.filter((item) => item.id !== employee.id).map((item) => item.statusColor)} />
 
       <div style={{ borderTop: '1px solid var(--border)', margin: '18px 0' }} />
 

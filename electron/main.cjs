@@ -278,8 +278,13 @@ function createWindow() {
     }
   });
 
-  ipcMain.handle('exec:command', async (_event, cmd) => {
-    const projectRoot = WORKSPACE;
+  ipcMain.handle('exec:command', async (_event, payload) => {
+    const cmd = typeof payload === 'string' ? payload : payload?.cmd;
+    const scope = typeof payload === 'object' && typeof payload?.scope === 'string'
+      ? payload.scope.replace(/[^a-zA-Z0-9_-]/g, '_')
+      : 'global';
+    const projectRoot = safeJoin(scope);
+    await fsp.mkdir(projectRoot, { recursive: true });
     const timeoutMs = 30000;
     const maxOutput = 100 * 1024; // 100KB 截断
 

@@ -82,6 +82,30 @@ export const TOOLS: ToolDef[] = [
   {
     type: 'function',
     function: {
+      name: 'search_skills',
+      description: '检索本机技能库。开始处理任务前使用，根据任务目标搜索可用 Skill，返回技能 ID、名称和说明。',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string', description: '任务目标或技能关键词，例如“短视频脚本创作”' } },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'read_skill',
+      description: '读取 search_skills 返回的 Skill 完整操作说明。确定技能适用后必须读取，再按说明执行。',
+      parameters: {
+        type: 'object',
+        properties: { id: { type: 'string', description: 'search_skills 返回的技能 ID' } },
+        required: ['id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'run_command',
       description: `执行终端命令（仅 Electron 桌面版可用）。命令在自主代理工作区（workspace）内执行，最长 30 秒超时，输出上限 100KB。
 可用命令示例：
@@ -125,6 +149,10 @@ function safePath(p: string): string {
   return p.replace(/[/\\]+/g, '-').replace(/\.\./g, '');
 }
 
+function diskScope(scope?: OutputScope): string {
+  return scope ? scope.replace(/[^a-zA-Z0-9_-]/g, '_') : 'global';
+}
+
 // ===== 工具执行 =====
 // 真实文件系统桥（Electron 桌面版）：把文件落到自主代理工作区（userData/workspace）
 function getFsApi(): any {
@@ -144,7 +172,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         let diskInfo = '';
         if (fsApi?.fsWrite) {
           try {
-            const r = await fsApi.fsWrite(path, content);
+            const r = await fsApi.fsWrite(`${diskScope(call.scope)}/${path}`, content);
             if (r?.ok) diskInfo = `（已写入磁盘工作区：${r.path}，${r.size} 字节）`;
             else diskInfo = `（磁盘写入失败：${r?.error ?? '未知'}）`;
           } catch (e: any) {
@@ -175,7 +203,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         const fsApi = getFsApi();
         if (fsApi?.fsRead) {
           try {
-            const r = await fsApi.fsRead(path);
+            const r = await fsApi.fsRead(`${diskScope(call.scope)}/${path}`);
             if (r?.ok) {
               return { toolCallId: id, name, success: true, output: `文件 ${path} 内容：\n${r.content.slice(0, 6000)}` };
             }
@@ -183,9 +211,10 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         }
         // 回退到应用内产出物
         const outputs = loadOutputs();
-        const found = outputs.find((o: OutputRecord) => o.filename === path);
+        const scopedOutputs = call.scope ? outputs.filter((output: OutputRecord) => output.scope === call.scope) : outputs;
+        const found = scopedOutputs.find((o: OutputRecord) => o.filename === path);
         if (!found) {
-          const fuzzy = outputs.filter((o: OutputRecord) => o.filename.includes(path));
+          const fuzzy = scopedOutputs.filter((o: OutputRecord) => o.filename.includes(path));
           if (fuzzy.length === 0) {
             return { toolCallId: id, name, success: false, output: `未找到文件：${path}。可用 list_files 查看工作区目录。` };
           }
@@ -205,7 +234,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         let source = '工作区';
         if (fsApi?.fsList) {
           try {
-            const r = await fsApi.fsList('', true);
+            const r = await fsApi.fsList(diskScope(call.scope), true);
             if (r?.ok && r.items?.length) {
               lines = r.items
                 .filter((it: any) => !filter || it.name.toLowerCase().includes(filter))
@@ -214,7 +243,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
           } catch {}
         }
         // 应用内产出物补充
-        const outputs = loadOutputs() as OutputRecord[];
+        const outputs = (loadOutputs() as OutputRecord[]).filter((output) => !call.scope || output.scope === call.scope);
         const outFiles = outputs
           .filter((o) => !filter || o.filename.toLowerCase().includes(filter))
           .map((o) => `- ${o.filename} (产出物 · ${(o.content.length / 1000).toFixed(1)}KB)`);
@@ -251,6 +280,26 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         }
       }
 
+      case 'search_skills': {
+        const query = (args.query ?? '').trim();
+        if (!query) return { toolCallId: id, name, success: false, output: '技能检索关键词不能为空' };
+        const { listSkills, matchSkills } = await import('../data/skills');
+        const [all, matched] = await Promise.all([listSkills(), matchSkills(query, 8)]);
+        const rows = matched.map((ref) => {
+          const skill = all.find((item) => item.id === ref.id);
+          return `- ID: ${ref.id}\n  名称: ${ref.name}\n  说明: ${skill?.description || '无说明'}\n  来源: ${skill?.source || '未知'}`;
+        });
+        return { toolCallId: id, name, success: true, output: rows.length ? `为「${query}」找到 ${rows.length} 个技能：\n${rows.join('\n')}` : `没有找到与「${query}」直接匹配的技能，可继续使用通用工具完成。` };
+      }
+
+      case 'read_skill': {
+        const skillId = (args.id ?? '').trim();
+        if (!skillId) return { toolCallId: id, name, success: false, output: '技能 ID 不能为空' };
+        const { readSkill } = await import('../data/skills');
+        const skill = await readSkill(skillId);
+        return { toolCallId: id, name, success: true, output: `已读取 Skill「${skill.name}」：\n${skill.content.slice(0, 12000)}` };
+      }
+
       case 'run_command': {
         const cmd = (args.cmd ?? '').trim();
         if (!cmd) return { toolCallId: id, name, success: false, output: '命令不能为空' };
@@ -265,7 +314,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         }
 
         try {
-          const result = await api.execCommand(cmd);
+          const result = await api.execCommand(cmd, diskScope(call.scope));
           const { success, exitCode, stdout, stderr, signal: sig, cwd } = result as any;
           // 自动保存输出到 outputs/
           const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
