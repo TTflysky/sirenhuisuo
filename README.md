@@ -1,4 +1,4 @@
-# 私人办公会所（Hermes Office Pro）v0.5.9
+# 私人办公会所（Hermes Office Pro）v0.6.1
 
 > 面向 Windows 的多模型 AI 虚拟办公室。创建员工、组建团队，让不同模型按照职责协作完成真实任务。
 
@@ -6,7 +6,7 @@
 
 ## 项目状态
 
-- 当前版本：`0.5.9`
+- 当前版本：`0.6.1`
 - 发布分支：`main`
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 33、React 19、TypeScript 6、Ant Design 6、Vite 8
@@ -44,9 +44,9 @@
 ### Skill 与工具
 
 - 技能中心按“内置 Skill / 我的 Skill / Skill 商城”分类展示。
-- SkillHub、SkillsMP、Skills.sh 和 Anthropic Skills 以第三方市场卡片展示并在系统浏览器打开。
+- Hermes Agent、SkillHub、SkillsMP、Skills.sh 和 Anthropic Skills 以第三方市场卡片展示并在系统浏览器打开。
 - 支持通过 `SKILL.md`、GitHub 文件、技能目录或仓库地址一键安装到本机 WorkBuddy 技能目录。
-- 安装包内置知识检索、任务规划、文档交付和代码审查 4 个基础 Skill。
+- 安装包内置 73 个 Skill，其中包含完整迁入的 69 个 Hermes Agent Skill，以及知识检索、任务规划、文档交付和代码审查 4 个基础 Skill。
 - 员工根据任务需要自行判断是否检索 Skill，不再强制每个任务调用。
 - Skill 或工具调用失败时展示具体错误，方便重试或改用其他方案。
 - 支持文件读取、写入、目录检查、网页搜索和连接器工具。
@@ -78,8 +78,9 @@
 ### 桌面体验
 
 - 原生 Electron 多聊天窗口，点击窗口即可置于最前。
-- 支持浅色和深色主题。
-- 全局内置幼圆字体，不依赖目标电脑预装字体。
+- 支持浅色和深色主题，深色弹窗边框与背景保持一致。
+- 内置幼圆及 5 款中英文字体，并支持在设置中心调整全局字体和界面字号。
+- 主标题栏和设置窗口支持拖动客户端窗口。
 - 员工颜色可自由选择，并自动避免与其他员工重复。
 - 提供多款头像框和身份牌，状态点显示空闲、工作中或掉线。
 - 最小化的聊天窗口可以从应用内重新打开。
@@ -90,13 +91,13 @@
 
 最新安装包可从 GitHub Releases 下载：
 
-- [直接下载私人办公会所 Setup 0.5.9.exe](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.5.9/Setup.0.5.9.exe)
-- [查看 v0.5.9 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.5.9)
+- [直接下载私人办公会所 Setup 0.6.1.exe](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.6.1/Setup.0.6.1.exe)
+- [查看 v0.6.1 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.6.1)
 
 本地构建的安装程序生成在：
 
 ```text
-release/私人办公会所 Setup 0.5.9.exe
+release/私人办公会所 Setup 0.6.1.exe
 ```
 
 可以直接覆盖安装旧版本。应用数据保存在用户目录，正常覆盖安装不会删除员工、团队、聊天和模型配置。
@@ -189,6 +190,17 @@ release/                 Windows 安装包输出目录
 - 删除应用前建议自行备份重要产出物。
 
 ## 最近版本
+
+### v0.6.1
+
+- 设置中心移除与主界面重复的技能库入口，主界面技能库继续保留。
+- 完整迁入 Hermes Agent 上游 69 个 Skill，安装包内置 Skill 总数增至 73 个。
+- 新增 5 款内置字体和全局字号调节，并修复深色弹窗白边与窗口拖动区域。
+
+### v0.6.0
+
+- 技能库升级为“我的 Skill / 内置 Skill / Skill 商城”，支持第三方市场和链接安装。
+- 知识库连接器支持网页知识库与 Obsidian Vault 一键配置。
 
 ### v0.5.9
 
