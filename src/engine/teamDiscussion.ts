@@ -58,6 +58,7 @@ async function memberSpeak(
   emp: Employee,
   team: Team,
   employees: Employee[],
+  contextMessages: ChatMessage[],
   extraInstruction: string,
   onToolCall: (toolName: string, toolArgs: string, result: string) => void,
   attachments?: import('../data/hermesClient').Attachment[],
@@ -81,7 +82,7 @@ async function memberSpeak(
     const r = await runAgentLoop({
       turns: [
         { role: 'system', content: system },
-        ...buildContext(team.chatMessages, employees),
+        ...buildContext(contextMessages, employees),
         userTurn,
       ],
       tools: TOOLS,
@@ -122,6 +123,7 @@ export async function runTeamDiscussion(
   const participants = plannedMembers?.length ? plannedMembers : (['pm', 'planner', 'coder', 'checker'] as const).map((role) => memberByRole(team, employees, role)).filter((employee): employee is Employee => !!employee);
   const responseCounts = new Map<string, number>();
   const responded = new Set<string>();
+  const contextMessages: ChatMessage[] = [...team.chatMessages];
   const planById = new Map((opts.participantPlan ?? []).map((plan) => [plan.memberId, plan]));
   const pending = [...new Set([
     ...(opts.forcedMemberIds ?? []),
@@ -148,7 +150,7 @@ export async function runTeamDiscussion(
     let tokens: number | undefined;
 
     if (useAI) {
-      const r = await memberSpeak(emp, team, employees,
+      const r = await memberSpeak(emp, team, employees, contextMessages,
         task
           ? `团队接到新任务「${task.title}」${task.description ? `：${task.description}` : ''}。如有必要，可调工具产出文件或用 web_search 查资料。`
           : `老板在群里说：「${opts.userText ?? ''}」。如需产出或查资料可调工具。`,
@@ -170,6 +172,15 @@ export async function runTeamDiscussion(
 
     const mentions = parseMentionIds(content, team, employees);
     round += 1;
+    contextMessages.push({
+      id: `context-${Date.now()}-${round}`,
+      authorId: emp.id,
+      roleId: emp.role,
+      content,
+      mentions,
+      timestamp: Date.now(),
+      discussionRound: round,
+    });
     handlers.onMessage(emp, content, mentions, tokens, round, opts.triggerMessageId);
     responseCounts.set(emp.id, (responseCounts.get(emp.id) ?? 0) + 1);
     responded.add(emp.id);
@@ -193,7 +204,7 @@ export async function runTeamDiscussion(
       let closing = '';
       let pmTokens: number | undefined;
       if (useAI) {
-        const r = await memberSpeak(pm, team, employees,
+        const r = await memberSpeak(pm, team, employees, contextMessages,
           `任务「${task.title}」已完成开发与审查，请做验收总结。如果代码或文档已产出，可直接 read_file 检查。`,
           (toolName, toolArgs) => handlers.onToolCall(pm, toolName, toolArgs, '🔄 执行中…')
         );

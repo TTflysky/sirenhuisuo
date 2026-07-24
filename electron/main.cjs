@@ -129,6 +129,9 @@ function trackActiveWindow(win) {
   lastActiveWindow = win;
   win.on('focus', () => {
     lastActiveWindow = win;
+    // Keep the clicked chat window above its sibling chat windows without
+    // leaving it permanently always-on-top.
+    if (!win.isDestroyed()) win.moveTop();
   });
   win.on('closed', () => {
     if (lastActiveWindow === win) lastActiveWindow = null;

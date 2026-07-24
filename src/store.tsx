@@ -465,6 +465,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   stateRef.current = state;
   const supervisorBusyRef = React.useRef(new Set<string>());
 
+  const extractMentionedEmployeeIds = (text: string, team: Team, employees: Employee[]): string[] => {
+    const names = new Map(
+      team.memberIds
+        .map((id) => employees.find((employee) => employee.id === id))
+        .filter((employee): employee is Employee => !!employee)
+        .map((employee) => [employee.name, employee.id]),
+    );
+    return [...text.matchAll(/@([^@\s，。！？,.!?]+)/g)]
+      .map((match) => names.get(match[1]))
+      .filter((id): id is string => !!id);
+  };
+
   const runDiscussion = (teamId: string, opts?: DiscussionOpts): boolean => {
     if (discussingRef.current.has(teamId)) return false;
     const team = stateRef.current.teams.find((t) => t.id === teamId);
@@ -621,15 +633,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }, delay);
   };
 
-  const enqueueAssistantSupervisor = async (team: Team, content: string) => {
-    if (supervisorBusyRef.current.has(team.id)) return;
+  const enqueueAssistantSupervisor = async (team: Team, content: string): Promise<string | undefined> => {
+    if (supervisorBusyRef.current.has(team.id)) return undefined;
     supervisorBusyRef.current.add(team.id);
     try {
       const assistantModel = client.getAssistantModel();
       const turns: client.ChatTurn[] = [
         {
           role: 'system',
-          content: '你是私人办公会所的监工助理，负责监督团队进度、调度成员和理解老板的工作习惯。平时保持安静，只有老板明确@你时才回复。回复要简洁、直接，指出当前进展、风险和下一步行动；不要代替团队成员长篇讨论。',
+          content: `你是私人办公会所的监工助理，负责监督团队进度、调度成员和理解老板的工作习惯。你现在被老板@，必须先给出简短判断，再根据需求分发给团队成员。需要成员处理时，必须使用他们的准确姓名格式@姓名进行点名；不需要某成员时不要点名。团队成员：${team.memberIds.map((id) => stateRef.current.employees.find((employee) => employee.id === id)?.name).filter(Boolean).join('、')}。回复要简洁、直接，指出当前进展、风险和下一步行动；不要代替团队成员长篇讨论。`,
         },
         ...team.chatMessages.slice(-12).map((message) => ({
           role: message.roleId === 'human' ? 'user' as const : 'assistant' as const,
@@ -637,10 +649,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         })),
         { role: 'user', content: `老板@你说：${content}` },
       ];
-      if (!client.resolveApiBase(assistantModel)) return;
+      if (!client.resolveApiBase(assistantModel)) return undefined;
       const result = await client.chatCompletion(turns, 'assistant-supervisor', `监工/${team.name}`, undefined, assistantModel);
       const reply = result.content?.trim();
-      if (!reply) return;
+      if (!reply) return undefined;
       dispatch({
         type: 'APPEND_CHAT',
         teamId: team.id,
@@ -656,8 +668,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }],
       });
       client.extractUserInsights(`老板：${content}\n监工回复：${reply}`, `团队监工-${team.name}`).catch(() => {});
+      return reply;
     } catch (error) {
       console.warn('[supervisor] reply failed:', error);
+      return undefined;
     } finally {
       supervisorBusyRef.current.delete(team.id);
     }
@@ -667,28 +681,34 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const current = stateRef.current;
     const team = current.teams.find((item) => item.id === teamId);
     if (!team) return;
-    if (mentions.includes('assistant')) {
-      void enqueueAssistantSupervisor(team, content);
-    }
-    const settings = client.loadSettings();
-    const input: DiscussionTriggerInput = {
-      teamId, messageId, userText: content, mentions,
-      hasAttachments: !!attachments?.length, recentMessages: team.chatMessages.slice(-12),
-      activeTaskCount: (team.tasks ?? []).filter((task) => task.lane !== 'DONE').length,
-      manual: false, now: Date.now(),
-    };
-    const decision = evaluateDiscussionTrigger(input, settings, team.memberIds, lastAutoTriggerRef.current.get(teamId));
-    if (!decision.shouldStart) return;
-    lastAutoTriggerRef.current.set(teamId, { dedupeKey: decision.dedupeKey, triggeredAt: Date.now() });
-    enqueueDiscussion(teamId, {
-      userText: content,
-      attachments,
-      participantPlan: buildParticipantPlan(team.memberIds, current.employees, content, team.tasks ?? [], decision.forcedMemberIds),
-      triggerMessageId: messageId,
-      discussionId: `discussion-${messageId}`,
-      maxRounds: settings.autoDiscussMaxRounds,
-      forcedMemberIds: decision.forcedMemberIds,
-    }, 400);
+    void (async () => {
+      const supervisorReply = await enqueueAssistantSupervisor(team, content);
+      const mentionedBySupervisor = supervisorReply
+        ? extractMentionedEmployeeIds(supervisorReply, team, current.employees)
+        : [];
+      const directMentions = mentions.filter((id) => team.memberIds.includes(id));
+      const requestedMemberIds = [...new Set([...directMentions, ...mentionedBySupervisor])];
+      const discussionText = [content, supervisorReply].filter(Boolean).join('\n\n');
+      const settings = client.loadSettings();
+      const input: DiscussionTriggerInput = {
+        teamId, messageId, userText: discussionText, mentions: requestedMemberIds,
+        hasAttachments: !!attachments?.length, recentMessages: team.chatMessages.slice(-12),
+        activeTaskCount: (team.tasks ?? []).filter((task) => task.lane !== 'DONE').length,
+        manual: false, now: Date.now(),
+      };
+      const decision = evaluateDiscussionTrigger(input, settings, team.memberIds, lastAutoTriggerRef.current.get(teamId));
+      if (!decision.shouldStart) return;
+      lastAutoTriggerRef.current.set(teamId, { dedupeKey: decision.dedupeKey, triggeredAt: Date.now() });
+      enqueueDiscussion(teamId, {
+        userText: discussionText,
+        attachments,
+        participantPlan: buildParticipantPlan(team.memberIds, current.employees, discussionText, team.tasks ?? [], decision.forcedMemberIds),
+        triggerMessageId: messageId,
+        discussionId: `discussion-${messageId}`,
+        maxRounds: settings.autoDiscussMaxRounds,
+        forcedMemberIds: decision.forcedMemberIds,
+      }, 400);
+    })();
   };
 
   const triggerDiscussion = (teamId: string, opts?: DiscussionOpts) => {

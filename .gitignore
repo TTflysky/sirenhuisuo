@@ -16,6 +16,7 @@ release/*.blockmap
 release/builder-*.yml
 release/builder-*.yaml
 release/latest.yml
+.electron-builder-cache
 outputs
 !src/components/outputs/
 !src/components/outputs/**

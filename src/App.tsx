@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Segmented, Button } from 'antd';
+import { BulbOutlined, MoonOutlined } from '@ant-design/icons';
 import type { Employee } from './types';
 import type { UpdateStatus } from './electron.d';
 import { useStore } from './store';
@@ -21,7 +22,13 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [view, setView] = useState<View>('office');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('hermes_office_theme') === 'dark');
   const unsubRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = darkMode ? 'dark' : 'light';
+    localStorage.setItem('hermes_office_theme', darkMode ? 'dark' : 'light');
+  }, [darkMode]);
 
   // 子窗口检测：原生聊天子窗口的 URL 附带 #chat 路由。
   // 仅在首次渲染时读一次 location.hash——主窗口永远不带 #chat（v0.1.13 已移除 hash fallback），
@@ -117,6 +124,13 @@ export default function App() {
           <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
             {state.status.backendOnline ? '🟢 模型在线' : '🔵 本地模式'}
           </span>
+          <button
+            className="titlebar-btn theme-toggle-btn"
+            title={darkMode ? '切换到白天模式' : '切换到黑夜模式'}
+            onClick={() => setDarkMode((value) => !value)}
+          >
+            {darkMode ? <BulbOutlined /> : <MoonOutlined />}
+          </button>
           <Button size="small" onClick={handleDemo} disabled={state.status.demoRunning}>
             ▶ 演示 OPC 协作
           </Button>

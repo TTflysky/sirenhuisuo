@@ -21,7 +21,7 @@ const supervisorMention: Employee = {
   name: 'Hermes 助理',
   title: '监工调度',
   role: 'custom',
-  avatar: 'assistant',
+  avatar: 'a06',
   avatarKind: 'preset',
   statusColor: '#6366f1',
   stationIndex: -1,
@@ -254,11 +254,12 @@ export default function TeamChatApp({ teamId }: Props) {
           <div className="team-chat-header">
             <div className="team-chat-title"><span>{team.icon ?? '👥'}</span><strong>{team.name}</strong></div>
             <div className="team-avatar-strip" aria-label="团队成员">
-              {teamMembers.map((emp) => <button key={emp.id} className="team-avatar-btn" onClick={() => insertMention(emp)} title={`${emp.name} · ${emp.isWorking ? '工作中' : emp.isOnline ? '在线' : '离线'}`}><AgentAvatar employee={emp} size={30} /></button>)}
+              {[supervisorMention, ...teamMembers].map((emp) => <button key={emp.id} className="team-avatar-btn" onClick={() => insertMention(emp)} title={`@${emp.name}`}><AgentAvatar employee={emp} size={30} /></button>)}
             </div>
           </div>
           <div className="team-chat-body">
             <aside className="team-member-sidebar" aria-label="团队成员列表">
+              <button key={supervisorMention.id} className="team-member-item team-supervisor-item" onClick={() => insertMention(supervisorMention)} title={`@${supervisorMention.name}`}><AgentAvatar employee={supervisorMention} size={34} /><span className="team-member-info"><strong>{supervisorMention.name}</strong><small>{supervisorMention.title}</small><small className="is-working">随时可联系</small></span></button>
               {teamMembers.map((emp) => <button key={emp.id} className="team-member-item" onClick={() => insertMention(emp)} title={`@${emp.name}`}><AgentAvatar employee={emp} size={34} /><span className="team-member-info"><strong>{emp.name}</strong><small>{emp.title}</small><small className={emp.isWorking ? 'is-working' : ''}>{emp.isWorking ? '工作中' : emp.isOnline ? '在线' : '离线'}</small></span></button>)}
             </aside>
             <div className="team-chat-content">
@@ -318,7 +319,8 @@ export default function TeamChatApp({ teamId }: Props) {
                 <div style={{ fontSize: 11, marginTop: 8 }}>💬 在下方输入消息开始团队协作</div>
               </div>
             ) : (team.chatMessages ?? []).map((msg) => {
-              const author = state.employees.find((e: Employee) => e.id === msg.authorId);
+              const author = state.employees.find((e: Employee) => e.id === msg.authorId)
+                ?? (msg.authorId === supervisorMention.id ? supervisorMention : undefined);
               const isHuman = msg.roleId === 'human';
 
               return (
