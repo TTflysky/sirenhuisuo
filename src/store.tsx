@@ -534,6 +534,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       .filter((id): id is string => !!id);
   };
 
+  const isTeamControlRequest = (text: string): boolean => {
+    const pause = /(?:暂停|停止|先停|停下|别做|不要继续).{0,12}(?:工作|任务|手上|当前|执行)|(?:工作|任务).{0,8}(?:暂停|停止)/u.test(text);
+    const report = /(?:汇报|报告|报一下|说一下|告诉我).{0,12}(?:模型|配置|状态)|(?:模型|配置|状态).{0,12}(?:汇报|报告|报一下|说一下)|(?:你们|大家|各位|自己).{0,8}(?:用的|使用).{0,8}(?:什么|哪个).{0,4}模型/u.test(text);
+    const rollCall = /报数|报个数|数数|在线情况/u.test(text);
+    return pause || report || rollCall;
+  };
+
+  const employeeModelSummary = (employee: Employee): string => {
+    const config = client.getEmployeeModel(employee);
+    const source = client.usesCustomEmployeeModel(employee) ? '员工独立配置' : '继承全局默认';
+    let host = config.apiHost?.trim() || '未配置';
+    try { host = new URL(host).host; } catch {}
+    return `${config.model || '未配置模型'}（${source}），服务商：${config.provider || '自定义'}，接口：${host}`;
+  };
+
   const runDiscussion = (teamId: string, opts?: DiscussionOpts): boolean => {
     if (discussingRef.current.has(teamId)) return false;
     const team = stateRef.current.teams.find((t) => t.id === teamId);
@@ -643,7 +658,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }
         },
         onStepStart(stepId, emp) {
-          updateProgress(Math.min(totalSteps, stepCounter + 1), emp.id, emp.name, emp.role, emp.modelConfig?.model ?? emp.modelConfig?.refModelId);
+          updateProgress(Math.min(totalSteps, stepCounter + 1), emp.id, emp.name, emp.role, client.getEmployeeModel(emp).model);
           dispatch({ type: 'UPDATE_EMPLOYEE', id: emp.id, partial: { isWorking: true } });
           updateRun((run) => {
             const step = run.steps.find((item) => item.id === stepId);
@@ -829,8 +844,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       .map((id) => stateRef.current.employees.find((employee) => employee.id === id))
       .filter((employee): employee is Employee => !!employee)
       .map((employee) => {
-        const model = employee.modelConfig?.model ?? employee.modelConfig?.refModelId ?? '使用团队默认模型';
-        return `- 姓名：${employee.name}\n  身份/职责：${employee.title} / ${employee.role}\n  在线：${employee.isOnline ? '是' : '否'}\n  专长与工作偏好：${(employee.prompt ?? '未填写').slice(0, 600)}\n  人设/补充信息：${(employee.soul ?? '未填写').slice(0, 900)}\n  模型：${model}`;
+        return `- 姓名：${employee.name}\n  身份/职责：${employee.title} / ${employee.role}\n  在线：${employee.isOnline ? '是' : '否'}\n  专长与工作偏好：${(employee.prompt ?? '未填写').slice(0, 600)}\n  人设/补充信息：${(employee.soul ?? '未填写').slice(0, 900)}\n  模型：${employeeModelSummary(employee)}`;
       }).join('\n');
     try {
       const assistantModel = client.getAssistantModel();
@@ -878,6 +892,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const skillRefs = explicitSkillRefs.length ? explicitSkillRefs : await matchSkills(request);
     const skillContext = await buildSkillContext(skillRefs);
     const run = createTaskRun(team, current.employees, request, plan, sourceMessageId, skillRefs);
+    run.memberSnapshot.forEach((snapshot) => {
+      const employee = current.employees.find((item) => item.id === snapshot.id);
+      if (employee) snapshot.model = client.getEmployeeModel(employee).model;
+    });
     if (!run.steps.length) return;
     dispatch({ type: 'CREATE_TASK_RUN', run });
     enqueueDiscussion(teamId, {
@@ -923,6 +941,39 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     void (async () => {
       const directMentions = mentions.filter((id) => team.memberIds.includes(id));
       const supervisorMentioned = mentions.includes('assistant');
+      if (isTeamControlRequest(content)) {
+        const pauseRequested = /(?:暂停|停止|先停|停下|别做|不要继续).{0,12}(?:工作|任务|手上|当前|执行)|(?:工作|任务).{0,8}(?:暂停|停止)/u.test(content);
+        const reportRequested = /(?:模型|配置|状态|报数|报个数|数数|在线情况)/u.test(content);
+        const targets = (directMentions.length ? directMentions : team.memberIds)
+          .map((id) => current.employees.find((employee) => employee.id === id))
+          .filter((employee): employee is Employee => !!employee);
+
+        if (pauseRequested) {
+          current.taskRuns
+            .filter((run) => run.teamId === teamId && (run.status === 'queued' || run.status === 'running'))
+            .forEach((run) => pauseTaskRun(run.id));
+          targets.forEach((employee) => dispatch({ type: 'UPDATE_EMPLOYEE', id: employee.id, partial: { isWorking: false } }));
+        }
+
+        const now = Date.now();
+        const messages: ChatMessage[] = [];
+        if (pauseRequested) {
+          messages.push({
+            id: `msg-control-${now}`, authorId: 'assistant', roleId: 'custom',
+            content: '当前团队任务已暂停。此指令不会创建新任务，也不会调用 Skill 或文件工具。',
+            mentions: targets.map((employee) => employee.id), timestamp: now, kind: 'text',
+          });
+        }
+        if (reportRequested) {
+          targets.forEach((employee, index) => messages.push({
+            id: `msg-model-report-${now}-${employee.id}`, authorId: employee.id, roleId: employee.role,
+            content: `${/报数|报个数|数数/u.test(content) ? `${index + 1}。` : ''}模型汇报：${employeeModelSummary(employee)}。当前状态：${employee.isOnline ? (pauseRequested ? '已暂停' : employee.isWorking ? '工作中' : '空闲') : '掉线'}。`,
+            mentions: [], timestamp: now + index + 1, kind: 'text',
+          }));
+        }
+        if (messages.length) dispatch({ type: 'APPEND_CHAT', teamId, msgs: messages });
+        return;
+      }
       if (directMentions.length > 0 && !supervisorMentioned) {
         void startTaskRun(teamId, content, directMentions, messageId, attachments, skillRefs);
         return;

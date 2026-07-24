@@ -28,6 +28,7 @@ export interface Employee {
   currentTask?: string;
   isOnline: boolean;
   isWorking: boolean;
+  useCustomModel?: boolean; // 显式开启后才使用员工独立模型；旧数据缺省时兼容 modelConfig
   modelConfig?: ModelConfig;  // 独立模型配置（留空则用全局设置）
   showThoughtChain?: boolean; // 是否显示思维链（可视化推理过程）
 }

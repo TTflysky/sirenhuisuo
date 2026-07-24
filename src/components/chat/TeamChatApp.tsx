@@ -55,7 +55,7 @@ export default function TeamChatApp({ teamId }: Props) {
   const [showOutputs, setShowOutputs] = useState(false);
   const [selectedOutputFilename, setSelectedOutputFilename] = useState<string | null>(null);
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(320);
-  const [showTaskList, setShowTaskList] = useState(true);
+  const [showTaskList, setShowTaskList] = useState(false);
   const [expandedExecutionIds, setExpandedExecutionIds] = useState<Set<string>>(() => new Set());
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [skillRefs, setSkillRefs] = useState<SkillReference[]>([]);

@@ -124,6 +124,39 @@ export function getAssistantModel(): ModelConfig {
   return { provider: s.provider, apiHost: s.apiHost, apiKey: s.apiKey, model: s.model };
 }
 
+/** 员工是否启用了独立模型。旧版数据没有开关字段时兼容已有 modelConfig。 */
+export function usesCustomEmployeeModel(employee: Employee): boolean {
+  return employee.useCustomModel ?? !!employee.modelConfig;
+}
+
+/** 获取员工实际使用的模型；未开启独立配置时始终继承全局激活模型。 */
+export function getEmployeeModel(employee: Employee): ModelConfig {
+  const active = getActiveModel();
+  if (!usesCustomEmployeeModel(employee) || !employee.modelConfig) return active;
+
+  const custom = employee.modelConfig;
+  const settings = loadSettings();
+  if (custom.refModelId && settings.modelLibrary) {
+    const referenced = settings.modelLibrary.find((model) => model.id === custom.refModelId);
+    if (referenced) {
+      return {
+        provider: referenced.provider ?? active.provider,
+        apiHost: referenced.apiHost ?? active.apiHost,
+        apiKey: referenced.apiKey ?? active.apiKey,
+        model: referenced.model ?? active.model,
+        refModelId: custom.refModelId,
+      };
+    }
+  }
+
+  return {
+    provider: custom.provider ?? active.provider,
+    apiHost: custom.apiHost ?? active.apiHost,
+    apiKey: custom.apiKey ?? active.apiKey,
+    model: custom.model ?? active.model,
+  };
+}
+
 /** 测试指定模型配置的连通性（不影响全局设置） */
 export async function testModelConnection(mc: ModelConfig): Promise<{ ok: boolean; message: string }> {
   const base = (mc.apiHost ?? '').trim().replace(/\/+$/, '');

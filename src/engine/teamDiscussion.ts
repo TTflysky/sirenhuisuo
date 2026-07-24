@@ -1,5 +1,5 @@
 import type { Employee, Team, ChatMessage, TeamTask, TaskLane, DiscussionParticipantPlan, TaskRunStep, TaskPlanStep } from '../types';
-import { runAgentLoop, resolveApiBase, extractUserInsights, getActiveModel, type ChatTurn } from '../data/hermesClient';
+import { runAgentLoop, resolveApiBase, extractUserInsights, getEmployeeModel, type ChatTurn } from '../data/hermesClient';
 import { TOOLS, executeTool } from './tools';
 import { diagnoseModel } from '../diagnostics/modelDiagnostics';
 
@@ -84,7 +84,8 @@ async function memberSpeak(
   skillContext = '',
   shouldStop?: () => boolean
 ): Promise<{ text: string; tokens?: number; failed?: boolean }> {
-  if (!resolveApiBase()) return { text: '' }; // 外部处理兜底
+  const effectiveModel = getEmployeeModel(emp);
+  if (!resolveApiBase(effectiveModel)) return { text: '' }; // 外部处理兜底
 
   const duty = ROLE_DUTY[emp.role] ?? ROLE_DUTY.custom;
   const persona = emp.prompt?.trim() || `你是「${emp.name}」，${emp.title}。`;
@@ -126,7 +127,7 @@ async function memberSpeak(
       tools: TOOLS,
       scene: 'team',
       label: `${team.name}/${emp.name}`,
-      modelConfig: emp.modelConfig,
+      modelConfig: effectiveModel,
       extraSystemContext: effectiveContext,
       scope: `team:${team.id}` as any,
       onToolCall(name, args) {
@@ -144,7 +145,7 @@ async function memberSpeak(
       ? '模型请求超过 30 秒未返回，已自动中止；可点击继续执行重试，任务上下文会保留'
       : raw;
     const contextChars = contextMessages.slice(-12).reduce((total, message) => total + Math.min(message.content.length, 3500), 0) + Math.min(skillContext.length + handoffContext.length + (emp.soul?.length ?? 0), 40000);
-    const diagnosis = await diagnoseModel(emp.modelConfig ?? getActiveModel(), { contextChars });
+    const diagnosis = await diagnoseModel(effectiveModel, { contextChars });
     return { text: `⚠️ ${emp.name} 无法响应：${reason}\n\n${diagnosis}`, failed: true };
   }
 }
@@ -166,10 +167,10 @@ export async function runTeamDiscussion(
   handlers: DiscussionHandlers,
   control?: { shouldStop?: () => boolean }
 ): Promise<void> {
-  const useAI = !!resolveApiBase();
   const task = opts.task;
   const plannedMembers = opts.participantPlan?.map((plan) => employees.find((employee) => employee.id === plan.memberId)).filter((employee): employee is Employee => !!employee);
   const participants = plannedMembers?.length ? plannedMembers : (['pm', 'planner', 'coder', 'checker'] as const).map((role) => memberByRole(team, employees, role)).filter((employee): employee is Employee => !!employee);
+  const useAI = participants.some((employee) => !!resolveApiBase(getEmployeeModel(employee)));
   const contextMessages: ChatMessage[] = [...team.chatMessages];
   const pending = [...new Set([
     ...(opts.forcedMemberIds ?? []),

@@ -28,7 +28,7 @@ export default function EditEmployeeModal({ employee, onClose }: Props) {
 
   // 模型配置
   const mc = employee.modelConfig;
-  const [useCustomModel, setUseCustomModel] = useState(!!mc);
+  const [useCustomModel, setUseCustomModel] = useState(employee.useCustomModel ?? !!mc);
 
   // 模式选择：'manual' = 手动填写全部，'ref' = 引用模型库已有模型
   const [modelMode, setModelMode] = useState<'manual' | 'ref'>(
@@ -116,6 +116,7 @@ export default function EditEmployeeModal({ employee, onClose }: Props) {
         prompt: prompt.trim() || undefined,
         soul: soul.trim() || undefined,
         isOnline,
+        useCustomModel,
         modelConfig,
         showThoughtChain,
         statusColor,

@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { ReloadOutlined, SettingOutlined, CloseOutlined } from '@ant-design/icons';
 import type { ChatMessage } from '../../types';
 import { useStore } from '../../store';
-import { loadDm, appendDm, runAgentLoop, resolveApiBase, extractUserInsights, type ChatTurn, type Attachment } from '../../data/hermesClient';
+import { loadDm, appendDm, runAgentLoop, resolveApiBase, extractUserInsights, getEmployeeModel, type ChatTurn, type Attachment } from '../../data/hermesClient';
 import AgentAvatar from '../office/AgentAvatar';
 import { addOutput } from '../../data/outputs';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
@@ -248,7 +248,7 @@ export default function DmChatApp({ empId }: Props) {
     // 图片类附件：走多模态视觉
     const imageAtts = atts.filter((a) => a.kind === 'image');
 
-    if (!resolveApiBase()) {
+    if (!resolveApiBase(getEmployeeModel(emp))) {
       // 未配置 API：本地剧本 + 短延迟模拟
       await new Promise((r) => setTimeout(r, 700 + Math.random() * 900));
       const t = emp.prompt
@@ -260,7 +260,7 @@ export default function DmChatApp({ empId }: Props) {
     const history = historyOverride ?? msgs.slice(-8).map((m): ChatTurn => ({ role: m.roleId === 'human' ? 'user' : 'assistant', content: m.content }));
     const r = await runAgentLoop({
       turns: [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content: enriched }],
-      tools: TOOLS, scene: 'dm', label: emp.name, modelConfig: emp.modelConfig,
+      tools: TOOLS, scene: 'dm', label: emp.name, modelConfig: getEmployeeModel(emp),
       extraSystemContext: [emp.soul, skillContext].filter(Boolean).join('\n\n'), scope: `dm:${empId}`, attachments: imageAtts,
     });
     return { text: r.content ?? '（无回复）', usage: r.usage.totalTokens };
