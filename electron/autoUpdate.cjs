@@ -17,7 +17,7 @@
  * 5. 已安装的客户端启动后自动检测更新
  */
 const { autoUpdater } = require('electron-updater');
-const { BrowserWindow, ipcMain } = require('electron');
+const { ipcMain } = require('electron');
 const log = require('electron-log');
 
 // ---- 日志 ----
