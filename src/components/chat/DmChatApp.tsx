@@ -4,18 +4,18 @@ import type { ChatMessage } from '../../types';
 import { useStore } from '../../store';
 import { loadDm, appendDm, runAgentLoop, resolveApiBase, extractUserInsights, getEmployeeModel, type ChatTurn, type Attachment } from '../../data/hermesClient';
 import AgentAvatar from '../office/AgentAvatar';
-import { addOutput } from '../../data/outputs';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
-import { copyToClipboard, messagesToMarkdown } from '../../utils/clipboard';
+import { copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
 import SkillMentionInput, { resolveSkillContext } from '../skills/SkillMentionInput';
 import SkillPickerButton from '../skills/SkillPickerButton';
 import type { SkillReference } from '../../types';
 import { linkify } from '../../utils/linkify';
 import {
-  fileToAttachment, attachmentsFromClipboard, formatFileSize,
+  fileToAttachment, attachmentsFromClipboard, attachmentWorkspaceContext, formatFileSize, persistAttachments,
 } from '../../utils/attachments';
 import { TOOLS } from '../../engine/tools';
+import { useFileDrop } from '../../hooks/useFileDrop';
 
 interface Props {
   empId: string;
@@ -112,12 +112,13 @@ export default function DmChatApp({ empId }: Props) {
   const addFiles = async (files: FileList | File[]) => {
     const arr = Array.from(files);
     if (arr.length === 0) return;
-    const atts = await Promise.all(arr.map(fileToAttachment));
+    const atts = await persistAttachments(`dm:${empId}`, await Promise.all(arr.map(fileToAttachment)));
     setAttachments((prev) => [...prev, ...atts]);
   };
+  const fileDrop = useFileDrop(addFiles, typing || !!retryJob);
 
   const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const atts = await attachmentsFromClipboard(e);
+    const atts = await persistAttachments(`dm:${empId}`, await attachmentsFromClipboard(e));
     if (atts.length > 0) {
       e.preventDefault();
       setAttachments((prev) => [...prev, ...atts]);
@@ -231,20 +232,7 @@ export default function DmChatApp({ empId }: Props) {
         .map((a) => `【附件 ${a.name}】\n${a.dataUrl!.slice(0, 6000)}`)
         .join('\n\n');
     }
-    // 文件类附件：保存为产出物
-    const fileAtts = atts.filter((a) => a.kind === 'file');
-    for (const f of fileAtts) {
-      addOutput({
-        id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        ts: Date.now(),
-        filename: f.name,
-        kind: 'file',
-        title: `附件：${f.name}`,
-        scope: `dm:${empId}`,
-        contentType: 'text',
-        content: `已上传附件 ${f.name}（${formatFileSize(f.size)}）`,
-      } as any);
-    }
+    enriched += attachmentWorkspaceContext(atts);
     // 图片类附件：走多模态视觉
     const imageAtts = atts.filter((a) => a.kind === 'image');
 
@@ -277,7 +265,7 @@ export default function DmChatApp({ empId }: Props) {
       content: m.content,
       time: new Date(m.timestamp).toLocaleString('zh-CN'),
     })), `与 ${emp.name} 私聊记录`);
-    addOutput({ id: `exp-${Date.now()}`, ts: Date.now(), filename: `私聊-${emp.name}-${new Date().toISOString().slice(0, 10)}.md`, kind: 'export', title: `与 ${emp.name} 私聊导出`, scope: `dm:${empId}`, contentType: 'markdown', content: md } as any);
+    downloadTextFile(`私聊-${emp.name}-${new Date().toISOString().slice(0, 10)}.md`, md);
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -355,7 +343,8 @@ export default function DmChatApp({ empId }: Props) {
           </div>
 
           {/* 输入区 */}
-          <div className="chat-composer">
+          <div className={`chat-composer ${fileDrop.dragActive ? 'is-file-dragging' : ''}`} {...fileDrop.dropProps}>
+            {fileDrop.dragActive && <div className="chat-file-drop-overlay"><strong>松开添加文件</strong><span>文件将真实写入本次聊天工作区</span></div>}
             {retryJob && <div className={`dm-retry-panel ${retryJob.status}`}>
               <ReloadOutlined spin={retryJob.status === 'waiting'} />
               <div className="dm-retry-copy">
@@ -394,7 +383,9 @@ export default function DmChatApp({ empId }: Props) {
                       <span className="attach-icon">{a.kind === 'image' ? '🖼' : a.kind === 'text' ? '📄' : '📦'}</span>
                     )}
                     <span className="attach-name">{a.name}</span>
-                    <span className="attach-size">{formatFileSize(a.size)}</span>
+                    <span className={`attach-size ${a.persistenceError ? 'error' : a.workspacePath ? 'saved' : ''}`} title={a.persistenceError ?? a.workspacePath}>
+                      {formatFileSize(a.size)} · {a.persistenceError ? '保存失败' : a.workspacePath ? '已保存' : '待保存'}
+                    </span>
                     <button className="attach-del" onClick={() => removeAttachment(i)} title="移除">✕</button>
                   </div>
                 ))}

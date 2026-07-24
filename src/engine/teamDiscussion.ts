@@ -219,8 +219,8 @@ export async function runTeamDiscussion(
           const argsStr = toolArgs ? (toolArgs.length > 80 ? toolArgs.slice(0, 80) + '…' : toolArgs) : '';
           handlers.onToolCall(emp, toolName, argsStr, result || '🔄 执行中…', step.id);
         },
-        // 仅首轮（PM）携带用户上传的图片附件
-        role === 'pm' ? opts.attachments : undefined,
+        // 所有被调度成员都能读取同一批用户图片，避免交接后丢失视觉上下文。
+        opts.attachments,
         opts.extraSystemContext,
         control?.shouldStop
       );

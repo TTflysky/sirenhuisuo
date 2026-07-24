@@ -41,11 +41,13 @@ export const TOOLS: ToolDef[] = [
     type: 'function',
     function: {
       name: 'read_file',
-      description: '读取 outputs/ 目录中已存在的文件内容。用于了解之前产出的上下文。',
+      description: '读取工作区中的真实文件。支持文本、代码、CSV/JSON，以及 Excel、Word、PowerPoint、PDF、OpenDocument、RTF、EPUB 的内容提取。长文件可用 offset 和 limit 分段读取。上传文件路径以 uploads/ 开头。',
       parameters: {
         type: 'object',
         properties: {
           path: { type: 'string', description: '文件名，如 "方案设计.md"' },
+          offset: { type: 'string', description: '可选，开始字符位置，默认 0' },
+          limit: { type: 'string', description: '可选，本次最多读取字符数，默认 12000，最大 50000' },
         },
         required: ['path'],
       },
@@ -145,8 +147,10 @@ export interface ToolResult {
 
 // ===== Sandbox 检查 =====
 function safePath(p: string): string {
-  // 去掉路径中危险字符，限制在当前 outputs/ 概念目录
-  return p.replace(/[/\\]+/g, '-').replace(/\.\./g, '');
+  const parts = p.replace(/\\/g, '/').split('/')
+    .filter((part) => part && part !== '.' && part !== '..')
+    .map((part) => part.replace(/[<>:"|?*\u0000-\u001f]/g, '_'));
+  return parts.join('/') || 'untitled.txt';
 }
 
 function diskScope(scope?: OutputScope): string {
@@ -157,6 +161,65 @@ function diskScope(scope?: OutputScope): string {
 // 真实文件系统桥（Electron 桌面版）：把文件落到自主代理工作区（userData/workspace）
 function getFsApi(): any {
   return (typeof window !== 'undefined' && (window as any).electronAPI) ? (window as any).electronAPI : null;
+}
+
+const TEXT_PREVIEW_EXTENSIONS = new Set([
+  'md', 'txt', 'json', 'csv', 'tsv', 'html', 'htm', 'css', 'scss', 'less',
+  'js', 'jsx', 'ts', 'tsx', 'py', 'go', 'rs', 'java', 'c', 'cpp', 'h', 'hpp',
+  'cs', 'rb', 'php', 'swift', 'kt', 'sql', 'sh', 'bash', 'ps1', 'bat', 'cmd',
+  'yaml', 'yml', 'toml', 'ini', 'cfg', 'xml', 'svg', 'vue', 'svelte', 'log',
+]);
+
+type WorkspaceFileVersion = { size: number; modifiedAt: number };
+
+async function workspaceFileVersions(scope: OutputScope, fsApi: any): Promise<Map<string, WorkspaceFileVersion>> {
+  const versions = new Map<string, WorkspaceFileVersion>();
+  if (!fsApi?.fsList) return versions;
+  const listed = await fsApi.fsList(diskScope(scope), true);
+  if (!listed?.ok || !Array.isArray(listed.items)) return versions;
+  for (const item of listed.items) {
+    if (item.type !== 'file') continue;
+    versions.set(String(item.name).replace(/\\/g, '/'), {
+      size: Number(item.size) || 0,
+      modifiedAt: Number(item.modifiedAt) || 0,
+    });
+  }
+  return versions;
+}
+
+async function syncWorkspaceFiles(scope: OutputScope, fsApi: any, before = new Map<string, WorkspaceFileVersion>()): Promise<number> {
+  if (!fsApi?.fsList) return 0;
+  const listed = await fsApi.fsList(diskScope(scope), true);
+  if (!listed?.ok || !Array.isArray(listed.items)) return 0;
+  let synced = 0;
+  for (const item of listed.items) {
+    if (item.type !== 'file') continue;
+    const filename = String(item.name).replace(/\\/g, '/');
+    if (filename === 'uploads' || filename.startsWith('uploads/')) continue;
+    const previous = before.get(filename);
+    if (previous && previous.size === (Number(item.size) || 0) && previous.modifiedAt === (Number(item.modifiedAt) || 0)) continue;
+    const ext = filename.split('.').pop()?.toLowerCase() ?? '';
+    const type = contentTypeFromFilename(filename);
+    let content = `文件已保存到工作区。点击“打开”可使用系统默认程序查看。`;
+    if (TEXT_PREVIEW_EXTENSIONS.has(ext) && item.size <= 2 * 1024 * 1024 && fsApi.fsRead) {
+      const read = await fsApi.fsRead(`${diskScope(scope)}/${filename}`);
+      if (read?.ok && typeof read.content === 'string') content = read.content;
+    }
+    const root = String(listed.path ?? '').replace(/[\\/]+$/, '');
+    addOutput({
+      filename,
+      kind: 'file',
+      title: filename.split('/').pop() || filename,
+      scope,
+      contentType: type,
+      language: type === 'code' ? ext : undefined,
+      content,
+      bytes: Number(item.size) || undefined,
+      diskPath: root ? `${root}/${filename}` : undefined,
+    });
+    synced += 1;
+  }
+  return synced;
 }
 
 export async function executeTool(call: ToolCall): Promise<ToolResult> {
@@ -170,27 +233,31 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         // 1) 落到真实工作区文件（桌面版可用；浏览器版跳过）
         const fsApi = getFsApi();
         let diskInfo = '';
+        let diskPath: string | undefined;
         if (fsApi?.fsWrite) {
           try {
             const r = await fsApi.fsWrite(`${diskScope(call.scope)}/${path}`, content);
-            if (r?.ok) diskInfo = `（已写入磁盘工作区：${r.path}，${r.size} 字节）`;
-            else diskInfo = `（磁盘写入失败：${r?.error ?? '未知'}）`;
+            if (r?.ok) {
+              diskPath = r.path;
+              diskInfo = `（已写入磁盘工作区：${r.path}，${r.size} 字节）`;
+            } else {
+              return { toolCallId: id, name, success: false, output: `文件写入失败：${r?.error ?? '未知错误'}` };
+            }
           } catch (e: any) {
-            diskInfo = `（磁盘写入异常：${e?.message ?? '未知'}）`;
+            return { toolCallId: id, name, success: false, output: `文件写入异常：${e?.message ?? '未知错误'}` };
           }
         }
-        // 2) 同时在应用内产出物列表里留一份（便于预览/下载）
+        // 同一路径使用 upsert，只展示磁盘上最新的文件版本。
         addOutput({
-          id: `tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-          ts: Date.now(),
           filename: path,
-          kind: 'tool-output',
-          title: `工具产出：${path}`,
+          kind: 'file',
+          title: path.split('/').pop() || path,
           scope: call.scope ?? 'global',
           contentType: ct,
           language: ct === 'code' ? path.split('.').pop() : undefined,
           content,
-        } as any);
+          diskPath,
+        });
         return {
           toolCallId: id, name, success: true,
           output: `文件已写入：${path}（${content.split('\n').length} 行，${content.length} 字符）${diskInfo}`,
@@ -199,14 +266,21 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
 
       case 'read_file': {
         const path = safePath(args.path ?? '');
+        const offset = Math.max(0, Number.parseInt(args.offset ?? '0', 10) || 0);
+        const limit = Math.min(50000, Math.max(1000, Number.parseInt(args.limit ?? '12000', 10) || 12000));
         // 优先读真实工作区文件
         const fsApi = getFsApi();
         if (fsApi?.fsRead) {
           try {
             const r = await fsApi.fsRead(`${diskScope(call.scope)}/${path}`);
             if (r?.ok) {
-              return { toolCallId: id, name, success: true, output: `文件 ${path} 内容：\n${r.content.slice(0, 6000)}` };
+              const content = String(r.content ?? '');
+              const section = content.slice(offset, offset + limit);
+              const next = offset + section.length < content.length ? `\n\n[还有内容；下一段请用 offset=${offset + section.length}]` : '';
+              const format = r.format ? `（${r.format}，${r.size ?? 0} 字节）` : '';
+              return { toolCallId: id, name, success: true, output: `文件 ${path}${format} 内容：\n${section}${next}` };
             }
+            return { toolCallId: id, name, success: false, output: `读取文件 ${path} 失败：${r?.error ?? '未知错误'}${r?.path ? `\n真实路径：${r.path}` : ''}` };
           } catch {}
         }
         // 回退到应用内产出物
@@ -314,28 +388,17 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         }
 
         try {
+          const beforeFiles = await workspaceFileVersions(call.scope ?? 'global', api);
           const result = await api.execCommand(cmd, diskScope(call.scope));
           const { success, exitCode, stdout, stderr, signal: sig, cwd } = result as any;
-          // 自动保存输出到 outputs/
-          const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-          const safeName = `cmd-${cmd.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 30)}-${ts}.txt`;
-          addOutput({
-            id: `cmd-${Date.now()}`,
-            ts: Date.now(),
-            filename: safeName,
-            kind: 'tool-output',
-            title: `命令输出：${cmd.slice(0, 60)}`,
-            scope: call.scope ?? 'global',
-            contentType: 'text',
-            content: `命令：${cmd}\n目录：${cwd}\n状态：${success ? '成功' : '失败'}（退出码 ${exitCode}）${sig ? ` (${sig})` : ''}\n\n--- STDOUT ---\n${stdout || '(无)'}\n\n--- STDERR ---\n${stderr || '(无)'}`,
-          } as any);
+          const syncedFiles = await syncWorkspaceFiles(call.scope ?? 'global', api, beforeFiles);
 
           const out = [
             `状态：${success ? '成功 ✅' : `失败 ❌（退出码 ${exitCode}）`}${sig ? ` (${sig})` : ''}`,
             `目录：${cwd}`,
             `STDOUT：\n${(stdout || '(无)').slice(0, 3000)}`,
             stderr ? `\nSTDERR：\n${stderr.slice(0, 1000)}` : '',
-            `输出已保存到 outputs/${safeName}`,
+            syncedFiles > 0 ? `工作区文件已同步到产出物：${syncedFiles} 个` : '',
           ].filter(Boolean).join('\n\n');
           return { toolCallId: id, name, success, output: out };
         } catch (e: any) {

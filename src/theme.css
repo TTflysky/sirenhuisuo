@@ -1515,13 +1515,13 @@ body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
 
 .chat-outputs-item {
   display: flex; align-items: center; gap: 8px;
-  padding: 6px 12px;
+  padding: 9px 12px;
   cursor: pointer;
   transition: background 0.12s;
   border-bottom: 1px solid var(--border-light);
 }
 .chat-outputs-item:hover { background: var(--bg-deep); }
-.chat-outputs-item.active { background: #eef2ff; }
+.chat-outputs-item.active { background: color-mix(in srgb, var(--apple-accent) 13%, var(--surface)); box-shadow: inset 3px 0 0 var(--apple-accent); }
 
 .chat-outputs-item-icon { font-size: 14px; flex-shrink: 0; }
 .chat-outputs-item-info {
@@ -1529,13 +1529,15 @@ body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
   display: flex; flex-direction: column;
   gap: 1px;
 }
+.chat-outputs-item-title-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .chat-outputs-item-title {
-  font-size: 12px; font-weight: 500;
+  flex: 1; min-width: 0; font-size: 12px; font-weight: 650;
   color: var(--text);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+.chat-outputs-item-type { flex-shrink: 0; padding: 1px 4px; border-radius: 3px; background: var(--bg-deep); color: var(--text-muted); font-size: 8px; font-weight: 700; }
 .chat-outputs-item-meta {
-  font-size: 10px; color: var(--text-muted);
+  font-size: 10px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .chat-outputs-item-del {
   opacity: 0; flex-shrink: 0;
@@ -1578,9 +1580,17 @@ body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
 }
 .chat-outputs-preview-body {
   flex: 1; min-height: 0;
-  overflow: hidden;
+  overflow: auto;
+  padding: 12px 14px;
   user-select: text;
 }
+.chat-outputs-binary-preview { min-height: 180px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-secondary); text-align: center; }
+.chat-outputs-binary-preview > span { font-size: 32px; }.chat-outputs-binary-preview > strong { max-width: 100%; color: var(--text); word-break: break-all; }.chat-outputs-binary-preview > small { color: var(--text-muted); }.chat-outputs-binary-preview > button { margin-top: 5px; padding: 6px 12px; border: 1px solid var(--border-light); border-radius: 5px; background: var(--surface-raised); color: var(--apple-accent); cursor: pointer; }
+.chat-composer.is-file-dragging { outline: 2px solid var(--apple-accent); outline-offset: -2px; background: color-mix(in srgb, var(--apple-accent) 8%, var(--surface)); }
+.chat-file-drop-overlay { position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: 2px dashed var(--apple-accent); background: color-mix(in srgb, var(--surface) 90%, transparent); color: var(--apple-accent); pointer-events: none; }
+.chat-file-drop-overlay strong { font-size: 13px; }.chat-file-drop-overlay span { color: var(--text-secondary); font-size: 10px; }
+.attach-size.saved { color: var(--online); }
+.attach-size.error { color: var(--offline); font-weight: 600; }
 
 /* Markdown 渲染区 */
 .outputs-markdown-body {

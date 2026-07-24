@@ -1,10 +1,10 @@
-# 私人办公会所（Hermes Office Pro）v0.5.6
+# 私人办公会所（Hermes Office Pro）v0.5.7
 
 > 面向 Windows 的多模型 AI 虚拟办公室。创建员工、组建团队，让不同模型按照职责协作完成真实任务。
 
 ## 项目状态
 
-- 当前版本：`0.5.6`
+- 当前版本：`0.5.7`
 - 发布分支：`main`
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 33、React 19、TypeScript 6、Ant Design 6、Vite 8
@@ -46,6 +46,15 @@
 - Skill 或工具调用失败时展示具体错误，方便重试或改用其他方案。
 - 支持文件读取、写入、目录检查、网页搜索和连接器工具。
 
+### 真实附件与交付文件
+
+- 助理、员工单聊和团队聊天统一支持文件选择、剪贴板粘贴与拖拽导入。
+- 附件先真实写入当前聊天的独立工作区，再由员工、Skill 和工具读取，不再只传递文件名与大小占位。
+- 图片同时作为视觉输入和真实文件保存；文本、代码、CSV、JSON 可直接读取。
+- 支持提取 Excel、Word、PowerPoint、PDF、OpenDocument、RTF 和 EPUB 内容，长文件可分段读取。
+- 其他二进制文件同样真实保存，并明确交给匹配的 Skill 或命令工具处理；失败时显示具体原因和路径。
+- 产出物只展示员工实际保存成功的交付文件，不再混入聊天纪要、命令日志、附件占位或重复记录。
+
 ### 模型稳定性与诊断
 
 - 员工单聊失败后可按设置自动重试，默认间隔 10 秒，最多 5 次。
@@ -68,13 +77,13 @@
 
 最新安装包可从 GitHub Releases 下载：
 
-- [直接下载私人办公会所 Setup 0.5.6.exe](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.5.6/Setup.0.5.6.exe)
-- [查看 v0.5.6 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.5.6)
+- [直接下载私人办公会所 Setup 0.5.7.exe](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.5.7/Setup.0.5.7.exe)
+- [查看 v0.5.7 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.5.7)
 
 本地构建的安装程序生成在：
 
 ```text
-release/私人办公会所 Setup 0.5.6.exe
+release/私人办公会所 Setup 0.5.7.exe
 ```
 
 可以直接覆盖安装旧版本。应用数据保存在用户目录，正常覆盖安装不会删除员工、团队、聊天和模型配置。
@@ -167,6 +176,13 @@ release/                 Windows 安装包输出目录
 - 删除应用前建议自行备份重要产出物。
 
 ## 最近版本
+
+### v0.5.7
+
+- 三类聊天窗口统一支持选择、粘贴和拖拽文件，附件真实落盘并显示保存状态。
+- 新增 Excel、Word、PowerPoint、PDF 等文档内容提取与长文件分段读取。
+- 产出物只保留实际交付文件，过滤聊天摘要、命令日志、输入附件和重复记录。
+- 命令执行只登记本次新增或修改的文件，不再重复展示整个工作区。
 
 ### v0.5.6
 

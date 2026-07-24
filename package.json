@@ -1,7 +1,7 @@
 {
   "name": "hermes-office-pro",
   "private": true,
-  "version": "0.5.6",
+  "version": "0.5.7",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -20,6 +20,7 @@
     "antd": "^6.5.1",
     "electron-log": "^5.4.4",
     "electron-updater": "^6.5.0",
+    "officeparser": "^7.4.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },

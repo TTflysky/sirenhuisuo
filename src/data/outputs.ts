@@ -13,7 +13,7 @@ export type OutputScope = `team:${string}` | `dm:${string}` | 'assistant' | 'glo
 export interface OutputRecord {
   id: string;
   filename: string;
-  kind: 'discussion' | 'task' | 'export' | 'tool-output';
+  kind: 'file' | 'discussion' | 'task' | 'export' | 'tool-output';
   title: string;
   ts: number;
   scope: OutputScope;           // 作用域，过滤用
@@ -25,6 +25,7 @@ export interface OutputRecord {
   bytes?: number;               // 文件大小
   language?: string;            // 代码语言（code 类型时）
   snippet?: string;             // 简短预览
+  diskPath?: string;            // Electron 工作区中的真实文件路径
 }
 
 // ===== 工具函数 =====
@@ -134,12 +135,22 @@ export function loadOutputs(): OutputRecord[] {
     const raw = localStorage.getItem(LS_OUTPUTS);
     if (raw) {
       const parsed = JSON.parse(raw) as OutputRecord[];
-      // 向后兼容：旧数据没有 scope / contentType
-      return parsed.map((o) => ({
+      // 只保留真实文件。旧版自动生成的聊天纪要、任务摘要、命令日志和附件占位不属于最终产物。
+      const normalized = parsed.map((o) => ({
         ...o,
         scope: (o as any).scope ?? 'global',
         contentType: (o as any).contentType ?? 'markdown',
-      }));
+      })).filter((output) => output.kind === 'file'
+        && !output.id.startsWith('att-')
+        && !output.title?.startsWith('附件：')
+        && !output.content?.startsWith('已上传附件 '));
+      const latestByPath = new Map<string, OutputRecord>();
+      normalized.sort((a, b) => a.ts - b.ts).forEach((output) => {
+        latestByPath.set(`${output.scope}\n${output.filename.replace(/\\/g, '/').toLowerCase()}`, output);
+      });
+      const cleaned = [...latestByPath.values()].sort((a, b) => a.ts - b.ts);
+      if (cleaned.length !== parsed.length) saveOutputs(cleaned);
+      return cleaned;
     }
   } catch {}
   return [];
@@ -168,7 +179,14 @@ export function addOutput(r: Omit<OutputRecord, 'id' | 'ts'>): OutputRecord {
       : new Blob([rec.content]).size;
   }
   const list = loadOutputs();
-  list.push(rec);
+  const key = `${rec.scope}\n${rec.filename.replace(/\\/g, '/').toLowerCase()}`;
+  const existingIndex = list.findIndex((item) => `${item.scope}\n${item.filename.replace(/\\/g, '/').toLowerCase()}` === key);
+  if (existingIndex >= 0) {
+    rec.id = list[existingIndex].id;
+    list[existingIndex] = rec;
+  } else {
+    list.push(rec);
+  }
   saveOutputs(list);
   // 广播产出物变更，让其他窗口（主办公室 / 原生聊天子窗口）实时刷新
   sendBus(BUS_CHANNELS.OUTPUTS_CHANGED, { scope: rec.scope });
@@ -209,6 +227,10 @@ export function loadOutputsByAssistant(): OutputRecord[] {
 
 /** 在浏览器新标签中打开产出物预览 */
 export function openOutputInBrowser(r: OutputRecord): void {
+  if (r.diskPath && window.electronAPI?.openPath) {
+    void window.electronAPI.openPath(r.diskPath);
+    return;
+  }
   let html: string;
   const title = r.title || r.filename;
 

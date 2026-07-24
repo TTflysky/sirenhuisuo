@@ -475,6 +475,9 @@ export interface Attachment {
   dataUrl?: string;
   size: number;
   kind: 'image' | 'text' | 'file';
+  /** 二进制或文本附件成功写入当前聊天工作区后的相对路径 */
+  workspacePath?: string;
+  persistenceError?: string;
 }
 
 export interface ChatTurn { role: 'system' | 'user' | 'assistant' | 'tool'; content: ChatContent; tool_call_id?: string; name?: string; }

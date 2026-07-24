@@ -3,15 +3,15 @@ import type { ChatMessage, ThoughtChainStep } from '../../types';
 import { runAgentLoop, resolveApiBase, resolveChatSettings, extractUserInsights, loadSettings, type ChatTurn, type Attachment } from '../../data/hermesClient';
 import { TOOLS } from '../../engine/tools';
 import { getConnectorTools } from '../../engine/connectorTools';
-import { addOutput } from '../../data/outputs';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
-import { copyToClipboard, messagesToMarkdown } from '../../utils/clipboard';
+import { copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
 import SkillMentionInput, { resolveSkillContext } from '../skills/SkillMentionInput';
 import SkillPickerButton from '../skills/SkillPickerButton';
 import type { SkillReference } from '../../types';
 import { linkify } from '../../utils/linkify';
-import { fileToAttachment, attachmentsFromClipboard, formatFileSize } from '../../utils/attachments';
+import { fileToAttachment, attachmentsFromClipboard, attachmentWorkspaceContext, formatFileSize, persistAttachments } from '../../utils/attachments';
+import { useFileDrop } from '../../hooks/useFileDrop';
 import AssistantSettingsModal, { getAssistantPrompt } from '../settings/AssistantSettingsModal';
 
 const LS_KEY = 'hermes_office_assistant_chat';
@@ -53,12 +53,13 @@ export default function AssistantChat() {
   const addFiles = async (files: FileList | File[]) => {
     const arr = Array.from(files);
     if (arr.length === 0) return;
-    const atts = await Promise.all(arr.map(fileToAttachment));
+    const atts = await persistAttachments('assistant', await Promise.all(arr.map(fileToAttachment)));
     setAttachments((prev) => [...prev, ...atts]);
   };
+  const fileDrop = useFileDrop(addFiles, busy);
 
   const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const atts = await attachmentsFromClipboard(e);
+    const atts = await persistAttachments('assistant', await attachmentsFromClipboard(e));
     if (atts.length > 0) {
       e.preventDefault();
       setAttachments((prev) => [...prev, ...atts]);
@@ -98,20 +99,7 @@ export default function AssistantChat() {
     if (textAtts.length > 0) {
       enriched += '\n\n' + textAtts.map((a) => `【附件 ${a.name}】\n${a.dataUrl!.slice(0, 6000)}`).join('\n\n');
     }
-    // 文件类附件：保存为产出物
-    const fileAtts = atts.filter((a) => a.kind === 'file');
-    for (const f of fileAtts) {
-      addOutput({
-        id: `att-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        ts: Date.now(),
-        filename: f.name,
-        kind: 'file',
-        title: `附件：${f.name}`,
-        scope: 'assistant',
-        contentType: 'text',
-        content: `已上传附件 ${f.name}（${formatFileSize(f.size)}）`,
-      } as any);
-    }
+    enriched += attachmentWorkspaceContext(atts);
     const imageAtts = atts.filter((a) => a.kind === 'image');
 
     const display = [content, ...atts.map((a) => `[📎 ${a.name}]`)].filter(Boolean).join('\n');
@@ -229,16 +217,7 @@ export default function AssistantChat() {
       })),
       'Hermes 助手对话记录'
     );
-    addOutput({
-      id: `exp-${Date.now()}`,
-      ts: Date.now(),
-      filename: `Hermes助手-对话-${new Date().toISOString().slice(0, 10)}.md`,
-      kind: 'export',
-      title: `Hermes 助手对话导出`,
-      scope: 'assistant' as any,
-      contentType: 'markdown',
-      content: md,
-    } as any);
+    downloadTextFile(`Hermes助手-对话-${new Date().toISOString().slice(0, 10)}.md`, md);
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -320,7 +299,8 @@ export default function AssistantChat() {
           </div>
 
           {/* 输入区 */}
-          <div className="chat-composer">
+          <div className={`chat-composer ${fileDrop.dragActive ? 'is-file-dragging' : ''}`} {...fileDrop.dropProps}>
+            {fileDrop.dragActive && <div className="chat-file-drop-overlay"><strong>松开添加文件</strong><span>文件将真实写入本次聊天工作区</span></div>}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
               <button
                 className={`btn btn-sm ${showOutputs ? 'btn-primary' : ''}`}
@@ -345,7 +325,9 @@ export default function AssistantChat() {
                       <span className="attach-icon">{a.kind === 'image' ? '🖼' : a.kind === 'text' ? '📄' : '📦'}</span>
                     )}
                     <span className="attach-name">{a.name}</span>
-                    <span className="attach-size">{formatFileSize(a.size)}</span>
+                    <span className={`attach-size ${a.persistenceError ? 'error' : a.workspacePath ? 'saved' : ''}`} title={a.persistenceError ?? a.workspacePath}>
+                      {formatFileSize(a.size)} · {a.persistenceError ? '保存失败' : a.workspacePath ? '已保存' : '待保存'}
+                    </span>
                     <button className="attach-del" onClick={() => removeAttachment(i)} title="移除">✕</button>
                   </div>
                 ))}
@@ -358,7 +340,7 @@ export default function AssistantChat() {
               <button className="btn btn-sm" onClick={handleCopyAll} disabled={msgs.length === 0} title="复制全部对话">
                 📋 复制全部
               </button>
-              <button className="btn btn-sm" onClick={handleExport} disabled={msgs.length === 0} title="导出为 markdown 到产出物">
+              <button className="btn btn-sm" onClick={handleExport} disabled={msgs.length === 0} title="下载 Markdown 对话记录">
                 📤 导出
               </button>
               <button

@@ -24,7 +24,7 @@ export default function ChatOutputsPanel({ scope, maxHeight = 500, selectedFilen
 
   useEffect(() => {
     const refresh = () => {
-      const next = loadOutputsByScope(scope).sort((a, b) => b.ts - a.ts);
+      const next = loadOutputsByScope(scope).sort((a, b) => a.filename.localeCompare(b.filename, 'zh-CN'));
       setOutputs(next);
       setSelectedId((current) => current && next.some((item) => item.id === current)
         ? current
@@ -64,8 +64,8 @@ export default function ChatOutputsPanel({ scope, maxHeight = 500, selectedFilen
         <div className="chat-outputs-preview-head chat-outputs-empty-head"><button type="button" className="chat-outputs-back" onClick={onBack} disabled={!onBack}>← 返回聊天</button><strong>产出物</strong></div>
         <div className="chat-outputs-empty">
           <span className="chat-outputs-empty-icon">{kindIcon('default')}</span>
-          <span className="chat-outputs-empty-text">No outputs yet</span>
-          <span className="chat-outputs-empty-hint">Generated files and task summaries will appear here.</span>
+          <span className="chat-outputs-empty-text">暂无交付文件</span>
+          <span className="chat-outputs-empty-hint">员工保存成功的文档、代码和项目文件会显示在这里。</span>
         </div>
       </div>
     );
@@ -76,7 +76,7 @@ export default function ChatOutputsPanel({ scope, maxHeight = 500, selectedFilen
       <div className="chat-outputs-list" style={{ maxHeight }}>
         <div className="chat-outputs-list-head">
           {onBack && <button type="button" className="chat-outputs-back" onClick={onBack}>← 返回聊天</button>}
-          <span>产出物 ({outputs.length})</span>
+          <span>交付文件 ({outputs.length})</span>
         </div>
         {outputs.map((output) => (
           <div
@@ -92,14 +92,17 @@ export default function ChatOutputsPanel({ scope, maxHeight = 500, selectedFilen
           >
             <span className="chat-outputs-item-icon">{contentTypeIcon(output.contentType)}</span>
             <span className="chat-outputs-item-info">
-              <span className="chat-outputs-item-title">{output.title || output.filename}</span>
+              <span className="chat-outputs-item-title-row">
+                <span className="chat-outputs-item-title">{fileBasename(output.filename)}</span>
+                <span className="chat-outputs-item-type">{fileTypeLabel(output.filename)}</span>
+              </span>
               <span className="chat-outputs-item-meta">
-                {output.filename} · {formatOutputSize(output)}
+                {fileDirectory(output.filename)}{fileDirectory(output.filename) ? ' · ' : ''}{formatOutputSize(output)} · {formatOutputTime(output.ts)}
               </span>
             </span>
             <button
               className="chat-outputs-item-open"
-              title="Open in browser"
+              title={output.diskPath ? '用系统程序打开文件' : '打开预览'}
               onClick={(event) => {
                 event.stopPropagation();
                 openOutputInBrowser(output);
@@ -109,7 +112,7 @@ export default function ChatOutputsPanel({ scope, maxHeight = 500, selectedFilen
             </button>
             <button
               className="chat-outputs-item-del"
-              title="Delete output"
+              title="从交付文件列表移除"
               onClick={(event) => {
                 event.stopPropagation();
                 handleRemove(output);
@@ -130,7 +133,7 @@ export default function ChatOutputsPanel({ scope, maxHeight = 500, selectedFilen
             </span>
             <button
               className="chat-outputs-item-open"
-              title="Open in browser"
+              title={selected.diskPath ? '用系统程序打开文件' : '打开预览'}
               onClick={() => openOutputInBrowser(selected)}
             >
               ↗
@@ -143,6 +146,8 @@ export default function ChatOutputsPanel({ scope, maxHeight = 500, selectedFilen
               <div className="outputs-markdown-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(selected.content) }} />
             ) : selected.contentType === 'url' ? (
               <a href={selected.content.trim()} target="_blank" rel="noreferrer">{selected.content.trim()}</a>
+            ) : selected.diskPath && selected.content.startsWith('文件已保存到工作区') ? (
+              <div className="chat-outputs-binary-preview"><span>{contentTypeIcon(selected.contentType)}</span><strong>{fileBasename(selected.filename)}</strong><small>{formatOutputSize(selected)}</small><button type="button" onClick={() => openOutputInBrowser(selected)}>打开文件</button></div>
             ) : (
               <pre style={{ margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{selected.content}</pre>
             )}
@@ -151,6 +156,26 @@ export default function ChatOutputsPanel({ scope, maxHeight = 500, selectedFilen
       )}
     </div>
   );
+}
+
+function fileBasename(filename: string): string {
+  return filename.replace(/\\/g, '/').split('/').pop() || filename;
+}
+
+function fileDirectory(filename: string): string {
+  const normalized = filename.replace(/\\/g, '/');
+  const index = normalized.lastIndexOf('/');
+  return index > 0 ? normalized.slice(0, index) : '';
+}
+
+function fileTypeLabel(filename: string): string {
+  const name = fileBasename(filename);
+  const extension = name.includes('.') ? name.split('.').pop() : 'FILE';
+  return (extension || 'FILE').toUpperCase();
+}
+
+function formatOutputTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
 function escapeHtml(value: string): string {

@@ -3,11 +3,32 @@ const path = require('path');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const { exec, execFile } = require('child_process');
+const officeParser = require('officeparser');
 const { initAutoUpdater } = require('./autoUpdate.cjs');
 const { listSkills, readSkill, deleteSkill } = require('./skills.cjs');
 
 // ===== 自主代理工作区（沙箱目录，所有文件读写/命令执行都限制在此）=====
 const WORKSPACE = path.join(app.getPath('userData'), 'workspace');
+const TEXT_FILE_EXTENSIONS = new Set([
+  '.txt', '.md', '.markdown', '.json', '.jsonl', '.csv', '.tsv', '.yaml', '.yml',
+  '.xml', '.log', '.js', '.jsx', '.ts', '.tsx', '.py', '.java', '.c', '.cpp', '.h',
+  '.css', '.scss', '.less', '.html', '.htm', '.sh', '.bat', '.cmd', '.ps1', '.go',
+  '.rs', '.php', '.rb', '.sql', '.toml', '.ini', '.cfg', '.conf', '.svg', '.vue', '.svelte',
+]);
+const PARSABLE_DOCUMENT_EXTENSIONS = new Set([
+  '.docx', '.pptx', '.xlsx', '.odt', '.odp', '.ods', '.pdf', '.rtf', '.epub',
+]);
+const MAX_READABLE_FILE_BYTES = 50 * 1024 * 1024;
+const MAX_EXTRACTED_TEXT_CHARS = 4 * 1024 * 1024;
+
+function decodeTextBuffer(buffer) {
+  if (buffer.includes(0)) return null;
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buffer);
+  } catch {
+    return null;
+  }
+}
 function ensureWorkspace() {
   try { fs.mkdirSync(WORKSPACE, { recursive: true }); } catch {}
   return WORKSPACE;
@@ -330,11 +351,65 @@ function createWindow() {
     }
   });
 
+  ipcMain.handle('fs:writeData', async (_event, { filePath, dataUrl }) => {
+    try {
+      const target = safeJoin(filePath || '');
+      const match = typeof dataUrl === 'string' ? dataUrl.match(/^data:[^;]*;base64,(.+)$/s) : null;
+      if (!match) throw new Error('附件不是有效的 base64 数据');
+      const buffer = Buffer.from(match[1], 'base64');
+      if (buffer.length > 50 * 1024 * 1024) throw new Error('单个附件不能超过 50MB');
+      await fsp.mkdir(path.dirname(target), { recursive: true });
+      await fsp.writeFile(target, buffer);
+      return { ok: true, path: target, size: buffer.length };
+    } catch (e) {
+      return { ok: false, error: String(e?.message ?? e) };
+    }
+  });
+
   ipcMain.handle('fs:read', async (_event, { filePath }) => {
     try {
       const target = safeJoin(filePath || '');
-      const content = await fsp.readFile(target, 'utf8');
-      return { ok: true, path: target, content };
+      const stat = await fsp.stat(target);
+      if (!stat.isFile()) throw new Error('目标不是文件');
+      if (stat.size > MAX_READABLE_FILE_BYTES) {
+        throw new Error(`文件过大（${Math.ceil(stat.size / 1024 / 1024)}MB），当前单文件读取上限为 50MB`);
+      }
+      const extension = path.extname(target).toLowerCase();
+      if (TEXT_FILE_EXTENSIONS.has(extension)) {
+        const content = await fsp.readFile(target, 'utf8');
+        return { ok: true, path: target, content, format: 'text', size: stat.size };
+      }
+      if (PARSABLE_DOCUMENT_EXTENSIONS.has(extension)) {
+        try {
+          const ast = await officeParser.parseOffice(target, { extractAttachments: false, ocr: false });
+          const extracted = ast.toText();
+          const truncated = extracted.length > MAX_EXTRACTED_TEXT_CHARS;
+          const content = truncated
+            ? `${extracted.slice(0, MAX_EXTRACTED_TEXT_CHARS)}\n\n[内容过长，已在 ${MAX_EXTRACTED_TEXT_CHARS} 字符处截断]`
+            : extracted;
+          return {
+            ok: true,
+            path: target,
+            content,
+            format: ast.type || extension.slice(1),
+            size: stat.size,
+            truncated,
+            warnings: Array.isArray(ast.warnings) ? ast.warnings.map((warning) => String(warning?.message ?? warning)).slice(0, 10) : [],
+          };
+        } catch (parseError) {
+          throw new Error(`无法解析 ${extension || '该'} 文件：${String(parseError?.message ?? parseError)}`);
+        }
+      }
+      const possibleText = decodeTextBuffer(await fsp.readFile(target));
+      if (possibleText !== null) {
+        return { ok: true, path: target, content: possibleText, format: 'text', size: stat.size };
+      }
+      return {
+        ok: false,
+        path: target,
+        size: stat.size,
+        error: `文件已真实保存，但 ${extension || '该二进制格式'} 不支持直接提取文本。请使用匹配的 Skill 或 run_command 工具处理。`,
+      };
     } catch (e) {
       return { ok: false, error: String(e?.message ?? e) };
     }
@@ -366,8 +441,13 @@ function createWindow() {
             if (recursive) await walk(full, rel);
           } else {
             let size = 0;
-            try { size = (await fsp.stat(full)).size; } catch {}
-            out.push({ name: rel, type: 'file', size });
+            let modifiedAt = 0;
+            try {
+              const stat = await fsp.stat(full);
+              size = stat.size;
+              modifiedAt = stat.mtimeMs;
+            } catch {}
+            out.push({ name: rel, type: 'file', size, modifiedAt });
           }
         }
       };

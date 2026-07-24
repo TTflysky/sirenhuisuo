@@ -47,8 +47,57 @@ export async function fileToAttachment(file: File): Promise<Attachment> {
     } catch {
       base.dataUrl = '';
     }
+  } else {
+    base.dataUrl = await readFileAsDataURL(file);
   }
   return base;
+}
+
+function workspaceScope(scope: string): string {
+  return scope.replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+function safeFilename(name: string): string {
+  return name.replace(/[\\/<>:"|?*\u0000-\u001f]/g, '_').replace(/^\.+/, '') || 'attachment.bin';
+}
+
+/** 将附件真实写入当前聊天的工作区，供员工工具读取。 */
+export async function persistAttachments(scope: string, attachments: Attachment[]): Promise<Attachment[]> {
+  const api = window.electronAPI;
+  if (!api?.fsWrite) return attachments;
+  const batchId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  return Promise.all(attachments.map(async (attachment) => {
+    if (attachment.workspacePath || !attachment.dataUrl) return attachment;
+    const uploadPath = `uploads/${batchId}/${safeFilename(attachment.name)}`;
+    const relativePath = `${workspaceScope(scope)}/${uploadPath}`;
+    try {
+      const result = attachment.kind === 'text'
+        ? await api.fsWrite(relativePath, attachment.dataUrl)
+        : await api.fsWriteData(relativePath, attachment.dataUrl);
+      if (!result.ok) return { ...attachment, persistenceError: result.error ?? '写入工作区失败' };
+      return {
+        ...attachment,
+        workspacePath: uploadPath,
+        persistenceError: undefined,
+        // 二进制已落盘后不再塞进聊天 localStorage；图片仍需 data URL 做视觉输入和缩略图。
+        dataUrl: attachment.kind === 'file' ? undefined : attachment.dataUrl,
+      };
+    } catch (error) {
+      return { ...attachment, persistenceError: error instanceof Error ? error.message : String(error) };
+    }
+  }));
+}
+
+/** 给模型明确提供真实附件路径，禁止把已落盘文件误认为占位记录。 */
+export function attachmentWorkspaceContext(attachments: Attachment[]): string {
+  const lines = attachments.map((attachment) => {
+    if (attachment.workspacePath) return `- ${attachment.name}：已真实保存为 ${attachment.workspacePath}（${formatFileSize(attachment.size)}）`;
+    if (attachment.persistenceError) return `- ${attachment.name}：保存失败，原因：${attachment.persistenceError}`;
+    if (attachment.kind === 'text' && attachment.dataUrl) return `- ${attachment.name}：\n${attachment.dataUrl.slice(0, 6000)}`;
+    return undefined;
+  }).filter(Boolean);
+  if (!lines.length) return '';
+  return `\n\n【工作区附件】\n${lines.join('\n')}\n必须使用 read_file、run_command 或相应 Skill 读取真实文件后再回答；禁止声称这些文件只是占位记录。`;
 }
 
 /** 从剪贴板提取文件/图片 */

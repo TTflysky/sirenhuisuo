@@ -13,9 +13,10 @@ export interface FsEntry {
   name: string;
   type: 'file' | 'dir';
   size: number;
+  modifiedAt?: number;
 }
 export interface FsWriteResult { ok: boolean; path?: string; size?: number; error?: string; }
-export interface FsReadResult { ok: boolean; path?: string; content?: string; error?: string; }
+export interface FsReadResult { ok: boolean; path?: string; content?: string; format?: string; size?: number; truncated?: boolean; warnings?: string[]; error?: string; }
 export interface FsListResult { ok: boolean; path?: string; items?: FsEntry[]; error?: string; }
 export interface FsZipResult { ok: boolean; path?: string; error?: string; }
 
@@ -50,6 +51,7 @@ declare global {
     // 自主代理工作区文件系统（沙箱到 userData/workspace）
     getWorkspace: () => Promise<string>;
     fsWrite: (filePath: string, content: string) => Promise<FsWriteResult>;
+    fsWriteData: (filePath: string, dataUrl: string) => Promise<FsWriteResult>;
     fsRead: (filePath: string) => Promise<FsReadResult>;
     fsMkdir: (dirPath: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
     fsList: (dirPath?: string, recursive?: boolean) => Promise<FsListResult>;

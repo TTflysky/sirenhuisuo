@@ -26,11 +26,11 @@ import { PROACTIVE_SCRIPT } from './engine/proactiveScript';
 import { runTeamDiscussion } from './engine/teamDiscussion';
 import { evaluateDiscussionTrigger } from './engine/discussionTrigger';
 import { findFreeStation } from './data/hermesClient';
-import { addOutput, buildDiscussionOutput, buildTaskOutput } from './data/outputs';
 import { sendBus, onBus, BUS_CHANNELS } from './ipcBus';
 import { createTaskRun, saveTaskRuns, updateTaskRun } from './data/taskRuns';
 import { buildTaskPlan, matchTeamMembers } from './engine/taskMatcher';
 import { buildSkillContext, listSkills, matchSkills } from './data/skills';
+import { attachmentWorkspaceContext } from './utils/attachments';
 
 // ===== Action =====
 type Action =
@@ -308,7 +308,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
     dispatch({ type: 'APPEND_CHAT', teamId, msgs: [msg] });
     if (roleId === 'human') {
-      enqueueAutoDiscussion(teamId, msg.id, content, mentions, attachments, skillRefs);
+      const executionContent = `${content}${attachmentWorkspaceContext(attachments ?? [])}`;
+      enqueueAutoDiscussion(teamId, msg.id, executionContent, mentions, attachments, skillRefs);
     }
   };
 
@@ -699,25 +700,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           dispatch({ type: 'SET_STATUS', partial: { demoRunning: false, activeDemoTeamId: undefined } });
           for (const memberId of scheduledMemberIds) {
             dispatch({ type: 'UPDATE_EMPLOYEE', id: memberId, partial: { isWorking: false } });
-          }
-          // 落盘产出物：取最新 state（讨论后消息已追加）
-          try {
-            const cur = stateRef.current;
-            const liveTeam = cur.teams.find((t) => t.id === teamId);
-            if (liveTeam) {
-              const out = buildDiscussionOutput(
-                liveTeam,
-                cur.employees,
-                opts?.task ? { kind: 'task', task: opts.task, userText: opts.userText } : { kind: 'user', userText: opts?.userText ?? '' }
-              );
-              addOutput(out);
-              if (opts?.task) {
-                const taskOut = buildTaskOutput(liveTeam, cur.employees, opts.task);
-                addOutput(taskOut);
-              }
-            }
-          } catch (e) {
-            console.warn('[store] failed to save outputs:', e);
           }
           updateRun((run) => {
             const paused = pausedRunIdsRef.current.has(run.id);
