@@ -163,9 +163,10 @@ html, body, #root, .app-root {
 .emp-avatar-wrap img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
 .emp-status-dot {
   width: 9px; height: 9px; border-radius: 50%; z-index: 3;
-  position: absolute; bottom: -1px; right: -1px; border: 2px solid var(--surface);
+  position: absolute; bottom: -1px; left: -1px; border: 2px solid var(--surface);
 }
 .emp-info { flex: 1; min-width: 0; }
+.emp-frame-title { margin-top: 1px; font-size: 10px; font-weight: 700; line-height: 1.25; }
 .emp-name { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .emp-title { font-size: 11px; color: var(--text-muted); }
 
@@ -243,7 +244,7 @@ html, body, #root, .app-root {
 }
 .station-avatar-ring img { border-radius: 50%; }
 .station-status {
-  position: absolute; bottom: 6px; right: 6px;
+  position: absolute; bottom: 6px; left: 6px;
   width: 14px; height: 14px; border-radius: 50%;
   border: 2.5px solid #fff;
 }
@@ -256,6 +257,11 @@ html, body, #root, .app-root {
 }
 .station-title {
   margin-top: 2px; font-size: 11px; font-weight: 600;
+}
+.station-frame-title {
+  margin-top: 4px; padding: 2px 7px; border: 1px solid; border-radius: 4px;
+  font-size: 10px; font-weight: 700; line-height: 1.35;
+  background: color-mix(in srgb, currentColor 10%, transparent);
 }
 
 /* 空位 */
@@ -314,7 +320,7 @@ html, body, #root, .app-root {
 .team-member-item { display:flex; align-items:center; gap:8px; width:100%; padding:7px 6px; border:0; background:transparent; text-align:left; cursor:pointer; border-radius:6px; color:var(--text); }
 .team-member-item:hover { background:var(--bg-deep); }
 .team-member-avatar { position:relative; display:inline-flex; flex:0 0 auto; }
-.team-member-status { position:absolute; right:-3px; bottom:-2px; width:9px; height:9px; border:2px solid var(--surface); border-radius:50%; background:var(--online); z-index:4; }
+.team-member-status { position:absolute; left:-3px; bottom:-2px; width:9px; height:9px; border:2px solid var(--surface); border-radius:50%; background:var(--online); z-index:4; }
 .team-member-status.working { background:var(--busy); }
 .team-member-status.offline { background:var(--offline); }
 .team-supervisor-item { background: linear-gradient(135deg, #e9f2ff, #f4f8ff); border: 1px solid #b8d5ff; }
@@ -542,7 +548,7 @@ html, body, #root, .app-root {
 }
 .avatar-preset-option.selected { border-color: var(--text); box-shadow: 0 0 0 2px rgba(26,31,54,0.15); }
 .avatar-preset-option:hover { transform: scale(1.08); }
-.agent-avatar-frame { position: relative; display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; border-radius: 50%; box-sizing: content-box; }
+.agent-avatar-frame { position: relative; display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; border-radius: 50%; box-sizing: content-box; isolation: isolate; }
 .agent-avatar-frame > img { width: 100% !important; height: 100% !important; border-radius: 50%; object-fit: cover; }
 .agent-avatar-badge { position: absolute; right: -3px; bottom: -2px; display: flex; align-items: center; justify-content: center; border: 1px solid rgba(255,255,255,.9); border-radius: 50%; font-weight: 700; line-height: 1; box-shadow: 0 1px 4px rgba(0,0,0,.28); }
 .employee-color-picker { display: grid; grid-template-columns: auto 22px auto auto; align-items: center; justify-content: start; gap: 9px; }

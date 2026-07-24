@@ -1,5 +1,6 @@
 import type { Employee, DiscussionProgress, Team } from '../../types';
 import AgentAvatar from '../office/AgentAvatar';
+import { resolveAvatarFrame } from '../../data/avatarFrames';
 
 interface Props {
   employee: Employee;
@@ -11,6 +12,7 @@ interface Props {
 }
 
 export default function EmployeeCard({ employee, isWorking, progress, teams, onClick, onEdit }: Props) {
+  const frame = resolveAvatarFrame(employee.avatarFrame);
   const isInDiscussion = !!progress && progress.currentEmpId === employee.id;
   const statusColor = !employee.isOnline
     ? 'var(--offline)'
@@ -44,6 +46,7 @@ export default function EmployeeCard({ employee, isWorking, progress, teams, onC
           )}
         </div>
         <div className="emp-title" style={{ color: employee.statusColor }}>{employee.title}</div>
+        <div className="emp-frame-title" style={{ color: frame.primary }}>{frame.name}</div>
         <div className="emp-work">
           {isInDiscussion && (
             <span className="emp-work-busy">● {statusText}</span>

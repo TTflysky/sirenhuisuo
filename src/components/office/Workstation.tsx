@@ -1,5 +1,6 @@
 import type { Employee } from '../../types';
 import AgentAvatar from './AgentAvatar';
+import { resolveAvatarFrame } from '../../data/avatarFrames';
 
 interface Props {
   stationIndex: number;
@@ -14,6 +15,7 @@ interface Props {
  */
 export default function Workstation({ stationIndex, employee, isWorking, onClick }: Props) {
   const hasEmp = employee !== null;
+  const frame = employee ? resolveAvatarFrame(employee.avatarFrame) : null;
 
   return (
     <div
@@ -31,6 +33,7 @@ export default function Workstation({ stationIndex, employee, isWorking, onClick
           </div>
           <div className="station-name">{employee.name}</div>
           <div className="station-title" style={{ color: employee.statusColor }}>{employee.title}</div>
+          <div className="station-frame-title" style={{ color: frame?.primary, borderColor: frame?.primary }}>{frame?.name}</div>
         </>
       ) : (
         <div className="station-empty-slot">
