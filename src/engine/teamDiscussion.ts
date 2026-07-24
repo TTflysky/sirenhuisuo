@@ -1,6 +1,7 @@
 import type { Employee, Team, ChatMessage, TeamTask, TaskLane, DiscussionParticipantPlan, TaskRunStep, TaskPlanStep } from '../types';
-import { runAgentLoop, resolveApiBase, extractUserInsights, type ChatTurn } from '../data/hermesClient';
+import { runAgentLoop, resolveApiBase, extractUserInsights, getActiveModel, type ChatTurn } from '../data/hermesClient';
 import { TOOLS, executeTool } from './tools';
+import { diagnoseModel } from '../diagnostics/modelDiagnostics';
 
 // ===== 讨论回调 =====
 export interface DiscussionHandlers {
@@ -67,7 +68,7 @@ function memberByRole(team: Team, employees: Employee[], role: string): Employee
 function buildContext(msgs: ChatMessage[], employees: Employee[]): ChatTurn[] {
   return msgs.slice(-12).map((m) => ({
     role: (m.roleId === 'human' ? 'user' : 'assistant') as 'user' | 'assistant',
-    content: `${(employees.find((e) => e.id === m.authorId)?.name ?? m.roleId)}: ${m.content}`,
+    content: `${(employees.find((e) => e.id === m.authorId)?.name ?? m.roleId)}: ${m.content.slice(-3500)}`,
   }));
 }
 
@@ -82,7 +83,7 @@ async function memberSpeak(
   attachments?: import('../data/hermesClient').Attachment[],
   skillContext = '',
   shouldStop?: () => boolean
-): Promise<{ text: string; tokens?: number }> {
+): Promise<{ text: string; tokens?: number; failed?: boolean }> {
   if (!resolveApiBase()) return { text: '' }; // 外部处理兜底
 
   const duty = ROLE_DUTY[emp.role] ?? ROLE_DUTY.custom;
@@ -97,8 +98,8 @@ async function memberSpeak(
     ? { role: 'user', content: [{ type: 'text', text: `[指令] ${extraInstruction}` }, ...imageParts] }
     : { role: 'user', content: `[指令] ${extraInstruction}` };
 
+  let handoffContext = '';
   try {
-    let handoffContext = '';
     if (/读取并继承|审查|修订/u.test(extraInstruction)) {
       const listArgs = JSON.stringify({ filter: '' });
       onToolCall('list_files', listArgs, '');
@@ -115,6 +116,7 @@ async function memberSpeak(
       }
       handoffContext = `前序成员的团队工作区清单：\n${listed.output}\n\n已读取的最新产出：\n${fileContents.join('\n\n') || '暂无可读文件，必须要求前序步骤形成真实产出。'}`;
     }
+    const effectiveContext = [emp.soul, skillContext, handoffContext].filter(Boolean).join('\n\n').slice(0, 40000);
     const r = await runAgentLoop({
       turns: [
         { role: 'system', content: system },
@@ -125,7 +127,7 @@ async function memberSpeak(
       scene: 'team',
       label: `${team.name}/${emp.name}`,
       modelConfig: emp.modelConfig,
-      extraSystemContext: [emp.soul, skillContext, handoffContext].filter(Boolean).join('\n\n'),
+      extraSystemContext: effectiveContext,
       scope: `team:${team.id}` as any,
       onToolCall(name, args) {
         onToolCall(name, args, '');
@@ -141,7 +143,9 @@ async function memberSpeak(
     const reason = e?.name === 'AbortError' || /aborted|signal is aborted/iu.test(raw)
       ? '模型请求超过 30 秒未返回，已自动中止；可点击继续执行重试，任务上下文会保留'
       : raw;
-    return { text: `⚠️ ${emp.name} 无法响应：${reason}` };
+    const contextChars = contextMessages.slice(-12).reduce((total, message) => total + Math.min(message.content.length, 3500), 0) + Math.min(skillContext.length + handoffContext.length + (emp.soul?.length ?? 0), 40000);
+    const diagnosis = await diagnoseModel(emp.modelConfig ?? getActiveModel(), { contextChars });
+    return { text: `⚠️ ${emp.name} 无法响应：${reason}\n\n${diagnosis}`, failed: true };
   }
 }
 
@@ -221,6 +225,15 @@ export async function runTeamDiscussion(
       );
       content = r.text;
       tokens = r.tokens;
+      if (r.failed) {
+        const failureMentions = parseMentionIds(content, team, employees);
+        round += 1;
+        contextMessages.push({ id: `context-${Date.now()}-${round}`, authorId: emp.id, roleId: emp.role, content, mentions: failureMentions, timestamp: Date.now(), discussionRound: round });
+        handlers.onMessage(emp, content, failureMentions, tokens, round, opts.triggerMessageId, step.id);
+        handlers.onRunFailed?.(`${emp.name} 当前步骤未返回结果，任务已暂停：${content.slice(0, 600)}`);
+        runFailed = true;
+        break;
+      }
     } else {
       await sleep(700 + Math.random() * 600);
       content = step.kind === 'review'

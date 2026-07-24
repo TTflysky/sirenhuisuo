@@ -15,9 +15,10 @@ interface Props {
   scope: OutputScope;
   maxHeight?: number;
   selectedFilename?: string | null;
+  onBack?: () => void;
 }
 
-export default function ChatOutputsPanel({ scope, maxHeight = 500, selectedFilename }: Props) {
+export default function ChatOutputsPanel({ scope, maxHeight = 500, selectedFilename, onBack }: Props) {
   const [outputs, setOutputs] = useState<OutputRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -60,6 +61,7 @@ export default function ChatOutputsPanel({ scope, maxHeight = 500, selectedFilen
   if (outputs.length === 0) {
     return (
       <div className="chat-outputs-panel">
+        <div className="chat-outputs-preview-head chat-outputs-empty-head"><button type="button" className="chat-outputs-back" onClick={onBack} disabled={!onBack}>← 返回聊天</button><strong>产出物</strong></div>
         <div className="chat-outputs-empty">
           <span className="chat-outputs-empty-icon">{kindIcon('default')}</span>
           <span className="chat-outputs-empty-text">No outputs yet</span>
@@ -73,7 +75,8 @@ export default function ChatOutputsPanel({ scope, maxHeight = 500, selectedFilen
     <div className="chat-outputs-panel">
       <div className="chat-outputs-list" style={{ maxHeight }}>
         <div className="chat-outputs-list-head">
-          <span>Outputs ({outputs.length})</span>
+          {onBack && <button type="button" className="chat-outputs-back" onClick={onBack}>← 返回聊天</button>}
+          <span>产出物 ({outputs.length})</span>
         </div>
         {outputs.map((output) => (
           <div
@@ -121,6 +124,7 @@ export default function ChatOutputsPanel({ scope, maxHeight = 500, selectedFilen
       {selected && (
         <div className="chat-outputs-preview">
           <div className="chat-outputs-preview-head">
+            {onBack && <button type="button" className="chat-outputs-back" onClick={onBack}>← 返回聊天</button>}
             <span className="chat-outputs-preview-title" title={selected.filename}>
               {selected.filename}
             </span>

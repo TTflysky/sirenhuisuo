@@ -54,11 +54,13 @@ export default function TeamChatApp({ teamId }: Props) {
   const [taskDesc, setTaskDesc] = useState('');
   const [showOutputs, setShowOutputs] = useState(false);
   const [selectedOutputFilename, setSelectedOutputFilename] = useState<string | null>(null);
+  const [workspacePanelWidth, setWorkspacePanelWidth] = useState(320);
   const [showTaskList, setShowTaskList] = useState(true);
   const [expandedExecutionIds, setExpandedExecutionIds] = useState<Set<string>>(() => new Set());
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [skillRefs, setSkillRefs] = useState<SkillReference[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const resizingPanelRef = useRef(false);
 
   const addFiles = async (files: FileList | File[]) => {
     const arr = Array.from(files);
@@ -336,6 +338,22 @@ export default function TeamChatApp({ teamId }: Props) {
         <div className="task-run-actions">{active && <button className="btn btn-sm" onClick={() => pauseTaskRun(run.id)}>暂停</button>}{(run.status === 'paused' || run.status === 'failed') && <button className="btn btn-sm btn-primary" onClick={() => resumeTaskRun(run.id)}>继续执行</button>}</div>
       </div>}
     </section>;
+  };
+
+  const startPanelResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    resizingPanelRef.current = true;
+    const move = (moveEvent: PointerEvent) => {
+      if (!resizingPanelRef.current) return;
+      setWorkspacePanelWidth(Math.max(240, Math.min(520, window.innerWidth - moveEvent.clientX)));
+    };
+    const stop = () => {
+      resizingPanelRef.current = false;
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stop);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop);
   };
 
   return (
@@ -655,27 +673,27 @@ export default function TeamChatApp({ teamId }: Props) {
                   const failed = /^⚠️|无法响应|执行失败|已手动停止/u.test(message.content);
                   const human = message.roleId === 'human';
                   const author = state.employees.find((employee) => employee.id === message.authorId)?.name ?? (human ? '老板' : message.authorId === 'assistant' ? '助理' : '成员');
-                  return <button key={message.id} type="button" className={`chat-jump-marker${human ? ' human' : failed ? ' failed' : ''}`} title={`${author}：${message.content.slice(0, 60)}`} onClick={() => document.querySelector(`[data-message-id="${CSS.escape(message.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })} />;
+                  return <button key={message.id} type="button" className={`chat-jump-marker${human ? ' human' : failed ? ' failed' : ''}`} data-tooltip={`${author}：${message.content.slice(0, 80)}`} title={`${author}：${message.content.slice(0, 80)}`} onClick={() => document.querySelector(`[data-message-id="${CSS.escape(message.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })} />;
                 })}
               </div>
               <button type="button" className="chat-jump-bottom" title="跳到最新消息" onClick={() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })}>↓</button>
             </nav>
-            {showTaskList && <aside className="team-task-sidebar" aria-label="任务列表">
+            {showTaskList && <><div className="workspace-resize-handle" onPointerDown={startPanelResize} title="拖动调整任务面板宽度" /><aside className="team-task-sidebar" style={{ width: workspacePanelWidth, minWidth: workspacePanelWidth }} aria-label="任务列表">
               <div className="team-task-sidebar-head"><strong>快速导航</strong><span>{taskRuns.length} 个任务</span><button type="button" className="team-task-clear" title="清理聊天中的旧执行过程" onClick={() => clearTeamExecution(teamId)}>清理过程</button><button type="button" className="task-run-close" title="收起任务列表" onClick={() => setShowTaskList(false)}>×</button></div>
               <div className="team-task-sidebar-body">
                 {activeTaskRuns.length > 0 && <div className="team-task-section"><div className="team-task-section-title">进行中与待处理</div>{activeTaskRuns.map(renderTaskRunCard)}</div>}
                 {completedTaskRuns.length > 0 && <div className="team-task-section completed"><div className="team-task-section-title">已完成</div>{completedTaskRuns.map(renderTaskRunCard)}</div>}
                 {taskRuns.length === 0 && <div className="team-task-empty">暂无任务</div>}
               </div>
-            </aside>}
+            </aside></>}
           </div>
         </div>
 
         {/* 右侧产出物面板 */}
         {showOutputs && (
-          <div className="chat-outputs-wrap">
+          <><div className="workspace-resize-handle" onPointerDown={startPanelResize} title="拖动调整产出物面板宽度" /><div className="chat-outputs-wrap" style={{ width: workspacePanelWidth, minWidth: workspacePanelWidth }}>
             <ChatOutputsPanel scope={`team:${teamId}`} maxHeight={500} selectedFilename={selectedOutputFilename} />
-          </div>
+          </div></>
         )}
       </div>
     </div>

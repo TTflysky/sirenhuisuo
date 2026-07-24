@@ -92,6 +92,7 @@ export default function DmChatApp({ empId }: Props) {
   const [text, setText] = useState('');
   const [typing, setTyping] = useState(false);
   const [showOutputs, setShowOutputs] = useState(false);
+  const [outputsWidth, setOutputsWidth] = useState(320);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [skillRefs, setSkillRefs] = useState<SkillReference[]>([]);
   const [retrySettings, setRetrySettings] = useState<DmRetrySettings>(() => loadRetrySettings());
@@ -101,6 +102,12 @@ export default function DmChatApp({ empId }: Props) {
   const runJobRef = useRef<(job: DmRetryJob) => Promise<void>>(async () => {});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const resizeOutputs = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const move = (moveEvent: PointerEvent) => setOutputsWidth(Math.max(240, Math.min(520, window.innerWidth - moveEvent.clientX)));
+    const stop = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', stop); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', stop);
+  };
 
   const addFiles = async (files: FileList | File[]) => {
     const arr = Array.from(files);
@@ -409,9 +416,10 @@ export default function DmChatApp({ empId }: Props) {
 
         {/* 右侧产出物面板 */}
         {showOutputs && (
-          <div className="chat-outputs-wrap">
-            <ChatOutputsPanel scope={`dm:${empId}`} maxHeight={500} />
+          <><div className="workspace-resize-handle" onPointerDown={resizeOutputs} title="拖动调整产出物面板宽度" /><div className="chat-outputs-wrap" style={{ width: outputsWidth, minWidth: outputsWidth }}>
+            <ChatOutputsPanel scope={`dm:${empId}`} maxHeight={500} onBack={() => setShowOutputs(false)} />
           </div>
+          </>
         )}
       </div>
     </div>);

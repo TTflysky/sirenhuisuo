@@ -445,8 +445,10 @@ html, body, #root, .app-root {
 .chat-jump-rail-label { color: var(--text-muted); font-size: 8px; writing-mode: vertical-rl; letter-spacing: 0; }
 .chat-jump-markers { flex: 1; width: 100%; min-height: 0; display: flex; flex-direction: column; justify-content: center; gap: 5px; overflow: hidden; }
 .chat-jump-marker { width: 13px; height: 3px; margin: 0 auto; padding: 0; border: 0; border-radius: 2px; background: var(--text-muted); opacity: .55; cursor: pointer; transition: width .15s, opacity .15s, background .15s; }
-.chat-jump-marker:hover { width: 22px; opacity: 1; }.chat-jump-marker.human { background: var(--apple-accent); }.chat-jump-marker.failed { background: var(--offline); }
+.chat-jump-marker { position: relative; }.chat-jump-marker:hover { width: 22px; opacity: 1; }.chat-jump-marker.human { background: var(--apple-accent); }.chat-jump-marker.failed { background: var(--offline); }
+.chat-jump-marker:hover::after { content: attr(data-tooltip); position: absolute; right: calc(100% + 8px); top: 50%; transform: translateY(-50%); z-index: 30; width: 210px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-raised); color: var(--text); box-shadow: var(--apple-shadow); font-size: 10px; line-height: 1.4; text-align: left; white-space: normal; pointer-events: none; }
 .chat-jump-bottom { width: 24px; height: 24px; padding: 0; border: 0; border-radius: 5px; background: var(--bg-deep); color: var(--text-secondary); cursor: pointer; }.chat-jump-bottom:hover { color: var(--text); }
+.workspace-resize-handle { width: 7px; min-width: 7px; cursor: col-resize; background: var(--bg-deep); border-left: 1px solid var(--border-light); border-right: 1px solid var(--border-light); position: relative; z-index: 5; }.workspace-resize-handle::after { content: '⋮'; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: var(--text-muted); font-size: 16px; }.workspace-resize-handle:hover { background: rgba(10,132,255,.16); }
 @keyframes execution-flow { 0%, 100% { border-color: rgba(128, 132, 145, 0.24); } 50% { border-color: rgba(10, 132, 255, 0.52); } }
 
 .chat-only-titlebar,
@@ -1483,6 +1485,7 @@ body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
   overflow: hidden;
   font-size: 12px;
 }
+.chat-outputs-back { border: 0; background: transparent; color: var(--apple-accent); cursor: pointer; font-size: 11px; }.chat-outputs-back:hover { text-decoration: underline; }.chat-outputs-empty-head { justify-content: flex-start; gap: 12px; padding: 8px 10px; border-bottom: 1px solid var(--border-light); }.chat-outputs-empty-head strong { color: var(--text); font-size: 12px; }
 
 /* 空状态 */
 .chat-outputs-empty {
