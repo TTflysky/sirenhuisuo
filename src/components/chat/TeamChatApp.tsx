@@ -16,6 +16,19 @@ interface Props {
   teamId: string;
 }
 
+const supervisorMention: Employee = {
+  id: 'assistant',
+  name: 'Hermes 助理',
+  title: '监工调度',
+  role: 'custom',
+  avatar: 'assistant',
+  avatarKind: 'preset',
+  statusColor: '#6366f1',
+  stationIndex: -1,
+  isOnline: true,
+  isWorking: false,
+};
+
 export default function TeamChatApp({ teamId }: Props) {
   const {
     state, sendMessage,
@@ -66,9 +79,10 @@ export default function TeamChatApp({ teamId }: Props) {
     .filter((e): e is Employee => !!e);
 
   const mentionCandidates = useMemo(() => {
-    if (!mentionQuery) return teamMembers;
+    const allCandidates = [supervisorMention, ...teamMembers];
+    if (!mentionQuery) return allCandidates;
     const q = mentionQuery.toLowerCase();
-    return teamMembers.filter(
+    return allCandidates.filter(
       (e) => e.name.toLowerCase().includes(q) || e.title.toLowerCase().includes(q)
     );
   }, [mentionQuery, teamMembers]);
@@ -91,7 +105,9 @@ export default function TeamChatApp({ teamId }: Props) {
     for (const p of parts) {
       if (p.startsWith('@')) {
         const name = p.slice(1);
-        const found = teamMembers.find((e) => e.name === name);
+        const found = name === '助理' || name === supervisorMention.name || name === supervisorMention.title
+          ? supervisorMention
+          : teamMembers.find((e) => e.name === name);
         if (found) mentions.push(found.id);
       }
     }
@@ -216,7 +232,9 @@ export default function TeamChatApp({ teamId }: Props) {
         const mentionName = part.slice(1);
         const mentionedEmp = state.employees.find(
           (e) => e.name === mentionName || e.title === mentionName
-        );
+        ) ?? (mentionName === supervisorMention.name || mentionName === supervisorMention.title || mentionName === '助理'
+          ? supervisorMention
+          : undefined);
         result.push(
           <span key={key++} className="msg-mention" style={{ color: mentionedEmp?.statusColor ?? 'var(--color-planner)' }}>
             {part}

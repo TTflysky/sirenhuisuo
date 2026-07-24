@@ -40,7 +40,9 @@ export function evaluateDiscussionTrigger(
   const threshold = settings.autoDiscussMinScore ?? 3;
   const duplicate = lastTrigger?.dedupeKey === dedupeKey;
   const inCooldown = !!lastTrigger && input.now - lastTrigger.triggeredAt < cooldownMs;
-  const allowed = input.manual || mode === 'always' || mode === 'smart';
+  // Explicit mentions are direct requests and must work even when automatic
+  // background discussions are disabled.
+  const allowed = input.manual || mode === 'always' || mode === 'smart' || forcedMemberIds.length > 0;
   const shouldStart = allowed && memberIds.length > 0 && (!!text || input.hasAttachments) && !duplicate && !inCooldown && (input.manual || mode === 'always' || score >= threshold || urgency === 'critical' || forcedMemberIds.length > 0);
   if (duplicate) reasonCodes.push('duplicate');
   if (inCooldown) reasonCodes.push('cooldown');

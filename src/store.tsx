@@ -463,6 +463,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const lastAutoTriggerRef = React.useRef<Map<string, { dedupeKey: string; triggeredAt: number }>>(new Map());
   const stateRef = React.useRef(state);
   stateRef.current = state;
+  const supervisorBusyRef = React.useRef(new Set<string>());
 
   const runDiscussion = (teamId: string, opts?: DiscussionOpts): boolean => {
     if (discussingRef.current.has(teamId)) return false;
@@ -620,10 +621,55 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }, delay);
   };
 
+  const enqueueAssistantSupervisor = async (team: Team, content: string) => {
+    if (supervisorBusyRef.current.has(team.id)) return;
+    supervisorBusyRef.current.add(team.id);
+    try {
+      const assistantModel = client.getAssistantModel();
+      const turns: client.ChatTurn[] = [
+        {
+          role: 'system',
+          content: '你是私人办公会所的监工助理，负责监督团队进度、调度成员和理解老板的工作习惯。平时保持安静，只有老板明确@你时才回复。回复要简洁、直接，指出当前进展、风险和下一步行动；不要代替团队成员长篇讨论。',
+        },
+        ...team.chatMessages.slice(-12).map((message) => ({
+          role: message.roleId === 'human' ? 'user' as const : 'assistant' as const,
+          content: `${stateRef.current.employees.find((employee) => employee.id === message.authorId)?.name ?? '团队成员'}: ${message.content}`,
+        })),
+        { role: 'user', content: `老板@你说：${content}` },
+      ];
+      if (!client.resolveApiBase(assistantModel)) return;
+      const result = await client.chatCompletion(turns, 'assistant-supervisor', `监工/${team.name}`, undefined, assistantModel);
+      const reply = result.content?.trim();
+      if (!reply) return;
+      dispatch({
+        type: 'APPEND_CHAT',
+        teamId: team.id,
+        msgs: [{
+          id: `msg-supervisor-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          authorId: 'assistant',
+          roleId: 'custom',
+          content: reply,
+          mentions: [],
+          timestamp: Date.now(),
+          kind: 'text',
+          tokens: result.usage.totalTokens,
+        }],
+      });
+      client.extractUserInsights(`老板：${content}\n监工回复：${reply}`, `团队监工-${team.name}`).catch(() => {});
+    } catch (error) {
+      console.warn('[supervisor] reply failed:', error);
+    } finally {
+      supervisorBusyRef.current.delete(team.id);
+    }
+  };
+
   const enqueueAutoDiscussion = (teamId: string, messageId: string, content: string, mentions: string[], attachments?: import('./data/hermesClient').Attachment[]) => {
     const current = stateRef.current;
     const team = current.teams.find((item) => item.id === teamId);
     if (!team) return;
+    if (mentions.includes('assistant')) {
+      void enqueueAssistantSupervisor(team, content);
+    }
     const settings = client.loadSettings();
     const input: DiscussionTriggerInput = {
       teamId, messageId, userText: content, mentions,
