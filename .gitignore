@@ -17,6 +17,8 @@ release/builder-*.yml
 release/builder-*.yaml
 release/latest.yml
 outputs
+!src/components/outputs/
+!src/components/outputs/**
 .edge-cdp/
 *.local
 
