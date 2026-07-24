@@ -687,7 +687,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const turns: client.ChatTurn[] = [
         {
           role: 'system',
-          content: `${configuredPrompt ? `## 助理配置\n${configuredPrompt}\n\n` : ''}${userContext ? `${userContext}\n` : ''}你是私人办公会所的监工助理，负责监督团队进度、调度成员和理解老板的工作习惯。先直接回应老板，再决定是否需要团队参与。${mayDelegate ? '老板已明确授权你推进团队工作；需要成员处理时，使用准确姓名格式@姓名点名并给出具体命令。' : '老板尚未授权启动团队。禁止@任何成员、禁止分派任务；遇到项目型需求，只需简短说明判断并询问“要我现在推进并分派给成员吗？”。'} 团队成员：${team.memberIds.map((id) => stateRef.current.employees.find((employee) => employee.id === id)?.name).filter(Boolean).join('、')}。回复要简洁、直接，指出当前进展、风险和下一步行动；不要代替团队成员长篇讨论。`,
+          content: `${configuredPrompt ? `## 助理配置\n${configuredPrompt}\n\n` : ''}${userContext ? `${userContext}\n` : ''}你是私人办公会所的监工助理，负责监督团队进度、调度成员和理解老板的工作习惯。先直接回应老板，再决定是否需要团队参与。${mayDelegate ? '老板已明确授权你推进团队工作；需要成员处理时，使用准确姓名格式@姓名点名并给出具体命令。对于报数、在线、职责汇报等场景，你只能派发任务，绝不能代替员工编造他们的汇报结果。' : '老板尚未授权启动团队。禁止@任何成员、禁止分派任务；遇到项目型需求，只需简短说明判断并询问“要我现在推进并分派给成员吗？”。'} 团队成员仅限：${team.memberIds.map((id) => stateRef.current.employees.find((employee) => employee.id === id)?.name).filter(Boolean).join('、')}。你自己 Hermes 助理不是团队成员，绝对不能在成员名单中出现，也不能@自己。回复要简洁、直接，指出当前进展、风险和下一步行动；不要代替团队成员长篇讨论。`,
         },
         ...team.chatMessages.slice(-12).map((message) => ({
           role: message.roleId === 'human' ? 'user' as const : 'assistant' as const,
@@ -701,7 +701,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         return reply;
       }
       const result = await client.chatCompletion(turns, 'assistant-supervisor', `监工/${team.name}`, undefined, assistantModel);
-      const reply = result.content?.trim();
+      const reply = result.content?.trim().replace(/@Hermes(?:\s+助理)?/gu, 'Hermes 助理');
       if (!reply) return undefined;
       appendSupervisorMessage(reply, result.usage.totalTokens);
       client.extractUserInsights(`老板：${content}\n监工回复：${reply}`, `团队监工-${team.name}`).catch(() => {});
@@ -723,7 +723,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     void (async () => {
       const directMentions = mentions.filter((id) => team.memberIds.includes(id));
       const supervisorMentioned = mentions.includes('assistant');
-      const mayDelegate = supervisorMentioned || directMentions.length > 0;
+      // A roll-call/status request is harmless coordination and should be
+      // actioned immediately by the supervisor without a second confirmation.
+      const teamCheckRequested = /报数|报个数|数数|汇报.*(?:职责|职能|状态)|(?:职责|职能).*汇报|在线情况/u.test(content);
+      const mayDelegate = supervisorMentioned || directMentions.length > 0 || teamCheckRequested;
       const supervisorReply = await enqueueAssistantSupervisor(team, content, mayDelegate);
       const mentionedBySupervisor = supervisorReply
         && mayDelegate
