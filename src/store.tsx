@@ -48,7 +48,9 @@ type Action =
   | { type: 'SET_STATUS'; partial: Partial<AgentStatus> }
   | { type: 'SET_PROGRESS'; progress: DiscussionProgress | null }
   | { type: 'CREATE_TASK_RUN'; run: TaskRun }
-  | { type: 'UPDATE_TASK_RUN'; run: TaskRun };
+  | { type: 'UPDATE_TASK_RUN'; run: TaskRun }
+  | { type: 'REMOVE_TASK_RUN'; runId: string }
+  | { type: 'CLEAR_TEAM_EXECUTION'; teamId: string };
 
 // ===== State =====
 const initialState: AppState = {
@@ -191,6 +193,29 @@ function reducer(s: AppState, a: Action): AppState {
       return { ...s, taskRuns };
     }
 
+    case 'REMOVE_TASK_RUN': {
+      const target = s.taskRuns.find((run) => run.id === a.runId);
+      const taskRuns = s.taskRuns.filter((run) => run.id !== a.runId);
+      const teams = target ? s.teams.map((team) => {
+        if (team.id !== target.teamId) return team;
+        const chatMessages = team.chatMessages.filter((message) => !(message.kind === 'execution' && message.discussionId === a.runId));
+        client.replaceChat(team.id, chatMessages);
+        return { ...team, chatMessages };
+      }) : s.teams;
+      saveTaskRuns(taskRuns);
+      return { ...s, taskRuns, teams };
+    }
+
+    case 'CLEAR_TEAM_EXECUTION': {
+      const teams = s.teams.map((team) => {
+        if (team.id !== a.teamId) return team;
+        const chatMessages = team.chatMessages.filter((message) => message.kind !== 'execution');
+        client.replaceChat(team.id, chatMessages);
+        return { ...team, chatMessages };
+      });
+      return { ...s, teams };
+    }
+
     default:
       return s;
   }
@@ -215,6 +240,8 @@ interface StoreCtx {
   triggerDiscussion: (teamId: string, opts?: { task?: TeamTask; userText?: string; extraSystemContext?: string; attachments?: import('./data/hermesClient').Attachment[]; participantPlan?: import('./types').DiscussionParticipantPlan[]; triggerMessageId?: string; discussionId?: string; forcedMemberIds?: string[]; maxRounds?: number }) => void;
   pauseTaskRun: (runId: string) => void;
   resumeTaskRun: (runId: string) => void;
+  closeTaskRun: (runId: string) => void;
+  clearTeamExecution: (teamId: string) => void;
 }
 
 const StoreContext = createContext<StoreCtx | null>(null);
@@ -600,7 +627,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               id: `msg-tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
               authorId: emp.id, roleId: emp.role,
               content: toolMsg, mentions: [], timestamp: Date.now(),
-              kind: 'execution',
+              kind: 'execution', discussionId: opts?.discussionId,
             }],
           });
           updateRun((run) => {
@@ -882,6 +909,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     void buildSkillContext(run.skillRefs ?? []).then((skillContext) => enqueueDiscussion(run.teamId, { userText: run.request, triggerMessageId: run.sourceMessageId, discussionId: run.id, forcedMemberIds: pending, runSteps: pendingSteps, maxRounds: pendingSteps.length, runId, extraSystemContext: skillContext }, 50));
   };
 
+  const closeTaskRun = (runId: string) => {
+    pausedRunIdsRef.current.add(runId);
+    dispatch({ type: 'REMOVE_TASK_RUN', runId });
+  };
+
+  const clearTeamExecution = (targetTeamId: string) => dispatch({ type: 'CLEAR_TEAM_EXECUTION', teamId: targetTeamId });
+
   const enqueueAutoDiscussion = (teamId: string, messageId: string, content: string, mentions: string[], attachments?: import('./data/hermesClient').Attachment[], skillRefs: import('./types').SkillReference[] = []) => {
     const current = stateRef.current;
     const team = current.teams.find((item) => item.id === teamId);
@@ -961,6 +995,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         triggerDiscussion,
         pauseTaskRun,
         resumeTaskRun,
+        closeTaskRun,
+        clearTeamExecution,
       }}
     >
       {children}

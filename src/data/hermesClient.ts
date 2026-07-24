@@ -783,6 +783,11 @@ export function appendChat(id: string, msgs: ChatMessage[]): void {
   }
 }
 
+export function replaceChat(id: string, msgs: ChatMessage[]): void {
+  try { localStorage.setItem(`${LS_CHAT_PREFIX}${id}`, JSON.stringify(msgs.slice(-MAX_CHAT))); }
+  catch (e) { console.warn('[hermesClient] Failed to replace chat:', e); }
+}
+
 // ===== 工具：找空闲工位 =====
 export function findFreeStation(employees: Employee[]): number {
   const occupied = new Set(employees.map((e) => e.stationIndex).filter((i) => i >= 0));

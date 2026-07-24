@@ -4,7 +4,7 @@ import type { Team, Employee, TaskRun } from '../../types';
 import { useStore } from '../../store';
 import { type Attachment } from '../../data/hermesClient';
 import AgentAvatar from '../office/AgentAvatar';
-import { addOutput } from '../../data/outputs';
+import { addOutput, loadOutputsByScope, type OutputRecord } from '../../data/outputs';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
 import { copyToClipboard, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
@@ -42,7 +42,7 @@ function SupervisorAvatar({ size = 34 }: { size?: number }) {
 export default function TeamChatApp({ teamId }: Props) {
   const {
     state, sendMessage,
-    publishTask, claimTask, advanceTask, triggerDiscussion, pauseTaskRun, resumeTaskRun,
+    publishTask, claimTask, advanceTask, triggerDiscussion, pauseTaskRun, resumeTaskRun, closeTaskRun, clearTeamExecution,
   } = useStore();
   const team = state.teams.find((t: Team) => t.id === teamId);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -53,6 +53,8 @@ export default function TeamChatApp({ teamId }: Props) {
   const [taskTitle, setTaskTitle] = useState('');
   const [taskDesc, setTaskDesc] = useState('');
   const [showOutputs, setShowOutputs] = useState(false);
+  const [selectedOutputFilename, setSelectedOutputFilename] = useState<string | null>(null);
+  const [showTaskList, setShowTaskList] = useState(true);
   const [expandedExecutionIds, setExpandedExecutionIds] = useState<Set<string>>(() => new Set());
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [skillRefs, setSkillRefs] = useState<SkillReference[]>([]);
@@ -84,7 +86,11 @@ export default function TeamChatApp({ teamId }: Props) {
 
   const progress = state.status.progress;
   const myProgress = progress && progress.teamId === teamId ? progress : null;
-  const taskRuns = state.taskRuns.filter((run) => run.teamId === teamId).slice(-4).reverse();
+  const taskRuns = state.taskRuns.filter((run) => run.teamId === teamId).reverse();
+  const activeTaskRuns = taskRuns.filter((run) => run.status !== 'completed');
+  const completedTaskRuns = taskRuns.filter((run) => run.status === 'completed');
+  const availableOutputs = loadOutputsByScope(`team:${teamId}`);
+  const jumpMessages = (team?.chatMessages ?? []).filter((message) => message.kind !== 'execution').slice(-24);
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
   const [progressNow, setProgressNow] = useState(Date.now());
 
@@ -247,7 +253,38 @@ export default function TeamChatApp({ teamId }: Props) {
     addOutput({ id: `exp-${Date.now()}`, ts: Date.now(), filename: `${team.name}-对话-${new Date().toISOString().slice(0, 10)}.md`, kind: 'export', title: `${team.name} 对话导出`, scope: `team:${teamId}`, contentType: 'markdown', content: md } as any);
   };
 
-  // 解析消息中的 @ 提及和链接渲染
+  const openOutputFromMessage = (output: OutputRecord) => {
+    setSelectedOutputFilename(output.filename);
+    setShowTaskList(false);
+    setShowOutputs(true);
+  };
+
+  const renderTextWithOutputLinks = (value: string, keySeed: string): React.ReactNode[] => {
+    const outputs = [...new Map(availableOutputs.map((output) => [output.filename, output])).values()]
+      .filter((output) => output.filename && value.includes(output.filename));
+    if (outputs.length === 0) return linkify(value).map((node, index) => <span key={`${keySeed}-${index}`}>{node}</span>);
+    const nodes: React.ReactNode[] = [];
+    let cursor = 0;
+    let nodeIndex = 0;
+    while (cursor < value.length) {
+      let matched: OutputRecord | undefined;
+      let matchedAt = Number.POSITIVE_INFINITY;
+      for (const output of outputs) {
+        const index = value.indexOf(output.filename, cursor);
+        if (index >= 0 && index < matchedAt) { matched = output; matchedAt = index; }
+      }
+      if (!matched) {
+        nodes.push(...linkify(value.slice(cursor)).map((node) => <span key={`${keySeed}-${nodeIndex++}`}>{node}</span>));
+        break;
+      }
+      if (matchedAt > cursor) nodes.push(...linkify(value.slice(cursor, matchedAt)).map((node) => <span key={`${keySeed}-${nodeIndex++}`}>{node}</span>));
+      nodes.push(<button type="button" className="msg-output-link" key={`${keySeed}-output-${nodeIndex++}`} onClick={() => openOutputFromMessage(matched!)} title="在产出物中定位">{matched.filename}</button>);
+      cursor = matchedAt + matched.filename.length;
+    }
+    return nodes;
+  };
+
+  // 解析消息中的 @ 提及、链接和产出物引用
   const renderContent = (content: string) => {
     const parts = content.split(/(@\S+)/g);
     const result: React.ReactNode[] = [];
@@ -266,10 +303,39 @@ export default function TeamChatApp({ teamId }: Props) {
           </span>
         );
       } else {
-        result.push(...linkify(part).map((n, i) => <span key={`${key}-${i}`}>{n}</span>));
+        result.push(...renderTextWithOutputLinks(part, `${key++}`));
       }
     }
     return result;
+  };
+
+  const renderTaskRunCard = (run: TaskRun) => {
+    const expanded = expandedRunIds.has(run.id);
+    const completed = run.steps.filter((step) => step.status === 'completed').length;
+    const active = run.status === 'running' || run.status === 'queued';
+    return <section key={run.id} className={`task-run-tray task-run-${run.status}`}>
+      <div className="task-run-summary-row">
+        <button type="button" className="task-run-summary" onClick={() => setExpandedRunIds((previous) => {
+          const next = new Set(previous); if (next.has(run.id)) next.delete(run.id); else next.add(run.id); return next;
+        })} onContextMenu={(event) => {
+          event.preventDefault(); setExpandedRunIds((previous) => { const next = new Set(previous); if (next.has(run.id)) next.delete(run.id); else next.add(run.id); return next; });
+        }}>
+          <span className="task-run-state">{run.status === 'running' ? '执行中' : run.status === 'queued' ? '排队中' : run.status === 'paused' ? '已暂停' : run.status === 'failed' ? '待恢复' : '已完成'}</span>
+          <strong>{run.title}</strong><span>{completed}/{run.steps.length}</span><span className="task-run-toggle">{expanded ? '收起' : '详情'}</span>
+        </button>
+        <button type="button" className="task-run-close" title="关闭并从任务列表移除" onClick={() => closeTaskRun(run.id)}>×</button>
+      </div>
+      {run.sourceMessageId && <button type="button" className="task-run-jump" title="跳到原始需求" onClick={() => document.querySelector(`[data-message-id="${CSS.escape(run.sourceMessageId!)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>↗</button>}
+      {expanded && <div className="task-run-details">
+        {!!run.skillRefs?.length && <div className="task-run-skills"><strong>Skills</strong>{run.skillRefs.map((skill) => <span key={skill.id}>{skill.name}</span>)}</div>}
+        {run.steps.map((step) => {
+          const emp = state.employees.find((item) => item.id === step.employeeId);
+          const model = run.memberSnapshot.find((item) => item.id === step.employeeId)?.model;
+          return <div key={step.id} className="task-run-step"><div><span className="task-step-order">{step.order}</span><strong>{emp?.name ?? step.title}</strong><span className={`task-step-kind kind-${step.kind}`}>{step.kind === 'review' ? '审查' : step.kind === 'revision' ? '修订' : '执行'}</span><span className={`task-step-status status-${step.status}`}>{step.status}</span><small>{model || '默认模型'} · 尝试 {step.attempts} 次</small></div><p className="task-step-assignment">{step.assignment}</p>{step.reviewDecision && <p className={`task-review-decision ${step.reviewDecision}`}>{step.reviewDecision === 'pass' ? '审查通过' : `退回：${step.reviewReason ?? '需要修改'}`}</p>}{step.lastError && <p className="task-step-error">{step.lastError}</p>}{step.events.slice(-4).map((event, index) => <p key={`${event.ts}-${index}`} className="task-step-event">{new Date(event.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} {event.detail}</p>)}</div>;
+        })}
+        <div className="task-run-actions">{active && <button className="btn btn-sm" onClick={() => pauseTaskRun(run.id)}>暂停</button>}{(run.status === 'paused' || run.status === 'failed') && <button className="btn btn-sm btn-primary" onClick={() => resumeTaskRun(run.id)}>继续执行</button>}</div>
+      </div>}
+    </section>;
   };
 
   return (
@@ -313,31 +379,6 @@ export default function TeamChatApp({ teamId }: Props) {
             </div>
           )}
 
-          {taskRuns.map((run: TaskRun) => {
-            const expanded = expandedRunIds.has(run.id);
-            const completed = run.steps.filter((step) => step.status === 'completed').length;
-            const active = run.status === 'running' || run.status === 'queued';
-            return (
-              <section key={run.id} className={`task-run-tray task-run-${run.status}`}>
-                <button type="button" className="task-run-summary" onClick={() => setExpandedRunIds((previous) => {
-                  const next = new Set(previous); if (next.has(run.id)) next.delete(run.id); else next.add(run.id); return next;
-                })}>
-                  <span className="task-run-state">{run.status === 'running' ? '执行中' : run.status === 'queued' ? '排队中' : run.status === 'paused' ? '已暂停' : run.status === 'failed' ? '待恢复' : '已完成'}</span>
-                  <strong>{run.title}</strong><span>{completed}/{run.steps.length}</span><span className="task-run-toggle">{expanded ? '收起' : '详情'}</span>
-                </button>
-                {expanded && <div className="task-run-details">
-                  {!!run.skillRefs?.length && <div className="task-run-skills"><strong>Skills</strong>{run.skillRefs.map((skill) => <span key={skill.id}>{skill.name}</span>)}</div>}
-                  {run.steps.map((step) => {
-                    const emp = state.employees.find((item) => item.id === step.employeeId);
-                    const model = run.memberSnapshot.find((item) => item.id === step.employeeId)?.model;
-                    return <div key={step.id} className="task-run-step"><div><span className="task-step-order">{step.order}</span><strong>{emp?.name ?? step.title}</strong><span className={`task-step-kind kind-${step.kind}`}>{step.kind === 'review' ? '审查' : step.kind === 'revision' ? '修订' : '执行'}</span><span className={`task-step-status status-${step.status}`}>{step.status}</span><small>{model || '默认模型'} · 尝试 {step.attempts} 次</small></div><p className="task-step-assignment">{step.assignment}</p>{step.reviewDecision && <p className={`task-review-decision ${step.reviewDecision}`}>{step.reviewDecision === 'pass' ? '审查通过' : `退回：${step.reviewReason ?? '需要修改'}`}</p>}{step.lastError && <p className="task-step-error">{step.lastError}</p>}{step.events.slice(-6).map((event, index) => <p key={`${event.ts}-${index}`} className="task-step-event">{new Date(event.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} {event.detail}</p>)}</div>;
-                  })}
-                  <div className="task-run-actions">{active && <button className="btn btn-sm" onClick={() => pauseTaskRun(run.id)}>暂停</button>}{(run.status === 'paused' || run.status === 'failed') && <button className="btn btn-sm btn-primary" onClick={() => resumeTaskRun(run.id)}>继续执行</button>}</div>
-                </div>}
-              </section>
-            );
-          })}
-
           {/* 消息流 */}
           <div className="chat-messages">
             {(team.chatMessages ?? []).length === 0 ? (
@@ -369,17 +410,22 @@ export default function TeamChatApp({ teamId }: Props) {
                 )}
                 <div style={{ fontSize: 11, marginTop: 8 }}>💬 在下方输入消息开始团队协作</div>
               </div>
-            ) : (team.chatMessages ?? []).map((msg) => {
+            ) : (team.chatMessages ?? []).map((msg, messageIndex, allMessages) => {
               const author = state.employees.find((e: Employee) => e.id === msg.authorId)
                 ?? (msg.authorId === supervisorMention.id ? supervisorMention : undefined);
               const isHuman = msg.roleId === 'human';
               const isExecution = msg.kind === 'execution';
+              if (isExecution && allMessages[messageIndex + 1]?.kind === 'execution') return null;
+              let executionStart = messageIndex;
+              while (executionStart > 0 && allMessages[executionStart - 1]?.kind === 'execution') executionStart -= 1;
+              const executionMessages = isExecution ? allMessages.slice(executionStart, messageIndex + 1) : [];
+              const executionGroupId = executionMessages[0]?.id ?? msg.id;
               const isFailure = /^⚠️|无法响应|执行失败|已手动停止/u.test(msg.content);
               const toolName = isExecution ? msg.content.match(/`([^`]+)`/u)?.[1] : undefined;
               const toolSummary = toolName === 'search_skills' ? '正在检索技能库' : toolName === 'read_skill' ? '正在读取技能说明' : toolName ? `正在调用 ${toolName}` : '正在调用工具';
 
               return (
-                <div key={msg.id} className={`msg ${isHuman ? 'human' : ''}`}>
+                <div key={msg.id} data-message-id={msg.id} className={`msg ${isHuman ? 'human' : ''}`}>
                   {!isHuman ? (
                     <div className="msg-meta">
                       <span className="msg-author" style={{ color: author?.statusColor ?? 'var(--text-secondary)' }}>
@@ -391,17 +437,20 @@ export default function TeamChatApp({ teamId }: Props) {
                   {isExecution ? (
                     <button
                       type="button"
-                      className={`execution-event${expandedExecutionIds.has(msg.id) ? ' expanded' : ''}`}
+                      className={`execution-event${expandedExecutionIds.has(executionGroupId) ? ' expanded' : ''}`}
                       onClick={() => setExpandedExecutionIds((previous) => {
                         const next = new Set(previous);
-                        if (next.has(msg.id)) next.delete(msg.id); else next.add(msg.id);
+                        if (next.has(executionGroupId)) next.delete(executionGroupId); else next.add(executionGroupId);
                         return next;
                       })}
+                      onContextMenu={(event) => {
+                        event.preventDefault(); setExpandedExecutionIds((previous) => { const next = new Set(previous); if (next.has(executionGroupId)) next.delete(executionGroupId); else next.add(executionGroupId); return next; });
+                      }}
                     >
                       <span className="execution-event-icon">...</span>
-                      <span className="execution-event-summary">{author?.name ?? '成员'} {toolSummary}</span>
-                      <span className="execution-event-action">{expandedExecutionIds.has(msg.id) ? '收起' : '查看'}</span>
-                      {expandedExecutionIds.has(msg.id) && <pre className="execution-event-detail">{msg.content}</pre>}
+                      <span className="execution-event-summary">执行过程 · {executionMessages.length} 条 · {author?.name ?? '成员'} {toolSummary}</span>
+                      <span className="execution-event-action">{expandedExecutionIds.has(executionGroupId) ? '收起' : '展开'}</span>
+                      {expandedExecutionIds.has(executionGroupId) && <div className="execution-event-detail">{executionMessages.map((event) => <pre key={event.id}>{event.content}</pre>)}</div>}
                     </button>
                   ) : msg.kind === 'task' ? (
                     <div className="task-card-msg" style={isHuman ? { marginLeft: 'auto', maxWidth: '85%' } : {}}>
@@ -500,9 +549,12 @@ export default function TeamChatApp({ teamId }: Props) {
             <button className="btn btn-sm" onClick={() => setShowTaskForm(!showTaskForm)}>
               📋 发布任务
             </button>
+            <button className={`btn btn-sm ${showTaskList ? 'btn-primary' : ''}`} onClick={() => { setShowOutputs(false); setShowTaskList((visible) => !visible); }} title="显示或隐藏右侧任务列表">
+              任务 {taskRuns.length}
+            </button>
             <button
               className={`btn btn-sm ${showOutputs ? 'btn-primary' : ''}`}
-              onClick={() => setShowOutputs(!showOutputs)}
+              onClick={() => { setShowTaskList(false); setShowOutputs(!showOutputs); }}
               title="产出物"
             >
               📁{showOutputs ? ' ✕' : ''}
@@ -596,13 +648,33 @@ export default function TeamChatApp({ teamId }: Props) {
             />
           </div>
             </div>
+            <nav className="chat-jump-rail" aria-label="聊天快速跳转">
+              <span className="chat-jump-rail-label">导航</span>
+              <div className="chat-jump-markers">
+                {jumpMessages.map((message) => {
+                  const failed = /^⚠️|无法响应|执行失败|已手动停止/u.test(message.content);
+                  const human = message.roleId === 'human';
+                  const author = state.employees.find((employee) => employee.id === message.authorId)?.name ?? (human ? '老板' : message.authorId === 'assistant' ? '助理' : '成员');
+                  return <button key={message.id} type="button" className={`chat-jump-marker${human ? ' human' : failed ? ' failed' : ''}`} title={`${author}：${message.content.slice(0, 60)}`} onClick={() => document.querySelector(`[data-message-id="${CSS.escape(message.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })} />;
+                })}
+              </div>
+              <button type="button" className="chat-jump-bottom" title="跳到最新消息" onClick={() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })}>↓</button>
+            </nav>
+            {showTaskList && <aside className="team-task-sidebar" aria-label="任务列表">
+              <div className="team-task-sidebar-head"><strong>快速导航</strong><span>{taskRuns.length} 个任务</span><button type="button" className="team-task-clear" title="清理聊天中的旧执行过程" onClick={() => clearTeamExecution(teamId)}>清理过程</button><button type="button" className="task-run-close" title="收起任务列表" onClick={() => setShowTaskList(false)}>×</button></div>
+              <div className="team-task-sidebar-body">
+                {activeTaskRuns.length > 0 && <div className="team-task-section"><div className="team-task-section-title">进行中与待处理</div>{activeTaskRuns.map(renderTaskRunCard)}</div>}
+                {completedTaskRuns.length > 0 && <div className="team-task-section completed"><div className="team-task-section-title">已完成</div>{completedTaskRuns.map(renderTaskRunCard)}</div>}
+                {taskRuns.length === 0 && <div className="team-task-empty">暂无任务</div>}
+              </div>
+            </aside>}
           </div>
         </div>
 
         {/* 右侧产出物面板 */}
         {showOutputs && (
           <div className="chat-outputs-wrap">
-            <ChatOutputsPanel scope={`team:${teamId}`} maxHeight={500} />
+            <ChatOutputsPanel scope={`team:${teamId}`} maxHeight={500} selectedFilename={selectedOutputFilename} />
           </div>
         )}
       </div>

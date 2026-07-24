@@ -14,9 +14,10 @@ import { onBus, BUS_CHANNELS } from '../../ipcBus';
 interface Props {
   scope: OutputScope;
   maxHeight?: number;
+  selectedFilename?: string | null;
 }
 
-export default function ChatOutputsPanel({ scope, maxHeight = 500 }: Props) {
+export default function ChatOutputsPanel({ scope, maxHeight = 500, selectedFilename }: Props) {
   const [outputs, setOutputs] = useState<OutputRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -42,6 +43,14 @@ export default function ChatOutputsPanel({ scope, maxHeight = 500 }: Props) {
     () => outputs.find((item) => item.id === selectedId) ?? null,
     [outputs, selectedId],
   );
+
+  useEffect(() => {
+    if (!selectedFilename) return;
+    const matched = outputs.find((output) => output.filename === selectedFilename);
+    if (!matched) return;
+    setSelectedId(matched.id);
+    window.setTimeout(() => document.querySelector(`[data-output-id="${CSS.escape(matched.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 0);
+  }, [outputs, selectedFilename]);
 
   const handleRemove = (output: OutputRecord) => {
     removeOutput(output.id);
@@ -70,6 +79,7 @@ export default function ChatOutputsPanel({ scope, maxHeight = 500 }: Props) {
           <div
             className={`chat-outputs-item ${output.id === selectedId ? 'active' : ''}`}
             key={output.id}
+            data-output-id={output.id}
             onClick={() => setSelectedId(output.id)}
             role="button"
             tabIndex={0}

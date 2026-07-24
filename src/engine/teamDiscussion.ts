@@ -87,7 +87,7 @@ async function memberSpeak(
 
   const duty = ROLE_DUTY[emp.role] ?? ROLE_DUTY.custom;
   const persona = emp.prompt?.trim() || `你是「${emp.name}」，${emp.title}。`;
-  const system = `${persona}\n\n${duty}\n\n你正在团队群聊中协作。如果需要产出实际文件或查阅资料，调用工具（不要只是说"我来写"，直接调 write_file）。完成后用简短的文字总结你做了什么事，便于队友接着工作。`;
+  const system = `${persona}\n\n${duty}\n\n你正在团队群聊中协作。先判断任务是否需要专业 Skill：只有当 Skill 能明显提高质量或提供必要流程时，才调用 search_skills；比较候选后只读取最匹配的 Skill。没有合适 Skill 时直接使用通用能力和其他工具，不要为了留下调用记录而强行调用。若工具失败，说明失败原因并选择重试、替代工具或继续执行。如果需要产出实际文件或查阅资料，直接调用工具完成，不要只口头承诺。完成后简短总结实际结果，便于队友接续。`;
 
   // 多模态：把图片附件拼到用户指令上
   const imageParts = (attachments ?? [])
@@ -98,19 +98,6 @@ async function memberSpeak(
     : { role: 'user', content: `[指令] ${extraInstruction}` };
 
   try {
-    const searchArgs = JSON.stringify({ query: extraInstruction.slice(0, 240) });
-    onToolCall('search_skills', searchArgs, '');
-    const searched = await executeTool({ id: `skill-search-${Date.now()}-${emp.id}`, name: 'search_skills', args: { query: extraInstruction.slice(0, 240) }, scope: `team:${team.id}` });
-    onToolCall('search_skills', searchArgs, searched.output);
-    const firstSkillId = searched.output.match(/ID:\s*([^\n]+)/u)?.[1]?.trim();
-    let discoveredSkillContext = '';
-    if (firstSkillId) {
-      const readArgs = JSON.stringify({ id: firstSkillId });
-      onToolCall('read_skill', readArgs, '');
-      const read = await executeTool({ id: `skill-read-${Date.now()}-${emp.id}`, name: 'read_skill', args: { id: firstSkillId }, scope: `team:${team.id}` });
-      onToolCall('read_skill', readArgs, read.output);
-      if (read.success) discoveredSkillContext = read.output;
-    }
     let handoffContext = '';
     if (/读取并继承|审查|修订/u.test(extraInstruction)) {
       const listArgs = JSON.stringify({ filter: '' });
@@ -138,7 +125,7 @@ async function memberSpeak(
       scene: 'team',
       label: `${team.name}/${emp.name}`,
       modelConfig: emp.modelConfig,
-      extraSystemContext: [emp.soul, skillContext, discoveredSkillContext, handoffContext].filter(Boolean).join('\n\n'),
+      extraSystemContext: [emp.soul, skillContext, handoffContext].filter(Boolean).join('\n\n'),
       scope: `team:${team.id}` as any,
       onToolCall(name, args) {
         onToolCall(name, args, '');
@@ -150,7 +137,11 @@ async function memberSpeak(
     });
     return { text: r.content, tokens: r.usage.totalTokens };
   } catch (e: any) {
-    return { text: `⚠️ ${emp.name} 无法响应（${e?.message ?? '模型错误'}）` };
+    const raw = e?.message ?? '模型错误';
+    const reason = e?.name === 'AbortError' || /aborted|signal is aborted/iu.test(raw)
+      ? '模型请求超过 30 秒未返回，已自动中止；可点击继续执行重试，任务上下文会保留'
+      : raw;
+    return { text: `⚠️ ${emp.name} 无法响应：${reason}` };
   }
 }
 
@@ -214,7 +205,7 @@ export async function runTeamDiscussion(
     let tokens: number | undefined;
 
     if (useAI) {
-      const assignment = `${step.assignment}\n\n执行规则：开始工作前必须先调用 search_skills 检索当前任务可用技能；找到合适技能后调用 read_skill 阅读，再使用文件、搜索或命令工具完成实际工作。禁止只口头描述安排。`;
+      const assignment = `${step.assignment}\n\n执行规则：先判断是否需要专业 Skill；需要时自主搜索、比较并读取最合适的 Skill，不需要时直接推进。使用文件、搜索或命令工具完成实际工作，禁止只口头描述安排。`;
       const r = await memberSpeak(emp, team, employees, contextMessages,
         task
           ? `团队接到新任务「${task.title}」${task.description ? `：${task.description}` : ''}。如有必要，可调工具产出文件或用 web_search 查资料。`
