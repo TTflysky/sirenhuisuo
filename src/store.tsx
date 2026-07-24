@@ -284,7 +284,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     client.checkBackend().then((online) => {
       dispatch({ type: 'SET_STATUS', partial: { backendOnline: online } });
     });
-  }, []);
+  }, [dispatch]);
 
   const sendMessage = (
     teamId: string,
