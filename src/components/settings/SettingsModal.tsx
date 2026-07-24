@@ -1,5 +1,9 @@
-import { useState } from 'react';
-import { Modal, Tabs, Switch, Input, Select, Button, Space, App, Tag, Tooltip } from 'antd';
+import { useEffect, useRef, useState } from 'react';
+import { Modal, Switch, Input, Select, Button, Space, App, Tag, Tooltip } from 'antd';
+import {
+  ApiOutlined, CloudSyncOutlined, DatabaseOutlined, FolderOpenOutlined, RobotOutlined,
+  SafetyCertificateOutlined, ScheduleOutlined, SettingOutlined, UserOutlined,
+} from '@ant-design/icons';
 import {
   loadSettings, saveSettings,
   PROVIDER_PRESETS, getProvider, type AppSettings,
@@ -10,8 +14,12 @@ import {
 } from '../../data/hermesClient';
 import type { ModelConfig } from '../../types';
 import { useStore } from '../../store';
+import SkillLibraryView from '../skills/SkillLibraryView';
+import { KnowledgeConnectorManager } from '../sidebar/ConnectorPanel';
+import { getAssistantPrompt, saveAssistantPrompt } from './AssistantSettingsModal';
+import { applySyncProfile } from '../../utils/configSync';
 
-type Tab = 'model' | 'profile' | 'memory';
+type Tab = 'model' | 'profile' | 'skills' | 'knowledge' | 'workspace' | 'memory' | 'persona' | 'automation' | 'backup';
 
 interface Props {
   onClose: () => void;
@@ -20,26 +28,89 @@ interface Props {
 
 export default function SettingsModal({ onClose, onSaved }: Props) {
   const [tab, setTab] = useState<Tab>('model');
-
-  const items = [
-    { key: 'model', label: '🧠 模型库', children: <ModelSettingsTab onSaved={onSaved} onClose={onClose} /> },
-    { key: 'profile', label: '👤 用户画像', children: <ProfileTab /> },
-    { key: 'memory', label: '📝 长期记忆', children: <MemoryTab /> },
+  const sections: Array<{ title: string; items: Array<{ key: Tab; label: string; icon: React.ReactNode }> }> = [
+    { title: '配置', items: [
+      { key: 'model', label: '模型', icon: <ApiOutlined /> },
+      { key: 'profile', label: '档案', icon: <UserOutlined /> },
+      { key: 'skills', label: '技能', icon: <SafetyCertificateOutlined /> },
+      { key: 'knowledge', label: '知识库', icon: <DatabaseOutlined /> },
+      { key: 'workspace', label: '工作区', icon: <FolderOpenOutlined /> },
+      { key: 'memory', label: '记忆', icon: <CloudSyncOutlined /> },
+      { key: 'persona', label: '人格', icon: <RobotOutlined /> },
+    ] },
+    { title: '自动化', items: [{ key: 'automation', label: '执行策略', icon: <ScheduleOutlined /> }] },
+    { title: '备份与恢复', items: [{ key: 'backup', label: '备份迁移', icon: <SettingOutlined /> }] },
   ];
+
+  const page = tab === 'model' ? <ModelSettingsTab onSaved={onSaved} onClose={onClose} />
+    : tab === 'profile' ? <ProfileTab />
+    : tab === 'skills' ? <SkillLibraryView />
+    : tab === 'knowledge' ? <KnowledgeSettingsPage />
+    : tab === 'workspace' ? <WorkspaceTab />
+    : tab === 'memory' ? <MemoryTab />
+    : tab === 'persona' ? <PersonaTab />
+    : tab === 'automation' ? <AutomationTab />
+    : <BackupTab />;
 
   return (
     <Modal
       open
       onCancel={onClose}
       footer={null}
-      width={580}
-      title="⚙️ 设置"
+      width={980}
+      title={null}
       destroyOnClose
-      styles={{ body: { paddingTop: 8 } }}
+      className="settings-center-modal"
+      styles={{ body: { padding: 0, height: 'min(720px, calc(100vh - 90px))', overflow: 'hidden' } }}
     >
-      <Tabs activeKey={tab} onChange={(k) => setTab(k as Tab)} items={items} />
+      <div className="settings-center">
+        <aside className="settings-center-nav">
+          <div className="settings-center-brand"><SettingOutlined /><div><strong>设置</strong><small>私人办公会所</small></div></div>
+          {sections.map((section) => <div className="settings-nav-section" key={section.title}>
+            <div className="settings-nav-title">{section.title}</div>
+            {section.items.map((item) => <button className={tab === item.key ? 'active' : ''} key={item.key} onClick={() => setTab(item.key)}>{item.icon}<span>{item.label}</span><code>/{item.key}</code></button>)}
+          </div>)}
+        </aside>
+        <main className={`settings-center-content settings-page-${tab}`}>{page}</main>
+      </div>
     </Modal>
   );
+}
+
+function KnowledgeSettingsPage() {
+  return <div className="settings-content-page"><header><h2>知识库</h2><span>网页内容与 Obsidian Vault</span></header><KnowledgeConnectorManager /></div>;
+}
+
+function WorkspaceTab() {
+  const [workspace, setWorkspace] = useState('');
+  useEffect(() => { void window.electronAPI?.getWorkspace?.().then(setWorkspace); }, []);
+  return <div className="settings-content-page"><header><h2>工作区</h2><span>员工任务文件与产出物目录</span></header><div className="settings-field"><label>目录</label><div className="knowledge-path-row"><Input value={workspace} readOnly /><Button icon={<FolderOpenOutlined />} onClick={() => workspace && void window.electronAPI?.openPath?.(workspace)}>打开</Button></div></div></div>;
+}
+
+function PersonaTab() {
+  const [prompt, setPrompt] = useState(() => getAssistantPrompt());
+  const [saved, setSaved] = useState(false);
+  const save = () => { saveAssistantPrompt(prompt); setSaved(true); setTimeout(() => setSaved(false), 1500); };
+  return <div className="settings-content-page"><header><h2>助理人格</h2><span>全局助理的角色与行为边界</span></header><Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={16} /><div className="settings-page-actions"><Button type="primary" onClick={save}>{saved ? '已保存' : '保存人格'}</Button></div></div>;
+}
+
+function AutomationTab() {
+  const [settings, setSettings] = useState(() => loadSettings());
+  const change = (key: 'autoDiscuss' | 'autoPilot', value: boolean) => { const next = { ...loadSettings(), [key]: value }; saveSettings(next); setSettings(next); };
+  return <div className="settings-content-page"><header><h2>执行策略</h2><span>团队讨论与自主办公</span></header><div className="settings-switch-row"><div><strong>自动讨论</strong><small>收到任务后自动组织团队讨论</small></div><Switch checked={settings.autoDiscuss ?? false} onChange={(value) => change('autoDiscuss', value)} /></div><div className="settings-switch-row"><div><strong>自主办公</strong><small>确认项目后自动推进执行流程</small></div><Switch checked={settings.autoPilot ?? false} onChange={(value) => change('autoPilot', value)} /></div></div>;
+}
+
+function BackupTab() {
+  const { message } = App.useApp();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const importProfile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try { const result = applySyncProfile(JSON.parse(await file.text())); message.success(`已导入 ${result.employees} 名员工、${result.teams} 个团队、${result.models} 个模型`); location.reload(); }
+    catch (error) { message.error(error instanceof Error ? error.message : '导入失败'); }
+  };
+  return <div className="settings-content-page"><header><h2>备份迁移</h2><span>工作区备份与脱敏配置导入</span></header><div className="settings-action-list"><div><div><strong>导出工作区</strong><small>任务文件和产出物 ZIP</small></div><Button onClick={() => void window.electronAPI?.fsExportZip?.()}>导出</Button></div><div><div><strong>导入同步配置</strong><small>员工、团队、模型和连接器</small></div><Button onClick={() => fileRef.current?.click()}>导入</Button><input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={(event) => void importProfile(event)} /></div></div></div>;
 }
 
 // ===== 模型库标签 =====

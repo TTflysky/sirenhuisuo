@@ -1,11 +1,12 @@
-const { app, BrowserWindow, ipcMain, screen, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, shell, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fsp = require('fs/promises');
 const { exec, execFile } = require('child_process');
 const officeParser = require('officeparser');
 const { initAutoUpdater } = require('./autoUpdate.cjs');
-const { listSkills, readSkill, deleteSkill } = require('./skills.cjs');
+const { listSkills, readSkill, deleteSkill, installSkill } = require('./skills.cjs');
+const { testObsidianVault, searchObsidianVault, readObsidianNote, fetchKnowledgeUrl } = require('./knowledge.cjs');
 
 // ===== 自主代理工作区（沙箱目录，所有文件读写/命令执行都限制在此）=====
 const WORKSPACE = path.join(app.getPath('userData'), 'workspace');
@@ -278,6 +279,18 @@ function createWindow() {
     try { return await deleteSkill(path.resolve(__dirname, '..'), id); }
     catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
   });
+  ipcMain.handle('skills:install', async (_event, input) => {
+    try { return await installSkill(path.resolve(__dirname, '..'), input); }
+    catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+  ipcMain.handle('sys:openExternal', async (_event, rawUrl) => {
+    try {
+      const url = new URL(typeof rawUrl === 'string' ? rawUrl : '');
+      if (!['https:', 'http:'].includes(url.protocol)) throw new Error('仅允许打开 HTTP/HTTPS 链接');
+      await shell.openExternal(url.toString());
+      return { ok: true };
+    } catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
 
   // ===== 连接器 API 调用（主进程代理 HTTP 请求，避免渲染进程 CORS）=====
   ipcMain.handle('connector:call', async (_event, opts) => {
@@ -297,6 +310,29 @@ function createWindow() {
     } catch (e) {
       return { ok: false, status: 0, data: '', error: String(e?.message ?? e) };
     }
+  });
+
+  ipcMain.handle('knowledge:pickObsidian', async () => {
+    const result = await dialog.showOpenDialog({ title: '选择 Obsidian Vault', properties: ['openDirectory'] });
+    if (result.canceled || !result.filePaths[0]) return { ok: false, canceled: true };
+    try { return await testObsidianVault(result.filePaths[0]); }
+    catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+  ipcMain.handle('knowledge:testObsidian', async (_event, root) => {
+    try { return await testObsidianVault(root); }
+    catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+  ipcMain.handle('knowledge:searchObsidian', async (_event, input) => {
+    try { return await searchObsidianVault(input?.root, input?.query); }
+    catch (e) { return { ok: false, error: String(e?.message ?? e), results: [] }; }
+  });
+  ipcMain.handle('knowledge:readObsidian', async (_event, input) => {
+    try { return await readObsidianNote(input?.root, input?.path); }
+    catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+  ipcMain.handle('knowledge:fetchUrl', async (_event, url) => {
+    try { return await fetchKnowledgeUrl(url); }
+    catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
   });
 
   ipcMain.handle('exec:command', async (_event, payload) => {

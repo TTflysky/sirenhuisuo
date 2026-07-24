@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   skillsList: () => ipcRenderer.invoke('skills:list'),
   skillsRead: (id) => ipcRenderer.invoke('skills:read', id),
   skillsDelete: (id) => ipcRenderer.invoke('skills:delete', id),
+  skillsInstall: (input) => ipcRenderer.invoke('skills:install', input),
+  openExternal: (url) => ipcRenderer.invoke('sys:openExternal', url),
 
   // 打开原生聊天窗口（真实桌面窗口，可自由拖动）
   openChat: (opts) => ipcRenderer.invoke('win:openChat', opts),
@@ -28,6 +30,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ===== 连接器 API 调用（主进程代理）=====
   connectorCall: (opts) => ipcRenderer.invoke('connector:call', opts),
+  knowledgePickObsidian: () => ipcRenderer.invoke('knowledge:pickObsidian'),
+  knowledgeTestObsidian: (root) => ipcRenderer.invoke('knowledge:testObsidian', root),
+  knowledgeSearchObsidian: (root, query) => ipcRenderer.invoke('knowledge:searchObsidian', { root, query }),
+  knowledgeReadObsidian: (root, path) => ipcRenderer.invoke('knowledge:readObsidian', { root, path }),
+  knowledgeFetchUrl: (url) => ipcRenderer.invoke('knowledge:fetchUrl', url),
   // broadcast: 向其他窗口广播一条消息（{ channel, payload }）
   broadcast: (channel, payload) => ipcRenderer.send('win:broadcast', { channel, payload }),
   // onBroadcast: 监听来自其他窗口的广播，返回取消订阅函数

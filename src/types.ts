@@ -50,6 +50,7 @@ export interface Skill {
   name: string;
   description: string;
   source: string;
+  scope?: 'built-in' | 'mine';
   version?: string;
   pathHash: string;
 }

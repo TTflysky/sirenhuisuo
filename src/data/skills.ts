@@ -20,6 +20,13 @@ export async function deleteSkill(id: string): Promise<void> {
   if (!result.ok) throw new Error(result.error ?? '技能删除失败');
 }
 
+export async function installSkill(sourceUrl: string, name?: string): Promise<Skill> {
+  if (!window.electronAPI?.skillsInstall) throw new Error('当前环境不支持技能安装');
+  const result = await window.electronAPI.skillsInstall({ sourceUrl, name });
+  if (!result.ok || !result.skill) throw new Error(result.error ?? '技能安装失败');
+  return result.skill;
+}
+
 export function skillReference(skill: Skill): SkillReference {
   return { id: skill.id, name: skill.name };
 }

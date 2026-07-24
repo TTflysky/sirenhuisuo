@@ -4,6 +4,7 @@ const crypto = require('crypto');
 
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_SKILLS = 2000;
+const SKILL_DOWNLOAD_TIMEOUT_MS = 15000;
 
 function uniqueRoots(projectRoot) {
   const userProfile = process.env.USERPROFILE || process.env.HOME || '';
@@ -37,6 +38,7 @@ function parseFrontmatter(raw) {
 
 async function scanSkills(projectRoot) {
   const entries = [];
+  const userSkillsRoot = path.resolve(process.env.USERPROFILE || process.env.HOME || '', '.workbuddy', 'skills');
   for (const root of uniqueRoots(projectRoot)) {
     let rootStat;
     try { rootStat = await fs.stat(root); } catch { continue; }
@@ -63,6 +65,7 @@ async function scanSkills(projectRoot) {
             name: fm.name || path.basename(path.dirname(real)),
             description: fm.description_zh || fm.description || '',
             source: path.relative(root, real).replace(/\\/g, '/').split('/')[0] || 'root',
+            scope: root === userSkillsRoot ? 'mine' : 'built-in',
             version: fm.version || undefined,
             pathHash,
             _path: real,
@@ -99,6 +102,7 @@ async function deleteSkill(projectRoot, id) {
   const all = await scanSkills(projectRoot);
   const found = all.find((item) => item.id === id);
   if (!found) throw new Error('技能不存在或已移除');
+  if (found.scope !== 'mine') throw new Error('内置技能不能删除');
   let allowed = false;
   for (const root of uniqueRoots(projectRoot)) {
     try { if (await insideRealRoot(root, found._path)) { allowed = true; break; } } catch {}
@@ -120,4 +124,84 @@ async function deleteSkill(projectRoot, id) {
   return { ok: true, id: found.id };
 }
 
-module.exports = { listSkills, readSkill, deleteSkill, MAX_BODY_BYTES };
+function githubCandidates(inputUrl) {
+  const parsed = new URL(inputUrl);
+  if (parsed.hostname !== 'github.com') return [inputUrl];
+  const parts = parsed.pathname.split('/').filter(Boolean);
+  if (parts.length < 2) return [inputUrl];
+  const [owner, repoWithGit] = parts;
+  const repo = repoWithGit.replace(/\.git$/i, '');
+  const contentsUrl = (branch, skillPath) => `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${skillPath.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(branch)}`;
+  if (parts[2] === 'blob' && parts.length >= 5) {
+    return [contentsUrl(parts[3], parts.slice(4).join('/'))];
+  }
+  if (parts[2] === 'raw' && parts.length >= 5) {
+    return [contentsUrl(parts[3], parts.slice(4).join('/'))];
+  }
+  if (parts[2] === 'tree' && parts.length >= 5) {
+    return [contentsUrl(parts[3], `${parts.slice(4).join('/')}/SKILL.md`)];
+  }
+  if (parts.length === 2) {
+    return [
+      contentsUrl('main', 'SKILL.md'),
+      contentsUrl('master', 'SKILL.md'),
+    ];
+  }
+  return [inputUrl];
+}
+
+async function downloadSkillMarkdown(sourceUrl) {
+  let parsed;
+  try { parsed = new URL(sourceUrl); } catch { throw new Error('技能地址不是有效 URL'); }
+  if (parsed.protocol !== 'https:') throw new Error('技能地址必须使用 HTTPS');
+  let lastError = '下载失败';
+  for (const candidate of githubCandidates(parsed.toString())) {
+    try {
+      const response = await fetch(candidate, {
+        headers: { 'User-Agent': 'Hermes-Office-Skill-Installer/1.0', Accept: 'application/vnd.github.raw+json,text/markdown,text/plain,*/*' },
+        signal: AbortSignal.timeout(SKILL_DOWNLOAD_TIMEOUT_MS),
+      });
+      if (!response.ok) { lastError = `HTTP ${response.status}`; continue; }
+      const length = Number(response.headers.get('content-length') || 0);
+      if (length > MAX_BODY_BYTES) throw new Error('技能文件超过 256KB');
+      const content = await response.text();
+      if (Buffer.byteLength(content, 'utf8') > MAX_BODY_BYTES) throw new Error('技能文件超过 256KB');
+      if (/^\s*<!doctype html|^\s*<html/i.test(content)) {
+        lastError = '该链接是网页，不是 SKILL.md 或 GitHub 仓库地址';
+        continue;
+      }
+      if (!content.trim() || !/(^|\n)#{1,3}\s+|(^|\n)---\s*\n/u.test(content)) {
+        lastError = '下载内容不是有效的 Markdown 技能文件';
+        continue;
+      }
+      return { content, resolvedUrl: candidate };
+    } catch (error) {
+      lastError = String(error?.message ?? error);
+    }
+  }
+  throw new Error(`技能下载失败：${lastError}`);
+}
+
+async function installSkill(projectRoot, input) {
+  const sourceUrl = typeof input?.sourceUrl === 'string' ? input.sourceUrl.trim() : '';
+  const requestedName = typeof input?.name === 'string' ? input.name.trim().slice(0, 80) : '';
+  if (!sourceUrl || sourceUrl.length > 2048) throw new Error('请填写有效的技能地址');
+  const { content, resolvedUrl } = await downloadSkillMarkdown(sourceUrl);
+  const frontmatter = parseFrontmatter(content);
+  const fallbackName = path.basename(new URL(resolvedUrl).pathname, '.md') || 'installed-skill';
+  const name = requestedName || frontmatter.name || fallbackName;
+  const slug = name.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff_-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+  if (!slug) throw new Error('无法生成安全的技能目录名');
+  const userProfile = process.env.USERPROFILE || process.env.HOME || '';
+  if (!userProfile) throw new Error('无法定位当前用户目录');
+  const skillsRoot = path.resolve(userProfile, '.workbuddy', 'skills');
+  const targetDir = path.resolve(skillsRoot, slug);
+  const rel = path.relative(skillsRoot, targetDir);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) throw new Error('技能目录不安全');
+  await fs.mkdir(targetDir, { recursive: true });
+  await fs.writeFile(path.join(targetDir, 'SKILL.md'), content, 'utf8');
+  const installed = (await scanSkills(projectRoot)).find((item) => item._path === path.join(targetDir, 'SKILL.md'));
+  return { ok: true, skill: installed ? (({ _path, ...item }) => item)(installed) : { name, source: slug }, resolvedUrl };
+}
+
+module.exports = { listSkills, readSkill, deleteSkill, installSkill, MAX_BODY_BYTES };

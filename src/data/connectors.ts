@@ -21,6 +21,7 @@ export interface Connector {
   label: string;
   icon: string;
   type: 'mcp' | 'custom';
+  kind?: 'knowledge-url' | 'obsidian' | 'legacy';
   runtime?: 'native-mcp' | 'http';
   mcpServerName?: string;
   status: 'connected' | 'disconnected' | 'unknown';
@@ -31,6 +32,8 @@ export interface Connector {
   error?: string;
   /** 服务基础 URL */
   baseUrl?: string;
+  /** Obsidian Vault 或本地知识库目录 */
+  localPath?: string;
   /** 认证配置 */
   auth?: ConnectorAuth;
   /** 自定义 headers */
@@ -51,8 +54,9 @@ export interface ConnectorAction {
     }>;
     required?: string[];
   };
-  source?: 'preset-http' | 'mcp-discovered';
+  source?: 'preset-http' | 'mcp-discovered' | 'knowledge-local';
   mcpToolName?: string;
+  local?: 'knowledge-fetch-url' | 'obsidian-search' | 'obsidian-read';
   /** HTTP 请求配置 */
   http?: {
     method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
@@ -71,6 +75,7 @@ export interface ConnectorPreset {
   label: string;
   icon: string;
   type: 'mcp' | 'custom';
+  kind?: Connector['kind'];
   mcpServerName?: string;
   desc: string;
   baseUrl?: string;
@@ -79,6 +84,41 @@ export interface ConnectorPreset {
 }
 
 export const CONNECTOR_PRESETS: ConnectorPreset[] = [
+  {
+    label: '网页知识库', icon: '🔗', type: 'custom', kind: 'knowledge-url', mcpServerName: 'knowledge-url',
+    desc: '读取网页、公开文档和在线知识库正文',
+    authType: 'none',
+    actions: [
+      {
+        name: 'read_knowledge_link',
+        description: '读取已配置的网页知识库内容',
+        parameters: { type: 'object', properties: {}, required: [] },
+        source: 'knowledge-local',
+        local: 'knowledge-fetch-url',
+      },
+    ],
+  },
+  {
+    label: 'Obsidian', icon: '◇', type: 'custom', kind: 'obsidian', mcpServerName: 'obsidian-vault',
+    desc: '搜索并读取本机 Obsidian Vault 中的 Markdown 笔记',
+    authType: 'none',
+    actions: [
+      {
+        name: 'search_obsidian',
+        description: '在 Obsidian Vault 中搜索相关笔记',
+        parameters: { type: 'object', properties: { query: { type: 'string', description: '搜索关键词' } }, required: ['query'] },
+        source: 'knowledge-local',
+        local: 'obsidian-search',
+      },
+      {
+        name: 'read_obsidian_note',
+        description: '读取 Obsidian Vault 中指定路径的笔记',
+        parameters: { type: 'object', properties: { path: { type: 'string', description: '搜索结果返回的笔记相对路径' } }, required: ['path'] },
+        source: 'knowledge-local',
+        local: 'obsidian-read',
+      },
+    ],
+  },
   {
     label: 'ima 知识库', icon: '📚', type: 'custom', mcpServerName: 'ima-mcp',
     desc: '腾讯 IMA 知识库搜索与笔记管理',
@@ -274,6 +314,7 @@ export function loadConnectors(): Connector[] {
     if (raw) {
       return (JSON.parse(raw) as Connector[]).map(c => ({
         ...c,
+        kind: c.kind ?? (c.mcpServerName === 'knowledge-url' ? 'knowledge-url' : c.mcpServerName === 'obsidian-vault' ? 'obsidian' : 'legacy'),
         runtime: c.runtime ?? (c.type === 'mcp' ? 'native-mcp' : 'http'),
         runtimeStatus: c.runtimeStatus ?? (c.type === 'mcp' ? 'unknown' : undefined),
       }));
@@ -304,10 +345,28 @@ export function updateConnector(id: string, partial: Partial<Connector>): void {
   saveConnectors(list);
 }
 
+export function upsertConnector(connector: Connector): void {
+  const list = loadConnectors();
+  const index = list.findIndex((item) => item.id === connector.id);
+  if (index >= 0) list[index] = connector;
+  else list.push(connector);
+  saveConnectors(list);
+}
+
 /* ===== 连接测试 ===== */
 
 /** 快速 ping 检测连接器是否可达 */
 export async function checkConnector(c: Connector): Promise<{ status: Connector['status']; error?: string; runtimeStatus?: Connector['runtimeStatus']; actions?: ConnectorAction[] }> {
+  if (c.kind === 'knowledge-url') {
+    if (!c.baseUrl) return { status: 'disconnected', error: '未配置知识库链接' };
+    const result = await window.electronAPI?.knowledgeFetchUrl?.(c.baseUrl);
+    return result?.ok ? { status: 'connected' } : { status: 'disconnected', error: result?.error ?? '网页知识库不可用' };
+  }
+  if (c.kind === 'obsidian') {
+    if (!c.localPath) return { status: 'disconnected', error: '未选择 Obsidian Vault' };
+    const result = await window.electronAPI?.knowledgeTestObsidian?.(c.localPath);
+    return result?.ok ? { status: 'connected' } : { status: 'disconnected', error: result?.error ?? 'Obsidian Vault 不可用' };
+  }
   if (c.type === 'mcp') {
     if (!c.baseUrl) return { status: 'disconnected', runtimeStatus: 'unavailable', actions: [], error: '未配置 MCP endpoint' };
     try {
@@ -417,6 +476,25 @@ export async function executeConnectorAction(
   action: ConnectorAction,
   args: Record<string, string>,
 ): Promise<string> {
+  if (action.local === 'knowledge-fetch-url') {
+    if (!connector.baseUrl) throw new Error('知识库链接未配置');
+    const result = await window.electronAPI?.knowledgeFetchUrl?.(connector.baseUrl);
+    if (!result?.ok) throw new Error(result?.error ?? '知识库读取失败');
+    return `来源：${result.url ?? connector.baseUrl}\n标题：${result.title ?? connector.label}\n\n${result.content ?? ''}`.slice(0, 50000);
+  }
+  if (action.local === 'obsidian-search') {
+    if (!connector.localPath) throw new Error('Obsidian Vault 未配置');
+    const result = await window.electronAPI?.knowledgeSearchObsidian?.(connector.localPath, args.query ?? '');
+    if (!result?.ok) throw new Error(result?.error ?? 'Obsidian 搜索失败');
+    const rows = (result.results ?? []).map((item) => `- ${item.title}\n  路径: ${item.path}\n  摘要: ${item.snippet}`);
+    return rows.length ? `扫描 ${result.scanned ?? 0} 篇笔记，找到 ${rows.length} 条：\n${rows.join('\n')}` : '没有找到匹配的 Obsidian 笔记。';
+  }
+  if (action.local === 'obsidian-read') {
+    if (!connector.localPath) throw new Error('Obsidian Vault 未配置');
+    const result = await window.electronAPI?.knowledgeReadObsidian?.(connector.localPath, args.path ?? '');
+    if (!result?.ok) throw new Error(result?.error ?? 'Obsidian 笔记读取失败');
+    return `笔记：${result.path}\n\n${result.content ?? ''}`.slice(0, 50000);
+  }
   if (!action.http) {
     if (connector.type !== 'mcp' || !connector.baseUrl || !action.mcpToolName) {
       throw new Error('连接器 endpoint/runtime 不可用，无法执行此操作。');

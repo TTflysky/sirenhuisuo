@@ -5,7 +5,7 @@ import { loadConnectors, executeConnectorAction, CONNECTOR_PRESETS } from '../da
 function actionsFor(conn: Connector): ConnectorAction[] {
   const presetActions = CONNECTOR_PRESETS.find(p => p.mcpServerName === conn.mcpServerName)?.actions ?? [];
   const discoveredActions = conn.discoveredActions ?? [];
-  const actions = [...presetActions.filter(action => action.http), ...discoveredActions];
+  const actions = [...presetActions.filter(action => action.http || action.local), ...discoveredActions];
   return actions.filter((action, index) => actions.findIndex(item => (item.mcpToolName ?? item.name) === (action.mcpToolName ?? action.name)) === index);
 }
 

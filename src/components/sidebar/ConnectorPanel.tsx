@@ -1,192 +1,132 @@
-import { useState } from 'react';
-import { Button, App } from 'antd';
+import { useMemo, useState } from 'react';
+import { DeleteOutlined, FolderOpenOutlined, LinkOutlined, PlusOutlined, ReloadOutlined, SettingOutlined } from '@ant-design/icons';
+import { App, Button } from 'antd';
 import {
+  checkConnector,
   type Connector,
-  loadConnectors, saveConnectors,
-  CONNECTOR_PRESETS, checkConnector, updateConnector,
+  loadConnectors,
+  saveConnectors,
+  updateConnector,
+  upsertConnector,
 } from '../../data/connectors';
 import ConnectorConfigModal from './ConnectorConfigModal';
 
-/** 侧栏底部的连接器面板——支持配置、测试、启用 */
-export default function ConnectorPanel() {
-  const { message } = App.useApp();
+function connectorIcon(connector: Connector) {
+  if (connector.kind === 'obsidian') return <FolderOpenOutlined />;
+  if (connector.kind === 'knowledge-url') return <LinkOutlined />;
+  return <span>{connector.icon}</span>;
+}
+
+function statusText(connector: Connector) {
+  if (connector.status === 'connected') return '已连接';
+  if (connector.status === 'disconnected') return '需检查';
+  return '未配置';
+}
+
+export function KnowledgeConnectorManager({ compact = false, onChange }: { compact?: boolean; onChange?: (connectors: Connector[]) => void }) {
+  const { message, modal } = App.useApp();
   const [connectors, setConnectors] = useState<Connector[]>(() => loadConnectors());
-  const [expanded, setExpanded] = useState(false);
   const [configConnector, setConfigConnector] = useState<Connector | null>(null);
-
+  const [testing, setTesting] = useState<string | null>(null);
+  const ordered = useMemo(() => [...connectors].sort((a, b) => Number(b.kind !== 'legacy') - Number(a.kind !== 'legacy')), [connectors]);
   const refresh = () => {
-    const list = loadConnectors();
-    setConnectors([...list]);
+    const next = [...loadConnectors()];
+    setConnectors(next);
+    onChange?.(next);
   };
 
-  /** 添加连接器 */
-  const handleAdd = () => {
-    const existingIds = new Set(connectors.map(c => c.mcpServerName));
-    const next = CONNECTOR_PRESETS.find(p => !existingIds.has(p.mcpServerName));
-    if (!next) {
-      message.info('所有预设连接器已添加');
-      return;
-    }
-    const c: Connector = {
-      id: `conn-${Date.now()}`,
-      label: next.label,
-      icon: next.icon,
-      type: next.type,
-      mcpServerName: next.mcpServerName,
-      status: 'unknown',
-      enabled: false,
-      baseUrl: next.baseUrl,
+  const addWebKnowledge = () => setConfigConnector({
+    id: `knowledge-${Date.now()}`,
+    label: '网页知识库',
+    icon: '🔗',
+    type: 'custom',
+    kind: 'knowledge-url',
+    mcpServerName: 'knowledge-url',
+    status: 'unknown',
+    enabled: true,
+  });
+
+  const addObsidian = async () => {
+    const result = await window.electronAPI?.knowledgePickObsidian?.();
+    if (!result || result.canceled) return;
+    if (!result.ok || !result.path) { message.error(result.error ?? 'Vault 连接失败'); return; }
+    const connector: Connector = {
+      id: `obsidian-${Date.now()}`,
+      label: result.path.split(/[\\/]/).filter(Boolean).pop() || 'Obsidian',
+      icon: '◇',
+      type: 'custom',
+      kind: 'obsidian',
+      mcpServerName: 'obsidian-vault',
+      status: 'connected',
+      enabled: true,
+      localPath: result.path,
+      lastChecked: Date.now(),
     };
-    const list = loadConnectors();
-    list.push(c);
-    saveConnectors(list);
+    upsertConnector(connector);
     refresh();
-    message.success(`已添加 ${next.label}`);
+    message.success(`Obsidian 已连接，发现 ${result.noteCount ?? 0} 篇笔记`);
   };
 
-  /** 删除连接器 */
-  const handleRemove = (id: string) => {
-    const list = loadConnectors().filter(c => c.id !== id);
-    saveConnectors(list);
+  const test = async (connector: Connector) => {
+    setTesting(connector.id);
+    const result = await checkConnector(connector);
+    updateConnector(connector.id, { status: result.status, error: result.error, lastChecked: Date.now(), discoveredActions: result.actions, runtimeStatus: result.runtimeStatus });
     refresh();
+    setTesting(null);
+    if (result.status === 'connected') message.success(`${connector.label} 连接正常`);
+    else message.warning(result.error ?? '连接失败');
   };
 
-  /** 测试连接 */
-  const handleTest = async (c: Connector) => {
-    message.loading({ content: `正在测试 ${c.label}...`, key: 'test' });
-    const result = await checkConnector(c);
-    updateConnector(c.id, { status: result.status, runtimeStatus: result.runtimeStatus, discoveredActions: result.actions, error: result.error, lastChecked: Date.now() });
-    refresh();
-    if (result.status === 'connected') {
-      message.success({ content: `${c.label} 连接成功`, key: 'test' });
-    } else {
-      message.warning({ content: `${c.label}: ${result.error ?? '连接失败'}`, key: 'test' });
-    }
-  };
-
-  /** 状态标签 */
-  const statusBadge = (c: Connector) => {
-    if (c.status === 'connected') return <span style={{ color: '#22c55e', fontSize: 10, fontWeight: 600 }}>已连接</span>;
-    if (c.status === 'disconnected') return <span style={{ color: '#ef4444', fontSize: 10 }}>断开</span>;
-    return <span style={{ color: '#9aa4c2', fontSize: 10 }}>未配置</span>;
-  };
+  const remove = (connector: Connector) => modal.confirm({
+    title: `移除 ${connector.label}？`,
+    okText: '移除',
+    okButtonProps: { danger: true },
+    cancelText: '取消',
+    onOk: () => {
+      saveConnectors(loadConnectors().filter((item) => item.id !== connector.id));
+      refresh();
+    },
+  });
 
   return (
-    <div className="connector-panel" style={{
-      borderTop: '1px solid var(--border-light)',
-      marginTop: 'auto',
-    }}>
-      {/* 头部 */}
-      <div
-        className="connector-toggle"
-        style={{
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '8px 14px', cursor: 'pointer',
-          fontSize: 11, fontWeight: 600, color: 'var(--text-muted)',
-        }}
-        onClick={() => setExpanded(!expanded)}
-      >
-        <span>
-          🔌 连接器
-          {connectors.filter(c => c.enabled).length > 0 && (
-            <span style={{ color: '#22c55e', marginLeft: 4 }}>
-              ({connectors.filter(c => c.enabled).length})
-            </span>
-          )}
-        </span>
-        <span style={{ fontSize: 9 }}>{expanded ? '▲' : '▼'}</span>
+    <div className={`knowledge-manager ${compact ? 'knowledge-manager--compact' : ''}`}>
+      <div className="knowledge-manager-actions">
+        <Button size="small" icon={<LinkOutlined />} onClick={addWebKnowledge}>网页知识库</Button>
+        <Button size="small" icon={<FolderOpenOutlined />} onClick={() => void addObsidian()}>Obsidian</Button>
       </div>
-
-      {expanded && (
-        <div style={{ padding: '0 10px 8px', maxHeight: 260, overflowY: 'auto' }}>
-          {connectors.length === 0 ? (
-            <div style={{ fontSize: 10, color: 'var(--text-muted)', padding: '6px 0', textAlign: 'center' }}>
-              暂无连接器，点击下方按钮添加
+      <div className="knowledge-connector-list">
+        {ordered.length === 0 && <div className="knowledge-empty">暂无知识库连接</div>}
+        {ordered.map((connector) => (
+          <div className={`knowledge-connector-row ${connector.enabled ? 'enabled' : ''}`} key={connector.id}>
+            <div className="knowledge-connector-icon">{connectorIcon(connector)}</div>
+            <div className="knowledge-connector-main">
+              <strong>{connector.label}</strong>
+              <small className={`status-${connector.status}`}>{statusText(connector)}{connector.kind === 'legacy' ? ' · 旧连接器' : ''}</small>
             </div>
-          ) : (
-            connectors.map(c => (
-              <div
-                key={c.id}
-                className="connector-item"
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 6,
-                  padding: '6px 8px', borderRadius: 8, marginBottom: 4,
-                  fontSize: 11, background: c.enabled ? 'rgba(34,197,94,0.06)' : 'var(--bg-deep)',
-                  border: `1px solid ${c.enabled ? 'rgba(34,197,94,0.2)' : 'transparent'}`,
-                }}
-              >
-                {/* 图标 */}
-                <span style={{ fontSize: 16, flexShrink: 0 }}>{c.icon}</span>
-
-                {/* 名称 + 状态 */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{
-                    whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
-                    fontWeight: c.enabled ? 600 : 400,
-                  }}>
-                    {c.label}
-                  </div>
-                  <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>
-                    {statusBadge(c)}
-                  </div>
-                </div>
-
-                {/* 操作按钮 */}
-                <div style={{ display: 'flex', gap: 2, flexShrink: 0 }}>
-                  {/* 配置按钮 */}
-                  <button
-                    onClick={() => setConfigConnector(c)}
-                    style={{
-                      border: 'none', background: 'rgba(99,102,241,0.1)', cursor: 'pointer',
-                      fontSize: 10, color: '#6366f1', padding: '2px 6px',
-                      borderRadius: 4, lineHeight: 1, fontWeight: 500,
-                    }}
-                    title="配置"
-                  >⚙</button>
-
-                  {/* 快速测试 */}
-                  {(
-                    <button
-                      onClick={() => handleTest(c)}
-                      style={{
-                        border: 'none', background: 'rgba(34,197,94,0.1)', cursor: 'pointer',
-                        fontSize: 10, color: '#22c55e', padding: '2px 6px',
-                        borderRadius: 4, lineHeight: 1,
-                      }}
-                      title="测试连接"
-                    >🔍</button>
-                  )}
-
-                  {/* 删除 */}
-                  <button
-                    onClick={() => handleRemove(c.id)}
-                    style={{
-                      border: 'none', background: 'transparent', cursor: 'pointer',
-                      fontSize: 10, color: 'var(--text-muted)', padding: '2px 4px',
-                      borderRadius: 4, lineHeight: 1, flexShrink: 0,
-                    }}
-                    title="移除"
-                  >✕</button>
-                </div>
-              </div>
-            ))
-          )}
-          <div style={{ marginTop: 6 }}>
-            <Button className="connector-add-btn" size="small" block onClick={handleAdd} style={{ fontSize: 10, height: 24 }}>
-              + 添加连接器
-            </Button>
+            <div className="knowledge-connector-tools">
+              <button title="检查连接" onClick={() => void test(connector)} disabled={testing === connector.id}><ReloadOutlined spin={testing === connector.id} /></button>
+              <button title="配置" onClick={() => setConfigConnector(connector)}><SettingOutlined /></button>
+              <button title="移除" onClick={() => remove(connector)}><DeleteOutlined /></button>
+            </div>
           </div>
-        </div>
-      )}
+        ))}
+      </div>
+      {!compact && <Button type="dashed" block icon={<PlusOutlined />} onClick={addWebKnowledge}>添加知识库</Button>}
+      {configConnector && <ConnectorConfigModal connector={configConnector} onClose={() => setConfigConnector(null)} onSaved={refresh} />}
+    </div>
+  );
+}
 
-      {/* 配置模态框 */}
-      {configConnector && (
-        <ConnectorConfigModal
-          connector={configConnector}
-          onClose={() => setConfigConnector(null)}
-          onSaved={refresh}
-        />
-      )}
+export default function ConnectorPanel() {
+  const [expanded, setExpanded] = useState(false);
+  const [connected, setConnected] = useState(() => loadConnectors().filter((connector) => connector.enabled && connector.status === 'connected').length);
+  return (
+    <div className="connector-panel">
+      <button className="connector-toggle" onClick={() => setExpanded((value) => !value)}>
+        <span><LinkOutlined /> 知识库{connected > 0 && <b>{connected}</b>}</span>
+        <span>{expanded ? '−' : '+'}</span>
+      </button>
+      {expanded && <KnowledgeConnectorManager compact onChange={(items) => setConnected(items.filter((connector) => connector.enabled && connector.status === 'connected').length)} />}
     </div>
   );
 }

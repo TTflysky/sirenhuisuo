@@ -27,6 +27,7 @@ export interface OpenChatResult { ok: boolean; reused?: boolean; error?: string;
 export interface SkillListResult { ok: boolean; skills?: import('./types').Skill[]; error?: string; }
 export interface SkillReadResult { ok: boolean; skill?: { id: string; name: string; content: string }; error?: string; }
 export interface SkillDeleteResult { ok: boolean; error?: string; }
+export interface SkillInstallResult { ok: boolean; skill?: import('./types').Skill; resolvedUrl?: string; error?: string; }
 
 export interface UpdateStatus {
   status: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
@@ -47,6 +48,8 @@ declare global {
     skillsList: () => Promise<SkillListResult>;
     skillsRead: (id: string) => Promise<SkillReadResult>;
     skillsDelete: (id: string) => Promise<SkillDeleteResult>;
+    skillsInstall: (input: { sourceUrl: string; name?: string }) => Promise<SkillInstallResult>;
+    openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>;
 
     // 自主代理工作区文件系统（沙箱到 userData/workspace）
     getWorkspace: () => Promise<string>;
@@ -72,6 +75,11 @@ declare global {
 
     // 连接器 API 调用（主进程代理 HTTP 请求）
     connectorCall: (opts: ConnectorCallOpts) => Promise<ConnectorCallResult>;
+    knowledgePickObsidian: () => Promise<KnowledgeVaultResult & { canceled?: boolean }>;
+    knowledgeTestObsidian: (root: string) => Promise<KnowledgeVaultResult>;
+    knowledgeSearchObsidian: (root: string, query: string) => Promise<{ ok: boolean; results?: Array<{ path: string; title: string; snippet: string }>; scanned?: number; error?: string }>;
+    knowledgeReadObsidian: (root: string, path: string) => Promise<{ ok: boolean; path?: string; content?: string; size?: number; error?: string }>;
+    knowledgeFetchUrl: (url: string) => Promise<{ ok: boolean; url?: string; title?: string; content?: string; error?: string }>;
   }
   interface Window {
     electronAPI?: ElectronAPI;
@@ -88,6 +96,13 @@ declare global {
     ok: boolean;
     status: number;
     data: string;
+    error?: string;
+  }
+  interface KnowledgeVaultResult {
+    ok: boolean;
+    path?: string;
+    noteCount?: number;
+    isObsidian?: boolean;
     error?: string;
   }
   interface Window {
