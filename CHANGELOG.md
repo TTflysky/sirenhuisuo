@@ -1,5 +1,29 @@
 # 更新日志
 
+## v0.3.0 (2026-07-24)
+
+### 重大改进
+- **团队自动讨论调度器**：发送消息后系统根据内容自动判断是否发起团队讨论
+  - 基于紧急程度、协作意图、任务关键词、@ 提及、附件/长文本等维度智能评分
+  - 支持 `off`/`smart`/`always` 三种自动讨论模式，用户可在设置中切换
+  - 手动「发起讨论」入口保留，手动触发跳过评分阈值
+  - 自动消息 400ms 聚合窗口，窗口内多条消息合并为一次讨论
+  - 团队级调度锁，讨论进行中到达的新请求自动排队，讨论结束后补触发最多一次
+  - `publishTask` 支持自动触发讨论，尊重 `autoDiscussMode='off'` 选项
+- **团队聊天界面升级**：
+  - 顶部团队成员头像条，一目了然谁在团队里
+  - 左侧成员列表栏：头像、姓名、职位/角色、在线状态
+  - 点击成员头像自动插入 `@成员名称` 到输入框，支持替换未完成的 @query
+- **连接器错误处理增强**：连接器执行异常不再崩溃，转为结构化失败结果提示
+
+### 技术改进
+- 新增 `DiscussionTriggerInput` / `DiscussionParticipantPlan` 等类型定义
+- 新增 `src/engine/discussionTrigger.ts`：自动讨论评分与参与者选择纯函数
+- 新增 `plans/team-collaboration-auto-discussion.md`：团队协作自动讨论方案文档
+- `store.tsx` 调度器重���：`schedulerRef`(Map) + `discussingRef`(Set) 双锁 + `keys` 去重
+- `teamDiscussion.ts` 支持 participantPlan、forcedMemberIds、讨论元数据回写
+- `hermesClient.ts` AppSettings 新增 `autoDiscussMode`/`autoDiscussMinScore`/`autoDiscussCooldownMs`/`autoDiscussMaxRounds`
+
 ## v0.2.9 (2026-07-23)
 
 ### 重大改进
