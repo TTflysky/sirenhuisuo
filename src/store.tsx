@@ -562,7 +562,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               id: `msg-tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
               authorId: emp.id, roleId: emp.role,
               content: toolMsg, mentions: [], timestamp: Date.now(),
-              kind: 'text',
+              kind: 'execution',
             }],
           });
         },
@@ -743,6 +743,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     void (async () => {
       const directMentions = mentions.filter((id) => team.memberIds.includes(id));
       const supervisorMentioned = mentions.includes('assistant');
+      if (directMentions.length > 0 && !supervisorMentioned) {
+        enqueueDiscussion(teamId, {
+          userText: content,
+          attachments,
+          participantPlan: buildParticipantPlan(team.memberIds, current.employees, content, team.tasks ?? [], directMentions),
+          triggerMessageId: messageId,
+          discussionId: `discussion-${messageId}`,
+          maxRounds: 1,
+          forcedMemberIds: directMentions,
+        }, 120);
+        return;
+      }
       const recentSupervisorPlan = team.chatMessages.slice(-6).some((message) =>
         message.authorId === 'assistant' && /交给|分派|安排|负责|编剧|推进/.test(message.content),
       );

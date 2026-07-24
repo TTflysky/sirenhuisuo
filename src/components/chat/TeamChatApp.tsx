@@ -52,6 +52,7 @@ export default function TeamChatApp({ teamId }: Props) {
   const [taskTitle, setTaskTitle] = useState('');
   const [taskDesc, setTaskDesc] = useState('');
   const [showOutputs, setShowOutputs] = useState(false);
+  const [expandedExecutionIds, setExpandedExecutionIds] = useState<Set<string>>(() => new Set());
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [skillRefs, setSkillRefs] = useState<SkillReference[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -344,6 +345,8 @@ export default function TeamChatApp({ teamId }: Props) {
               const author = state.employees.find((e: Employee) => e.id === msg.authorId)
                 ?? (msg.authorId === supervisorMention.id ? supervisorMention : undefined);
               const isHuman = msg.roleId === 'human';
+              const isExecution = msg.kind === 'execution';
+              const isFailure = /^⚠️|无法响应|执行失败|已手动停止/u.test(msg.content);
 
               return (
                 <div key={msg.id} className={`msg ${isHuman ? 'human' : ''}`}>
@@ -355,7 +358,22 @@ export default function TeamChatApp({ teamId }: Props) {
                       <span className="msg-time">{new Date(msg.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
                   ) : <div className="msg-meta msg-human-time"><span className="msg-time">{new Date(msg.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span></div>}
-                  {msg.kind === 'task' ? (
+                  {isExecution ? (
+                    <button
+                      type="button"
+                      className={`execution-event${expandedExecutionIds.has(msg.id) ? ' expanded' : ''}`}
+                      onClick={() => setExpandedExecutionIds((previous) => {
+                        const next = new Set(previous);
+                        if (next.has(msg.id)) next.delete(msg.id); else next.add(msg.id);
+                        return next;
+                      })}
+                    >
+                      <span className="execution-event-icon">...</span>
+                      <span className="execution-event-summary">{author?.name ?? '成员'} 正在调用工具</span>
+                      <span className="execution-event-action">{expandedExecutionIds.has(msg.id) ? '收起' : '查看'}</span>
+                      {expandedExecutionIds.has(msg.id) && <pre className="execution-event-detail">{msg.content}</pre>}
+                    </button>
+                  ) : msg.kind === 'task' ? (
                     <div className="task-card-msg" style={isHuman ? { marginLeft: 'auto', maxWidth: '85%' } : {}}>
                       <div className="task-card-title">📋 {msg.content.replace('[新任务] ', '')}</div>
                       {(() => {
@@ -414,6 +432,20 @@ export default function TeamChatApp({ teamId }: Props) {
                   )}
                   {msg.tokens != null && (
                     <div className="msg-tokens">≈ {msg.tokens.toLocaleString()} tokens</div>
+                  )}
+                  {isFailure && !isExecution && !isHuman && (
+                    <button
+                      className="resume-execution-btn"
+                      onClick={() => triggerDiscussion(teamId, {
+                        userText: '继续执行上次未完成的任务。请读取已有产出和当前聊天上下文，从中断点继续，不要重复已完成部分。',
+                        triggerMessageId: `resume-${msg.id}`,
+                        discussionId: `resume-${msg.id}`,
+                        forcedMemberIds: [msg.authorId],
+                        maxRounds: 1,
+                      })}
+                    >
+                      继续执行
+                    </button>
                   )}
                 </div>
               );

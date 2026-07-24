@@ -26,7 +26,7 @@ const antdTheme = {
     colorInfo: '#1a1f36',
     borderRadius: 8,
     fontFamily:
-      "-apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif",
+      "'Hermes YouYuan', 'YouYuan', '幼圆', sans-serif",
     colorBgContainer: '#ffffff',
     colorBorder: '#e2e6ef',
     colorBorderSecondary: '#eef0f6',

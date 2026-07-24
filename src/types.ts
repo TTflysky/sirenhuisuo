@@ -98,7 +98,7 @@ export interface ChatMessage {
   discussionRound?: number;
   triggeredBy?: DiscussionTriggerSource;
   inReplyToMessageId?: string;
-  kind?: 'text' | 'task';
+  kind?: 'text' | 'task' | 'execution';
   taskRef?: string;
   tokens?: number;     // 本条 AI 回复消耗的 token 数（仅模型回复有）
   attachments?: import('./data/hermesClient').Attachment[]; // 用户上传/粘贴的附件
