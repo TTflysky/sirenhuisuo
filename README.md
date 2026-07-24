@@ -1,4 +1,4 @@
-# 私人办公会所（Hermes Office Pro）v0.5.8
+# 私人办公会所（Hermes Office Pro）v0.5.9
 
 > 面向 Windows 的多模型 AI 虚拟办公室。创建员工、组建团队，让不同模型按照职责协作完成真实任务。
 
@@ -6,7 +6,7 @@
 
 ## 项目状态
 
-- 当前版本：`0.5.8`
+- 当前版本：`0.5.9`
 - 发布分支：`main`
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 33、React 19、TypeScript 6、Ant Design 6、Vite 8
@@ -56,6 +56,7 @@
 - 支持提取 Excel、Word、PowerPoint、PDF、OpenDocument、RTF 和 EPUB 内容，长文件可分段读取。
 - 其他二进制文件同样真实保存，并明确交给匹配的 Skill 或命令工具处理；失败时显示具体原因和路径。
 - 产出物只展示员工实际保存成功的交付文件，不再混入聊天纪要、命令日志、附件占位或重复记录。
+- 侧栏“同步”按钮可导入仓库中的脱敏员工/团队/模型配置；API Key 不随文件同步，需要在目标电脑本地回填。
 
 ### 模型稳定性与诊断
 
@@ -79,13 +80,13 @@
 
 最新安装包可从 GitHub Releases 下载：
 
-- [直接下载私人办公会所 Setup 0.5.8.exe](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.5.8/Setup.0.5.8.exe)
-- [查看 v0.5.8 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.5.8)
+- [直接下载私人办公会所 Setup 0.5.9.exe](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.5.9/Setup.0.5.9.exe)
+- [查看 v0.5.9 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.5.9)
 
 本地构建的安装程序生成在：
 
 ```text
-release/私人办公会所 Setup 0.5.8.exe
+release/私人办公会所 Setup 0.5.9.exe
 ```
 
 可以直接覆盖安装旧版本。应用数据保存在用户目录，正常覆盖安装不会删除员工、团队、聊天和模型配置。
@@ -178,6 +179,11 @@ release/                 Windows 安装包输出目录
 - 删除应用前建议自行备份重要产出物。
 
 ## 最近版本
+
+### v0.5.9
+
+- 新增脱敏员工、团队、模型和连接器同步配置文件。
+- 侧栏新增“同步”导入入口，导入后保留聊天记录，并提示在本机回填 API Key。
 
 ### v0.5.8
 

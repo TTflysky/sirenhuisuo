@@ -1,7 +1,7 @@
 # 项目交接手册
 
 > 最后整理：2026-07-24
-> 当前源码/发布版本：`v0.5.8`
+> 当前源码/发布版本：`v0.5.9`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 
@@ -70,6 +70,8 @@
 - 上传附件：`<scope>/uploads/<批次>/<原文件名>`。输入附件不会显示为最终产出物。
 - Skill：用户目录 `.workbuddy/skills` 或项目本地 Skill 目录。
 - 交付文件：由 `write_file` 或命令生成，写入对应 scope 工作区；`ChatOutputsPanel` 只登记真实文件。
+
+同步配置文件 `config/local-test-profile.sanitized.json` 只包含员工、团队、模型结构和连接器非敏感信息，不包含聊天、记忆、任务运行记录或明文 API Key。启动应用后，在左侧点击“同步”即可导入；导入后到设置中为模型逐个回填本机 API Key。
 
 若需要迁移用户实际配置到另一台电脑，应单独设计“导出/导入用户数据”功能，不能直接把本机 `localStorage` 或用户数据目录提交到仓库。
 

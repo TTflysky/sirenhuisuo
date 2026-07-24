@@ -17,6 +17,8 @@ release/builder-*.yml
 release/builder-*.yaml
 release/latest.yml
 .electron-builder-cache
+.config-export-profile/
+config/private/
 outputs
 !src/components/outputs/
 !src/components/outputs/**

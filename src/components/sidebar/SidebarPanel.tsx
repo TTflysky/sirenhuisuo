@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { UploadOutlined } from '@ant-design/icons';
 import { useStore } from '../../store';
 import type { Employee } from '../../types';
 import EmployeeCard from './EmployeeCard';
@@ -8,6 +9,7 @@ import CreateTeamModal from './CreateTeamModal';
 import EditEmployeeModal from './EditEmployeeModal';
 import AssistantModelSelector from './AssistantModelSelector';
 import ConnectorPanel from './ConnectorPanel';
+import { applySyncProfile } from '../../utils/configSync';
 
 type Filter = 'all' | 'online' | 'working' | 'idle';
 
@@ -18,6 +20,22 @@ export default function SidebarPanel() {
   const [showAddEmp, setShowAddEmp] = useState(false);
   const [showNewTeam, setShowNewTeam] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
+  const syncInputRef = useRef<HTMLInputElement>(null);
+
+  const handleSyncImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      const profile = JSON.parse(await file.text()) as unknown;
+      if (!confirm('导入员工、团队和模型配置？现有这些配置会被替换，聊天记录不会删除。')) return;
+      const result = applySyncProfile(profile);
+      alert(`同步配置已导入：${result.employees} 名员工、${result.teams} 个团队、${result.models} 个模型。API Key 需要在本机设置中重新填写。`);
+      location.reload();
+    } catch (error) {
+      alert(`同步配置导入失败：${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
 
   let filtered = state.employees;
   if (filter === 'online') filtered = filtered.filter((e) => e.isOnline);
@@ -90,6 +108,10 @@ export default function SidebarPanel() {
 
             {/* 底部操作 */}
             <div style={{ padding: '10px 14px', display: 'flex', gap: 8 }}>
+              <button className="btn btn-sm" title="导入员工、团队和模型同步配置" onClick={() => syncInputRef.current?.click()}>
+                <UploadOutlined /> 同步
+              </button>
+              <input ref={syncInputRef} type="file" accept="application/json,.json" hidden onChange={handleSyncImport} />
               <button className="btn btn-sm btn-primary" style={{ flex: 1 }} onClick={() => setShowAddEmp(true)}>
                 + 添加员工
               </button>
