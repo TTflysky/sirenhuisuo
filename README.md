@@ -1,305 +1,212 @@
-# 私人办公会所（Hermes Office Pro）v0.3.0
+# 私人办公会所（Hermes Office Pro）v0.5.5
 
-> AI 虚拟办公室桌面应用 —— 让多名 AI 员工在一间虚拟办公室里协作办公。
+> 面向 Windows 的多模型 AI 虚拟办公室。创建员工、组建团队，让不同模型按照职责协作完成真实任务。
 
-## 这是什么
+## 项目状态
 
-一个基于 **Electron 33 + React 19 + TypeScript 6** 的 Windows 桌面应用。
-
-你在虚拟办公室里雇佣 AI 员工（PM、Planner、Coder、Checker），组建团队，发送消息时系统**自动判断**是否需要发起团队讨论，AI 员工自主协作推进任务。支持 OpenAI 兼容 API（DeepSeek、千问、智谱、Kimi、豆包、混元、OpenAI、Ollama 等 9 家服务商），每个员工可独立配置模型或引用模型库。
-
----
+- 当前版本：`0.5.5`
+- 发布分支：`main`
+- 支持系统：Windows 10 / 11 x64
+- 技术栈：Electron 33、React 19、TypeScript 6、Ant Design 6、Vite 8
+- 模型接口：OpenAI 兼容的 `/chat/completions` API
 
 ## 核心能力
 
-### 四角色 OPC 架构
-PM（协调者）→ Planner（规划者��→ Coder（编码者）→ Checker（审查者），AI 员工按角色自动编排协作。
+### 多员工、多模型协作
 
-### 团队自动讨论调度器（v0.3.0 新增）
-- 发送消息后系统自动判断是否需要发起团队讨论
-- 基于**紧急程度、协作意图、任务关键词、@ 提及、附件/长文本**等维度智能评分
-- 三种模式：`off`（关闭）/ `smart`（智能，默认）/ `always`（始终）
-- 手动「发起讨论」入口保留，手动触发跳过评分阈值
-- 自动消息 **400ms 聚合窗口**，窗口内多条消息合并为一次讨论
-- 团队级调度锁：讨论进行中到达的新请求自动排队，讨论结束后补触发最多一次
-- AI 回复中 `@` 提及的成员自动进入后续响应队列
-- `publishTask` 发布任务时自动触发讨论
+- 每个员工都可以拥有独立身份、职责、提示词、人格资料和模型配置。
+- 员工关闭“独立模型配置”时，继承全局激活模型。
+- 员工开启“独立模型配置”后，可以引用模型库或手动填写接口。
+- 同一个团队可以同时使用多个不同模型，适合规划、编码、审查等岗位分工。
+- 助理模型、全局模型和员工独立模型彼此有明确边界，不会被最后一次切换全员覆盖。
 
-### 连��器系统（v0.2.9 新增）
-- 侧栏「🔌 连接器」面板：添加/删除/配置/测试外部服务连接
-- 支持 API Key / Bearer 认证 + 自定义 headers
-- 预设连接器：ima 知识库（搜索/列出/添加）、QQ 邮箱（发送/搜索）、GitHub（搜仓库）、自定义 HTTP（GET/POST）
-- 连接器工具自动注入聊天 agent 循环，助手可直接调用（如 `connector_ima_search_knowledge`）
-- Electron 主进程代理 HTTP 请求，绕过渲染进程 CORS 限制
+### 助理监督与任务调度
 
-### 自主办公
-AI 团队自主规划项目、写代码、跑命令、验证结果，全程自动化。真实文件系统沙箱，AI 可读写文件、安装依赖、执行命令。
+- Hermes 助理默认接收没有明确点名的团队消息。
+- 明确 `@员工` 时由该员工处理，助理不会无故抢答。
+- 工作请求会形成真实任务计划，并按照步骤依次执行。
+- 上一步没有结果或模型超时时，后续步骤不会直接跳过。
+- 审查不通过时，任务退回对应责任员工修改，再次提交审查。
+- 任务可暂停、继续、关闭，并保留原任务上下文。
+- “暂停工作、汇报模型、汇报状态、报数”等控制指令不创建任务，也不调用 Skill 或文件工具。
 
-### 原生聊天窗口
-每个员工/团队/助手对话都是独立 Windows BrowserWindow，可拖动、自由排列。多窗口间通过 IPC 广播实时同步状态。
+### 可观察的执行过程
 
-### 多模型支持
-9 家服务商预设 + 自定义端点。每个员工可独立配置模型，也可直接「📦 引用模型库中已配置的模型」。
+- 聊天气泡显示时间和 Token 消耗。
+- 执行过程以可折叠的半透明区域展示，不再铺满聊天窗口。
+- 右侧任务列表收纳进行中和已完成任务，默认收起，点击后展开。
+- 聊天快速跳转轨道支持悬停预览。
+- 产出物高亮显示，可点击打开，并可返回聊天。
+- 团队任务面板和产出物面板支持拖动调整宽度。
 
-### 技能库
-扫描本地已安装的 WorkBuddy 技能（`~/.workbuddy/skills/`），聊天中 `@` 可搜索并选择技能，发送时自动将技能指令注入 AI 上下文。最多同时引用 5 个。
+### Skill 与工具
 
-### 其他
-- 文件上传/粘贴（图片多模态 + 文件附件）
-- 聊天内嵌产出物面板（Markdown/HTML/代码/图片预览）
-- Token 消耗分析面板
-- 用户画像 + 长期记忆自动提炼
-- 应用内自动更新（electron-updater）
+- 扫描本地 WorkBuddy Skill，并支持搜索和手动选择。
+- 员工根据任务需要自行判断是否检索 Skill，不再强制每个任务调用。
+- Skill 或工具调用失败时展示具体错误，方便重试或改用其他方案。
+- 支持文件读取、写入、目录检查、网页搜索和连接器工具。
 
----
+### 模型稳定性与诊断
 
-## 技术栈
+- 员工单聊失败后可按设置自动重试，默认间隔 10 秒，最多 5 次。
+- 重试继续使用原聊天上下文，不会创建一段无关的新任务。
+- 团队模型超时会暂停当前步骤，等待继续执行或人工处理。
+- 模型诊断显示模型名称、API 地址、HTTP 状态、耗时、上下文大小和错误摘要，不显示 API Key。
 
-| 层 | 技术 | 版本 |
-|---|---|---|
-| 桌面框架 | Electron | 33 |
-| 前端 | React + TypeScript | 19 / 6.0 |
-| UI 库 | Ant Design + @ant-design/icons | 6 |
-| 构建 | Vite (Rolldown) | 8 |
-| 打包 | electron-builder (NSIS) | 25 |
-| 代码检查 | Oxlint | 1 |
-| 存储 | localStorage 全量持久化 | - |
-| LLM | OpenAI 兼容 API（`/v1/chat/completions`） | - |
+### 桌面体验
 
-**不依赖**：Redux / Zustand / MobX（状态管理手写 useReducer）；Tailwind / styled-components（样式手写 CSS）。
-
----
-
-## 项目架构
-
-### 数据流
-```
-用户操作 → store.tsx dispatch(action)
-  ├── reducer 修改内存 state
-  ├── hermesClient 持久化到 localStorage
-  └── ipcBus 广播到其他窗口（store:action 协议）
-```
-
-### 讨论调度器（核心新增）
-```
-用户发消息 → enqueueAutoDiscussion()
-  ├── evaluateDiscussionTrigger() 评分判断是否触发
-  ├── buildParticipantPlan() 选择参与者
-  └── enqueueDiscussion(teamId, opts, 400ms)
-        ├── keys Set 去重
-        ├── 400ms 聚合窗口内合并
-        ├── 进行中 → queued 排队
-        └── 空闲 → runDiscussion()
-              ├── runTeamDiscussion() 成员依次发言
-              └── finally: 消费 queued
-```
-
-### LLM 调用链
-```
-hermesClient.chatCompletion()        # 单次 API 调用
-hermesClient.runAgentLoop()          # Agent 循环（调模型 + 执行工具，最多 6 轮）
-src/engine/teamDiscussion.ts         # 团队讨论编排（多成员顺序发言）
-src/engine/discussionTrigger.ts      # 自动触发判定
-src/engine/autopilot.ts              # 自主代理（项目推荐 + 全自动执行）
-src/engine/simulationEngine.ts       # 演示剧本播放器
-src/engine/proactiveScript.ts        # 预置演示剧本
-src/engine/tools.ts                  # AI 工具注册表（文件/搜索/命令）
-src/engine/connectorTools.ts         # 连接器工具生成与路由
-```
-
----
-
-## 项目结构
-
-```
-hermes-office-pro/
-├── package.json              # 项目配置 v0.3.0
-├── tsconfig.json             # TS 根配置（引用子配置）
-├── tsconfig.app.json         # 应用代码 TS 配置
-├── tsconfig.node.json        # Node 端 TS 配置
-├── vite.config.ts            # Vite 构建配置
-├── .gitignore
-├── .oxlintrc.json
-├── CHANGELOG.md              # 版本变更日志
-├── README.md                 # 本文件
-├── index.html                # SPA 入口 HTML
-│
-├── src/
-│   ├── main.tsx              # 应用入口，挂载 React
-│   ├── App.tsx               # 主布局 + 视图切换（4 个主视图）
-│   ├── store.tsx             # ★ 全局状态管理（Context + Reducer，760 行）
-│   ├── types.ts              # ★ 核心类型定义（Employee/Team/ChatMessage/TeamTask 等）
-│   ├── theme.css             # 全局样式（~1200 行）
-│   ├── ipcBus.ts             # 窗口间 IPC 广播总线
-│   ├── electron.d.ts         # Electron API TypeScript 类型声明
-│   │
-│   ├── data/                 # 数据层
-│   │   ├── hermesClient.ts   # ★ LLM 客户端 + 持久化 + 设置管理（811 行）
-│   │   ├── outputs.ts        # 产出物管理（CRUD/导出/内容类型推断）
-│   │   ├── skills.ts         # 技能加载（通过 electronAPI 桥接）
-│   │   ├── connectors.ts     # 连接器模型（MCP/HTTP 外部服务集成）
-│   │   ├── defaultEmployees.ts  # 4 个 OPC 种子员工 + 真人用户
-│   │   ├── defaultTeams.ts   # 种子团队 "OPC 协作组"
-│   │   └── avatarPresets.tsx # 头像预设资源
-│   │
-│   ├── engine/               # AI 引擎层
-│   │   ├── teamDiscussion.ts     # ★ 团队 AI 讨论编排（多角色顺序发言）
-│   │   ├── discussionTrigger.ts  # ★ 讨论自动触发判定 + 参与者计划
-│   │   ├── tools.ts              # AI 工具注册表（文件/搜索/命令）
-│   │   ├── connectorTools.ts     # 连接器工具生成与路由执行
-│   │   ├── autopilot.ts          # 自主代理引擎（项目推荐 + 自动执行）
-│   │   ├── simulationEngine.ts   # 演示剧本播放器
-│   │   └── proactiveScript.ts    # 预置演示剧本
-│   │
-│   ├── components/           # UI 组件（28 个文件，8 个子目录）
-│   │   ├── chat/             # AssistantChat / TeamChatApp / DmChatApp / ModelSelector
-│   │   ├── office/           # OfficeView / Workstation / AgentAvatar / OfficeDecor
-│   │   ├── sidebar/          # SidebarPanel / TeamList / EmployeeCard / 弹窗系列 / ConnectorPanel
-│   │   ├── skills/           # SkillLibraryView / SkillMentionInput
-│   │   ├── outputs/          # OutputsView / OutputRenderer / ChatOutputsPanel
-│   │   ├── analytics/        # 数据分析面板
-│   │   ├── autopilot/        # 自主办公面板
-│   │   └── settings/         # SettingsModal / AssistantSettingsModal
-│   │
-│   └── utils/                # 工具函数
-│       ├── clipboard.ts      # 剪贴板操作、消息导出
-│       ├── linkify.tsx       # URL 自动链接化
-│       └── attachments.ts    # 附件上传/粘贴/分类
-│
-├── electron/                 # Electron 主进程
-│   ├── main.cjs              # ★ 主进程（452 行）：窗口管理/IPC/沙箱文件系统/命令执行
-│   ├── preload.cjs           # 预加载桥接（53 行）：contextBridge 暴露 API
-│   ├── skills.cjs            # 技能扫描与安全读取
-│   └── autoUpdate.cjs        # 自动更新模块
-│
-├── plans/                    # 设计规划文档
-│   ├── team-collaboration-auto-discussion.md   # 团队协作自动讨论方案（366 行）
-│   └── window-connector-experience.md          # 窗口与连接器体验改造方案（179 行）
-│
-├── _deadcode/                # 已废弃代码存档
-├── dist/                     # Vite 构建产物
-├── release/                  # electron-builder 打包输出
-├── outputs/                  # AI 生成产出物目录（git ignored）
-├── workspace/                # AI 沙箱工作区（git ignored）
-├── public/                   # 静态资源
-└── node_modules/             # 依赖（git ignored）
-```
-
-### 关键类型速查（src/types.ts）
-
-| 类型 | 字段 | 说明 |
-|------|------|------|
-| `Employee` | id, name, title, role, avatar, stationIndex, prompt, soul, modelConfig, isOnline, isWorking, isTalking | AI 员工实体 |
-| `Team` | id, name, memberIds, chatMessages, tasks, archived | 团队实体 |
-| `ChatMessage` | id, authorId, roleId, content, mentions, attachments, skillRefs, discussionId, discussionRound, triggeredBy, thoughtChain, tokens | 聊天消息 |
-| `TeamTask` | id, title, lane(PLANNING/CODING/REVIEW/DONE), assigneeId, description, acceptance | 任务卡 |
-| `ModelConfig` | provider, apiHost, apiKey, model, refModelId | 模型配置（支持引用模型库） |
-| `DiscussionTriggerInput` | teamId, messageId, userText, mentions, hasAttachments, recentMessages, activeTaskCount, manual, now | 自动触发判定输入 |
-| `DiscussionParticipantPlan` | memberId, roleId, reason, priority | 参与者参与计划 |
-| `AppState` | employees, teams, status | 应用根状态 |
-
----
-
-## 配置
-
-### 模型配置（三阶回退）
-1. **员工独立配置**：编辑员工 → 模型配置 → 引用模型库 或 手动填写
-2. **助理机器人配置**：助理机器人设置的默认模型
-3. **全局设置**���设置 → API 模型管理 → 默认模型
-
-### 自动讨论设置
-- `autoDiscussMode`：`off` / `smart` / `always`
-- `autoDiscussMinScore`：触发阈值（smart 模式）
-- `autoDiscussCooldownMs`：冷却时间
-- `autoDiscussMaxRounds`：最大响应轮数
-
-### 连接器配置
-侧栏「🔌 连接器」→ 点击 ⚙ → 填写服务地址/认证方式/Token → 测试连接
-
----
+- 原生 Electron 多聊天窗口，点击窗口即可置于最前。
+- 支持浅色和深色主题。
+- 全局内置幼圆字体，不依赖目标电脑预装字体。
+- 员工颜色可自由选择，并自动避免与其他员工重复。
+- 提供多款头像框和身份牌，状态点显示空闲、工作中或掉线。
+- 最小化的聊天窗口可以从应用内重新打开。
 
 ## 快速开始
 
-```bash
-# 克隆
-git clone https://github.com/TTflysky/sirenhuisuo.git
-cd hermes-office-pro
+### 使用安装包
 
-# 安装依赖
-npm install
+安装程序生成在：
 
-# 开发模式（两个终端并行）
-npm run dev    # 终端 1：Vite dev server（http://localhost:5173）
-npm start      # 终端 2：Electron 窗口
-
-# 构建 + 打包 Windows 安装程序
-npm run dist:win
-# 产物：release/私人办公会所 Setup 0.3.0.exe
+```text
+release/私人办公会所 Setup 0.5.5.exe
 ```
 
-### 环境要求
-- Windows 10/11
-- Node.js 22+
-- Git
+可以直接覆盖安装旧版本。应用数据保存在用户目录，正常覆盖安装不会删除员工、团队、聊天和模型配置。
 
-### 注意事项
-- 应用内不内置任何 API Key，所有模型配置需自行填写
-- 安装包未签名，Windows SmartScreen 可能拦截，需手动「仍要运行」
-- 技能库依赖本机安装的 WorkBuddy 技能（`~/.workbuddy/skills/`），无 WorkBuddy 时此功能不可用
-- 本地开发分支是 `master`，远端发布分支是 `main`
+安装包目前未签名，Windows SmartScreen 可能提示风险。项目保留了 `electron-updater` 代码，但发布地址仍是占位配置，因此当前版本以下载安装包覆盖升级为准。
 
----
+### 本地开发
+
+```bash
+git clone https://github.com/TTflysky/sirenhuisuo.git
+cd sirenhuisuo
+npm install
+npm run dev
+```
+
+另开一个终端启动 Electron：
+
+```bash
+npm start
+```
+
+### 构建与打包
+
+```bash
+npm run build
+npm run lint
+npm run dist:win
+```
+
+## 模型配置规则
+
+### 全局默认模型
+
+在设置中的模型库添加接口，并选择“全局激活模型”。未开启独立配置的员工都使用该模型。
+
+### 助理模型
+
+助理可以选择自己的模型。助理模型只影响 Hermes 助理，不会覆盖员工配置。
+
+### 员工独立模型
+
+编辑员工并开启“独立模型配置”后，可以：
+
+1. 引用模型库中的已有模型。
+2. 手动填写服务商、API 地址、API Key 和模型名。
+
+团队执行时，每一步都会解析该员工的有效模型，因此一个团队可以同时使用 DeepSeek、OpenAI、千问或其他兼容模型。
+
+## 调度流程
+
+```text
+老板发送消息
+  -> 控制指令：直接暂停/汇报，不启动工具链
+  -> 明确 @员工：交给指定员工
+  -> 普通工作请求：助理拆解并创建任务
+       -> 规划步骤
+       -> 执行步骤
+       -> 审查步骤
+       -> 通过：归档任务和产出物
+       -> 不通过：退回责任步骤修改
+```
+
+## 项目结构
+
+```text
+src/
+  components/           UI、聊天窗口、设置、任务与产出物面板
+  data/                 模型配置、持久化、Skill、任务和产出物
+  diagnostics/          模型连接与超时诊断
+  engine/               团队调度、任务执行、工具和连接器
+  store.tsx             全局状态与团队消息路由
+  types.ts              核心数据类型
+  theme.css             浅色/深色主题与桌面样式
+electron/
+  main.cjs              Electron 主进程、窗口和 IPC
+  preload.cjs           渲染进程安全桥接
+  skills.cjs            本地 Skill 扫描
+  autoUpdate.cjs        自动更新模块
+public/
+  fonts/                 内置幼圆字体
+release/                 Windows 安装包输出目录
+```
+
+## 数据与安全
+
+- 项目不内置任何 API Key。
+- 模型、员工、团队、聊天和任务数据主要保存在本机 `localStorage`。
+- API Key 不会出现在模型诊断和员工汇报消息中。
+- 工具文件操作限制在应用工作区范围内。
+- 删除应用前建议自行备份重要产出物。
+
+## 最近版本
+
+### v0.5.5
+
+- 同步 README、当前功能、模型规则和发布流程。
+
+### v0.5.4
+
+- 修复未开启独立配置的员工仍使用旧模型的问题。
+- 保留每个员工独立模型和团队多模型协作能力。
+- 暂停、模型汇报和状态汇报从任务执行链分离。
+- 右侧任务列表默认收起。
+
+### v0.5.3
+
+- 模型超时后暂停当前步骤，不再跳过并执行下一步。
+- 增加模型诊断信息、聊天跳转预览和可调面板宽度。
+- 员工产出物支持返回聊天。
+
+### v0.5.2
+
+- 增加右侧任务列表、完成任务收纳和旧任务关闭。
+- 执行过程改为紧凑折叠展示。
+- 产出物支持点击跳转，Skill 改为按需调用。
+
+### v0.5.0 - v0.5.1
+
+- 引入可恢复的多步骤团队任务运行器。
+- 支持顺序执行、审查退回和上下文续接。
+- 完善员工颜色、头像框、身份牌和状态显示。
+
+完整历史见 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## Git 工作流
 
 ```bash
-# 每次实质性修改后提交并推送
 git add -A
 git commit -m "描述本次修改"
-git push origin master:main
+git push origin main
 ```
 
-远端仓库：https://github.com/TTflysky/sirenhuisuo
+仓库地址：https://github.com/TTflysky/sirenhuisuo
 
----
+## 已知限制
 
-## 版本历史
-
-详见 [CHANGELOG.md](./CHANGELOG.md)
-
-最新版本 v0.3.0 变更摘要：
-- 团队自动讨论调度器（评分触发 + 400ms 聚合 + 团队级排队锁）
-- 团队聊天界面升级（顶部头像条 + 左侧成员栏 + 点击 @）
-- 连接器错误处理增强
-- `discussionTrigger.ts` 自动触发判定引擎
-- 讨论元数据回写（discussionId/discussionRound/triggeredBy）
-
----
-
-## 已知问题与改进方向
-
-- 打包后 bundle 超过 500KB（`INEFFECTIVE_DYNAMIC_IMPORT` 警告），可考虑 code splitting
-- 调度器 `keys` Set 长期不清理，极端情况下可能占用内存（可加 LRU 或定时清理）
-- 安装包未签名（需 Windows 代码签名证书）
-- 自动更新服务 URL 配置为 example.com 占位符
-- 单元测试未覆盖，当前仅依赖 Oxlint 静态检查
-
----
-
-## 给 Codex 的快速上手指南
-
-### 你首先需要读的文件（按优先级）
-1. **`src/types.ts`** — 所有类型定义，理解数据模型
-2. **`src/store.tsx`** — 状态管理 + 讨论调度器，理解业务逻辑
-3. **`src/data/hermesClient.ts`** — LLM 调用 + 持久化，理解 AI 交互
-4. **`electron/main.cjs`** — Electron 主进程，理解窗口和 IPC
-5. **`src/engine/teamDiscussion.ts`** — 团队讨论编排核心
-6. **`src/engine/discussionTrigger.ts`** — 自动触发判定引擎
-7. **`plans/team-collaboration-auto-discussion.md`** — 自动讨论完整方案文档
-
-### 关键设计决策
-- **不用 Redux/Zustand**：手写 useReducer + Context，所有状态通过 `dispatch(action)` 修改
-- **多窗口同步**：通过 `ipcBus.ts` 的 `win:broadcast` IPC 广播 `store:action` 到其他窗口
-- **讨论调度器**：团队级 Map 锁 + Set 去重 + setTimeout 400ms 聚合 + queued 排队补触发
-- **LLM 模型配置**：员工独立 > 助理配置 > 全局设置，三阶回退
-- **连接器**：项目内置 HTTP JSON-RPC 实现，不是完整 MCP runtime
+- 安装包尚未配置代码签名证书。
+- 自动更新发布地址仍需替换为真实服务器或 GitHub Releases。
+- 主前端 bundle 超过 500 KB，构建时会提示代码分割建议。
+- 当前主要依赖 TypeScript 构建和 Oxlint 检查，自动化测试仍需补充。
