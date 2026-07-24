@@ -325,6 +325,7 @@ export default function TeamChatApp({ teamId }: Props) {
                   <strong>{run.title}</strong><span>{completed}/{run.steps.length}</span><span className="task-run-toggle">{expanded ? '收起' : '详情'}</span>
                 </button>
                 {expanded && <div className="task-run-details">
+                  {!!run.skillRefs?.length && <div className="task-run-skills"><strong>Skills</strong>{run.skillRefs.map((skill) => <span key={skill.id}>{skill.name}</span>)}</div>}
                   {run.steps.map((step) => {
                     const emp = state.employees.find((item) => item.id === step.employeeId);
                     return <div key={step.id} className="task-run-step"><div><strong>{emp?.name ?? step.title}</strong><span className={`task-step-status status-${step.status}`}>{step.status}</span><small>尝试 {step.attempts} 次</small></div>{step.lastError && <p className="task-step-error">{step.lastError}</p>}{step.events.slice(-4).map((event, index) => <p key={`${event.ts}-${index}`} className="task-step-event">{new Date(event.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} {event.detail}</p>)}</div>;

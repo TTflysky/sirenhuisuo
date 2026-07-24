@@ -411,6 +411,7 @@ html, body, #root, .app-root {
 .task-run-running .task-run-state { color: #0a84ff; }.task-run-failed .task-run-state { color: #ff6b6b; }.task-run-paused .task-run-state { color: #f5a524; }.task-run-completed .task-run-state { color: #30d158; }
 .task-run-toggle { font-size: 11px; color: var(--text-muted); }.task-run-details { padding: 3px 10px 9px; border-top: 1px solid var(--border-light); max-height: 220px; overflow: auto; }
 .task-run-step { padding: 7px 0; border-bottom: 1px solid var(--border-light); }.task-run-step:last-of-type { border-bottom: 0; }.task-run-step > div { display: flex; align-items: center; gap: 7px; }.task-run-step small { margin-left: auto; color: var(--text-muted); font-size: 10px; }
+.task-run-skills { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 6px 0; color: var(--text-muted); font-size: 10px; }.task-run-skills span { padding: 2px 5px; border: 1px solid var(--border-light); border-radius: 4px; color: var(--text-secondary); background: var(--bg-deep); }
 .task-step-event, .task-step-error { margin: 4px 0 0; color: var(--text-secondary); font-size: 11px; line-height: 1.35; white-space: pre-wrap; word-break: break-word; }.task-step-error { color: #ff6b6b; }.task-run-actions { display: flex; justify-content: flex-end; gap: 6px; padding-top: 7px; }
 @keyframes execution-flow { 0%, 100% { border-color: rgba(128, 132, 145, 0.24); } 50% { border-color: rgba(10, 132, 255, 0.52); } }
 
@@ -535,6 +536,18 @@ html, body, #root, .app-root {
 }
 .avatar-preset-option.selected { border-color: var(--text); box-shadow: 0 0 0 2px rgba(26,31,54,0.15); }
 .avatar-preset-option:hover { transform: scale(1.08); }
+.agent-avatar-frame { position: relative; display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; border-radius: 50%; box-sizing: border-box; }
+.agent-avatar-frame > img { width: 100% !important; height: 100% !important; border-radius: 50%; object-fit: cover; }
+.agent-avatar-badge { position: absolute; right: -3px; bottom: -2px; display: flex; align-items: center; justify-content: center; border: 1px solid rgba(255,255,255,.9); border-radius: 50%; font-weight: 700; line-height: 1; box-shadow: 0 1px 4px rgba(0,0,0,.28); }
+.employee-color-picker { display: grid; grid-template-columns: auto 22px auto; align-items: center; justify-content: start; gap: 9px; }
+.employee-color-picker input[type="color"], .avatar-frame-custom input[type="color"] { width: 42px; height: 30px; padding: 2px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); cursor: pointer; }
+.employee-color-preview { width: 20px; height: 20px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0,0,0,.15); }
+.employee-color-picker code { color: var(--text-secondary); font-size: 11px; }
+.avatar-frame-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+.avatar-frame-option { min-width: 0; height: 55px; padding: 4px 2px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-raised); color: var(--text); cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; transition: transform .15s, border-color .15s, background .15s; }
+.avatar-frame-option:hover { transform: translateY(-1px); background: var(--bg-deep); }.avatar-frame-option.selected { border-color: #0a84ff; box-shadow: inset 0 0 0 1px #0a84ff; }
+.avatar-frame-option > span { width: 25px; height: 25px; display: flex; align-items: center; justify-content: center; border-width: 3px; border-style: solid; border-radius: 50%; font-size: 9px; font-weight: 700; }.avatar-frame-option small { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; }
+.avatar-frame-custom { display: grid; grid-template-columns: 42px 42px minmax(0, 1fr); gap: 6px; margin-top: 7px; }.avatar-frame-custom .form-input { height: 30px; }.avatar-frame-current { margin-top: 6px; color: var(--text-muted); font-size: 10px; }
 
 /* 多选框 */
 .checkbox-group { display: flex; flex-direction: column; gap: 6px; }

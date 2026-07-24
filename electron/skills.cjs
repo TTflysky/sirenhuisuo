@@ -61,7 +61,7 @@ async function scanSkills(projectRoot) {
           entries.push({
             id: `${pathHash}:${(fm.name || path.basename(path.dirname(real))).toLowerCase().replace(/[^a-z0-9_-]+/g, '-').slice(0, 64)}`,
             name: fm.name || path.basename(path.dirname(real)),
-            description: fm.description || '',
+            description: fm.description_zh || fm.description || '',
             source: path.relative(root, real).replace(/\\/g, '/').split('/')[0] || 'root',
             version: fm.version || undefined,
             pathHash,

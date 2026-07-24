@@ -1,4 +1,4 @@
-import type { Employee, TaskRun, TaskRunMemberSnapshot, TaskRunStatus, TaskRunStep, Team } from '../types';
+import type { Employee, SkillReference, TaskRun, TaskRunMemberSnapshot, TaskRunStatus, TaskRunStep, Team } from '../types';
 
 const LS_TASK_RUNS = 'hermes_office_task_runs_v1';
 const MAX_RUNS = 120;
@@ -17,7 +17,7 @@ export function saveTaskRuns(runs: TaskRun[]): void {
   try { localStorage.setItem(LS_TASK_RUNS, JSON.stringify(runs.slice(-MAX_RUNS))); } catch {}
 }
 
-export function createTaskRun(team: Team, employees: Employee[], request: string, employeeIds: string[], sourceMessageId?: string): TaskRun {
+export function createTaskRun(team: Team, employees: Employee[], request: string, employeeIds: string[], sourceMessageId?: string, skillRefs?: SkillReference[]): TaskRun {
   const now = Date.now();
   const teamMembers = team.memberIds
     .map((id) => employees.find((employee) => employee.id === id))
@@ -48,6 +48,7 @@ export function createTaskRun(team: Team, employees: Employee[], request: string
     updatedAt: now,
     memberSnapshot,
     steps,
+    skillRefs,
     sourceMessageId,
   };
 }

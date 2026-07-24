@@ -20,6 +20,7 @@ export interface Employee {
   avatar: string;        // 预设 key 或自定义 base64/dataURL
   avatarKind: 'preset' | 'custom';
   statusColor: string;   // 角色色
+  avatarFrame?: AvatarFrameConfig;
   stationIndex: number;  // 0..MAX_STATIONS-1
   prompt?: string;       // 个性提示词（人设/说话风格），用于私聊回应
   soul?: string;         // 核心人格文件（soul.md），深度人设描述
@@ -128,6 +129,13 @@ export interface TeamTask {
   claimedBy?: string;
 }
 
+export interface AvatarFrameConfig {
+  presetId: string;
+  primaryColor?: string;
+  secondaryColor?: string;
+  label?: string;
+}
+
 // ===== 可恢复任务运行（v0.4 调度内核） =====
 export type TaskRunStatus = 'queued' | 'running' | 'paused' | 'failed' | 'completed';
 export type TaskStepStatus = 'queued' | 'running' | 'paused' | 'failed' | 'completed';
@@ -164,6 +172,7 @@ export interface TaskRun {
   updatedAt: number;
   memberSnapshot: TaskRunMemberSnapshot[];
   steps: TaskRunStep[];
+  skillRefs?: SkillReference[];
   sourceMessageId?: string;
   lastError?: string;
 }

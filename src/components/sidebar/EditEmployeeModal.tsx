@@ -1,11 +1,11 @@
 import { useState } from 'react';
 import { Modal, Select, Switch, Input, Button, App } from 'antd';
-import type { Employee, OpcRoleId, ModelConfig } from '../../types';
-import { ROLE_SCARF } from '../../types';
+import type { Employee, OpcRoleId, ModelConfig, AvatarFrameConfig } from '../../types';
 import { useStore } from '../../store';
 import { PROVIDER_PRESETS, getProvider, loadSettings } from '../../data/hermesClient';
 import type { ModelEntry } from '../../data/hermesClient';
 import AgentAvatar from '../office/AgentAvatar';
+import EmployeeAppearanceFields from './EmployeeAppearanceFields';
 
 interface Props {
   employee: Employee;
@@ -23,6 +23,8 @@ export default function EditEmployeeModal({ employee, onClose }: Props) {
   const [soul, setSoul] = useState(employee.soul ?? '');
   const [isOnline, setIsOnline] = useState(employee.isOnline);
   const [showThoughtChain, setShowThoughtChain] = useState(employee.showThoughtChain ?? true);
+  const [statusColor, setStatusColor] = useState(employee.statusColor);
+  const [avatarFrame, setAvatarFrame] = useState<AvatarFrameConfig>(employee.avatarFrame ?? { presetId: 'standard' });
 
   // 模型配置
   const mc = employee.modelConfig;
@@ -116,6 +118,8 @@ export default function EditEmployeeModal({ employee, onClose }: Props) {
         isOnline,
         modelConfig,
         showThoughtChain,
+        statusColor,
+        avatarFrame,
       },
     });
     onClose();
@@ -230,13 +234,7 @@ export default function EditEmployeeModal({ employee, onClose }: Props) {
         />
       </div>
 
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6 }}>角色标识色</div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <div style={{ width: 20, height: 20, borderRadius: 4, background: ROLE_SCARF[role] }} />
-          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{ROLE_SCARF[role]}</span>
-        </div>
-      </div>
+      <EmployeeAppearanceFields statusColor={statusColor} onStatusColorChange={setStatusColor} frame={avatarFrame} onFrameChange={setAvatarFrame} />
 
       <div style={{ borderTop: '1px solid var(--border)', margin: '18px 0' }} />
 

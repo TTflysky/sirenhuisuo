@@ -1,8 +1,9 @@
 import React, { useState, useRef } from 'react';
-import type { OpcRoleId } from '../../types';
+import type { OpcRoleId, AvatarFrameConfig } from '../../types';
 import { useStore } from '../../store';
 import { AVATAR_PRESETS, renderPresetAvatar } from '../../data/avatarPresets';
 import { ROLE_SCARF } from '../../types';
+import EmployeeAppearanceFields from './EmployeeAppearanceFields';
 
 interface Props {
   onClose: () => void;
@@ -16,6 +17,8 @@ export default function AddEmployeeModal({ onClose }: Props) {
   const [avatarKey, setAvatarKey] = useState('a06');
   const [customAvatar, setCustomAvatar] = useState('');
   const [prompt, setPrompt] = useState('');
+  const [statusColor, setStatusColor] = useState(ROLE_SCARF.custom);
+  const [avatarFrame, setAvatarFrame] = useState<AvatarFrameConfig>({ presetId: 'standard' });
   const fileRef = useRef<HTMLInputElement>(null);
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -34,7 +37,7 @@ export default function AddEmployeeModal({ onClose }: Props) {
     if (!name.trim()) return alert('请输入名字');
     const kind = customAvatar ? 'custom' : 'preset';
     const avatar = customAvatar || avatarKey;
-    addEmployee(name.trim(), title.trim() || role.toUpperCase(), role, avatar, kind as 'preset' | 'custom', undefined, prompt.trim() || undefined);
+    addEmployee(name.trim(), title.trim() || role.toUpperCase(), role, avatar, kind as 'preset' | 'custom', statusColor, prompt.trim() || undefined, avatarFrame);
     onClose();
   };
 
@@ -66,7 +69,7 @@ export default function AddEmployeeModal({ onClose }: Props) {
           </div>
           <div className="form-group" style={{ flex: 1 }}>
             <label className="form-label">角色</label>
-            <select className="form-select" value={role} onChange={(e) => setRole(e.target.value as OpcRoleId)}>
+            <select className="form-select" value={role} onChange={(e) => { const next = e.target.value as OpcRoleId; setRole(next); setStatusColor(ROLE_SCARF[next]); }}>
               <option value="pm">PM 协调者</option>
               <option value="planner">Planner 规划者</option>
               <option value="coder">Coder 编码者</option>
@@ -117,15 +120,7 @@ export default function AddEmployeeModal({ onClose }: Props) {
         </div>
 
         {/* 角色色预览 */}
-        <div className="form-group">
-          <label className="form-label">角色标识色</label>
-          <div style={{
-            width: 24, height: 24, borderRadius: 6,
-            background: ROLE_SCARF[role],
-            display: 'inline-block', verticalAlign: 'middle', marginRight: 8,
-          }} />
-          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{ROLE_SCARF[role]}</span>
-        </div>
+        <EmployeeAppearanceFields statusColor={statusColor} onStatusColorChange={setStatusColor} frame={avatarFrame} onFrameChange={setAvatarFrame} />
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 16 }}>
           <button className="btn" onClick={onClose}>取消</button>
