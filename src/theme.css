@@ -8,7 +8,15 @@
   font-display: swap;
 }
 
+@font-face { font-family: 'Hermes Noto Sans SC'; src: url('./assets/fonts/NotoSansSC.ttf') format('truetype'); font-style: normal; font-weight: 100 900; font-display: swap; }
+@font-face { font-family: 'Hermes Noto Serif SC'; src: url('./assets/fonts/NotoSerifSC.ttf') format('truetype'); font-style: normal; font-weight: 100 900; font-display: swap; }
+@font-face { font-family: 'Hermes Source Han Sans Regular'; src: url('./assets/fonts/SourceHanSansCN-Regular.otf') format('opentype'); font-style: normal; font-weight: 400; font-display: swap; }
+@font-face { font-family: 'Hermes Source Han Sans Light'; src: url('./assets/fonts/SourceHanSansCN-Light.otf') format('opentype'); font-style: normal; font-weight: 300; font-display: swap; }
+@font-face { font-family: 'Hermes Source Han Sans Bold'; src: url('./assets/fonts/SourceHanSansCN-Bold.otf') format('opentype'); font-style: normal; font-weight: 700; font-display: swap; }
+
 :root {
+  --ui-font-family: 'Hermes YouYuan', 'YouYuan', '幼圆', sans-serif;
+  --ui-font-scale: 1;
   /* 调色板 - 白调 */
   --bg: #f5f6fa;
   --bg-deep: #eef0f6;
@@ -61,7 +69,7 @@
 
 html, body, #root, .app-root {
   width: 100%; height: 100%; min-width: 0; min-height: 0;
-  font-family: 'Hermes YouYuan', 'YouYuan', '幼圆', sans-serif;
+  font-family: var(--ui-font-family);
   background: var(--bg);
   color: var(--text);
   overflow: hidden;
@@ -92,6 +100,7 @@ html, body, #root, .app-root {
   justify-content: space-between;
   padding: 0 14px 0 0;
   z-index: 100;
+  -webkit-app-region: drag;
 }
 /* 标题栏空白可拖动，交互控件必须显式排除。 */
 .titlebar-left { display: flex; align-items: center; gap: 10px; -webkit-app-region: drag; padding-left: 14px; flex: 1; }
@@ -1025,11 +1034,11 @@ html, body, #root, .app-root {
   background: var(--surface);
 }
 .skill-grid-card-icon { width: 30px; height: 30px; display: grid; place-items: center; margin-bottom: 4px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: #0877c9; font: 700 14px/1 var(--font-mono,monospace); }
-.skill-grid-card-name { font-size: 14px; font-weight: 600; color: var(--text);
+.skill-grid-card-name { font-size: 15px; font-weight: 600; color: var(--text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.skill-grid-card-desc { font-size: 11px; color: var(--text-secondary);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.skill-grid-card-meta { font-size: 10px; color: var(--text-muted); margin-top: auto;
+.skill-grid-card-desc { min-height: 40px; font-size: 13px; line-height: 1.55; color: var(--text-secondary);
+  display: -webkit-box; overflow: hidden; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.skill-grid-card-meta { font-size: 11px; color: var(--text-muted); margin-top: auto;
   padding-top: 6px; }
 .skill-grid-card-actions {
   position: absolute; z-index: 2; top: 8px; right: 8px; display: flex; align-items: center; gap: 4px;
@@ -1053,7 +1062,7 @@ html, body, #root, .app-root {
 }
 .skill-grid-detail-body {
   margin: 0; padding: 16px 20px;
-  white-space: pre-wrap; font: 12px/1.6 var(--font-mono, monospace);
+  white-space: pre-wrap; font: 14px/1.7 var(--ui-font-family);
   max-height: 50vh; overflow: auto;
   color: var(--text);
 }
@@ -1467,11 +1476,18 @@ html, body, #root, .app-root {
 :root[data-theme='dark'] .knowledge-connector-row,.knowledge-market-card { background: #2d2e33; }
 
 /* ===== 设置中心 ===== */
-.settings-center-modal .ant-modal-content { padding: 0; overflow: hidden; }
-.settings-center-modal .ant-modal-close { z-index: 4; top: 10px; right: 12px; }
+.settings-center-modal .ant-modal-container,
+.settings-center-modal .ant-modal-content {
+  padding: 0 !important;
+  overflow: hidden;
+  border: 1px solid var(--border) !important;
+  background: var(--surface) !important;
+  box-shadow: 0 18px 58px rgba(0,0,0,.28) !important;
+}
+.settings-center-modal .ant-modal-close { z-index: 4; top: 10px; right: 12px; -webkit-app-region: no-drag; }
 .settings-center { width: 100%; height: 100%; min-height: 0; display: grid; grid-template-columns: 210px minmax(0,1fr); background: var(--surface); }
 .settings-center-nav { min-height: 0; padding: 14px 10px; overflow-y: auto; border-right: 1px solid var(--border); background: var(--sidebar-bg); }
-.settings-center-brand { min-height: 42px; display: flex; align-items: center; gap: 9px; padding: 0 10px 10px; color: #0877c9; }
+.settings-center-brand { min-height: 42px; display: flex; align-items: center; gap: 9px; padding: 0 36px 10px 10px; color: #0877c9; -webkit-app-region: drag; user-select: none; }
 .settings-center-brand > span { font-size: 17px; }
 .settings-center-brand > div { display: flex; flex-direction: column; }
 .settings-center-brand strong { color: var(--text); font-size: 14px; }
@@ -1483,8 +1499,6 @@ html, body, #root, .app-root {
 .settings-nav-section button.active { background: rgba(10,132,255,.1); color: #0877c9; font-weight: 700; }
 .settings-nav-section button code { color: var(--text-muted); font-size: 8px; font-weight: 400; }
 .settings-center-content { min-width: 0; min-height: 0; padding: 22px 24px; overflow-y: auto; background: var(--surface); }
-.settings-page-skills { padding: 0; overflow: hidden; }
-.settings-page-skills .skill-library-view { height: 100%; padding: 20px 24px; }
 .settings-content-page { min-width: 0; display: flex; flex-direction: column; gap: 16px; }
 .settings-content-page > header { padding-bottom: 12px; border-bottom: 1px solid var(--border-light); }
 .settings-content-page > header h2 { margin: 0 0 3px; font-size: 18px; letter-spacing: 0; }
@@ -1500,6 +1514,12 @@ html, body, #root, .app-root {
 .settings-action-list > div { min-height: 62px; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--border-light); }
 .settings-action-list > div:last-child { border-bottom: 0; }
 .settings-action-list > div > div { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.appearance-font-preview { min-height: 150px; display: flex; flex-direction: column; justify-content: center; gap: 8px; padding: 22px; border: 1px solid var(--border-light); border-radius: 6px; background: var(--bg-deep); }
+.appearance-font-preview strong { font-size: 24px; font-weight: 600; }
+.appearance-font-preview span { color: var(--text-secondary); font-size: 15px; }
+.appearance-font-preview code { color: var(--text-muted); font: inherit; font-size: 12px; }
+:root[data-theme='dark'] .settings-center-modal .ant-modal-container,
+:root[data-theme='dark'] .settings-center-modal .ant-modal-content { border-color: #393a40 !important; background: #242529 !important; box-shadow: 0 20px 64px rgba(0,0,0,.56) !important; }
 :root[data-theme='dark'] .settings-center,:root[data-theme='dark'] .settings-center-content { background: #242529; }
 :root[data-theme='dark'] .settings-center-nav { background: #1e1f22; border-right-color: #393a40; }
 :root[data-theme='dark'] .skill-market-card,:root[data-theme='dark'] .skill-install-bar,:root[data-theme='dark'] .skill-library-search { background: #2d2e33; border-color: #45464c; }

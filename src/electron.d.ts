@@ -44,6 +44,7 @@ declare global {
     minimize: () => void;
     toggleMax: () => void;
     close: () => void;
+    setZoomFactor: (factor: number) => void;
     execCommand: (cmd: string, scope?: string) => Promise<ExecCommandResult>;
     skillsList: () => Promise<SkillListResult>;
     skillsRead: (id: string) => Promise<SkillReadResult>;

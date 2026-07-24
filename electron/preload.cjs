@@ -1,9 +1,10 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webFrame } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
   minimize: () => ipcRenderer.send('win:minimize'),
   toggleMax: () => ipcRenderer.send('win:toggle-max'),
   close: () => ipcRenderer.send('win:close'),
+  setZoomFactor: (factor) => webFrame.setZoomFactor(Math.max(0.8, Math.min(1.3, Number(factor) || 1))),
 
   // 命令执行：renderer 调用，main 进程 exec，返回 { success, stdout, stderr, exitCode, cwd }
   execCommand: (cmd, scope) => ipcRenderer.invoke('exec:command', { cmd, scope }),

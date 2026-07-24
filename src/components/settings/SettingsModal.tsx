@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { Modal, Switch, Input, Select, Button, Space, App, Tag, Tooltip } from 'antd';
+import { Modal, Switch, Input, Select, Button, Space, App, Tag, Tooltip, Segmented } from 'antd';
 import {
-  ApiOutlined, CloudSyncOutlined, DatabaseOutlined, FolderOpenOutlined, RobotOutlined,
-  SafetyCertificateOutlined, ScheduleOutlined, SettingOutlined, UserOutlined,
+  ApiOutlined, BgColorsOutlined, CloudSyncOutlined, DatabaseOutlined, FolderOpenOutlined, RobotOutlined,
+  ScheduleOutlined, SettingOutlined, UserOutlined,
 } from '@ant-design/icons';
 import {
   loadSettings, saveSettings,
@@ -14,12 +14,15 @@ import {
 } from '../../data/hermesClient';
 import type { ModelConfig } from '../../types';
 import { useStore } from '../../store';
-import SkillLibraryView from '../skills/SkillLibraryView';
 import { KnowledgeConnectorManager } from '../sidebar/ConnectorPanel';
 import { getAssistantPrompt, saveAssistantPrompt } from './AssistantSettingsModal';
 import { applySyncProfile } from '../../utils/configSync';
+import {
+  FONT_OPTIONS, FONT_SIZE_OPTIONS, loadAppearanceSettings, saveAppearanceSettings,
+  type AppearanceSettings,
+} from '../../data/appearance';
 
-type Tab = 'model' | 'profile' | 'skills' | 'knowledge' | 'workspace' | 'memory' | 'persona' | 'automation' | 'backup';
+type Tab = 'model' | 'profile' | 'appearance' | 'knowledge' | 'workspace' | 'memory' | 'persona' | 'automation' | 'backup';
 
 interface Props {
   onClose: () => void;
@@ -32,7 +35,7 @@ export default function SettingsModal({ onClose, onSaved }: Props) {
     { title: '配置', items: [
       { key: 'model', label: '模型', icon: <ApiOutlined /> },
       { key: 'profile', label: '档案', icon: <UserOutlined /> },
-      { key: 'skills', label: '技能', icon: <SafetyCertificateOutlined /> },
+      { key: 'appearance', label: '外观', icon: <BgColorsOutlined /> },
       { key: 'knowledge', label: '知识库', icon: <DatabaseOutlined /> },
       { key: 'workspace', label: '工作区', icon: <FolderOpenOutlined /> },
       { key: 'memory', label: '记忆', icon: <CloudSyncOutlined /> },
@@ -44,7 +47,7 @@ export default function SettingsModal({ onClose, onSaved }: Props) {
 
   const page = tab === 'model' ? <ModelSettingsTab onSaved={onSaved} onClose={onClose} />
     : tab === 'profile' ? <ProfileTab />
-    : tab === 'skills' ? <SkillLibraryView />
+    : tab === 'appearance' ? <AppearanceTab />
     : tab === 'knowledge' ? <KnowledgeSettingsPage />
     : tab === 'workspace' ? <WorkspaceTab />
     : tab === 'memory' ? <MemoryTab />
@@ -75,6 +78,26 @@ export default function SettingsModal({ onClose, onSaved }: Props) {
       </div>
     </Modal>
   );
+}
+
+function AppearanceTab() {
+  const [settings, setSettings] = useState<AppearanceSettings>(() => loadAppearanceSettings());
+  const selectedFont = FONT_OPTIONS.find((option) => option.value === settings.font) ?? FONT_OPTIONS[0];
+  const update = (partial: Partial<AppearanceSettings>) => {
+    const next = { ...settings, ...partial };
+    setSettings(next);
+    saveAppearanceSettings(next);
+  };
+  return <div className="settings-content-page appearance-settings-page">
+    <header><h2>外观</h2><span>客户端字体与界面字号</span></header>
+    <div className="settings-field"><label>字体</label><Select value={settings.font} options={FONT_OPTIONS.map(({ value, label }) => ({ value, label }))} onChange={(font) => update({ font })} /></div>
+    <div className="settings-field"><label>字体大小</label><Segmented block value={settings.fontSize} options={FONT_SIZE_OPTIONS.map(({ value, label }) => ({ value, label }))} onChange={(fontSize: string | number) => update({ fontSize: fontSize as AppearanceSettings['fontSize'] })} /></div>
+    <div className="appearance-font-preview" style={{ fontFamily: selectedFont.family }}>
+      <strong>私人办公会所</strong>
+      <span>清晰阅读 Skill 说明、任务消息和设置内容。</span>
+      <code>Hermes Office · Aa 123</code>
+    </div>
+  </div>;
 }
 
 function KnowledgeSettingsPage() {

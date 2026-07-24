@@ -16,6 +16,7 @@ release/*.blockmap
 release/builder-*.yml
 release/builder-*.yaml
 release/latest.yml
+artifacts/
 .electron-builder-cache
 .config-export-profile/
 config/private/

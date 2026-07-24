@@ -6,9 +6,11 @@ import App from './App';
 import { StoreProvider } from './store';
 import { deliverBus } from './ipcBus';
 import { migrateToModelLibrary } from './data/hermesClient';
+import { applyAppearanceSettings, loadAppearanceSettings } from './data/appearance';
 
 // 迁移旧设置到多模型库格式（如果还没有）
 try { migrateToModelLibrary(); } catch {}
+try { applyAppearanceSettings(loadAppearanceSettings()); } catch {}
 
 // 注册窗口间广播监听：任意窗口经 main 进程转发来的消息，统一交给本地总线分发
 if (typeof window !== 'undefined' && window.electronAPI?.onBroadcast) {
@@ -25,8 +27,7 @@ const antdTheme = {
     colorPrimary: '#1a1f36',
     colorInfo: '#1a1f36',
     borderRadius: 8,
-    fontFamily:
-      "'Hermes YouYuan', 'YouYuan', '幼圆', sans-serif",
+    fontFamily: 'var(--ui-font-family)',
     colorBgContainer: '#ffffff',
     colorBorder: '#e2e6ef',
     colorBorderSecondary: '#eef0f6',
@@ -48,5 +49,4 @@ createRoot(document.getElementById('root')!).render(
     </ConfigProvider>
   </StrictMode>,
 );
-
 

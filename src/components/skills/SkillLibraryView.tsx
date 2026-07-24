@@ -7,6 +7,13 @@ type SkillTab = 'built-in' | 'mine' | 'market';
 
 const SKILL_MARKETS = [
   {
+    name: 'Hermes Agent Skills',
+    host: 'hermesagent.org.cn',
+    url: 'https://hermesagent.org.cn/skills',
+    summary: 'Hermes Agent 官方中文技能目录与内置技能速查。',
+    detail: '适合查看 Hermes 内置技能分类、用途说明和上游生态资源。',
+  },
+  {
     name: 'SkillHub',
     host: 'skillhub.cn',
     url: 'https://www.skillhub.cn/',
