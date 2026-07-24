@@ -1,4 +1,4 @@
-# 私人办公会所（Hermes Office Pro）v0.6.1
+# 私人办公会所（Hermes Office Pro）v0.6.2
 
 > 面向 Windows 的多模型 AI 虚拟办公室。创建员工、组建团队，让不同模型按照职责协作完成真实任务。
 
@@ -6,7 +6,7 @@
 
 ## 项目状态
 
-- 当前版本：`0.6.1`
+- 当前版本：`0.6.2`
 - 发布分支：`main`
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 33、React 19、TypeScript 6、Ant Design 6、Vite 8
@@ -91,13 +91,13 @@
 
 最新安装包可从 GitHub Releases 下载：
 
-- [直接下载私人办公会所 Setup 0.6.1.exe](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.6.1/Setup.0.6.1.exe)
-- [查看 v0.6.1 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.6.1)
+- [直接下载私人办公会所 Setup 0.6.2.exe](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.6.2/Setup.0.6.2.exe)
+- [查看 v0.6.2 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.6.2)
 
 本地构建的安装程序生成在：
 
 ```text
-release/私人办公会所 Setup 0.6.1.exe
+release/私人办公会所 Setup 0.6.2.exe
 ```
 
 可以直接覆盖安装旧版本。应用数据保存在用户目录，正常覆盖安装不会删除员工、团队、聊天和模型配置。
@@ -190,6 +190,12 @@ release/                 Windows 安装包输出目录
 - 删除应用前建议自行备份重要产出物。
 
 ## 最近版本
+
+### v0.6.2
+
+- 自动清理聊天记录中被误写入的 Base64 头像或附件数据，避免长串代码占满团队聊天区。
+- 助理未单独指定模型时改为正确继承全局激活模型，不再误触发“已记录”本地兜底。
+- 交付型任务必须保存真实文件；模型不可用或没有产出时明确暂停并保留上下文，不再显示虚假的“收到/跟进/已完成”。
 
 ### v0.6.1
 

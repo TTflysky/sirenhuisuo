@@ -47,18 +47,6 @@ const ROLE_DUTY: Record<string, string> = {
   custom: '你是团队的一员。可用工具包括 write_file/read_file/list_files/web_search。根据自己的身份牌职责参与协作。',
 };
 
-// 成员发言的本地兜底剧本（无 API 时用）
-const FALLBACK_LINES: Record<string, string[]> = {
-  pm: ['收到，我来拆解一下需求，拉大家对齐目标。', '这个任务我来协调，先请规划者出方案。'],
-  planner: ['我出个方案：先搭框架，再填核心逻辑，最后联调。', '方案有了，分三步走，编码者可以照着实现。'],
-  coder: ['方案明白，我开始实现核心部分，写完同步进度。', '代码写好了，自测通过，请审查者把关。'],
-  checker: ['我审查了一遍，逻辑没问题，边界情况也覆盖了，可以交付。', '审查通过，符合验收标准。'],
-  custom: ['收到，我看一下。', '明白，我来跟进。'],
-};
-
-let _seq = 0;
-const pick = (arr: string[]) => arr[_seq++ % arr.length];
-
 function memberByRole(team: Team, employees: Employee[], role: string): Employee | undefined {
   return team.memberIds
     .map((id) => employees.find((e) => e.id === id))
@@ -82,14 +70,17 @@ async function memberSpeak(
   onToolCall: (toolName: string, toolArgs: string, result: string) => void,
   attachments?: import('../data/hermesClient').Attachment[],
   skillContext = '',
-  shouldStop?: () => boolean
-): Promise<{ text: string; tokens?: number; failed?: boolean }> {
+  shouldStop?: () => boolean,
+  requireFileOutput = false
+): Promise<{ text: string; tokens?: number; failed?: boolean; producedFile?: boolean }> {
   const effectiveModel = getEmployeeModel(emp);
-  if (!resolveApiBase(effectiveModel)) return { text: '' }; // 外部处理兜底
+  if (!resolveApiBase(effectiveModel)) {
+    return { text: `⚠️ ${emp.name} 未配置可用模型，当前步骤没有执行。请在设置中为该成员或全局激活模型填写 API 地址和密钥后点击继续执行。`, failed: true };
+  }
 
   const duty = ROLE_DUTY[emp.role] ?? ROLE_DUTY.custom;
   const persona = emp.prompt?.trim() || `你是「${emp.name}」，${emp.title}。`;
-  const system = `${persona}\n\n${duty}\n\n你正在团队群聊中协作。先判断任务是否需要专业 Skill：只有当 Skill 能明显提高质量或提供必要流程时，才调用 search_skills；比较候选后只读取最匹配的 Skill。没有合适 Skill 时直接使用通用能力和其他工具，不要为了留下调用记录而强行调用。若工具失败，说明失败原因并选择重试、替代工具或继续执行。如果需要产出实际文件或查阅资料，直接调用工具完成，不要只口头承诺。完成后简短总结实际结果，便于队友接续。`;
+  const system = `${persona}\n\n${duty}\n\n你正在团队群聊中协作。先判断任务是否需要专业 Skill：只有当 Skill 能明显提高质量或提供必要流程时，才调用 search_skills；比较候选后只读取最匹配的 Skill。没有合适 Skill 时直接使用通用能力和其他工具，不要为了留下调用记录而强行调用。若工具失败，说明失败原因并选择重试、替代工具或继续执行。${requireFileOutput ? '\n\n本步骤是交付步骤：在最终回复前必须调用 write_file 保存可交接的真实文件。没有成功写入文件就不算完成，禁止用“收到”“跟进”“已完成”代替产出。' : ''}\n\n完成后简短总结实际结果，注明已写入或读取的文件名，便于队友接续。`;
 
   // 多模态：把图片附件拼到用户指令上
   const imageParts = (attachments ?? [])
@@ -100,6 +91,7 @@ async function memberSpeak(
     : { role: 'user', content: `[指令] ${extraInstruction}` };
 
   let handoffContext = '';
+  let producedFile = false;
   try {
     if (/读取并继承|审查|修订/u.test(extraInstruction)) {
       const listArgs = JSON.stringify({ filter: '' });
@@ -134,11 +126,15 @@ async function memberSpeak(
         onToolCall(name, args, '');
       },
       onToolResult(name, args, result) {
+        if (name === 'write_file' && !/^⚠️/u.test(result)) producedFile = true;
         onToolCall(name, args, result);
       },
       shouldStop,
     });
-    return { text: r.content, tokens: r.usage.totalTokens };
+    if (requireFileOutput && !producedFile) {
+      return { text: `⚠️ ${emp.name} 没有生成可交接文件，本步骤未完成。请点击继续执行，系统会保留上下文并要求补交实际产出。`, tokens: r.usage.totalTokens, failed: true };
+    }
+    return { text: r.content, tokens: r.usage.totalTokens, producedFile };
   } catch (e: any) {
     const raw = e?.message ?? '模型错误';
     const reason = e?.name === 'AbortError' || /aborted|signal is aborted/iu.test(raw)
@@ -186,6 +182,12 @@ export async function runTeamDiscussion(
   let revisionCount = 0;
   let runFailed = false;
   const maxRevisions = 2;
+  if (!useAI) {
+    handlers.onRunFailed?.('团队成员没有可用模型配置，任务未执行。请在设置中激活全局模型或为成员选择模型后点击继续执行。');
+    handlers.onStatus('');
+    handlers.onDone();
+    return;
+  }
   const fallbackSteps: TaskPlanStep[] = (pending.length > 0 ? pending : participants.map((employee) => employee.id)).map((employeeId, index) => ({
     id: `legacy-step-${Date.now()}-${index}-${employeeId}`, employeeId, order: index + 1, kind: 'work',
     title: employees.find((item) => item.id === employeeId)?.name ?? '团队成员',
@@ -222,7 +224,8 @@ export async function runTeamDiscussion(
         // 所有被调度成员都能读取同一批用户图片，避免交接后丢失视觉上下文。
         opts.attachments,
         opts.extraSystemContext,
-        control?.shouldStop
+        control?.shouldStop,
+        step.kind !== 'review'
       );
       content = r.text;
       tokens = r.tokens;
@@ -235,11 +238,6 @@ export async function runTeamDiscussion(
         runFailed = true;
         break;
       }
-    } else {
-      await sleep(700 + Math.random() * 600);
-      content = step.kind === 'review'
-        ? '已检查当前产出，结构与要求一致。\nREVIEW_RESULT: PASS'
-        : pick(FALLBACK_LINES[role] ?? FALLBACK_LINES.custom);
     }
 
     const mentions = parseMentionIds(content, team, employees);

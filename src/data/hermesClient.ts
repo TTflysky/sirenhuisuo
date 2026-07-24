@@ -125,7 +125,9 @@ export function getAssistantModel(): ModelConfig {
   }
   // 助理手动配置优先于全局激活模型
   if (s.assistantModelConfig) return s.assistantModelConfig;
-  return { provider: s.provider, apiHost: s.apiHost, apiKey: s.apiKey, model: s.model };
+  // 模型库启用后，旧字段通常为空。助理未单独指定模型时必须继承当前激活模型，
+  // 否则会误判为“未配置 API”并持续返回本地兜底文案。
+  return getActiveModel();
 }
 
 /** 员工是否启用了独立模型。旧版数据没有开关字段时兼容已有 modelConfig。 */
@@ -826,10 +828,41 @@ export function saveTeams(list: Team[]): void {
 }
 
 // ===== 持久化：聊天 =====
+function isRawBinaryChatContent(content: unknown): boolean {
+  if (typeof content !== 'string') return true;
+  const value = content.trim();
+  if (!value) return false;
+  if (/^data:[a-z][a-z0-9+.-]*\/[a-z0-9+.-]+;base64,/iu.test(value)) return true;
+
+  // 头像或附件的 data URL 被错误写入聊天记录时，有时只留下 Base64 主体。
+  // 普通文本、代码和模型回复不可能由数千个无空白 Base64 字符组成。
+  const compact = value.replace(/\s/gu, '');
+  return compact.length >= 1024
+    && compact.length >= value.length * 0.95
+    && /^[A-Za-z0-9+/_-]+={0,2}$/u.test(compact);
+}
+
+function cleanChatMessages(value: unknown): ChatMessage[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((message): message is ChatMessage => (
+    !!message
+    && typeof message === 'object'
+    && typeof (message as ChatMessage).id === 'string'
+    && !isRawBinaryChatContent((message as ChatMessage).content)
+  ));
+}
+
 export function loadChat(id: string): ChatMessage[] {
   try {
     const raw = localStorage.getItem(`${LS_CHAT_PREFIX}${id}`);
-    if (raw) return JSON.parse(raw) as ChatMessage[];
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const messages = cleanChatMessages(parsed);
+      if (Array.isArray(parsed) && messages.length !== parsed.length) {
+        localStorage.setItem(`${LS_CHAT_PREFIX}${id}`, JSON.stringify(messages));
+      }
+      return messages;
+    }
   } catch {}
   return [];
 }
@@ -839,7 +872,7 @@ export function appendChat(id: string, msgs: ChatMessage[]): void {
     const existing = loadChat(id);
     // 按消息 id 去重：同一 action 可能在多个窗口各执行一次，避免重复落盘
     const existingIds = new Set(existing.map((m) => m.id));
-    const toAdd = msgs.filter((m) => !existingIds.has(m.id));
+    const toAdd = cleanChatMessages(msgs).filter((m) => !existingIds.has(m.id));
     if (toAdd.length === 0) return;
     const merged = [...existing, ...toAdd].slice(-MAX_CHAT);
     localStorage.setItem(`${LS_CHAT_PREFIX}${id}`, JSON.stringify(merged));
@@ -849,7 +882,7 @@ export function appendChat(id: string, msgs: ChatMessage[]): void {
 }
 
 export function replaceChat(id: string, msgs: ChatMessage[]): void {
-  try { localStorage.setItem(`${LS_CHAT_PREFIX}${id}`, JSON.stringify(msgs.slice(-MAX_CHAT))); }
+  try { localStorage.setItem(`${LS_CHAT_PREFIX}${id}`, JSON.stringify(cleanChatMessages(msgs).slice(-MAX_CHAT))); }
   catch (e) { console.warn('[hermesClient] Failed to replace chat:', e); }
 }
 
@@ -867,7 +900,14 @@ const LS_DM_PREFIX = 'hermes_office_dm_';
 export function loadDm(empId: string): ChatMessage[] {
   try {
     const raw = localStorage.getItem(`${LS_DM_PREFIX}${empId}`);
-    if (raw) return JSON.parse(raw) as ChatMessage[];
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const messages = cleanChatMessages(parsed);
+      if (Array.isArray(parsed) && messages.length !== parsed.length) {
+        localStorage.setItem(`${LS_DM_PREFIX}${empId}`, JSON.stringify(messages));
+      }
+      return messages;
+    }
   } catch {}
   return [];
 }
@@ -876,7 +916,7 @@ export function appendDm(empId: string, msgs: ChatMessage[]): void {
     const existing = loadDm(empId);
     // 去重：避免同一消息在多个窗口重复落盘
     const existingIds = new Set(existing.map((m) => m.id));
-    const toAdd = msgs.filter((m) => !existingIds.has(m.id));
+    const toAdd = cleanChatMessages(msgs).filter((m) => !existingIds.has(m.id));
     if (toAdd.length === 0) return;
     const merged = [...existing, ...toAdd].slice(-MAX_CHAT);
     localStorage.setItem(`${LS_DM_PREFIX}${empId}`, JSON.stringify(merged));

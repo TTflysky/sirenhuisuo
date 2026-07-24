@@ -521,20 +521,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const supervisorBusyRef = React.useRef(new Set<string>());
   const pausedRunIdsRef = React.useRef(new Set<string>());
 
-  const extractMentionedEmployeeIds = (text: string, team: Team, employees: Employee[]): string[] => {
-    const names = new Map(
-      team.memberIds
-        .map((id) => employees.find((employee) => employee.id === id))
-        .filter((employee): employee is Employee => !!employee)
-        .map((employee) => [employee.name, employee.id]),
-    );
-    // Assistant replies commonly use "@姓名：任务". Punctuation must not become
-    // part of the member name, otherwise the delegation cannot be scheduled.
-    return [...text.matchAll(/@([^@\s，。！？,.!?：:；;、]+)/g)]
-      .map((match) => names.get(match[1]))
-      .filter((id): id is string => !!id);
-  };
-
   const isTeamControlRequest = (text: string): boolean => {
     const pause = /(?:暂停|停止|先停|停下|别做|不要继续).{0,12}(?:工作|任务|手上|当前|执行)|(?:工作|任务).{0,8}(?:暂停|停止)/u.test(text);
     const report = /(?:汇报|报告|报一下|说一下|告诉我).{0,12}(?:模型|配置|状态)|(?:模型|配置|状态).{0,12}(?:汇报|报告|报一下|说一下)|(?:你们|大家|各位|自己).{0,8}(?:用的|使用).{0,8}(?:什么|哪个).{0,4}模型/u.test(text);
@@ -803,25 +789,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }],
       });
     };
-    const fallbackReply = () => {
-      const members = team.memberIds
-        .map((id) => stateRef.current.employees.find((employee) => employee.id === id))
-        .filter((employee): employee is Employee => !!employee);
-      if (mayDelegate && /报数|报个数|数数|数字/.test(content)) {
-        return `收到，我来点名确认。${members.map((employee, index) => `@${employee.name} 请只回复「${index + 1}」。`).join(' ')}`;
-      }
-      const directlyMentioned = extractMentionedEmployeeIds(content, team, stateRef.current.employees);
-      if (mayDelegate && directlyMentioned.length > 0) {
-        return `收到，已分派。${directlyMentioned.map((id) => `@${members.find((employee) => employee.id === id)?.name} 请直接处理老板刚才的要求，并反馈结果。`).join(' ')}`;
-      }
-      const lead = members.find((employee) => employee.role === 'pm') ?? members[0];
-      if (/实现|设计|写代码|验收|发布|文档|开发|修复|处理|讨论|方案|协作/.test(content) && lead) {
-        return mayDelegate
-          ? `收到，我已接单。@${lead.name} 请先拆解老板的要求并提出下一步安排，其余成员等待监工继续分派。`
-          : '我已理解这是一个需要团队处理的事项。要我现在推进并分派给成员吗？请直接 @Hermes 助理 并说明“推进”。';
-      }
-      return '收到，已记录当前信息。我会持续跟进，需要团队行动时会直接点名分派。';
-    };
     const teamRoster = team.memberIds
       .map((id) => stateRef.current.employees.find((employee) => employee.id === id))
       .filter((employee): employee is Employee => !!employee)
@@ -846,7 +813,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         { role: 'user', content: `老板@你说：${content}` },
       ];
       if (!client.resolveApiBase(assistantModel)) {
-        const reply = fallbackReply();
+        const reply = `⚠️ Hermes 助理没有可用模型配置，无法进行真实对话或调度。请在设置中激活全局模型，或为助理选择模型后重试。`;
         appendSupervisorMessage(reply);
         return reply;
       }
@@ -858,7 +825,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return reply;
     } catch (error) {
       console.warn('[supervisor] reply failed:', error);
-      const reply = fallbackReply();
+      const reason = error instanceof Error ? error.message : String(error);
+      const reply = `⚠️ Hermes 助理本次模型调用失败：${reason.slice(0, 180)}。任务没有被伪装为已执行；请检查模型连接后重试。`;
       appendSupervisorMessage(reply);
       return reply;
     } finally {
@@ -970,7 +938,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const actionableRequest = /帮|请|安排|制作|起草|重写|改写|重新|写|生成|开发|设计|分析|优化|修复|检查|审核|测试|整理|调研|创建|完成|执行|做|出一份|产出|输出|脚本|剧本|文案|方案|报告|各位/u.test(content);
       const mayDelegate = supervisorMentioned || directMentions.length > 0 || teamCheckRequested || continuesSupervisorPlan || actionableRequest;
       const requestedMemberIds = mayDelegate ? matchTeamMembers(team, current.employees, content, directMentions) : [];
-      const supervisorReply = await enqueueAssistantSupervisor(team, content, mayDelegate);
+      await enqueueAssistantSupervisor(team, content, mayDelegate);
       if (!mayDelegate) return;
       if (requestedMemberIds.length > 0) {
         const planned = buildTaskPlan(team, current.employees, content, requestedMemberIds);
@@ -986,9 +954,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }],
         });
       }
-      const discussionText = [content, supervisorReply].filter(Boolean).join('\n\n');
       if (!requestedMemberIds.length) return;
-      void startTaskRun(teamId, discussionText, requestedMemberIds, messageId, attachments, skillRefs);
+      void startTaskRun(teamId, content, requestedMemberIds, messageId, attachments, skillRefs);
     })();
   };
 

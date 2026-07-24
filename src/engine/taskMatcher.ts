@@ -56,6 +56,13 @@ function isReviewer(employee: Employee): boolean {
   return employee.role === 'checker' || /审查|审核|验收|测试|质检|校对/u.test(`${employee.title} ${employee.prompt ?? ''}`);
 }
 
+function outputInstruction(request: string): string {
+  if (/脚本|剧本|文案|故事/u.test(request)) return '使用 write_file 交付完整 Markdown 文稿，文件名清楚体现主题与版本。';
+  if (/分镜|镜头|拍摄|视频/u.test(request)) return '使用 write_file 交付分镜或拍摄清单，逐项包含时长、画面、台词/音效和执行备注。';
+  if (/代码|开发|程序|修复/u.test(request)) return '使用 write_file 交付可运行的代码或明确的修改文件，不得只在聊天中描述实现。';
+  return '使用 write_file 交付可交接的文件，文件名清楚体现任务主题。';
+}
+
 export function buildTaskPlan(team: Team, employees: Employee[], request: string, explicitIds: string[] = []): TaskPlanStep[] {
   const selectedIds = matchTeamMembers(team, employees, request, explicitIds);
   const selected = selectedIds.map((id) => employees.find((item) => item.id === id)).filter((item): item is Employee => !!item);
@@ -68,8 +75,8 @@ export function buildTaskPlan(team: Team, employees: Employee[], request: string
     const assignment = review
       ? `审查本任务所有已有产出，必须实际读取前序成员提交的文件或结果。逐项检查是否满足老板原始要求。最后严格输出 REVIEW_RESULT: PASS；若不通过则输出 REVIEW_RESULT: REJECT、RESPONSIBLE: 责任员工姓名、REASON: 具体问题。`
       : previous
-        ? `读取并继承「${previous.title}」的真实产出，在此基础上完成你负责的部分。不得只回复“收到”或描述计划，必须调用合适工具形成可交接结果。你的职责：${employee.title}。`
-        : `作为第一责任人理解老板的完整要求，先主动检索可用 Skill，再完成主要产出。不得只描述计划，必须调用合适工具形成可交接结果。你的职责：${employee.title}。`;
+        ? `读取并继承「${previous.title}」的真实产出，在此基础上完成你负责的部分。不得只回复“收到”或描述计划，必须调用合适工具形成可交接结果。${outputInstruction(request)} 你的职责：${employee.title}。`
+        : `作为第一责任人理解老板的完整要求，先主动检索可用 Skill，再完成主要产出。不得只描述计划，必须调用合适工具形成可交接结果。${outputInstruction(request)} 你的职责：${employee.title}。`;
     steps.push({
       id: `step-${stamp}-${steps.length + 1}-${employee.id}`,
       employeeId: employee.id,
