@@ -43,8 +43,8 @@ export default function ChatOnlyView({ hash }: Props) {
       <div className="chat-only-titlebar">
         <span className="chat-only-title">{title}</span>
         <div className="chat-only-traffic">
-          <button type="button" className="titlebar-btn" title="最小化" aria-label="最小化聊天窗口" onClick={() => window.electronAPI?.minimize()}>—</button>
-          <button type="button" className="titlebar-btn" title="关闭" aria-label="关闭聊天窗口" onClick={() => window.electronAPI?.close()}>✕</button>
+          <button type="button" className="titlebar-btn mac-traffic mac-minimize" title="最小化" aria-label="最小化聊天窗口" onClick={() => window.electronAPI?.minimize()} />
+          <button type="button" className="titlebar-btn mac-traffic mac-close" title="关闭" aria-label="关闭聊天窗口" onClick={() => window.electronAPI?.close()} />
         </div>
       </div>
 

@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
+import { RobotOutlined } from '@ant-design/icons';
 import type { Team, Employee } from '../../types';
 import { useStore } from '../../store';
 import { type Attachment } from '../../data/hermesClient';
@@ -28,6 +29,14 @@ const supervisorMention: Employee = {
   isOnline: true,
   isWorking: false,
 };
+
+function SupervisorAvatar({ size = 34 }: { size?: number }) {
+  return (
+    <span className="supervisor-avatar" style={{ width: size, height: size }} aria-label="Hermes 助理">
+      <RobotOutlined style={{ fontSize: Math.round(size * 0.58) }} />
+    </span>
+  );
+}
 
 export default function TeamChatApp({ teamId }: Props) {
   const {
@@ -104,7 +113,7 @@ export default function TeamChatApp({ teamId }: Props) {
     const parts = content.split(/(@\S+)/g);
     for (const p of parts) {
       if (p.startsWith('@')) {
-        const name = p.slice(1);
+        const name = p.slice(1).replace(/[，。！？!?：:；;、]+$/u, '');
         const found = name === '助理' || name === supervisorMention.name || name === supervisorMention.title
           ? supervisorMention
           : teamMembers.find((e) => e.name === name);
@@ -254,12 +263,12 @@ export default function TeamChatApp({ teamId }: Props) {
           <div className="team-chat-header">
             <div className="team-chat-title"><span>{team.icon ?? '👥'}</span><strong>{team.name}</strong></div>
             <div className="team-avatar-strip" aria-label="团队成员">
-              {[supervisorMention, ...teamMembers].map((emp) => <button key={emp.id} className="team-avatar-btn" onClick={() => insertMention(emp)} title={`@${emp.name}`}><AgentAvatar employee={emp} size={30} /></button>)}
+              {[supervisorMention, ...teamMembers].map((emp) => <button key={emp.id} className={`team-avatar-btn${emp.id === supervisorMention.id ? ' supervisor-avatar-btn' : ''}`} onClick={() => insertMention(emp)} title={`@${emp.name}`}>{emp.id === supervisorMention.id ? <SupervisorAvatar size={30} /> : <AgentAvatar employee={emp} size={30} />}</button>)}
             </div>
           </div>
           <div className="team-chat-body">
             <aside className="team-member-sidebar" aria-label="团队成员列表">
-              <button key={supervisorMention.id} className="team-member-item team-supervisor-item" onClick={() => insertMention(supervisorMention)} title={`@${supervisorMention.name}`}><AgentAvatar employee={supervisorMention} size={34} /><span className="team-member-info"><strong>{supervisorMention.name}</strong><small>{supervisorMention.title}</small><small className="is-working">随时可联系</small></span></button>
+              <button key={supervisorMention.id} className="team-member-item team-supervisor-item" onClick={() => insertMention(supervisorMention)} title={`@${supervisorMention.name}`}><SupervisorAvatar size={34} /><span className="team-member-info"><strong>{supervisorMention.name}</strong><small>{supervisorMention.title}</small><small className="is-working">随时可联系</small></span></button>
               {teamMembers.map((emp) => <button key={emp.id} className="team-member-item" onClick={() => insertMention(emp)} title={`@${emp.name}`}><AgentAvatar employee={emp} size={34} /><span className="team-member-info"><strong>{emp.name}</strong><small>{emp.title}</small><small className={emp.isWorking ? 'is-working' : ''}>{emp.isWorking ? '工作中' : emp.isOnline ? '在线' : '离线'}</small></span></button>)}
             </aside>
             <div className="team-chat-content">

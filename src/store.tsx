@@ -472,7 +472,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         .filter((employee): employee is Employee => !!employee)
         .map((employee) => [employee.name, employee.id]),
     );
-    return [...text.matchAll(/@([^@\s，。！？,.!?]+)/g)]
+    // Assistant replies commonly use "@姓名：任务". Punctuation must not become
+    // part of the member name, otherwise the delegation cannot be scheduled.
+    return [...text.matchAll(/@([^@\s，。！？,.!?：:；;、]+)/g)]
       .map((match) => names.get(match[1]))
       .filter((id): id is string => !!id);
   };
@@ -638,10 +640,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     supervisorBusyRef.current.add(team.id);
     try {
       const assistantModel = client.getAssistantModel();
+      const configuredPrompt = localStorage.getItem('hermes_office_assistant_system_prompt')?.trim();
+      const userContext = client.buildUserContext();
       const turns: client.ChatTurn[] = [
         {
           role: 'system',
-          content: `你是私人办公会所的监工助理，负责监督团队进度、调度成员和理解老板的工作习惯。你现在被老板@，必须先给出简短判断，再根据需求分发给团队成员。需要成员处理时，必须使用他们的准确姓名格式@姓名进行点名；不需要某成员时不要点名。团队成员：${team.memberIds.map((id) => stateRef.current.employees.find((employee) => employee.id === id)?.name).filter(Boolean).join('、')}。回复要简洁、直接，指出当前进展、风险和下一步行动；不要代替团队成员长篇讨论。`,
+          content: `${configuredPrompt ? `## 助理配置\n${configuredPrompt}\n\n` : ''}${userContext ? `${userContext}\n` : ''}你是私人办公会所的监工助理，负责监督团队进度、调度成员和理解老板的工作习惯。你现在被老板@，必须先给出简短判断，再根据需求分发给团队成员。需要成员处理时，必须使用他们的准确姓名格式@姓名进行点名；不需要某成员时不要点名。团队成员：${team.memberIds.map((id) => stateRef.current.employees.find((employee) => employee.id === id)?.name).filter(Boolean).join('、')}。回复要简洁、直接，指出当前进展、风险和下一步行动；不要代替团队成员长篇讨论。`,
         },
         ...team.chatMessages.slice(-12).map((message) => ({
           role: message.roleId === 'human' ? 'user' as const : 'assistant' as const,

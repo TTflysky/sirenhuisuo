@@ -295,18 +295,18 @@ html, body, #root, .app-root {
 }
 
 /* ===== 团队聊天成员布局 ===== */
-.team-chat-header { display:flex; align-items:center; gap:12px; min-height:48px; padding:6px 12px; border-bottom:1px solid var(--border-light); background:var(--surface); flex-shrink:0; }
+.team-chat-header { display:flex; align-items:center; gap:12px; min-height:52px; padding:7px 14px; border-bottom:1px solid var(--border-light); background:var(--surface); flex-shrink:0; }
 .team-chat-title { display:flex; align-items:center; gap:7px; min-width:0; white-space:nowrap; }
 .team-chat-title strong { overflow:hidden; text-overflow:ellipsis; }
-.team-avatar-strip { display:flex; align-items:center; gap:4px; overflow-x:auto; min-width:0; }
+.team-avatar-strip { display:flex; align-items:center; gap:6px; overflow-x:auto; min-width:0; padding:2px 3px; }
 .team-avatar-btn { border:0; background:transparent; padding:2px; cursor:pointer; border-radius:50%; flex:0 0 auto; }
 .team-avatar-btn:hover { background:var(--bg-deep); }
 .team-chat-body { display:flex; flex:1; min-height:0; min-width:0; }
 .team-member-sidebar { width:190px; min-width:190px; padding:8px 4px; border-right:1px solid var(--border-light); background:var(--surface); overflow-y:auto; }
 .team-member-item { display:flex; align-items:center; gap:8px; width:100%; padding:7px 6px; border:0; background:transparent; text-align:left; cursor:pointer; border-radius:6px; color:var(--text); }
 .team-member-item:hover { background:var(--bg-deep); }
-.team-supervisor-item { background: #eef2ff; border: 1px solid #c7d2fe; }
-.team-supervisor-item:hover { background: #e0e7ff; }
+.team-supervisor-item { background: linear-gradient(135deg, #e9f2ff, #f4f8ff); border: 1px solid #b8d5ff; }
+.team-supervisor-item:hover { background: #dfeeff; }
 .team-member-info { min-width:0; display:flex; flex-direction:column; gap:1px; }
 .team-member-info strong,.team-member-info small { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .team-member-info strong { font-size:12px; }
@@ -425,6 +425,11 @@ html, body, #root, .app-root {
   color: var(--text-muted);
 }
 .chat-only-traffic .titlebar-btn:hover { background: rgba(0,0,0,0.08); }
+.chat-only-traffic { gap: 8px; }
+.chat-only-traffic .mac-traffic { width: 13px; height: 13px; min-width: 13px; padding: 0; border-radius: 50%; }
+.chat-only-traffic .mac-minimize { background: #ffbd2e; border: 1px solid #e1a31d; }
+.chat-only-traffic .mac-close { background: #ff5f57; border: 1px solid #db4e47; }
+.chat-only-traffic .mac-traffic:hover { filter: brightness(0.92); transform: scale(1.1); }
 
 /* ===== 附件 chips ===== */
 .attach-row {
@@ -1228,6 +1233,21 @@ body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
   transform: scale(1.06);
 }
 .theme-toggle-btn { color: var(--apple-accent); }
+
+.supervisor-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  color: #fff;
+  background: linear-gradient(145deg, #0a84ff, #5e5ce6);
+  border: 2px solid #d9ecff;
+  box-shadow: 0 2px 8px rgba(0, 122, 255, 0.35);
+}
+.supervisor-avatar-btn { background: rgba(10, 132, 255, 0.11); box-shadow: 0 0 0 1px rgba(10, 132, 255, 0.2); }
+.supervisor-avatar-btn:hover { background: rgba(10, 132, 255, 0.18); }
+.team-supervisor-item .supervisor-avatar { box-shadow: 0 3px 10px rgba(10, 132, 255, 0.32); }
 
 .btn, .model-selector-btn, .chat-input, .form-input, .form-select, .form-textarea {
   border-radius: 10px;

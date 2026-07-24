@@ -105,7 +105,7 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 function parseMentionIds(content: string, team: Team, employees: Employee[]): string[] {
   const names = new Set(team.memberIds.map((id) => employees.find((employee) => employee.id === id)?.name).filter(Boolean));
-  return [...content.matchAll(/@([^@\s，。！？!?]+)/g)].map((match) => {
+  return [...content.matchAll(/@([^@\s，。！？!?：:；;、]+)/g)].map((match) => {
     const employee = employees.find((item) => names.has(item.name) && item.name === match[1]);
     return employee?.id;
   }).filter((id): id is string => !!id);
