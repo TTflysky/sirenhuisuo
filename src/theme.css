@@ -404,6 +404,14 @@ html, body, #root, .app-root {
 .execution-event-detail { grid-column: 1 / -1; margin: 3px 0 0; white-space: pre-wrap; word-break: break-word; font: 11px/1.45 ui-monospace, Consolas, monospace; color: var(--text); }
 .resume-execution-btn { margin-top: 5px; padding: 4px 8px; border: 1px solid rgba(10, 132, 255, 0.45); border-radius: 6px; background: rgba(10, 132, 255, 0.12); color: #0a84ff; cursor: pointer; font-size: 11px; }
 .resume-execution-btn:hover { background: rgba(10, 132, 255, 0.20); }
+.task-run-tray { margin: 8px 14px 0; border: 1px solid var(--border-light); border-radius: 8px; background: color-mix(in srgb, var(--surface-raised) 86%, transparent); overflow: hidden; }
+.task-run-summary { width: 100%; min-height: 34px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 7px 9px; border: 0; background: transparent; color: var(--text); cursor: pointer; text-align: left; font: inherit; }
+.task-run-summary strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.task-run-state, .task-step-status { padding: 2px 5px; border-radius: 4px; font-size: 10px; background: var(--bg-deep); color: var(--text-secondary); }
+.task-run-running .task-run-state { color: #0a84ff; }.task-run-failed .task-run-state { color: #ff6b6b; }.task-run-paused .task-run-state { color: #f5a524; }.task-run-completed .task-run-state { color: #30d158; }
+.task-run-toggle { font-size: 11px; color: var(--text-muted); }.task-run-details { padding: 3px 10px 9px; border-top: 1px solid var(--border-light); max-height: 220px; overflow: auto; }
+.task-run-step { padding: 7px 0; border-bottom: 1px solid var(--border-light); }.task-run-step:last-of-type { border-bottom: 0; }.task-run-step > div { display: flex; align-items: center; gap: 7px; }.task-run-step small { margin-left: auto; color: var(--text-muted); font-size: 10px; }
+.task-step-event, .task-step-error { margin: 4px 0 0; color: var(--text-secondary); font-size: 11px; line-height: 1.35; white-space: pre-wrap; word-break: break-word; }.task-step-error { color: #ff6b6b; }.task-run-actions { display: flex; justify-content: flex-end; gap: 6px; padding-top: 7px; }
 @keyframes execution-flow { 0%, 100% { border-color: rgba(128, 132, 145, 0.24); } 50% { border-color: rgba(10, 132, 255, 0.52); } }
 
 .chat-only-titlebar,

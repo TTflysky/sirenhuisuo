@@ -17,16 +17,18 @@ import type {
   RoleId,
   DiscussionProgress,
   DiscussionTriggerInput,
+  TaskRun,
 } from './types';
 import { ROLE_SCARF } from './types';
 import * as client from './data/hermesClient';
 import { runScript, cancelDemo as cancelScript, type ScriptHandlers } from './engine/simulationEngine';
 import { PROACTIVE_SCRIPT } from './engine/proactiveScript';
 import { runTeamDiscussion } from './engine/teamDiscussion';
-import { buildParticipantPlan, evaluateDiscussionTrigger } from './engine/discussionTrigger';
+import { evaluateDiscussionTrigger } from './engine/discussionTrigger';
 import { findFreeStation } from './data/hermesClient';
 import { addOutput, buildDiscussionOutput, buildTaskOutput } from './data/outputs';
 import { sendBus, onBus, BUS_CHANNELS } from './ipcBus';
+import { createTaskRun, saveTaskRuns, updateTaskRun } from './data/taskRuns';
 
 // ===== Action =====
 type Action =
@@ -42,12 +44,15 @@ type Action =
   | { type: 'ADVANCE_TASK'; teamId: string; taskId: string; lane: TaskLane }
   | { type: 'CLAIM_TASK'; teamId: string; taskId: string; claimerId: string }
   | { type: 'SET_STATUS'; partial: Partial<AgentStatus> }
-  | { type: 'SET_PROGRESS'; progress: DiscussionProgress | null };
+  | { type: 'SET_PROGRESS'; progress: DiscussionProgress | null }
+  | { type: 'CREATE_TASK_RUN'; run: TaskRun }
+  | { type: 'UPDATE_TASK_RUN'; run: TaskRun };
 
 // ===== State =====
 const initialState: AppState = {
   employees: [],
   teams: [],
+  taskRuns: [],
   status: { backendOnline: false, demoRunning: false },
 };
 
@@ -172,6 +177,18 @@ function reducer(s: AppState, a: Action): AppState {
     case 'SET_PROGRESS':
       return { ...s, status: { ...s.status, progress: a.progress ?? undefined } };
 
+    case 'CREATE_TASK_RUN': {
+      const taskRuns = [...s.taskRuns, a.run].slice(-120);
+      saveTaskRuns(taskRuns);
+      return { ...s, taskRuns };
+    }
+
+    case 'UPDATE_TASK_RUN': {
+      const taskRuns = s.taskRuns.map((run) => run.id === a.run.id ? a.run : run);
+      saveTaskRuns(taskRuns);
+      return { ...s, taskRuns };
+    }
+
     default:
       return s;
   }
@@ -194,6 +211,8 @@ interface StoreCtx {
   claimTask: (teamId: string, taskId: string, claimerId: string) => void;
   publishTask: (teamId: string, title: string, description?: string, acceptance?: string) => void;
   triggerDiscussion: (teamId: string, opts?: { task?: TeamTask; userText?: string; extraSystemContext?: string; attachments?: import('./data/hermesClient').Attachment[]; participantPlan?: import('./types').DiscussionParticipantPlan[]; triggerMessageId?: string; discussionId?: string; forcedMemberIds?: string[]; maxRounds?: number }) => void;
+  pauseTaskRun: (runId: string) => void;
+  resumeTaskRun: (runId: string) => void;
 }
 
 const StoreContext = createContext<StoreCtx | null>(null);
@@ -469,6 +488,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const stateRef = React.useRef(state);
   stateRef.current = state;
   const supervisorBusyRef = React.useRef(new Set<string>());
+  const pausedRunIdsRef = React.useRef(new Set<string>());
 
   const extractMentionedEmployeeIds = (text: string, team: Team, employees: Employee[]): string[] => {
     const names = new Map(
@@ -525,6 +545,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'SET_STATUS', partial: { demoRunning: true, activeDemoTeamId: teamId } });
 
     let stepCounter = 0;
+    const updateRun = (mutate: (run: TaskRun) => void) => {
+      if (!opts?.runId) return;
+      const run = stateRef.current.taskRuns.find((item) => item.id === opts.runId);
+      if (run) dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, mutate) });
+    };
+    updateRun((run) => { run.status = 'running'; run.lastError = undefined; });
     Promise.resolve().then(() => runTeamDiscussion(
       team,
       stateRef.current.employees,
@@ -549,6 +575,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             inReplyToMessageId,
           };
           dispatch({ type: 'APPEND_CHAT', teamId, msgs: [msg] });
+          updateRun((run) => {
+            const step = run.steps.find((item) => item.employeeId === emp.id);
+            if (!step) return;
+            step.status = /^⚠️|无法响应|执行失败/u.test(content) ? 'failed' : 'completed';
+            step.completedAt = Date.now();
+            if (step.status === 'failed') step.lastError = content;
+            step.events.push({ ts: Date.now(), type: step.status === 'failed' ? 'error' : 'result', detail: content.slice(0, 360) });
+          });
         },
         onTaskAdvance(taskId, lane) {
           dispatch({ type: 'ADVANCE_TASK', teamId, taskId, lane });
@@ -565,12 +599,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               kind: 'execution',
             }],
           });
+          updateRun((run) => {
+            const step = run.steps.find((item) => item.employeeId === emp.id);
+            if (step) step.events.push({ ts: Date.now(), type: 'tool', detail: `${toolName} ${toolArgs}`.slice(0, 220) });
+          });
         },
         onStatus(statusText) {
           const emp = stateRef.current.employees.find((employee) => statusText.startsWith(employee.name));
           if (emp) {
             updateProgress(Math.min(totalSteps, stepCounter + 1), emp.id, emp.name, emp.role);
             dispatch({ type: 'UPDATE_EMPLOYEE', id: emp.id, partial: { isWorking: true } });
+            updateRun((run) => {
+              const step = run.steps.find((item) => item.employeeId === emp.id);
+              if (step && step.status === 'queued') {
+                step.status = 'running'; step.startedAt = Date.now(); step.attempts += 1;
+                step.events.push({ ts: Date.now(), type: 'status', detail: '正在执行' });
+              }
+            });
           }
         },
         onDone() {
@@ -599,9 +644,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           } catch (e) {
             console.warn('[store] failed to save outputs:', e);
           }
+          updateRun((run) => {
+            const paused = pausedRunIdsRef.current.has(run.id);
+            const hasFailed = run.steps.some((step) => step.status === 'failed');
+            run.status = paused ? 'paused' : hasFailed ? 'failed' : 'completed';
+            if (paused) run.steps.forEach((step) => {
+              if (step.status === 'running') { step.status = 'paused'; step.events.push({ ts: Date.now(), type: 'status', detail: '已暂停，等待继续' }); }
+            });
+          });
         },
-      }
-    )).finally(() => {
+      }, { shouldStop: () => !!opts?.runId && pausedRunIdsRef.current.has(opts.runId) }
+    )).catch((error) => {
+      updateRun((run) => { run.status = 'failed'; run.lastError = error instanceof Error ? error.message : String(error); });
+    }).finally(() => {
       discussingRef.current.delete(teamId);
       const scheduler = schedulerRef.current.get(teamId);
       if (scheduler) {
@@ -736,6 +791,40 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const startTaskRun = (teamId: string, request: string, employeeIds: string[], sourceMessageId?: string, attachments?: import('./data/hermesClient').Attachment[]) => {
+    const current = stateRef.current;
+    const team = current.teams.find((item) => item.id === teamId);
+    if (!team) return;
+    const run = createTaskRun(team, current.employees, request, employeeIds, sourceMessageId);
+    if (!run.steps.length) return;
+    dispatch({ type: 'CREATE_TASK_RUN', run });
+    enqueueDiscussion(teamId, {
+      userText: request, attachments, triggerMessageId: sourceMessageId, discussionId: run.id,
+      forcedMemberIds: run.steps.map((step) => step.employeeId), maxRounds: run.steps.length, runId: run.id,
+    }, 120);
+  };
+
+  const pauseTaskRun = (runId: string) => {
+    pausedRunIdsRef.current.add(runId);
+    const run = stateRef.current.taskRuns.find((item) => item.id === runId);
+    if (run) dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
+      next.status = 'paused'; next.steps.forEach((step) => { if (step.status === 'queued' || step.status === 'running') step.status = 'paused'; });
+    }) });
+  };
+
+  const resumeTaskRun = (runId: string) => {
+    pausedRunIdsRef.current.delete(runId);
+    const run = stateRef.current.taskRuns.find((item) => item.id === runId);
+    if (!run) return;
+    const pending = run.steps.filter((step) => step.status === 'paused' || step.status === 'failed' || step.status === 'queued').map((step) => step.employeeId);
+    if (!pending.length) return;
+    dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
+      next.status = 'queued'; next.lastError = undefined;
+      next.steps.forEach((step) => { if (pending.includes(step.employeeId)) step.status = 'queued'; });
+    }) });
+    enqueueDiscussion(run.teamId, { userText: run.request, triggerMessageId: run.sourceMessageId, discussionId: run.id, forcedMemberIds: pending, maxRounds: pending.length, runId }, 50);
+  };
+
   const enqueueAutoDiscussion = (teamId: string, messageId: string, content: string, mentions: string[], attachments?: import('./data/hermesClient').Attachment[]) => {
     const current = stateRef.current;
     const team = current.teams.find((item) => item.id === teamId);
@@ -744,15 +833,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const directMentions = mentions.filter((id) => team.memberIds.includes(id));
       const supervisorMentioned = mentions.includes('assistant');
       if (directMentions.length > 0 && !supervisorMentioned) {
-        enqueueDiscussion(teamId, {
-          userText: content,
-          attachments,
-          participantPlan: buildParticipantPlan(team.memberIds, current.employees, content, team.tasks ?? [], directMentions),
-          triggerMessageId: messageId,
-          discussionId: `discussion-${messageId}`,
-          maxRounds: 1,
-          forcedMemberIds: directMentions,
-        }, 120);
+        startTaskRun(teamId, content, directMentions, messageId, attachments);
         return;
       }
       const recentSupervisorPlan = team.chatMessages.slice(-6).some((message) =>
@@ -815,15 +896,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const decision = evaluateDiscussionTrigger(input, settings, team.memberIds, lastAutoTriggerRef.current.get(teamId));
       if (!decision.shouldStart) return;
       lastAutoTriggerRef.current.set(teamId, { dedupeKey: decision.dedupeKey, triggeredAt: Date.now() });
-      enqueueDiscussion(teamId, {
-        userText: discussionText,
-        attachments,
-        participantPlan: buildParticipantPlan(team.memberIds, current.employees, discussionText, team.tasks ?? [], decision.forcedMemberIds),
-        triggerMessageId: messageId,
-        discussionId: `discussion-${messageId}`,
-        maxRounds: settings.autoDiscussMaxRounds,
-        forcedMemberIds: decision.forcedMemberIds,
-      }, 400);
+      startTaskRun(teamId, discussionText, requestedMemberIds.length ? requestedMemberIds : decision.forcedMemberIds, messageId, attachments);
     })();
   };
 
@@ -841,13 +914,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
     const decision = evaluateDiscussionTrigger(input, settings, team.memberIds);
     if (!decision.shouldStart) return;
-    const discussionId = opts?.discussionId ?? `discussion-${opts?.triggerMessageId ?? opts?.task?.id ?? Date.now()}`;
-    enqueueDiscussion(teamId, {
-      ...opts,
-      discussionId,
-      participantPlan: opts?.participantPlan ?? buildParticipantPlan(team.memberIds, current.employees, opts?.userText ?? '', team.tasks ?? [], decision.forcedMemberIds),
-      forcedMemberIds: opts?.forcedMemberIds ?? decision.forcedMemberIds,
-    });
+    startTaskRun(teamId, triggerText, opts?.forcedMemberIds ?? decision.forcedMemberIds, opts?.triggerMessageId, opts?.attachments);
   };
 
   return (
@@ -867,6 +934,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         claimTask,
         publishTask,
         triggerDiscussion,
+        pauseTaskRun,
+        resumeTaskRun,
       }}
     >
       {children}

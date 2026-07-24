@@ -11,6 +11,19 @@ export interface DiscussionHandlers {
   onDone: () => void;
 }
 
+export interface TeamDiscussionOptions {
+  task?: TeamTask;
+  userText?: string;
+  attachments?: import('../data/hermesClient').Attachment[];
+  extraSystemContext?: string;
+  participantPlan?: DiscussionParticipantPlan[];
+  triggerMessageId?: string;
+  discussionId?: string;
+  maxRounds?: number;
+  forcedMemberIds?: string[];
+  runId?: string;
+}
+
 // 角色在讨论中的职责描述（系统提示词扩展）
 const ROLE_DUTY: Record<string, string> = {
   pm: `你是团队协调者（PM）。你的工具：write_file(输出文档)、read_file(读已有文件)、list_files(查看产出物)、web_search(搜索资料)。
@@ -62,7 +75,8 @@ async function memberSpeak(
   extraInstruction: string,
   onToolCall: (toolName: string, toolArgs: string, result: string) => void,
   attachments?: import('../data/hermesClient').Attachment[],
-  skillContext = ''
+  skillContext = '',
+  shouldStop?: () => boolean
 ): Promise<{ text: string; tokens?: number }> {
   if (!resolveApiBase()) return { text: '' }; // 外部处理兜底
 
@@ -94,6 +108,7 @@ async function memberSpeak(
       onToolCall(name, args) {
         onToolCall(name, args, '');
       },
+      shouldStop,
     });
     return { text: r.content, tokens: r.usage.totalTokens };
   } catch (e: any) {
@@ -114,8 +129,9 @@ function parseMentionIds(content: string, team: Team, employees: Employee[]): st
 export async function runTeamDiscussion(
   team: Team,
   employees: Employee[],
-  opts: { task?: TeamTask; userText?: string; attachments?: import('../data/hermesClient').Attachment[]; extraSystemContext?: string; participantPlan?: DiscussionParticipantPlan[]; triggerMessageId?: string; discussionId?: string; maxRounds?: number; forcedMemberIds?: string[] },
-  handlers: DiscussionHandlers
+  opts: TeamDiscussionOptions,
+  handlers: DiscussionHandlers,
+  control?: { shouldStop?: () => boolean }
 ): Promise<void> {
   const useAI = !!resolveApiBase();
   const task = opts.task;
@@ -138,6 +154,7 @@ export async function runTeamDiscussion(
   let round = 0;
   const queue = pending.length > 0 ? pending : participants.map((employee) => employee.id);
   while (queue.length > 0 && round < maxRounds) {
+    if (control?.shouldStop?.()) break;
     const memberId = queue.shift()!;
     const emp = employees.find((employee) => employee.id === memberId) ?? participants.find((employee) => employee.id === memberId);
     if (!emp) continue;
@@ -164,7 +181,8 @@ export async function runTeamDiscussion(
         },
         // 仅首轮（PM）携带用户上传的图片附件
         role === 'pm' ? opts.attachments : undefined,
-        opts.extraSystemContext
+        opts.extraSystemContext,
+        control?.shouldStop
       );
       content = r.text;
       tokens = r.tokens;
@@ -200,7 +218,7 @@ export async function runTeamDiscussion(
   }
 
   // 任务收尾
-  if (task) {
+  if (task && !control?.shouldStop?.()) {
     const pm = memberByRole(team, employees, 'pm');
     if (pm) {
       handlers.onStatus(`${pm.name} 验收中…`);

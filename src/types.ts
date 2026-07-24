@@ -128,6 +128,46 @@ export interface TeamTask {
   claimedBy?: string;
 }
 
+// ===== 可恢复任务运行（v0.4 调度内核） =====
+export type TaskRunStatus = 'queued' | 'running' | 'paused' | 'failed' | 'completed';
+export type TaskStepStatus = 'queued' | 'running' | 'paused' | 'failed' | 'completed';
+
+export interface TaskRunMemberSnapshot {
+  id: string;
+  name: string;
+  title: string;
+  role: OpcRoleId;
+  prompt?: string;
+  soul?: string;
+  model?: string;
+}
+
+export interface TaskRunStep {
+  id: string;
+  employeeId: string;
+  title: string;
+  status: TaskStepStatus;
+  attempts: number;
+  startedAt?: number;
+  completedAt?: number;
+  lastError?: string;
+  events: Array<{ ts: number; type: 'status' | 'tool' | 'result' | 'error'; detail: string }>;
+}
+
+export interface TaskRun {
+  id: string;
+  teamId: string;
+  title: string;
+  request: string;
+  status: TaskRunStatus;
+  createdAt: number;
+  updatedAt: number;
+  memberSnapshot: TaskRunMemberSnapshot[];
+  steps: TaskRunStep[];
+  sourceMessageId?: string;
+  lastError?: string;
+}
+
 // ===== 应用状态 =====
 export const MAX_STATIONS = 12;
 
@@ -157,6 +197,7 @@ export interface DiscussionProgress {
 export interface AppState {
   employees: Employee[];
   teams: Team[];
+  taskRuns: TaskRun[];
   status: AgentStatus;
 }
 

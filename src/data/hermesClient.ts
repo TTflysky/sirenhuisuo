@@ -3,6 +3,7 @@ import { MAX_STATIONS } from '../types';
 import { seedEmployees } from './defaultEmployees';
 import { seedTeams } from './defaultTeams';
 import type { OutputScope } from './outputs';
+import { loadTaskRuns } from './taskRuns';
 
 const LS_EMPLOYEES = 'hermes_office_employees';
 const LS_TEAMS = 'hermes_office_teams';
@@ -712,7 +713,7 @@ export function fetchInitial(): AppState {
 
   const status: AgentStatus = { backendOnline: _backendOnline ?? false, demoRunning: false };
 
-  return { employees, teams, status };
+  return { employees, teams, taskRuns: loadTaskRuns(), status };
 }
 
 // ===== 持久化：员工 =====

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { RobotOutlined } from '@ant-design/icons';
-import type { Team, Employee } from '../../types';
+import type { Team, Employee, TaskRun } from '../../types';
 import { useStore } from '../../store';
 import { type Attachment } from '../../data/hermesClient';
 import AgentAvatar from '../office/AgentAvatar';
@@ -41,7 +41,7 @@ function SupervisorAvatar({ size = 34 }: { size?: number }) {
 export default function TeamChatApp({ teamId }: Props) {
   const {
     state, sendMessage,
-    publishTask, claimTask, advanceTask, triggerDiscussion,
+    publishTask, claimTask, advanceTask, triggerDiscussion, pauseTaskRun, resumeTaskRun,
   } = useStore();
   const team = state.teams.find((t: Team) => t.id === teamId);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -83,6 +83,8 @@ export default function TeamChatApp({ teamId }: Props) {
 
   const progress = state.status.progress;
   const myProgress = progress && progress.teamId === teamId ? progress : null;
+  const taskRuns = state.taskRuns.filter((run) => run.teamId === teamId).slice(-4).reverse();
+  const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
   const [progressNow, setProgressNow] = useState(Date.now());
 
   const teamMembers = (team?.memberIds ?? [])
@@ -309,6 +311,29 @@ export default function TeamChatApp({ teamId }: Props) {
               </div>
             </div>
           )}
+
+          {taskRuns.map((run: TaskRun) => {
+            const expanded = expandedRunIds.has(run.id);
+            const completed = run.steps.filter((step) => step.status === 'completed').length;
+            const active = run.status === 'running' || run.status === 'queued';
+            return (
+              <section key={run.id} className={`task-run-tray task-run-${run.status}`}>
+                <button type="button" className="task-run-summary" onClick={() => setExpandedRunIds((previous) => {
+                  const next = new Set(previous); if (next.has(run.id)) next.delete(run.id); else next.add(run.id); return next;
+                })}>
+                  <span className="task-run-state">{run.status === 'running' ? '执行中' : run.status === 'queued' ? '排队中' : run.status === 'paused' ? '已暂停' : run.status === 'failed' ? '待恢复' : '已完成'}</span>
+                  <strong>{run.title}</strong><span>{completed}/{run.steps.length}</span><span className="task-run-toggle">{expanded ? '收起' : '详情'}</span>
+                </button>
+                {expanded && <div className="task-run-details">
+                  {run.steps.map((step) => {
+                    const emp = state.employees.find((item) => item.id === step.employeeId);
+                    return <div key={step.id} className="task-run-step"><div><strong>{emp?.name ?? step.title}</strong><span className={`task-step-status status-${step.status}`}>{step.status}</span><small>尝试 {step.attempts} 次</small></div>{step.lastError && <p className="task-step-error">{step.lastError}</p>}{step.events.slice(-4).map((event, index) => <p key={`${event.ts}-${index}`} className="task-step-event">{new Date(event.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} {event.detail}</p>)}</div>;
+                  })}
+                  <div className="task-run-actions">{active && <button className="btn btn-sm" onClick={() => pauseTaskRun(run.id)}>暂停</button>}{(run.status === 'paused' || run.status === 'failed') && <button className="btn btn-sm btn-primary" onClick={() => resumeTaskRun(run.id)}>继续执行</button>}</div>
+                </div>}
+              </section>
+            );
+          })}
 
           {/* 消息流 */}
           <div className="chat-messages">
