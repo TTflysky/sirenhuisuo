@@ -72,7 +72,12 @@ function reducer(s: AppState, a: Action): AppState {
 
     case 'REMOVE_EMPLOYEE': {
       const next = client.removeEmployee(a.id, s.employees);
-      return { ...s, employees: next };
+      const teams = s.teams.map((team) => ({
+        ...team,
+        memberIds: team.memberIds.filter((memberId) => memberId !== a.id),
+      }));
+      client.saveTeams(teams);
+      return { ...s, employees: next, teams };
     }
 
     case 'ADD_TEAM': {
@@ -635,28 +640,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }, delay);
   };
 
-  const enqueueAssistantSupervisor = async (team: Team, content: string): Promise<string | undefined> => {
+  const enqueueAssistantSupervisor = async (team: Team, content: string, mayDelegate: boolean): Promise<string | undefined> => {
     if (supervisorBusyRef.current.has(team.id)) return undefined;
     supervisorBusyRef.current.add(team.id);
-    try {
-      const assistantModel = client.getAssistantModel();
-      const configuredPrompt = localStorage.getItem('hermes_office_assistant_system_prompt')?.trim();
-      const userContext = client.buildUserContext();
-      const turns: client.ChatTurn[] = [
-        {
-          role: 'system',
-          content: `${configuredPrompt ? `## 助理配置\n${configuredPrompt}\n\n` : ''}${userContext ? `${userContext}\n` : ''}你是私人办公会所的监工助理，负责监督团队进度、调度成员和理解老板的工作习惯。你现在被老板@，必须先给出简短判断，再根据需求分发给团队成员。需要成员处理时，必须使用他们的准确姓名格式@姓名进行点名；不需要某成员时不要点名。团队成员：${team.memberIds.map((id) => stateRef.current.employees.find((employee) => employee.id === id)?.name).filter(Boolean).join('、')}。回复要简洁、直接，指出当前进展、风险和下一步行动；不要代替团队成员长篇讨论。`,
-        },
-        ...team.chatMessages.slice(-12).map((message) => ({
-          role: message.roleId === 'human' ? 'user' as const : 'assistant' as const,
-          content: `${stateRef.current.employees.find((employee) => employee.id === message.authorId)?.name ?? '团队成员'}: ${message.content}`,
-        })),
-        { role: 'user', content: `老板@你说：${content}` },
-      ];
-      if (!client.resolveApiBase(assistantModel)) return undefined;
-      const result = await client.chatCompletion(turns, 'assistant-supervisor', `监工/${team.name}`, undefined, assistantModel);
-      const reply = result.content?.trim();
-      if (!reply) return undefined;
+    const appendSupervisorMessage = (reply: string, tokens?: number) => {
       dispatch({
         type: 'APPEND_CHAT',
         teamId: team.id,
@@ -668,14 +655,62 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           mentions: [],
           timestamp: Date.now(),
           kind: 'text',
-          tokens: result.usage.totalTokens,
+          tokens,
         }],
       });
+    };
+    const fallbackReply = () => {
+      const members = team.memberIds
+        .map((id) => stateRef.current.employees.find((employee) => employee.id === id))
+        .filter((employee): employee is Employee => !!employee);
+      if (mayDelegate && /报数|报个数|数数|数字/.test(content)) {
+        return `收到，我来点名确认。${members.map((employee, index) => `@${employee.name} 请只回复「${index + 1}」。`).join(' ')}`;
+      }
+      const directlyMentioned = extractMentionedEmployeeIds(content, team, stateRef.current.employees);
+      if (mayDelegate && directlyMentioned.length > 0) {
+        return `收到，已分派。${directlyMentioned.map((id) => `@${members.find((employee) => employee.id === id)?.name} 请直接处理老板刚才的要求，并反馈结果。`).join(' ')}`;
+      }
+      const lead = members.find((employee) => employee.role === 'pm') ?? members[0];
+      if (/实现|设计|写代码|验收|发布|文档|开发|修复|处理|讨论|方案|协作/.test(content) && lead) {
+        return mayDelegate
+          ? `收到，我已接单。@${lead.name} 请先拆解老板的要求并提出下一步安排，其余成员等待监工继续分派。`
+          : '我已理解这是一个需要团队处理的事项。要我现在推进并分派给成员吗？请直接 @Hermes 助理 并说明“推进”。';
+      }
+      return '收到，已记录当前信息。我会持续跟进，需要团队行动时会直接点名分派。';
+    };
+    try {
+      // The supervisor must be visibly present even while the model is thinking.
+      appendSupervisorMessage('收到，我正在判断需求并安排下一步。');
+      const assistantModel = client.getAssistantModel();
+      const configuredPrompt = localStorage.getItem('hermes_office_assistant_system_prompt')?.trim();
+      const userContext = client.buildUserContext();
+      const turns: client.ChatTurn[] = [
+        {
+          role: 'system',
+          content: `${configuredPrompt ? `## 助理配置\n${configuredPrompt}\n\n` : ''}${userContext ? `${userContext}\n` : ''}你是私人办公会所的监工助理，负责监督团队进度、调度成员和理解老板的工作习惯。先直接回应老板，再决定是否需要团队参与。${mayDelegate ? '老板已明确授权你推进团队工作；需要成员处理时，使用准确姓名格式@姓名点名并给出具体命令。' : '老板尚未授权启动团队。禁止@任何成员、禁止分派任务；遇到项目型需求，只需简短说明判断并询问“要我现在推进并分派给成员吗？”。'} 团队成员：${team.memberIds.map((id) => stateRef.current.employees.find((employee) => employee.id === id)?.name).filter(Boolean).join('、')}。回复要简洁、直接，指出当前进展、风险和下一步行动；不要代替团队成员长篇讨论。`,
+        },
+        ...team.chatMessages.slice(-12).map((message) => ({
+          role: message.roleId === 'human' ? 'user' as const : 'assistant' as const,
+          content: `${stateRef.current.employees.find((employee) => employee.id === message.authorId)?.name ?? '团队成员'}: ${message.content}`,
+        })),
+        { role: 'user', content: `老板@你说：${content}` },
+      ];
+      if (!client.resolveApiBase(assistantModel)) {
+        const reply = fallbackReply();
+        appendSupervisorMessage(reply);
+        return reply;
+      }
+      const result = await client.chatCompletion(turns, 'assistant-supervisor', `监工/${team.name}`, undefined, assistantModel);
+      const reply = result.content?.trim();
+      if (!reply) return undefined;
+      appendSupervisorMessage(reply, result.usage.totalTokens);
       client.extractUserInsights(`老板：${content}\n监工回复：${reply}`, `团队监工-${team.name}`).catch(() => {});
       return reply;
     } catch (error) {
       console.warn('[supervisor] reply failed:', error);
-      return undefined;
+      const reply = fallbackReply();
+      appendSupervisorMessage(reply);
+      return reply;
     } finally {
       supervisorBusyRef.current.delete(team.id);
     }
@@ -686,12 +721,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const team = current.teams.find((item) => item.id === teamId);
     if (!team) return;
     void (async () => {
-      const supervisorReply = await enqueueAssistantSupervisor(team, content);
+      const directMentions = mentions.filter((id) => team.memberIds.includes(id));
+      const supervisorMentioned = mentions.includes('assistant');
+      const mayDelegate = supervisorMentioned || directMentions.length > 0;
+      const supervisorReply = await enqueueAssistantSupervisor(team, content, mayDelegate);
       const mentionedBySupervisor = supervisorReply
+        && mayDelegate
         ? extractMentionedEmployeeIds(supervisorReply, team, current.employees)
         : [];
-      const directMentions = mentions.filter((id) => team.memberIds.includes(id));
       const requestedMemberIds = [...new Set([...directMentions, ...mentionedBySupervisor])];
+      // The supervisor is the default speaker. Do not start the employee group
+      // until the owner explicitly calls the supervisor to proceed or names staff.
+      if (!mayDelegate) return;
       const discussionText = [content, supervisorReply].filter(Boolean).join('\n\n');
       const settings = client.loadSettings();
       const input: DiscussionTriggerInput = {

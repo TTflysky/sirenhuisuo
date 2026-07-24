@@ -120,6 +120,11 @@ export default function TeamChatApp({ teamId }: Props) {
         if (found) mentions.push(found.id);
       }
     }
+    // The assistant display name contains a space, while the generic @ token
+    // parser stops at whitespace. Preserve an explicit @Hermes 助理 mention.
+    if (content.includes(`@${supervisorMention.name}`) && !mentions.includes(supervisorMention.id)) {
+      mentions.push(supervisorMention.id);
+    }
     // 文本类附件：拼进消息文本
     let enriched = content;
     const textAtts = attachments.filter((a) => a.kind === 'text' && a.dataUrl);

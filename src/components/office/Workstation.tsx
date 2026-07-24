@@ -18,6 +18,7 @@ export default function Workstation({ stationIndex, employee, isWorking, onClick
   return (
     <div
       className={`station-card ${hasEmp ? 'occupied' : 'empty'}`}
+      data-role={employee?.role}
       onClick={onClick}
       title={hasEmp ? `${employee.name} - ${employee.title}` : `空位 #${stationIndex + 1}`}
     >

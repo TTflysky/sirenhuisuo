@@ -31,7 +31,7 @@ export default function EmployeeCard({ employee, isWorking, progress, teams, onC
   const myTeam = teams?.find((t) => t.memberIds.includes(employee.id));
 
   return (
-    <div className="employee-card" onClick={onClick}>
+    <div className="employee-card" data-role={employee.role} onClick={onClick}>
       <div className="emp-avatar-wrap">
         <AgentAvatar employee={employee} size={26} />
         <div className="emp-status-dot" style={{ background: statusColor }} />

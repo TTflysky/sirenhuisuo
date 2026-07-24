@@ -121,6 +121,21 @@ export default function EditEmployeeModal({ employee, onClose }: Props) {
     onClose();
   };
 
+  const handleDelete = () => {
+    Modal.confirm({
+      title: `删除员工「${employee.name}」？`,
+      content: '该员工会从所有团队移除，历史聊天记录会保留。此操作无法撤销。',
+      okText: '删除员工',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: () => {
+        dispatch({ type: 'REMOVE_EMPLOYEE', id: employee.id });
+        message.success(`已删除 ${employee.name}`);
+        onClose();
+      },
+    });
+  };
+
   return (
     <Modal
       open
@@ -129,6 +144,7 @@ export default function EditEmployeeModal({ employee, onClose }: Props) {
       width={540}
       destroyOnClose
       footer={[
+        <Button key="delete" danger onClick={handleDelete}>删除员工</Button>,
         <Button key="cancel" onClick={onClose}>取消</Button>,
         <Button key="save" type="primary" onClick={handleSave}>保存修改</Button>,
       ]}

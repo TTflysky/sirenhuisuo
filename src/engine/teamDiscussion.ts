@@ -150,10 +150,13 @@ export async function runTeamDiscussion(
     let tokens: number | undefined;
 
     if (useAI) {
+      const assignment = opts.forcedMemberIds?.includes(emp.id)
+        ? `监工已经明确点名由你处理。你必须直接完成或回答这条命令，不要只回复“在线”“收到”或介绍自己的状态。`
+        : '';
       const r = await memberSpeak(emp, team, employees, contextMessages,
         task
           ? `团队接到新任务「${task.title}」${task.description ? `：${task.description}` : ''}。如有必要，可调工具产出文件或用 web_search 查资料。`
-          : `老板在群里说：「${opts.userText ?? ''}」。如需产出或查资料可调工具。`,
+          : `${assignment}\n老板与监工在群里的完整指令：\n「${opts.userText ?? ''}」\n如需产出或查资料可调工具。`,
         (toolName, toolArgs) => {
           // 先发工具调用消息
           const argsStr = toolArgs ? (toolArgs.length > 80 ? toolArgs.slice(0, 80) + '…' : toolArgs) : '';
