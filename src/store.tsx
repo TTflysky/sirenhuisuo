@@ -678,6 +678,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       return '收到，已记录当前信息。我会持续跟进，需要团队行动时会直接点名分派。';
     };
+    const teamRoster = team.memberIds
+      .map((id) => stateRef.current.employees.find((employee) => employee.id === id))
+      .filter((employee): employee is Employee => !!employee)
+      .map((employee) => {
+        const model = employee.modelConfig?.model ?? employee.modelConfig?.refModelId ?? '使用团队默认模型';
+        return `- 姓名：${employee.name}\n  身份/职责：${employee.title} / ${employee.role}\n  在线：${employee.isOnline ? '是' : '否'}\n  专长与工作偏好：${(employee.prompt ?? '未填写').slice(0, 600)}\n  人设/补充信息：${(employee.soul ?? '未填写').slice(0, 900)}\n  模型：${model}`;
+      }).join('\n');
     try {
       // The supervisor must be visibly present even while the model is thinking.
       appendSupervisorMessage('收到，我正在判断需求并安排下一步。');
@@ -687,7 +694,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const turns: client.ChatTurn[] = [
         {
           role: 'system',
-          content: `${configuredPrompt ? `## 助理配置\n${configuredPrompt}\n\n` : ''}${userContext ? `${userContext}\n` : ''}你是私人办公会所的监工助理，负责监督团队进度、调度成员和理解老板的工作习惯。先直接回应老板，再决定是否需要团队参与。${mayDelegate ? '老板已明确授权你推进团队工作；需要成员处理时，使用准确姓名格式@姓名点名并给出具体命令。对于报数、在线、职责汇报等场景，你只能派发任务，绝不能代替员工编造他们的汇报结果。' : '老板尚未授权启动团队。禁止@任何成员、禁止分派任务；遇到项目型需求，只需简短说明判断并询问“要我现在推进并分派给成员吗？”。'} 团队成员仅限：${team.memberIds.map((id) => stateRef.current.employees.find((employee) => employee.id === id)?.name).filter(Boolean).join('、')}。你自己 Hermes 助理不是团队成员，绝对不能在成员名单中出现，也不能@自己。回复要简洁、直接，指出当前进展、风险和下一步行动；不要代替团队成员长篇讨论。`,
+          content: `${configuredPrompt ? `## 助理配置\n${configuredPrompt}\n\n` : ''}${userContext ? `${userContext}\n` : ''}你是私人办公会所的监工助理，负责监督团队进度、调度成员和理解老板的工作习惯。\n\n## 当前团队（唯一可调度范围）\n团队名称：${team.name}\n${teamRoster || '暂无成员'}\n\n先直接回应老板，再决定是否需要团队参与。${mayDelegate ? '老板已明确授权你推进团队工作；需要成员处理时，使用准确姓名格式@姓名点名并给出具体命令。对于报数、在线、职责汇报等场景，你只能派发任务，绝不能代替员工编造他们的汇报结果。你只负责拆解、分派、跟进和验收：禁止输出脚本、代码、长文正文、分镜或任何最终产物；你的回复最多 180 个汉字，仅输出任务拆分与指派。' : '老板尚未授权启动团队。禁止@任何成员、禁止分派任务；遇到项目型需求，只需简短说明判断并询问“要我现在推进并分派给成员吗？”。'} 你自己 Hermes 助理不是团队成员，绝对不能在成员名单中出现，也不能@自己。`,
         },
         ...team.chatMessages.slice(-12).map((message) => ({
           role: message.roleId === 'human' ? 'user' as const : 'assistant' as const,
@@ -732,7 +739,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         && mayDelegate
         ? extractMentionedEmployeeIds(supervisorReply, team, current.employees)
         : [];
-      const requestedMemberIds = [...new Set([...directMentions, ...mentionedBySupervisor])];
+      // A supervisor-approved task must reach real employees even if the model
+      // forgot to format its assignment as @姓名. Scope is always this team only.
+      const initiallyRequestedMemberIds = [...new Set([...directMentions, ...mentionedBySupervisor])];
+      const scheduledBySupervisor = supervisorMentioned && initiallyRequestedMemberIds.length === 0
+        ? team.memberIds.filter((id) => current.employees.some((employee) => employee.id === id && employee.isOnline))
+        : [];
+      const requestedMemberIds = [...new Set([...initiallyRequestedMemberIds, ...scheduledBySupervisor])];
       // The supervisor is the default speaker. Do not start the employee group
       // until the owner explicitly calls the supervisor to proceed or names staff.
       if (!mayDelegate) return;

@@ -72,12 +72,13 @@ export default function ConnectorPanel() {
   };
 
   return (
-    <div style={{
+    <div className="connector-panel" style={{
       borderTop: '1px solid var(--border-light)',
       marginTop: 'auto',
     }}>
       {/* 头部 */}
       <div
+        className="connector-toggle"
         style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '8px 14px', cursor: 'pointer',
@@ -106,6 +107,7 @@ export default function ConnectorPanel() {
             connectors.map(c => (
               <div
                 key={c.id}
+                className="connector-item"
                 style={{
                   display: 'flex', alignItems: 'center', gap: 6,
                   padding: '6px 8px', borderRadius: 8, marginBottom: 4,
@@ -170,7 +172,7 @@ export default function ConnectorPanel() {
             ))
           )}
           <div style={{ marginTop: 6 }}>
-            <Button size="small" block onClick={handleAdd} style={{ fontSize: 10, height: 24 }}>
+            <Button className="connector-add-btn" size="small" block onClick={handleAdd} style={{ fontSize: 10, height: 24 }}>
               + 添加连接器
             </Button>
           </div>

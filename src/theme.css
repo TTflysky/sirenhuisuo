@@ -1267,6 +1267,33 @@ html, body, #root, .app-root {
 }
 :root[data-theme='dark'] .ant-input::placeholder { color: #8f9199 !important; }
 
+:root[data-theme='dark'] .btn.btn-primary:disabled,
+:root[data-theme='dark'] .btn.btn-primary:disabled:hover {
+  background: #494b52 !important;
+  border-color: #55575e !important;
+  color: #a4a6ad !important;
+  box-shadow: none;
+}
+:root[data-theme='dark'] .connector-panel {
+  background: #242529;
+  border-top-color: #393a40 !important;
+}
+:root[data-theme='dark'] .connector-toggle {
+  color: #b7b9c0 !important;
+  background: #2a2b30;
+}
+:root[data-theme='dark'] .connector-toggle:hover { background: #33343a; }
+:root[data-theme='dark'] .connector-item {
+  background: #303136 !important;
+  border-color: #414249 !important;
+  color: #e4e5e8;
+}
+:root[data-theme='dark'] .connector-add-btn {
+  background: #34353b !important;
+  border-color: #4b4d55 !important;
+  color: #e4e5e8 !important;
+}
+
 body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
 .chat-toolbar, .chat-composer, .dm-peer {
   transition: background-color 220ms ease, border-color 220ms ease, color 220ms ease, box-shadow 220ms ease;

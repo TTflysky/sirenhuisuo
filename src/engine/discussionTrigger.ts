@@ -56,7 +56,7 @@ export function buildParticipantPlan(teamMemberIds: string[], employees: Employe
   const plans = teamMemberIds.map((memberId) => {
     const employee = employees.find((item) => item.id === memberId);
     if (!employee) return null;
-    if (forcedMemberIds.includes(memberId)) return { memberId, priority: 'forced' as const, relevanceScore: 100, reason: 'mentioned' as const, maxResponses: 2 };
+    if (forcedMemberIds.includes(memberId)) return { memberId, priority: 'forced' as const, relevanceScore: 100, reason: 'mentioned' as const, maxResponses: 1 };
     const haystack = `${employee.name} ${employee.title} ${employee.role} ${employee.prompt ?? ''} ${employee.soul ?? ''}`.toLowerCase();
     const keywordScore = words.filter((word) => haystack.includes(word)).length * 3;
     const laneScore = lane && laneRoles[lane]?.includes(employee.role) ? 4 : 0;
