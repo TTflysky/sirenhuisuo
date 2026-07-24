@@ -580,7 +580,7 @@ export default function TeamChatApp({ teamId }: Props) {
             <div style={{ flex: 1 }} />
             <ModelSelector />
             <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-              {state.status.backendOnline ? '🟢 模型在线' : '🔵 本地模式'}
+              {state.status.backendOnline ? '🟢 默认模型可用' : '🔴 默认模型不可用'}
             </span>
           </div>
 

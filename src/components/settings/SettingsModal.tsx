@@ -9,6 +9,7 @@ import {
   loadUserMemory, saveUserMemory, type UserMemoryItem,
 } from '../../data/hermesClient';
 import type { ModelConfig } from '../../types';
+import { useStore } from '../../store';
 
 type Tab = 'model' | 'profile' | 'memory';
 
@@ -43,6 +44,7 @@ export default function SettingsModal({ onClose, onSaved }: Props) {
 
 // ===== 模型库标签 =====
 function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?: () => void }) {
+  const { dispatch } = useStore();
   const { message } = App.useApp();
   const [settings, setSettings] = useState<AppSettings>(() => {
     migrateToModelLibrary();
@@ -185,13 +187,20 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
           ...s.modelLibrary[idx],
           tested: r.ok ? 'ok' : 'fail',
           lastTested: Date.now(),
+          lastLatencyMs: r.latencyMs,
+          lastHttpStatus: r.httpStatus,
+          lastTestMessage: r.message,
+          lastTestEndpoint: r.endpoint,
         };
         saveSettings(s);
         setSettings({ ...s });
       }
     }
     setTesting(null);
-    if (r.ok) message.success(`✓ ${entry.label} 连接正常`);
+    if (entry.id === s.activeModelId) {
+      dispatch({ type: 'SET_STATUS', partial: { backendOnline: r.ok } });
+    }
+    if (r.ok) message.success(`✓ ${entry.label}：${r.message}`);
     else message.error(`✗ ${entry.label}：${r.message}`);
   };
 
@@ -219,7 +228,7 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
             }}
           >
             {/* 测试状态指示灯 */}
-            <Tooltip title={entry.tested === 'ok' ? '连接正常' : entry.tested === 'fail' ? '连接失败' : '未测试'}>
+            <Tooltip title={entry.lastTestMessage ?? (entry.tested === 'ok' ? '连接正常' : entry.tested === 'fail' ? '连接失败' : '未测试')}>
               <span style={{
                 width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
                 background: entry.tested === 'ok' ? '#52c41a' : entry.tested === 'fail' ? '#ff4d4f' : '#d9d9d9',
@@ -237,6 +246,16 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
               <div style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {entry.model ?? '未设置模型名'} · {getProvider(entry.provider).label}
               </div>
+              {entry.lastTestMessage && (
+                <div style={{ fontSize: 10, marginTop: 3, color: entry.tested === 'ok' ? 'var(--online)' : 'var(--danger)', whiteSpace: 'normal', wordBreak: 'break-word' }}>
+                  {entry.lastTestMessage}
+                </div>
+              )}
+              {entry.lastTestEndpoint && (
+                <div style={{ fontSize: 10, marginTop: 2, color: 'var(--text-muted)', whiteSpace: 'normal', wordBreak: 'break-all' }}>
+                  {entry.lastTestEndpoint}{entry.lastTested ? ` · ${new Date(entry.lastTested).toLocaleString()}` : ''}
+                </div>
+              )}
             </div>
 
             {/* 操作按钮 */}

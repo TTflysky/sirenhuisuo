@@ -37,6 +37,10 @@ export interface ModelEntry extends ModelConfig {
   label: string;       // 显示名称（如"DeepSeek 主力"）
   tested?: 'ok' | 'fail' | undefined;  // 连接测试结果
   lastTested?: number; // 上次测试时间戳
+  lastLatencyMs?: number;
+  lastHttpStatus?: number;
+  lastTestMessage?: string;
+  lastTestEndpoint?: string;
 }
 
 export interface AppSettings {
@@ -157,22 +161,66 @@ export function getEmployeeModel(employee: Employee): ModelConfig {
   };
 }
 
-/** 测试指定模型配置的连通性（不影响全局设置） */
-export async function testModelConnection(mc: ModelConfig): Promise<{ ok: boolean; message: string }> {
-  const base = (mc.apiHost ?? '').trim().replace(/\/+$/, '');
-  if (!base) return { ok: false, message: '请先填写 API 地址' };
+export interface ModelConnectionTestResult {
+  ok: boolean;
+  message: string;
+  latencyMs: number;
+  endpoint: string;
+  httpStatus?: number;
+}
+
+function apiErrorMessage(raw: string): string {
   try {
-    const url = endpointUrl(base, '/models');
-    const headers: Record<string, string> = { Accept: 'application/json' };
+    const parsed = JSON.parse(raw);
+    return String(parsed?.error?.message ?? parsed?.message ?? raw).slice(0, 500);
+  } catch {
+    return raw.trim().slice(0, 500) || '服务端未返回错误详情';
+  }
+}
+
+/** 使用真实的最小聊天请求测试模型，而不是只探测可能无关的 /models。 */
+export async function testModelConnection(mc: ModelConfig): Promise<ModelConnectionTestResult> {
+  const base = (mc.apiHost ?? '').trim().replace(/\/+$/, '');
+  const endpoint = base ? endpointUrl(base, '/chat/completions') : '';
+  if (!base) return { ok: false, message: '请先填写 API 地址', latencyMs: 0, endpoint };
+  const model = mc.model?.trim() || getProvider(mc.provider).defaultModel;
+  if (!model) return { ok: false, message: '请先填写模型名称', latencyMs: 0, endpoint };
+  const startedAt = performance.now();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20000);
+  try {
+    const headers: Record<string, string> = { Accept: 'application/json', 'Content-Type': 'application/json' };
     if (mc.apiKey) headers['Authorization'] = `Bearer ${mc.apiKey}`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
-    const res = await fetch(url, { method: 'GET', headers, signal: controller.signal });
-    clearTimeout(timer);
-    if (res.ok) return { ok: true, message: `连接成功 ✓` };
-    return { ok: false, message: `服务器响应 ${res.status}` };
+    const res = await fetch(endpoint, {
+      method: 'POST', headers, signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: '连接测试：请只回复 OK' }],
+        stream: false,
+      }),
+    });
+    const latencyMs = Math.round(performance.now() - startedAt);
+    const raw = await res.text().catch(() => '');
+    if (!res.ok) {
+      return { ok: false, message: `HTTP ${res.status}：${apiErrorMessage(raw)}`, latencyMs, endpoint, httpStatus: res.status };
+    }
+    let data: any;
+    try { data = JSON.parse(raw); } catch {
+      return { ok: false, message: 'HTTP 200，但响应不是有效 JSON', latencyMs, endpoint, httpStatus: res.status };
+    }
+    const reply = data?.choices?.[0]?.message?.content;
+    if (typeof reply !== 'string' || !reply.trim()) {
+      return { ok: false, message: 'HTTP 200，但模型没有返回可用的聊天内容', latencyMs, endpoint, httpStatus: res.status };
+    }
+    return { ok: true, message: `聊天调用成功 · ${latencyMs} ms · HTTP ${res.status}`, latencyMs, endpoint, httpStatus: res.status };
   } catch (e: any) {
-    return { ok: false, message: `无法连接：${e?.message ?? '网络错误'}` };
+    const latencyMs = Math.round(performance.now() - startedAt);
+    const message = e?.name === 'AbortError'
+      ? `请求超时：20 秒内模型没有返回结果`
+      : `网络错误：${e?.message ?? '无法连接模型服务'}`;
+    return { ok: false, message, latencyMs, endpoint };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -397,33 +445,15 @@ async function apiFetch(path: string, init: RequestInit = {}, timeoutMs = 4000, 
 
 // ===== 探测后端 =====
 export async function checkBackend(): Promise<boolean> {
-  const base = resolveApiBase();
-  if (!base) {
-    _backendOnline = false;
-    return false;
-  }
-  try {
-    const res = await apiFetch('/models', { method: 'GET' }, 2500);
-    _backendOnline = res.ok;
-    return res.ok;
-  } catch {
-    _backendOnline = false;
-    return false;
-  }
+  const result = await testModelConnection(getActiveModel());
+  _backendOnline = result.ok;
+  return result.ok;
 }
 
 // 测试连接（供设置面板用，返回详细结果）
 export async function testConnection(): Promise<{ ok: boolean; message: string }> {
-  const base = resolveApiBase();
-  if (!base) return { ok: false, message: '请先填写 API 地址' };
-  try {
-    // OpenAI 兼容接口探测 /models
-    const res = await apiFetch('/models', { method: 'GET' }, 5000);
-    if (res.ok) return { ok: true, message: `连接成功 ✓ (${endpointUrl(base, '/models')})` };
-    return { ok: false, message: `服务器响应 ${res.status}（${endpointUrl(base, '/models')}）` };
-  } catch (e: any) {
-    return { ok: false, message: `无法连接 ${base}：${e?.message ?? '网络错误'}` };
-  }
+  const result = await testModelConnection(getActiveModel());
+  return { ok: result.ok, message: `${result.message}${result.endpoint ? `（${result.endpoint}）` : ''}` };
 }
 
 // ===== OpenAI 兼容聊天补全 =====
@@ -565,7 +595,6 @@ export async function chatCompletion(
     body: JSON.stringify({
       model,
       messages: finalTurns,
-      temperature: 0.7,
       stream: false,
       ...(tools && tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
     }),
