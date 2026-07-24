@@ -11,6 +11,7 @@ node_modules
 dist
 dist-ssr
 release/win-unpacked/
+release/*.exe
 release/*.blockmap
 release/builder-*.yml
 release/builder-*.yaml
