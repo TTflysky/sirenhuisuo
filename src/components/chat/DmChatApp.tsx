@@ -18,6 +18,7 @@ import {
 } from '../../utils/attachments';
 import { TOOLS } from '../../engine/tools';
 import { useFileDrop } from '../../hooks/useFileDrop';
+import { BEGINNER_RESPONSE_GUIDE, isToolResultSuccessful } from '../../data/assistantPresentation';
 
 interface Props {
   empId: string;
@@ -257,7 +258,8 @@ export default function DmChatApp({ empId }: Props) {
         : craftReply(emp.role, enriched);
       return { text: t };
     }
-    const systemPrompt = emp.prompt?.trim() || `你是「${emp.name}」，一名${emp.title}。用简洁、专业的中文回复，语气贴合你的角色。需要产出文件时直接调用工具完成。`;
+    const personaPrompt = emp.prompt?.trim() || `你是「${emp.name}」，一名${emp.title}。用简洁、专业的中文回复，语气贴合你的角色。需要产出文件时直接调用工具完成。`;
+    const systemPrompt = `${personaPrompt}\n\n${BEGINNER_RESPONSE_GUIDE}`;
     const history = historyOverride ?? msgs.slice(-8).map((m): ChatTurn => ({ role: m.roleId === 'human' ? 'user' : 'assistant', content: m.content }));
     const thoughtChain: ThoughtChainStep[] = [];
     const showThoughtChain = loadSettings().showThoughtChain !== false;
@@ -269,9 +271,9 @@ export default function DmChatApp({ empId }: Props) {
       onToolCall(name) {
         dispatch({ type: 'UPDATE_EMPLOYEE', id: empId, partial: { isWorking: true, currentTask: `调用 ${name}` } });
       },
-      onToolResult(name, args, result) {
+      onToolResult(name, args, result, success) {
         if (!showThoughtChain) return;
-        thoughtChain.push({ toolName: name, args: args ?? '', result: result.slice(0, 2000), success: !/^工具执行错误|^未知工具|^⚠️/u.test(result), timestamp: Date.now() });
+        thoughtChain.push({ toolName: name, args: args ?? '', result: result.slice(0, 2000), success: isToolResultSuccessful(result, success), timestamp: Date.now() });
       },
     });
     return { text: r.content ?? '（无回复）', usage: r.usage.totalTokens, thoughtChain: thoughtChain.length ? thoughtChain : undefined };

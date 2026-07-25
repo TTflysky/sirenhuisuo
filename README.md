@@ -1,4 +1,4 @@
-# 私人办公会所 v0.7.15
+# 私人办公会所 v0.7.16
 
 > 面向 Windows 的多模型 AI 虚拟办公室。创建员工、组建团队，让不同模型按照职责协作完成真实任务。
 
@@ -6,7 +6,7 @@
 
 ## 项目状态
 
-- 当前版本：`0.7.15`
+- 当前版本：`0.7.16`
 - 发布分支：`main`
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 33、React 19、TypeScript 6、Ant Design 6、Vite 8
@@ -21,6 +21,7 @@
 - 员工开启“独立模型配置”后，可以引用模型库或手动填写接口。
 - 同一个团队可以同时使用多个不同模型，适合规划、编码、审查等岗位分工。
 - 助理模型、全局模型和员工独立模型彼此有明确边界，不会被最后一次切换全员覆盖。
+- 助手和员工默认面向非技术用户回答：先说清楚成功或失败，再说明在哪里使用或卡在哪一步；技术日志只放在折叠执行过程中。
 
 ### 助理监督与任务调度
 
@@ -100,13 +101,13 @@
 
 最新安装包可从 GitHub Releases 下载：
 
-- [直接下载 v0.7.15 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.7.15/hermes-office-pro-setup-0.7.15.exe)
-- [查看 v0.7.15 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.7.15)
+- [直接下载 v0.7.16 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.7.16/hermes-office-pro-setup-0.7.16.exe)
+- [查看 v0.7.16 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.7.16)
 
 本地构建的安装程序生成在：
 
 ```text
-release/hermes-office-pro-setup-0.7.15.exe
+release/hermes-office-pro-setup-0.7.16.exe
 ```
 
 可以直接覆盖安装旧版本。应用数据保存在用户目录，正常覆盖安装不会删除员工、团队、聊天和模型配置。

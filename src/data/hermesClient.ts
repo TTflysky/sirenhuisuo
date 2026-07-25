@@ -5,6 +5,7 @@ import { seedTeams } from './defaultTeams';
 import type { OutputScope } from './outputs';
 import { loadTaskRuns } from './taskRuns';
 import { ensureDistinctEmployeeColors } from './employeeColors';
+import { getToolStage, humanizeExecutionError, isToolResultSuccessful } from './assistantPresentation';
 
 const LS_EMPLOYEES = 'hermes_office_employees';
 const LS_TEAMS = 'hermes_office_teams';
@@ -891,7 +892,7 @@ export interface AgentLoopOpts {
   scene: string;
   label: string;
   onToolCall?: (name: string, args: string) => void;
-  onToolResult?: (name: string, args: string, result: string) => void;
+  onToolResult?: (name: string, args: string, result: string, success?: boolean) => void;
   modelConfig?: ModelConfig;  // 可选员工独立模型配置
   extraSystemContext?: string; // 额外的系统上下文（如 soul.md）
   scope?: OutputScope;        // 产出物作用域
@@ -923,9 +924,9 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   let totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   let finalContent: string | null = null;
   let finalModel = '';
-  const maxIter = 10; // 包含工具调用和中途引导，给调整方向留出余量
-  const callLog: Array<{ name: string; args: string; result: string }> = [];
-  const toolResultCache = new Map<string, string>();
+  const maxIter = 14; // 给连续工具操作留出空间，并确保模型有机会生成最终说明
+  const callLog: Array<{ name: string; args: string; result: string; success: boolean }> = [];
+  const toolResultCache = new Map<string, { output: string; success: boolean }>();
   let stopped = false;
 
   for (let iter = 0; iter < maxIter; iter++) {
@@ -956,11 +957,12 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         const cacheKey = `${tc.name}:${tc.arguments}`;
         const cached = toolResultCache.get(cacheKey);
         const result = cached !== undefined
-          ? { toolCallId: tc.id, name: tc.name, success: true, output: `相同工具调用已执行过，复用结果：\n${cached}` }
+          ? { toolCallId: tc.id, name: tc.name, success: cached.success, output: `相同工具调用已执行过，复用结果：\n${cached.output}` }
           : await executeTool({ id: tc.id, name: tc.name, args: (() => { try { return JSON.parse(tc.arguments); } catch { return {}; } })(), scope });
-        if (cached === undefined) toolResultCache.set(cacheKey, result.output.slice(0, 6000));
-        onToolResult?.(tc.name, tc.arguments, result.output);
-        callLog.push({ name: tc.name, args: tc.arguments, result: result.output.slice(0, 200) });
+        const resultSuccess = result.success && isToolResultSuccessful(result.output, result.success);
+        if (cached === undefined) toolResultCache.set(cacheKey, { output: result.output.slice(0, 6000), success: resultSuccess });
+        onToolResult?.(tc.name, tc.arguments, result.output, resultSuccess);
+        callLog.push({ name: tc.name, args: tc.arguments, result: result.output.slice(0, 200), success: resultSuccess });
         // 对 tool output 长度做上限，防止下游模型调用因上下文超长失败
         const truncated = result.output.slice(0, 1500);
         currentTurns.push({ role: 'assistant', content: null, tool_calls: [{ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments } }] } as any);
@@ -977,21 +979,22 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     }
   }
 
-  // 工具循环用尽但模型未产出最终文本 → 构造简洁的摘要
+  // 工具循环用尽但模型未产出最终文本：只给普通用户看得懂的结果，技术记录由折叠执行过程承载。
   if (!finalContent) {
     if (stopped) {
-      finalContent = '⛔ 已手动停止执行。已完成的部分已保存在工作区，可重新执行继续。';
+      finalContent = '已经停止了。之前完成的内容仍然保留，需要时可以从中断的位置继续。';
     } else if (callLog.length > 0) {
-      const blocks = callLog.map((c, i) => {
-        const failed = /❌|退出码 \d+|error|not found|失败|异常/iu.test(c.result);
-        const status = failed ? '❌ 失败' : '✅ 成功';
-        const written = c.result.match(/文件已写入：[^（\n]+/u)?.[0];
-        const detail = failed ? c.result.replace(/\s+/g, ' ').slice(0, 160) : written ?? '已完成';
-        return `${i + 1}. ${c.name} → ${status}\n   ${detail}`;
-      });
-      finalContent = `已执行 ${callLog.length} 个操作。详细过程已收纳在下方“执行过程”中：\n\n${blocks.join('\n\n')}`;
+      const failures = callLog.filter((call) => !call.success);
+      const lastCall = callLog.at(-1)!;
+      if (failures.length === 0) {
+        finalContent = '已经处理好了。所有步骤都顺利完成，详细记录可以在下方“执行过程”中查看。';
+      } else if (lastCall.success) {
+        finalContent = `本轮处理已经完成。中途有 ${failures.length} 步没有成功，后来换了方法继续完成了最后一步。详细记录可以在下方“执行过程”中查看。`;
+      } else {
+        finalContent = `还没有处理好。最后卡在“${getToolStage(lastCall.name)}”这一步。${humanizeExecutionError(lastCall.result)}`;
+      }
     } else {
-      finalContent = '模型未调用任何工具也未给出回复，请重试或检查 API 配置。';
+      finalContent = '还没有拿到有效结果。请重新发送一次；如果仍然没有回复，请打开“设置 → 模型”检查模型是否可用。';
     }
   }
   return { content: finalContent, usage: totalUsage, model: finalModel };

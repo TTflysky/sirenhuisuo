@@ -2,6 +2,7 @@ import type { Employee, Team, ChatMessage, TeamTask, TaskLane, DiscussionPartici
 import { runAgentLoop, resolveApiBase, extractUserInsights, getEmployeeModel, type ChatTurn } from '../data/hermesClient';
 import { TOOLS, executeTool } from './tools';
 import { diagnoseModel } from '../diagnostics/modelDiagnostics';
+import { BEGINNER_RESPONSE_GUIDE } from '../data/assistantPresentation';
 
 // ===== 讨论回调 =====
 export interface DiscussionHandlers {
@@ -81,7 +82,7 @@ async function memberSpeak(
 
   const duty = ROLE_DUTY[emp.role] ?? ROLE_DUTY.custom;
   const persona = emp.prompt?.trim() || `你是「${emp.name}」，${emp.title}。`;
-  const system = `${persona}\n\n${duty}\n\n你正在团队群聊中协作。先判断任务是否需要专业 Skill：只有当 Skill 能明显提高质量或提供必要流程时，才调用 search_skills；比较候选后只读取最匹配的 Skill。没有合适 Skill 时直接使用通用能力和其他工具，不要为了留下调用记录而强行调用。若工具失败，说明失败原因并选择重试、替代工具或继续执行。${requireFileOutput ? '\n\n本步骤是交付步骤：在最终回复前必须调用 write_file 保存可交接的真实文件。没有成功写入文件就不算完成，禁止用“收到”“跟进”“已完成”代替产出。' : ''}\n\n完成后简短总结实际结果，注明已写入或读取的文件名，便于队友接续。`;
+  const system = `${persona}\n\n${duty}\n\n你正在团队群聊中协作。先判断任务是否需要专业 Skill：只有当 Skill 能明显提高质量或提供必要流程时，才调用 search_skills；比较候选后只读取最匹配的 Skill。没有合适 Skill 时直接使用通用能力和其他工具，不要为了留下调用记录而强行调用。若工具失败，说明失败原因并选择重试、替代工具或继续执行。${requireFileOutput ? '\n\n本步骤是交付步骤：在最终回复前必须调用 write_file 保存可交接的真实文件。没有成功写入文件就不算完成，禁止用“收到”“跟进”“已完成”代替产出。' : ''}\n\n完成后简短总结实际结果，注明已写入或读取的文件名，便于队友接续。\n\n${BEGINNER_RESPONSE_GUIDE}`;
 
   // 多模态：把图片附件拼到用户指令上
   const imageParts = (attachments ?? [])

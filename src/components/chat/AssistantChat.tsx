@@ -17,6 +17,14 @@ import { useFileDrop } from '../../hooks/useFileDrop';
 import AssistantSettingsModal, { getAssistantPrompt } from '../settings/AssistantSettingsModal';
 import { useStore } from '../../store';
 import {
+  BEGINNER_RESPONSE_GUIDE,
+  getToolActivity,
+  getToolStage,
+  humanizeExecutionError,
+  isToolResultSuccessful,
+  simplifyLegacyAssistantContent,
+} from '../../data/assistantPresentation';
+import {
   CopyOutlined,
   DeleteOutlined,
   ExportOutlined,
@@ -38,7 +46,9 @@ function isDialogMessage(m: ChatMessage): boolean {
 function loadHistory(): ChatMessage[] {
   try {
     const raw = localStorage.getItem(LS_KEY);
-    if (raw) return (JSON.parse(raw) as ChatMessage[]).filter(isDialogMessage);
+    if (raw) return (JSON.parse(raw) as ChatMessage[]).filter(isDialogMessage).map((message) => (
+      message.roleId === 'human' ? message : { ...message, content: simplifyLegacyAssistantContent(message.content) }
+    ));
   } catch {}
   return [];
 }
@@ -146,7 +156,7 @@ export default function AssistantChat() {
     if (!resolveApiBase(assistantSettings)) {
       push({
         id: `h-${Date.now()}-ai`, authorId: 'assistant', roleId: 'custom',
-        content: '我是驴狗蛋助手。当前未配置 AI 接口，请在设置中填入模型服务地址和 API Key 后重试。',
+        content: '还不能开始。你还没有设置可用的 AI 模型。请打开“设置 → 模型”，添加并启用一个模型后再试。',
         mentions: [], timestamp: Date.now(), kind: 'text',
       });
       setBusy(false);
@@ -155,6 +165,7 @@ export default function AssistantChat() {
       return;
     }
 
+    let lastStage = '连接 AI 模型';
     try {
       // 构建上下文（最近 20 条实质对话，过滤掉工具调用中间消息）
       const dialogMsgs = msgs.filter(isDialogMessage);
@@ -174,7 +185,7 @@ export default function AssistantChat() {
 
       const r = await runAgentLoop({
         turns: [
-          { role: 'system', content: getAssistantPrompt() },
+          { role: 'system', content: `${getAssistantPrompt()}\n\n${BEGINNER_RESPONSE_GUIDE}` },
           ...history,
           { role: 'user', content: enriched },
         ],
@@ -185,18 +196,18 @@ export default function AssistantChat() {
         attachments: imageAtts,
         extraSystemContext: skillContext,
         consumeSteeringMessages: () => steeringMessagesRef.current.splice(0),
-        onToolCall(name, args) {
+        onToolCall(name) {
           setActivityStep(2);
-          const argsStr = args ? (args.length > 100 ? args.slice(0, 100) + '…' : args) : '';
-          setStatus(`🔧 调用 ${name}${argsStr ? `(${argsStr})` : ''}`);
+          lastStage = getToolStage(name);
+          setStatus(getToolActivity(name));
         },
-        onToolResult(name, args, result) {
+        onToolResult(name, args, result, success) {
           if (showCoT) {
             cotSteps.push({
               toolName: name,
               args: args ?? '',
               result: result.slice(0, 2000),  // 限制单步结果
-              success: !result.startsWith('工具执行错误') && !result.startsWith('未知工具'),
+              success: isToolResultSuccessful(result, success),
               timestamp: Date.now(),
             });
           }
@@ -205,10 +216,10 @@ export default function AssistantChat() {
 
       const ts = Date.now();
       setActivityStep(3);
-      setStatus('整理回复…');
+      setStatus('正在整理清楚的结果…');
       push({
         id: `h-${ts}-ai`, authorId: 'assistant', roleId: 'custom',
-        content: r.content, mentions: [], timestamp: ts, kind: 'text',
+        content: simplifyLegacyAssistantContent(r.content), mentions: [], timestamp: ts, kind: 'text',
         tokens: r.usage.totalTokens,
         thoughtChain: showCoT && cotSteps.length > 0 ? cotSteps : undefined,
       });
@@ -236,7 +247,7 @@ export default function AssistantChat() {
     } catch (e: any) {
       push({
         id: `h-${Date.now()}-err`, authorId: 'assistant', roleId: 'custom',
-        content: `⚠️ 出错了：${e?.message ?? '未知错误'}`,
+        content: `还没有处理好。卡在“${lastStage}”这一步。${humanizeExecutionError(e?.message ?? '')}`,
         mentions: [], timestamp: Date.now(), kind: 'text',
       });
     }
@@ -341,7 +352,7 @@ export default function AssistantChat() {
                 <div className="msg-meta">
                   <span className="msg-author" style={{ color: 'var(--apple-accent)' }}><RobotOutlined /> 驴狗蛋助手</span>
                 </div>
-                <div className="msg-bubble typing">
+                <div className="msg-bubble typing assistant-live-step">
                   {status === '思考中…' ? (
                     <><span className="dot" /><span className="dot" /><span className="dot" /></>
                   ) : (

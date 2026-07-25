@@ -1952,6 +1952,23 @@ body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
   50% { opacity: 1; }
   to { transform: translateX(280%); opacity: .35; }
 }
+.assistant-live-step {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-color: color-mix(in srgb, var(--apple-accent) 35%, var(--border));
+  background: color-mix(in srgb, var(--apple-accent) 6%, var(--surface));
+  box-shadow: 0 4px 18px color-mix(in srgb, var(--apple-accent) 13%, transparent);
+}
+.assistant-live-step::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  width: 45%;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--apple-accent) 23%, transparent), transparent);
+  animation: assistant-light-flow 2.2s ease-in-out infinite;
+}
 .chat-messages {
   padding: 12px;
   border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
