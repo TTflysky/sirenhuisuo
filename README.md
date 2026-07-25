@@ -1,4 +1,4 @@
-# 私人办公会所（Hermes Office Pro）v0.6.4
+# 私人办公会所（Hermes Office Pro）v0.7.0
 
 > 面向 Windows 的多模型 AI 虚拟办公室。创建员工、组建团队，让不同模型按照职责协作完成真实任务。
 
@@ -6,7 +6,7 @@
 
 ## 项目状态
 
-- 当前版本：`0.6.4`
+- 当前版本：`0.7.0`
 - 发布分支：`main`
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 33、React 19、TypeScript 6、Ant Design 6、Vite 8
@@ -91,13 +91,13 @@
 
 最新安装包可从 GitHub Releases 下载：
 
-- [直接下载 v0.6.4 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.6.4/hermes-office-pro-setup-0.6.4.exe)
-- [查看 v0.6.4 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.6.4)
+- [直接下载 v0.7.0 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.7.0/hermes-office-pro-setup-0.7.0.exe)
+- [查看 v0.7.0 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.7.0)
 
 本地构建的安装程序生成在：
 
 ```text
-release/hermes-office-pro-setup-0.6.4.exe
+release/hermes-office-pro-setup-0.7.0.exe
 ```
 
 可以直接覆盖安装旧版本。应用数据保存在用户目录，正常覆盖安装不会删除员工、团队、聊天和模型配置。

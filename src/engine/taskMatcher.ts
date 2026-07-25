@@ -1,4 +1,4 @@
-import type { Employee, TaskPlanStep, Team } from '../types';
+import type { Employee, ProjectMember, TaskPlanStep, Team } from '../types';
 
 const ROLE_TERMS: Record<string, string[]> = {
   pm: ['规划', '拆解', '协调', '管理', '需求', '方案', '安排', '项目'],
@@ -46,6 +46,20 @@ export function matchTeamMembers(team: Team, employees: Employee[], request: str
     if (reviewer) best.push(reviewer.id);
   }
   return best.slice(0, 3);
+}
+
+export function matchProjectMembers(employees: Employee[], request: string): ProjectMember[] {
+  const pool: Team = { id: 'project-match', name: '项目匹配', memberIds: employees.filter((item) => item.isOnline).map((item) => item.id), chatMessages: [], tasks: [] };
+  const selected = matchTeamMembers(pool, employees, request);
+  return selected.map((employeeId, index) => {
+    const employee = employees.find((item) => item.id === employeeId);
+    const reason = employee?.role === 'checker'
+      ? '负责最终审查与验收'
+      : index === 0
+        ? `与「${request.slice(0, 24)}」的职责匹配度最高`
+        : `补充 ${employee?.title ?? '专项'} 能力并承接前序产出`;
+    return { employeeId, reason };
+  });
 }
 
 export function requiresValidation(request: string): boolean {

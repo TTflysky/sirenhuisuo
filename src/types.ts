@@ -42,6 +42,27 @@ export interface Team {
   chatMessages: ChatMessage[];
   tasks: TeamTask[];
   archived?: boolean;     // 归档后不出现在活跃列表，可恢复
+  projectId?: string;
+}
+
+export type ProjectStatus = 'awaiting_approval' | 'running' | 'completed' | 'failed' | 'archived';
+
+export interface ProjectMember {
+  employeeId: string;
+  reason: string;
+}
+
+export interface Project {
+  id: string;
+  title: string;
+  request: string;
+  steps: string[];
+  expectedOutputs: string[];
+  members: ProjectMember[];
+  status: ProjectStatus;
+  teamId?: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 // ===== 群聊消息 =====
@@ -187,6 +208,7 @@ export interface TaskRunStep {
 export interface TaskRun {
   id: string;
   teamId: string;
+  projectId?: string;
   title: string;
   request: string;
   status: TaskRunStatus;
@@ -230,6 +252,7 @@ export interface DiscussionProgress {
 export interface AppState {
   employees: Employee[];
   teams: Team[];
+  projects: Project[];
   taskRuns: TaskRun[];
   status: AgentStatus;
 }

@@ -8,6 +8,7 @@ import { ensureDistinctEmployeeColors } from './employeeColors';
 
 const LS_EMPLOYEES = 'hermes_office_employees';
 const LS_TEAMS = 'hermes_office_teams';
+const LS_PROJECTS = 'hermes_office_projects_v1';
 const LS_CHAT_PREFIX = 'hermes_office_chat_';
 const LS_SETTINGS = 'hermes_office_settings';
 const MAX_CHAT = 200;
@@ -785,7 +786,21 @@ export function fetchInitial(): AppState {
 
   const status: AgentStatus = { backendOnline: _backendOnline ?? false, demoRunning: false };
 
-  return { employees, teams, taskRuns: loadTaskRuns(), status };
+  return { employees, teams, projects: loadProjects(), taskRuns: loadTaskRuns(), status };
+}
+
+export function loadProjects(): import('../types').Project[] {
+  try {
+    const raw = localStorage.getItem(LS_PROJECTS);
+    const value = raw ? JSON.parse(raw) : [];
+    return Array.isArray(value) ? value : [];
+  } catch { return []; }
+}
+
+export function saveProjects(projects: import('../types').Project[]): void {
+  try { localStorage.setItem(LS_PROJECTS, JSON.stringify(projects.slice(-80))); } catch (e) {
+    console.warn('[hermesClient] Failed to save projects:', e);
+  }
 }
 
 // ===== 持久化：员工 =====

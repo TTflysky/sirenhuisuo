@@ -17,6 +17,7 @@ import type {
   RoleId,
   DiscussionProgress,
   DiscussionTriggerInput,
+  Project,
   TaskRun,
 } from './types';
 import { ROLE_SCARF } from './types';
@@ -28,7 +29,7 @@ import { evaluateDiscussionTrigger } from './engine/discussionTrigger';
 import { findFreeStation } from './data/hermesClient';
 import { sendBus, onBus, BUS_CHANNELS } from './ipcBus';
 import { createTaskRun, saveTaskRuns, updateTaskRun } from './data/taskRuns';
-import { buildTaskPlan, matchTeamMembers } from './engine/taskMatcher';
+import { buildTaskPlan, matchProjectMembers, matchTeamMembers } from './engine/taskMatcher';
 import { buildSkillContext, listSkills, matchSkills } from './data/skills';
 import { attachmentWorkspaceContext } from './utils/attachments';
 
@@ -41,6 +42,8 @@ type Action =
   | { type: 'ADD_TEAM'; team: Team }
   | { type: 'UPDATE_TEAM'; id: string; partial: Partial<Team> }
   | { type: 'REMOVE_TEAM'; id: string }
+  | { type: 'CREATE_PROJECT'; project: Project }
+  | { type: 'UPDATE_PROJECT'; id: string; partial: Partial<Project> }
   | { type: 'APPEND_CHAT'; teamId: string; msgs: ChatMessage[] }
   | { type: 'ADD_TASK'; teamId: string; task: TeamTask }
   | { type: 'ADVANCE_TASK'; teamId: string; taskId: string; lane: TaskLane }
@@ -56,6 +59,7 @@ type Action =
 const initialState: AppState = {
   employees: [],
   teams: [],
+  projects: [],
   taskRuns: [],
   status: { backendOnline: false, demoRunning: false },
 };
@@ -107,6 +111,20 @@ function reducer(s: AppState, a: Action): AppState {
       const next = s.teams.filter((t) => t.id !== a.id);
       client.saveTeams(next);
       return { ...s, teams: next };
+    }
+
+    case 'CREATE_PROJECT': {
+      const projects = [...s.projects, a.project].slice(-80);
+      client.saveProjects(projects);
+      return { ...s, projects };
+    }
+
+    case 'UPDATE_PROJECT': {
+      const projects = s.projects.map((project) => project.id === a.id
+        ? { ...project, ...a.partial, updatedAt: Date.now() }
+        : project);
+      client.saveProjects(projects);
+      return { ...s, projects };
     }
 
     case 'APPEND_CHAT': {
@@ -190,7 +208,14 @@ function reducer(s: AppState, a: Action): AppState {
     case 'UPDATE_TASK_RUN': {
       const taskRuns = s.taskRuns.map((run) => run.id === a.run.id ? a.run : run);
       saveTaskRuns(taskRuns);
-      return { ...s, taskRuns };
+      const project = a.run.projectId && (a.run.status === 'completed' || a.run.status === 'failed')
+        ? s.projects.find((item) => item.id === a.run.projectId)
+        : undefined;
+      const projects = project
+        ? s.projects.map((item) => item.id === project.id ? { ...item, status: (a.run.status === 'completed' ? 'completed' : 'failed') as Project['status'], updatedAt: Date.now() } : item)
+        : s.projects;
+      if (project) client.saveProjects(projects);
+      return { ...s, taskRuns, projects };
     }
 
     case 'REMOVE_TASK_RUN': {
@@ -231,6 +256,9 @@ interface StoreCtx {
   resetDemo: () => void;
   addEmployee: (name: string, title: string, role: OpcRoleId, avatar: string, avatarKind: 'preset' | 'custom', statusColor?: string, prompt?: string, avatarFrame?: import('./types').AvatarFrameConfig) => void;
   createTeam: (name: string, icon: string, memberIds: string[]) => void;
+  createProjectDraft: (input: { title: string; request: string; steps?: string[]; expectedOutputs?: string[] }) => void;
+  approveProject: (projectId: string) => void;
+  archiveProject: (projectId: string) => void;
   openTeamChat: (teamId: string) => void;
   openDmChat: (empId: string) => void;
   openAssistantChat: () => void;
@@ -444,6 +472,46 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     for (const mid of memberIds) {
       dispatch({ type: 'UPDATE_EMPLOYEE', id: mid, partial: { currentTeamId: team.id } });
     }
+  };
+
+  const createProjectDraft = (input: { title: string; request: string; steps?: string[]; expectedOutputs?: string[] }) => {
+    const now = Date.now();
+    const project: Project = {
+      id: `project-${now}-${Math.random().toString(36).slice(2, 7)}`,
+      title: input.title.trim() || '未命名项目',
+      request: input.request.trim(),
+      steps: input.steps?.filter(Boolean) ?? [],
+      expectedOutputs: input.expectedOutputs?.filter(Boolean) ?? [],
+      members: matchProjectMembers(stateRef.current.employees, input.request),
+      status: 'awaiting_approval', createdAt: now, updatedAt: now,
+    };
+    dispatch({ type: 'CREATE_PROJECT', project });
+  };
+
+  const approveProject = (projectId: string) => {
+    const project = stateRef.current.projects.find((item) => item.id === projectId);
+    if (!project || project.status !== 'awaiting_approval') return;
+    const memberIds = project.members.map((member) => member.employeeId);
+    if (!memberIds.length) return;
+    const team: Team = {
+      id: `team-project-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      name: project.title,
+      icon: '📌', memberIds, projectId,
+      chatMessages: [{ id: `msg-project-${Date.now()}`, authorId: 'assistant', roleId: 'custom',
+        content: `项目已批准。Hermes 将按既定步骤调度成员，最终产出须经审查后交付。`, mentions: memberIds, timestamp: Date.now(), kind: 'text' }],
+      tasks: [],
+    };
+    dispatch({ type: 'ADD_TEAM', team });
+    dispatch({ type: 'UPDATE_PROJECT', id: projectId, partial: { status: 'running', teamId: team.id } });
+    memberIds.forEach((id) => dispatch({ type: 'UPDATE_EMPLOYEE', id, partial: { currentTeamId: team.id } }));
+    setTimeout(() => { void startTaskRun(team.id, project.request, memberIds); }, 0);
+  };
+
+  const archiveProject = (projectId: string) => {
+    const project = stateRef.current.projects.find((item) => item.id === projectId);
+    if (!project) return;
+    dispatch({ type: 'UPDATE_PROJECT', id: projectId, partial: { status: 'archived' } });
+    if (project.teamId) dispatch({ type: 'UPDATE_TEAM', id: project.teamId, partial: { archived: true } });
   };
 
   const openChatWindow = (type: 'team-chat' | 'dm-chat' | 'assistant-chat', refId = '') => {
@@ -842,6 +910,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const skillRefs = explicitSkillRefs.length ? explicitSkillRefs : await matchSkills(request);
     const skillContext = await buildSkillContext(skillRefs);
     const run = createTaskRun(team, current.employees, request, plan, sourceMessageId, skillRefs);
+    run.projectId = team.projectId;
     run.memberSnapshot.forEach((snapshot) => {
       const employee = current.employees.find((item) => item.id === snapshot.id);
       if (employee) snapshot.model = client.getEmployeeModel(employee).model;
@@ -986,6 +1055,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         resetDemo,
         addEmployee,
         createTeam,
+        createProjectDraft,
+        approveProject,
+        archiveProject,
         openTeamChat,
         openDmChat,
         openAssistantChat,

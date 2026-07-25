@@ -13,6 +13,7 @@ import { linkify } from '../../utils/linkify';
 import { fileToAttachment, attachmentsFromClipboard, attachmentWorkspaceContext, formatFileSize, persistAttachments } from '../../utils/attachments';
 import { useFileDrop } from '../../hooks/useFileDrop';
 import AssistantSettingsModal, { getAssistantPrompt } from '../settings/AssistantSettingsModal';
+import { useStore } from '../../store';
 
 const LS_KEY = 'hermes_office_assistant_chat';
 
@@ -37,6 +38,7 @@ function saveHistory(msgs: ChatMessage[]): void {
 }
 
 export default function AssistantChat() {
+  const { createProjectDraft } = useStore();
   const [msgs, setMsgs] = useState<ChatMessage[]>(() => loadHistory());
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -175,6 +177,17 @@ export default function AssistantChat() {
         tokens: r.usage.totalTokens,
         thoughtChain: showCoT && cotSteps.length > 0 ? cotSteps : undefined,
       });
+
+      // Explicit project-management requests create an approval-gated draft.
+      // The assistant may advise freely, but it cannot silently start people or spend model tokens.
+      if (/(?:安排|组建|拉|启动).{0,8}(?:团队|群|项目)|(?:项目|任务).{0,8}(?:组队|拉群|调度)/u.test(content)) {
+        createProjectDraft({ title: content.slice(0, 40), request: content });
+        push({
+          id: `h-${Date.now()}-project`, authorId: 'assistant', roleId: 'custom',
+          content: '我已根据你的需求生成待批准项目草案。请到“自主办公”查看成员选择、执行步骤和预期产出；批准后才会创建项目团队并开始调度。',
+          mentions: [], timestamp: Date.now(), kind: 'text',
+        });
+      }
 
       // 自动提炼用户洞察（每 2 次对话触发）
       const userMsgCount = msgs.filter(m => m.roleId === 'human' && isDialogMessage(m)).length;

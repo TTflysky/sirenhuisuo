@@ -1,19 +1,16 @@
 import { useState, useRef, useEffect } from 'react';
 import { Switch, Button, Input, Space } from 'antd';
 import { useStore } from '../../store';
-import {
-  recommendProjects, runAutopilot,
-  type ProjectPlan, type AutopilotContext,
-} from '../../engine/autopilot';
+import { recommendProjects, type ProjectPlan, type AutopilotContext } from '../../engine/autopilot';
 import { loadSettings, saveSettings } from '../../data/hermesClient';
 
 interface LogLine { kind: 'phase' | 'thought' | 'tool' | 'obs' | 'msg' | 'err'; text: string; }
 
 export default function AutopilotPanel() {
-  const { state } = useStore();
+  const { state, createProjectDraft, approveProject, archiveProject, openTeamChat } = useStore();
   const [recos, setRecos] = useState<ProjectPlan[]>([]);
   const [loading, setLoading] = useState(false);
-  const [running, setRunning] = useState(false);
+  const [running] = useState(false);
   const [customGoal, setCustomGoal] = useState('');
   const [autoPilot, setAutoPilot] = useState<boolean>(() => loadSettings().autoPilot ?? false);
   const [workspace, setWorkspace] = useState<string>('');
@@ -47,7 +44,7 @@ export default function AutopilotPanel() {
       else push('phase', `✨ 推荐了 ${list.length} 个项目：`);
       // 自主模式：自动执行第一个
       if (autoPilot && list.length > 0) {
-        setTimeout(() => runProject(list[0]), 600);
+        setTimeout(() => proposeProject(list[0]), 600);
       }
     } catch (e: any) {
       push('err', `推荐失败：${e?.message ?? '未知错误'}`);
@@ -56,26 +53,10 @@ export default function AutopilotPanel() {
     }
   };
 
-  const runProject = async (plan: ProjectPlan) => {
-    if (running) return;
-    stopRef.current = false;
-    setRunning(true);
-    setLog([]);
+  const proposeProject = (plan: ProjectPlan) => {
+    createProjectDraft({ title: plan.title, request: plan.steps.join('\n') || plan.title, steps: plan.steps, expectedOutputs: plan.expectedOutputs });
+    push('phase', `已生成项目草案「${plan.title}」，等待你批准后才会创建团队并调用成员。`);
     setRecos([]);
-    try {
-      await runAutopilot(plan, {
-        onPhase: (t) => push('phase', t),
-        onThought: (t) => push('thought', t),
-        onToolCall: (name, args) => push('tool', `🔧 ${name}(${args.slice(0, 160)})`),
-        onObservation: (t) => push('obs', t),
-        onMessage: (t) => push('msg', t),
-        onDone: (t) => push('msg', `【总结】\n${t}`),
-        onError: (t) => push('err', t),
-        shouldStop: () => stopRef.current,
-      });
-    } finally {
-      setRunning(false);
-    }
   };
 
   const runCustom = () => {
@@ -87,7 +68,7 @@ export default function AutopilotPanel() {
       steps: [goal],
       expectedOutputs: ['按需求产出'],
     };
-    runProject(plan);
+    proposeProject(plan);
   };
 
   const toggleAuto = () => {
@@ -174,11 +155,33 @@ export default function AutopilotPanel() {
                 <div className="autopilot-card-out">预期产出：{p.expectedOutputs.join('、')}</div>
               )}
               <div className="autopilot-card-actions">
-                <Button size="small" type="primary" onClick={() => runProject(p)}>🚀 执行</Button>
+                <Button size="small" type="primary" onClick={() => proposeProject(p)}>📌 创建项目草案</Button>
                 <Button size="small" onClick={() => { setCustomGoal(p.title); }}>📝 改成我的需求</Button>
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {state.projects.length > 0 && (
+        <div className="autopilot-recos" style={{ marginTop: 14 }}>
+          {state.projects.slice().reverse().map((project) => {
+            const members = project.members.map((member) => {
+              const employee = state.employees.find((item) => item.id === member.employeeId);
+              return `${employee?.name ?? '已删除成员'}：${member.reason}`;
+            });
+            return <div className="autopilot-card" key={project.id}>
+              <div className="autopilot-card-title">{project.title} <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{project.status === 'awaiting_approval' ? '待批准' : project.status === 'running' ? '执行中' : project.status === 'archived' ? '已归档' : project.status}</span></div>
+              <div className="autopilot-card-rationale">{project.request}</div>
+              <div className="autopilot-card-out">成员选择：{members.join('；') || '未找到在线成员'}</div>
+              {project.steps.length > 0 && <ol className="autopilot-card-steps">{project.steps.map((step, index) => <li key={index}>{step}</li>)}</ol>}
+              <div className="autopilot-card-actions">
+                {project.status === 'awaiting_approval' && <Button size="small" type="primary" disabled={!project.members.length} onClick={() => approveProject(project.id)}>批准并组建团队</Button>}
+                {project.teamId && <Button size="small" onClick={() => openTeamChat(project.teamId!)}>打开项目团队</Button>}
+                {project.status !== 'archived' && <Button size="small" onClick={() => archiveProject(project.id)}>归档</Button>}
+              </div>
+            </div>;
+          })}
         </div>
       )}
 
