@@ -66,7 +66,8 @@ export default function AssistantChat() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [activityStep, setActivityStep] = useState(0);
-  const [liveActivities, setLiveActivities] = useState<Array<{ id: string; matchKey: string; label: string; state: 'active' | 'success' | 'error' }>>([]);
+  const [liveActivities, setLiveActivities] = useState<Array<{ id: string; matchKey: string; label: string; args: string; state: 'active' | 'error' }>>([]);
+  const [liveExecutionSteps, setLiveExecutionSteps] = useState<ThoughtChainStep[]>([]);
   const [showOutputs, setShowOutputs] = useState(false);
   const [selectedOutputFilename, setSelectedOutputFilename] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -145,7 +146,14 @@ export default function AssistantChat() {
       steeringMessagesRef.current.push(mode === 'steer'
         ? enriched
         : `【排队跟进】先完成当前工作，再按顺序处理：${enriched}`);
-      setStatus(mode === 'steer' ? '已收到新指令，等待当前模型返回后调整…' : '新消息已排队…');
+      const acknowledgement = mode === 'steer'
+        ? '收到。我会把这条作为当前工作的最新要求，完成手头这一步后马上调整。'
+        : '收到。这条要求已经排好队，我会先完成当前工作，再接着处理。';
+      push({
+        id: `h-${Date.now()}-ack`, authorId: 'assistant', roleId: 'custom',
+        content: acknowledgement, mentions: [], timestamp: Date.now(), kind: 'text',
+      });
+      setStatus(mode === 'steer' ? '已收到新要求，正在调整当前操作…' : '已收到新要求，等待接续处理…');
       return;
     }
 
@@ -153,6 +161,7 @@ export default function AssistantChat() {
     setStatus('思考中…');
     setActivityStep(1);
     setLiveActivities([]);
+    setLiveExecutionSteps([]);
 
     // 无当前助理 API 时本地回复（支持助理独立模型配置）
     const assistantSettings = resolveChatSettings();
@@ -169,6 +178,8 @@ export default function AssistantChat() {
     }
 
     let lastStage = '连接 AI 模型';
+    let showCoT = false;
+    const cotSteps: ThoughtChainStep[] = [];
     try {
       // 构建上下文（最近 20 条实质对话，过滤掉工具调用中间消息）
       const dialogMsgs = msgs.filter(isDialogMessage);
@@ -183,8 +194,7 @@ export default function AssistantChat() {
 
       // 思维链采集
       const settings = loadSettings();
-      const showCoT = settings.showThoughtChain !== false; // 默认开启
-      const cotSteps: ThoughtChainStep[] = [];
+      showCoT = settings.showThoughtChain !== false; // 默认开启
 
       const r = await runAgentLoop({
         turns: [
@@ -204,10 +214,7 @@ export default function AssistantChat() {
           lastStage = getToolStage(name);
           setStatus(getToolActivity(name, args));
           const matchKey = `${name}:${args}`;
-          setLiveActivities((current) => [
-            ...current,
-            { id: `${Date.now()}-${current.length}`, matchKey, label: getToolReport(name, args), state: 'active' as const },
-          ].slice(-5));
+          setLiveActivities([{ id: `${Date.now()}`, matchKey, label: getToolReport(name, args), args: args ?? '', state: 'active' }]);
         },
         onToolResult(name, args, result, success) {
           const matchKey = `${name}:${args}`;
@@ -217,19 +224,22 @@ export default function AssistantChat() {
             for (let cursor = current.length - 1; cursor >= 0; cursor -= 1) {
               if (current[cursor].matchKey === matchKey && current[cursor].state === 'active') { index = cursor; break; }
             }
-            const nextState: 'success' | 'error' = resultSuccess ? 'success' : 'error';
-            return index < 0 ? current : current.map((item, itemIndex) => itemIndex === index
-              ? { ...item, state: nextState }
+            if (index < 0) return current;
+            if (resultSuccess) return current.filter((_, itemIndex) => itemIndex !== index);
+            return current.map((item, itemIndex) => itemIndex === index
+              ? { ...item, state: 'error' }
               : item);
           });
           if (showCoT) {
-            cotSteps.push({
+            const step: ThoughtChainStep = {
               toolName: name,
               args: args ?? '',
               result: result.slice(0, 2000),  // 限制单步结果
               success: resultSuccess,
               timestamp: Date.now(),
-            });
+            };
+            cotSteps.push(step);
+            setLiveExecutionSteps((current) => [...current, step].slice(-50));
           }
         },
       });
@@ -269,6 +279,7 @@ export default function AssistantChat() {
         id: `h-${Date.now()}-err`, authorId: 'assistant', roleId: 'custom',
         content: `还没有处理好。卡在“${lastStage}”这一步。${humanizeExecutionError(e?.message ?? '')}`,
         mentions: [], timestamp: Date.now(), kind: 'text',
+        thoughtChain: showCoT && cotSteps.length > 0 ? cotSteps : undefined,
       });
     }
     setBusy(false);
@@ -368,7 +379,7 @@ export default function AssistantChat() {
               );
             })}
             {busy && status && (
-              <div className="msg">
+              <div className="msg assistant-live-report">
                 <div className="msg-meta">
                   <span className="msg-author" style={{ color: 'var(--apple-accent)' }}><RobotOutlined /> 驴狗蛋助手</span>
                 </div>
@@ -379,12 +390,19 @@ export default function AssistantChat() {
                     <div className="assistant-live-content">
                       <strong>{status}</strong>
                       {liveActivities.length > 0 && <div className="assistant-live-activities">
-                        {liveActivities.map((item) => <span key={item.id} className={`assistant-live-activity is-${item.state}`}>
-                          <i>{item.state === 'success' ? '✓' : item.state === 'error' ? '!' : '•'}</i>
-                          <span>{item.label}</span>
-                          <small>{item.state === 'success' ? '完成' : item.state === 'error' ? '换方法处理中' : '进行中'}</small>
-                        </span>)}
+                        {liveActivities.map((item) => <details key={item.id} className={`assistant-live-activity is-${item.state}`}>
+                          <summary>
+                            <i>{item.state === 'error' ? '!' : '•'}</i>
+                            <span>{item.label}</span>
+                            <small>{item.state === 'error' ? '换方法处理中' : '进行中'}</small>
+                          </summary>
+                          <div className="assistant-live-detail">
+                            <span>本步输入</span>
+                            <pre>{item.args || '这一步没有额外参数。'}</pre>
+                          </div>
+                        </details>)}
                       </div>}
+                      {liveExecutionSteps.length > 0 && <ThoughtChainView steps={liveExecutionSteps} />}
                     </div>
                   )}
                 </div>
