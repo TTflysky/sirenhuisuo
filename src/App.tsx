@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { Segmented, Button } from 'antd';
-import { BulbOutlined, MoonOutlined } from '@ant-design/icons';
+import { Segmented, Button, Dropdown } from 'antd';
+import { BgColorsOutlined, RobotOutlined } from '@ant-design/icons';
 import type { Employee } from './types';
 import type { UpdateStatus } from './electron.d';
 import { useStore } from './store';
@@ -14,21 +14,50 @@ import SkillLibraryView from './components/skills/SkillLibraryView';
 import { checkBackend } from './data/hermesClient';
 
 type View = 'office' | 'analytics' | 'autopilot' | 'skill-library';
+type ThemeName = 'light' | 'dark' | 'eye-care' | 'soft-gray';
+
+const THEME_OPTIONS: Array<{ value: ThemeName; label: string; color: string }> = [
+  { value: 'light', label: '明亮', color: '#f7f8fb' },
+  { value: 'dark', label: '深色', color: '#242529' },
+  { value: 'eye-care', label: '护眼', color: '#dfe9dc' },
+  { value: 'soft-gray', label: '柔和灰', color: '#e5e7eb' },
+];
 
 export default function App() {
-  const { state, openDmChat, openTeamChat, startTeamDemo, dispatch } = useStore();
+  const { state, openDmChat, openTeamChat, openAssistantChat, startTeamDemo, dispatch } = useStore();
 
   // ===== ALL hooks first (Rules of Hooks) =====
   const [showSettings, setShowSettings] = useState(false);
   const [view, setView] = useState<View>('office');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
-  const [darkMode, setDarkMode] = useState(() => localStorage.getItem('hermes_office_theme') === 'dark');
+  const [themeName, setThemeName] = useState<ThemeName>(() => {
+    const saved = localStorage.getItem('hermes_office_theme');
+    return THEME_OPTIONS.some((option) => option.value === saved) ? saved as ThemeName : 'light';
+  });
   const unsubRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = darkMode ? 'dark' : 'light';
-    localStorage.setItem('hermes_office_theme', darkMode ? 'dark' : 'light');
-  }, [darkMode]);
+    document.documentElement.dataset.theme = themeName;
+    localStorage.setItem('hermes_office_theme', themeName);
+    window.electronAPI?.broadcast?.('theme-changed', themeName);
+  }, [themeName]);
+
+  useEffect(() => {
+    const applyTheme = (theme: unknown) => {
+      if (THEME_OPTIONS.some((option) => option.value === theme)) setThemeName(theme as ThemeName);
+    };
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === 'hermes_office_theme') applyTheme(event.newValue);
+    };
+    window.addEventListener('storage', handleStorage);
+    const unsubscribe = window.electronAPI?.onBroadcast?.((message) => {
+      if (message.channel === 'theme-changed') applyTheme(message.payload);
+    });
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      unsubscribe?.();
+    };
+  }, []);
 
   // 子窗口检测：原生聊天子窗口的 URL 附带 #chat 路由。
   // 仅在首次渲染时读一次 location.hash——主窗口永远不带 #chat（v0.1.13 已移除 hash fallback），
@@ -125,12 +154,28 @@ export default function App() {
             {state.status.backendOnline ? '🟢 默认模型可用' : '🔴 默认模型不可用'}
           </span>
           <button
-            className="titlebar-btn theme-toggle-btn"
-            title={darkMode ? '切换到白天模式' : '切换到黑夜模式'}
-            onClick={() => setDarkMode((value) => !value)}
+            className="titlebar-btn assistant-launch-btn"
+            title="打开章北海助理"
+            aria-label="打开章北海助理"
+            onClick={openAssistantChat}
           >
-            {darkMode ? <BulbOutlined /> : <MoonOutlined />}
+            <RobotOutlined />
           </button>
+          <Dropdown
+            trigger={['click']}
+            menu={{
+              selectedKeys: [themeName],
+              onClick: ({ key }) => setThemeName(key as ThemeName),
+              items: THEME_OPTIONS.map((option) => ({
+                key: option.value,
+                label: <span className="theme-menu-item"><i style={{ background: option.color }} />{option.label}</span>,
+              })),
+            }}
+          >
+            <button className="titlebar-btn theme-toggle-btn" title="选择界面主题" aria-label="选择界面主题">
+              <BgColorsOutlined />
+            </button>
+          </Dropdown>
           <Button size="small" onClick={handleDemo} disabled={state.status.demoRunning}>
             ▶ 演示 OPC 协作
           </Button>

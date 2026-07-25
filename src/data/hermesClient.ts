@@ -172,6 +172,13 @@ export interface ModelConnectionTestResult {
   httpStatus?: number;
 }
 
+export interface ModelListResult {
+  ok: boolean;
+  models: string[];
+  message: string;
+  endpoint: string;
+}
+
 function apiErrorMessage(raw: string): string {
   try {
     const parsed = JSON.parse(raw);
@@ -449,6 +456,38 @@ async function apiFetch(path: string, init: RequestInit = {}, timeoutMs = 4000, 
     if (timedOut) throw new Error(`模型响应超时（${Math.round(timeoutMs / 1000)} 秒）。请检查模型服务负载、网络或稍后重试。`);
     if (e instanceof DOMException && e.name === 'AbortError') throw new Error('模型请求已取消。');
     throw e;
+  }
+}
+
+/** 读取 OpenAI 兼容服务的模型列表，用于设置页免手填模型 ID。 */
+export async function fetchAvailableModels(mc: ModelConfig): Promise<ModelListResult> {
+  const base = (mc.apiHost ?? '').trim().replace(/\/+$/, '');
+  const endpoint = base ? endpointUrl(base, '/models') : '';
+  if (!base) return { ok: false, models: [], message: '请先填写 API 地址', endpoint };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (mc.apiKey) headers.Authorization = `Bearer ${mc.apiKey}`;
+    const response = await fetch(endpoint, { headers, signal: controller.signal });
+    const raw = await response.text().catch(() => '');
+    if (!response.ok) return { ok: false, models: [], message: `HTTP ${response.status}：${apiErrorMessage(raw)}`, endpoint };
+    let payload: unknown;
+    try { payload = JSON.parse(raw); } catch { return { ok: false, models: [], message: '模型列表响应不是有效 JSON', endpoint }; }
+    const records = Array.isArray((payload as { data?: unknown }).data)
+      ? (payload as { data: unknown[] }).data
+      : Array.isArray(payload) ? payload : [];
+    const models = [...new Set(records.map((item) => {
+      if (typeof item === 'string') return item.trim();
+      if (item && typeof item === 'object') return String((item as { id?: unknown; name?: unknown; model?: unknown }).id ?? (item as { name?: unknown }).name ?? (item as { model?: unknown }).model ?? '').trim();
+      return '';
+    }).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+    if (models.length === 0) return { ok: false, models: [], message: '接口返回成功，但未找到可用模型 ID', endpoint };
+    return { ok: true, models, message: `已获取 ${models.length} 个模型`, endpoint };
+  } catch (error: any) {
+    return { ok: false, models: [], message: error?.name === 'AbortError' ? '获取模型列表超时（15 秒）' : `网络错误：${error?.message ?? '无法连接服务'}`, endpoint };
+  } finally {
+    clearTimeout(timer);
   }
 }
 

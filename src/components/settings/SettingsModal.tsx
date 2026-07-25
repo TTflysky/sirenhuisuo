@@ -8,7 +8,7 @@ import {
   loadSettings, saveSettings,
   PROVIDER_PRESETS, getProvider, type AppSettings,
   type ModelEntry,
-  testModelConnection, migrateToModelLibrary,
+  testModelConnection, fetchAvailableModels, migrateToModelLibrary,
   loadUserProfile, saveUserProfile,
   loadUserMemory, saveUserMemory, type UserMemoryItem,
 } from '../../data/hermesClient';
@@ -166,6 +166,8 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
   });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
 
   // 编辑状态
   const [editLabel, setEditLabel] = useState('');
@@ -186,6 +188,7 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
     setEditHost(preset.baseUrl);
     setEditModel(preset.defaultModel);
     setEditApiKey('');
+    setAvailableModels([]);
   };
 
   const startEdit = (entry: ModelEntry) => {
@@ -195,6 +198,7 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
     setEditHost(entry.apiHost ?? '');
     setEditApiKey(entry.apiKey ?? '');
     setEditModel(entry.model ?? '');
+    setAvailableModels(entry.model ? [entry.model] : []);
   };
 
   const handleProviderChange = (key: string) => {
@@ -203,6 +207,23 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
     const preset = getProvider(key);
     setEditHost(preset.baseUrl);
     setEditModel(preset.defaultModel);
+  };
+
+  const handleFetchModels = async () => {
+    if (!editHost.trim()) {
+      message.warning('请先填写 API 地址');
+      return;
+    }
+    setFetchingModels(true);
+    const result = await fetchAvailableModels({ provider: editProvider, apiHost: editHost.trim(), apiKey: editApiKey.trim() || undefined });
+    setFetchingModels(false);
+    if (!result.ok) {
+      message.error(`${result.message}${result.endpoint ? `（${result.endpoint}）` : ''}`);
+      return;
+    }
+    setAvailableModels(result.models);
+    if (!result.models.includes(editModel)) setEditModel(result.models[0]);
+    message.success(result.message);
   };
 
   const handleSaveEntry = () => {
@@ -436,11 +457,14 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
             style={{ marginBottom: 8 }}
           />
           <Space.Compact style={{ width: '100%', marginBottom: 8 }}>
-            <Input
-              value={editModel}
-              onChange={(e) => setEditModel(e.target.value)}
-              placeholder="模型名，如 deepseek-chat"
+            <Select
+              showSearch
+              allowClear
+              value={editModel || undefined}
+              onChange={(value) => setEditModel(value ?? '')}
+              placeholder="点击“获取模型”后选择"
               style={{ width: '50%' }}
+              options={availableModels.map((model) => ({ value: model, label: model }))}
             />
             <Input.Password
               value={editApiKey}
@@ -449,6 +473,9 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
               style={{ width: '50%' }}
             />
           </Space.Compact>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: -3, marginBottom: 8 }}>
+            <Button size="small" onClick={() => void handleFetchModels()} loading={fetchingModels}>↻ 获取当前 API 的模型</Button>
+          </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
             <Button size="small" onClick={() => setEditingId(null)}>取消</Button>
             <Button size="small" type="primary" onClick={handleSaveEntry}>保存</Button>

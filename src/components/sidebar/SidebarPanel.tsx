@@ -16,11 +16,56 @@ type Filter = 'all' | 'online' | 'working' | 'idle';
 export default function SidebarPanel() {
   const { state, openTeamChat, openDmChat } = useStore();
   const [collapsed, setCollapsed] = useState(false);
+  const [employeesCollapsed, setEmployeesCollapsed] = useState(() => localStorage.getItem('hermes_office_sidebar_employees_collapsed') === '1');
+  const [teamsCollapsed, setTeamsCollapsed] = useState(() => localStorage.getItem('hermes_office_sidebar_teams_collapsed') === '1');
+  const [sidebarWidth, setSidebarWidth] = useState(() => Number(localStorage.getItem('hermes_office_sidebar_width')) || 248);
+  const [employeeHeight, setEmployeeHeight] = useState(() => Number(localStorage.getItem('hermes_office_sidebar_employee_height')) || 300);
   const [filter, setFilter] = useState<Filter>('all');
   const [showAddEmp, setShowAddEmp] = useState(false);
   const [showNewTeam, setShowNewTeam] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const syncInputRef = useRef<HTMLInputElement>(null);
+
+  const startSidebarResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const initial = sidebarWidth;
+    const move = (moveEvent: PointerEvent) => setSidebarWidth(Math.max(210, Math.min(420, initial + moveEvent.clientX - startX)));
+    const end = (endEvent: PointerEvent) => {
+      const next = Math.max(210, Math.min(420, initial + endEvent.clientX - startX));
+      setSidebarWidth(next);
+      localStorage.setItem('hermes_office_sidebar_width', String(next));
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end);
+  };
+
+  const startSectionResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startY = event.clientY;
+    const initial = employeeHeight;
+    const move = (moveEvent: PointerEvent) => setEmployeeHeight(Math.max(130, Math.min(520, initial + moveEvent.clientY - startY)));
+    const end = (endEvent: PointerEvent) => {
+      const next = Math.max(130, Math.min(520, initial + endEvent.clientY - startY));
+      setEmployeeHeight(next);
+      localStorage.setItem('hermes_office_sidebar_employee_height', String(next));
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end);
+  };
+
+  const toggleEmployees = () => setEmployeesCollapsed((value) => {
+    localStorage.setItem('hermes_office_sidebar_employees_collapsed', value ? '0' : '1');
+    return !value;
+  });
+  const toggleTeams = () => setTeamsCollapsed((value) => {
+    localStorage.setItem('hermes_office_sidebar_teams_collapsed', value ? '0' : '1');
+    return !value;
+  });
 
   const handleSyncImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -44,7 +89,7 @@ export default function SidebarPanel() {
 
   return (
     <>
-      <div className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
+      <div className={`sidebar ${collapsed ? 'collapsed' : ''}`} style={collapsed ? undefined : { width: sidebarWidth, minWidth: sidebarWidth }}>
         <div className="sidebar-header">
           {!collapsed && <h3>👥 员工</h3>}
           <AssistantModelSelector />
@@ -59,8 +104,12 @@ export default function SidebarPanel() {
 
         {!collapsed && (
           <>
-            {/* 状态筛选 */}
-            <div className="sidebar-section" style={{ paddingTop: 6 }}>
+            <div className={`sidebar-resizable-panel employee-panel ${employeesCollapsed ? 'is-collapsed' : ''}`} style={employeesCollapsed ? undefined : { height: employeeHeight }}>
+              <div className="sidebar-section-heading">
+                <span>员工列表 <small>{filtered.length}</small></span>
+                <button className="sidebar-fold-btn" onClick={toggleEmployees} title={employeesCollapsed ? '展开员工' : '折叠员工'}>{employeesCollapsed ? '⌄' : '⌃'}</button>
+              </div>
+              {!employeesCollapsed && <div className="sidebar-section sidebar-filter-section" style={{ paddingTop: 6 }}>
               {(['all', 'online', 'working', 'idle'] as Filter[]).map((f) => (
                 <button
                   key={f}
@@ -77,10 +126,10 @@ export default function SidebarPanel() {
                   {{ all: '全部', online: '在线 🟢', working: '工作中 💪', idle: '空闲 😴' }[f]}
                 </button>
               ))}
-            </div>
+              </div>}
 
             {/* 员工列表 */}
-            <div className="sidebar-section" style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
+              {!employeesCollapsed && <div className="sidebar-section employee-list-section" style={{ flex: 1, overflowY: 'auto', minHeight: 0 }}>
               {filtered.map((emp) => (
                 <EmployeeCard
                   key={emp.id}
@@ -95,10 +144,15 @@ export default function SidebarPanel() {
               {filtered.length === 0 && (
                 <div style={{ textAlign: 'center', padding: 20, fontSize: 12, color: 'var(--text-muted)' }}>暂无员工</div>
               )}
+              </div>}
             </div>
 
+            {!employeesCollapsed && !teamsCollapsed && <div className="sidebar-section-resizer" onPointerDown={startSectionResize} title="拖动调整员工与团队区域高度" />}
+
             {/* 团队列表 */}
-            <TeamList onTeamClick={openTeamChat} onNewTeam={() => setShowNewTeam(true)} />
+            <div className={`sidebar-resizable-panel team-panel ${teamsCollapsed ? 'is-collapsed' : ''}`}>
+              <TeamList onTeamClick={openTeamChat} onNewTeam={() => setShowNewTeam(true)} collapsed={teamsCollapsed} onToggle={toggleTeams} />
+            </div>
 
             {/* 连接器区域 */}
             <ConnectorPanel />
@@ -136,6 +190,7 @@ export default function SidebarPanel() {
             </div>
           </>
         )}
+        {!collapsed && <div className="sidebar-width-resizer" onPointerDown={startSidebarResize} title="拖动调整侧栏宽度" />}
       </div>
 
       {/* Modals */}

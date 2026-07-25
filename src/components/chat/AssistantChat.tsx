@@ -38,11 +38,12 @@ function saveHistory(msgs: ChatMessage[]): void {
 }
 
 export default function AssistantChat() {
-  const { createProjectDraft, dispatch } = useStore();
+  const { createProjectDraft } = useStore();
   const [msgs, setMsgs] = useState<ChatMessage[]>(() => loadHistory());
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
+  const [activityStep, setActivityStep] = useState(0);
   const [showOutputs, setShowOutputs] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [skillRefs, setSkillRefs] = useState<SkillReference[]>([]);
@@ -94,13 +95,7 @@ export default function AssistantChat() {
     setText('');    setAttachments([]);
     setBusy(true);
     setStatus('思考中…');
-    const progressStartedAt = Date.now();
-    const updateProgress = (step: number, name = '章北海助理') => dispatch({ type: 'SET_PROGRESS', progress: {
-      teamId: 'assistant', teamName: '章北海助理', step, totalSteps: 3,
-      currentEmpName: name, currentRole: 'custom', scene: 'discussion',
-      startedAt: progressStartedAt, estimatedMs: 300000, lastUpdate: Date.now(),
-    } });
-    updateProgress(1);
+    setActivityStep(1);
 
     // 文本类附件：拼进消息文本
     let enriched = content;
@@ -128,6 +123,7 @@ export default function AssistantChat() {
       });
       setBusy(false);
       setStatus('');
+      setActivityStep(0);
       return;
     }
 
@@ -161,7 +157,7 @@ export default function AssistantChat() {
         attachments: imageAtts,
         extraSystemContext: skillContext,
         onToolCall(name, args) {
-          updateProgress(2, `章北海助理 · ${name}`);
+          setActivityStep(2);
           const argsStr = args ? (args.length > 100 ? args.slice(0, 100) + '…' : args) : '';
           setStatus(`🔧 调用 ${name}${argsStr ? `(${argsStr})` : ''}`);
         },
@@ -179,7 +175,8 @@ export default function AssistantChat() {
       });
 
       const ts = Date.now();
-      updateProgress(3, '章北海助理 · 整理回复');
+      setActivityStep(3);
+      setStatus('整理回复…');
       push({
         id: `h-${ts}-ai`, authorId: 'assistant', roleId: 'custom',
         content: r.content, mentions: [], timestamp: ts, kind: 'text',
@@ -216,7 +213,7 @@ export default function AssistantChat() {
     }
     setBusy(false);
     setStatus('');
-    dispatch({ type: 'SET_PROGRESS', progress: null });
+    setActivityStep(0);
   };
 
   const handleCopyMsg = async (content: string) => {
@@ -254,11 +251,17 @@ export default function AssistantChat() {
     <div className="chat-panel">
       <div className="chat-layout">
         <div className="chat-main">
-          <div className="assistant-chat-toolbar">
-            <strong>章北海助理</strong>
-            <div style={{ flex: 1 }} />
-            <button className="btn btn-sm" onClick={() => setShowAssistantSettings(true)} title="助理设置" aria-label="打开助理设置">⚙️ 设置</button>
-          </div>
+          {busy && (
+            <div className="assistant-activity" role="status" aria-live="polite">
+              <div className="assistant-activity-glow" />
+              <span className="assistant-activity-icon">🤖</span>
+              <div className="assistant-activity-copy">
+                <strong>{status || '思考中…'}</strong>
+                <span>章北海助理正在处理当前对话</span>
+              </div>
+              <span className="assistant-activity-step">{Math.max(1, activityStep)}/3</span>
+            </div>
+          )}
           {/* 消息流 */}
           <div className="chat-messages">
             {msgs.length === 0 && (
@@ -335,7 +338,7 @@ export default function AssistantChat() {
               <button className="btn btn-sm" onClick={() => fileInputRef.current?.click()} title="上传文件/图片">📎</button>
               <SkillPickerButton selected={skillRefs} onSelectedChange={setSkillRefs} disabled={busy} />
               <div style={{ flex: 1 }} />
-              <span />
+              <button className="btn btn-sm assistant-settings-btn" onClick={() => setShowAssistantSettings(true)} title="助理设置" aria-label="打开助理设置">⚙️</button>
             </div>
             {/* 附件预览 */}
             {attachments.length > 0 && (

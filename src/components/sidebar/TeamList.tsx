@@ -8,9 +8,11 @@ import RenameTeamModal from './RenameTeamModal';
 interface Props {
   onTeamClick: (teamId: string) => void;
   onNewTeam: () => void;
+  collapsed?: boolean;
+  onToggle?: () => void;
 }
 
-export default function TeamList({ onTeamClick, onNewTeam }: Props) {
+export default function TeamList({ onTeamClick, onNewTeam, collapsed = false, onToggle }: Props) {
   const { state, dispatch } = useStore();
   const { message } = App.useApp();
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -61,12 +63,15 @@ export default function TeamList({ onTeamClick, onNewTeam }: Props) {
       <div className="sidebar-section">
         <div className="sidebar-section-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span>团队</span>
-          <button className="btn btn-sm" style={{ padding: '2px 8px', fontSize: 10 }} onClick={onNewTeam}>+ 新建</button>
+          <span className="sidebar-section-actions">
+            {!collapsed && <button className="btn btn-sm" style={{ padding: '2px 8px', fontSize: 10 }} onClick={onNewTeam}>+ 新建</button>}
+            <button className="sidebar-fold-btn" onClick={onToggle} title={collapsed ? '展开团队' : '折叠团队'}>{collapsed ? '⌄' : '⌃'}</button>
+          </span>
         </div>
-        {activeTeams.length === 0 && archivedTeams.length === 0 && (
+        {!collapsed && activeTeams.length === 0 && archivedTeams.length === 0 && (
           <div style={{ padding: 8, fontSize: 11, color: 'var(--text-muted)', textAlign: 'center' }}>暂无团队</div>
         )}
-        {activeTeams.map((team: Team) => (
+        {!collapsed && activeTeams.map((team: Team) => (
           <TeamItem
             key={team.id}
             team={team}
@@ -76,7 +81,7 @@ export default function TeamList({ onTeamClick, onNewTeam }: Props) {
         ))}
 
         {/* 已归档团队 */}
-        {archivedTeams.length > 0 && (
+        {!collapsed && archivedTeams.length > 0 && (
           <div style={{ marginTop: 8 }}>
             <div
               className="sidebar-section-label"
