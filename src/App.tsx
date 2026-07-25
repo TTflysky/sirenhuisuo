@@ -1,6 +1,18 @@
 import { useState, useEffect, useRef } from 'react';
 import { Segmented, Button, Dropdown } from 'antd';
-import { BgColorsOutlined, RobotOutlined } from '@ant-design/icons';
+import {
+  AppstoreOutlined,
+  BarChartOutlined,
+  BgColorsOutlined,
+  BorderOutlined,
+  CloseOutlined,
+  HomeOutlined,
+  MinusOutlined,
+  PlayCircleOutlined,
+  RobotOutlined,
+  SettingOutlined,
+  ThunderboltOutlined,
+} from '@ant-design/icons';
 import type { Employee } from './types';
 import type { UpdateStatus } from './electron.d';
 import { useStore } from './store';
@@ -115,22 +127,24 @@ export default function App() {
   const progress = state.status.progress;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+    <div className="app-shell">
       {/* 标题栏 */}
       <div className="titlebar">
         <div className="titlebar-left">
-          <span style={{ fontSize: 16 }}>🏢</span>
-          <span className="titlebar-title">私人办公会所</span>
+          <div className="titlebar-brand" aria-label="私人办公会所">
+            <span className="titlebar-brand-mark"><AppstoreOutlined /></span>
+            <span className="titlebar-title">私人办公会所</span>
+          </div>
           {/* 视图切换 */}
           <div className="view-tabs" style={{ marginLeft: 14 }}>
             <Segmented
               value={view}
               onChange={(v) => setView(v as View)}
               options={[
-                { label: '🏢 办公室', value: 'office' },
-                { label: '📊 数据分析', value: 'analytics' },
-                { label: '🤖 自主办公', value: 'autopilot' },
-                { label: '🧩 技能库', value: 'skill-library' },
+                { label: <span className="view-tab-label"><HomeOutlined /><span>办公室</span></span>, value: 'office' },
+                { label: <span className="view-tab-label"><BarChartOutlined /><span>数据分析</span></span>, value: 'analytics' },
+                { label: <span className="view-tab-label"><ThunderboltOutlined /><span>自主办公</span></span>, value: 'autopilot' },
+                { label: <span className="view-tab-label"><AppstoreOutlined /><span>技能库</span></span>, value: 'skill-library' },
               ]}
             />
           </div>
@@ -163,8 +177,9 @@ export default function App() {
               {updateStatus.status === 'error' && '⚠️'}
             </div>
           )}
-          <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-            {state.status.backendOnline ? '🟢 默认模型可用' : '🔴 默认模型不可用'}
+          <span className="backend-status" title={state.status.backendOnline ? '默认模型连接正常' : '默认模型当前不可用'}>
+            <i className={state.status.backendOnline ? 'is-online' : 'is-offline'} />
+            <span>{state.status.backendOnline ? '模型可用' : '模型离线'}</span>
           </span>
           <button
             className="titlebar-btn assistant-launch-btn"
@@ -189,21 +204,21 @@ export default function App() {
               <BgColorsOutlined />
             </button>
           </Dropdown>
-          <Button size="small" onClick={handleDemo} disabled={state.status.demoRunning}>
-            ▶ 演示 OPC 协作
+          <Button className="titlebar-command" size="small" icon={<PlayCircleOutlined />} onClick={handleDemo} disabled={state.status.demoRunning}>
+            协作演示
           </Button>
-          <Button size="small" onClick={() => window.electronAPI?.openSettings?.() ?? setShowSettings(true)} title="API 接口配置">
-            ⚙️ 设置
-          </Button>
+          <button className="titlebar-btn" onClick={() => window.electronAPI?.openSettings?.() ?? setShowSettings(true)} title="设置" aria-label="打开设置">
+            <SettingOutlined />
+          </button>
           <div className="titlebar-actions">
-            <button className="titlebar-btn" title="最小化" onClick={() => window.electronAPI?.minimize()}>
-              —
+            <button className="titlebar-btn window-control" title="最小化" aria-label="最小化" onClick={() => window.electronAPI?.minimize()}>
+              <MinusOutlined />
             </button>
-            <button className="titlebar-btn" title="最大化" onClick={() => window.electronAPI?.toggleMax()}>
-              ▢
+            <button className="titlebar-btn window-control" title="最大化" aria-label="最大化" onClick={() => window.electronAPI?.toggleMax()}>
+              <BorderOutlined />
             </button>
-            <button className="titlebar-btn" title="关闭" onClick={() => window.electronAPI?.close()}>
-              ✕
+            <button className="titlebar-btn window-control window-control-close" title="关闭" aria-label="关闭" onClick={() => window.electronAPI?.close()}>
+              <CloseOutlined />
             </button>
           </div>
         </div>

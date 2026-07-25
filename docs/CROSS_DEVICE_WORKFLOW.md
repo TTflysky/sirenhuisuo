@@ -1,36 +1,70 @@
-# 跨设备 Codex 协作流程
+# 跨设备同步与交接
 
-办公室和家里的 Codex 都以 GitHub `main` 分支为唯一共享事实来源。不要依赖聊天记忆、桌面文件或某一台电脑的安装目录来判断项目状态。
+办公室和家里的电脑都以 GitHub `main` 和同版本 Release 为唯一共享来源。同步脚本不需要 Git Smart HTTP：它直接读取 GitHub API，把源码下载到带版本和提交号的新目录，并校验安装包的 Release 文件大小。
 
-## 每次开始开发
+## 一条命令同步
+
+在任意一份已有源码中执行：
 
 ```powershell
-cd 'E:\私人办公会所项目'
-git pull --ff-only origin main
-npm.cmd run status:project -- -Fetch
+npm.cmd run sync:project
 ```
 
-状态命令统一显示版本、分支、最新提交、与远端的领先/落后数量、未提交改动和当前版本安装包是否已经构建。GitHub 暂时不可达时，命令会保留本地结果并明确提示刷新失败，不能把它误判为项目故障。
+这条命令会：
 
-接着阅读：
+1. 查询远端 `main` 的提交号和 `package.json` 版本。
+2. 下载到同级目录 `sirenhuisuo-v<版本>-<提交前7位>`，不覆盖正在开发的目录。
+3. 如果当前源码已有 `node_modules`，为新目录复用依赖 Junction。
+4. 下载对应 GitHub Release 安装包到同级 `downloads/v<版本>`。
+5. 按 GitHub Release 记录的字节数校验安装包，避免使用不完整文件。
 
-1. `docs/PROJECT_HANDOFF.md`：产品规则、架构、隐私边界和发布要求。
-2. `CHANGELOG.md`：每个版本的已完成改动。
-3. `git log -5 --oneline` 和 `git status --short`：本次接力的直接上下文。
+只查看远端状态：
 
-## 每次交接或发布
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/sync-project.ps1 -Mode Status
+```
 
-1. 在 `docs/PROJECT_HANDOFF.md` 更新当前版本、已验证内容和未完成风险。
-2. 升级 `package.json`、`package-lock.json`、README 和 CHANGELOG 中的版本号。
-3. 执行 `npm.cmd run build` 和 `npm.cmd run dist:win`；安装器文件名固定为 `hermes-office-pro-setup-<version>.exe`。
-4. 提交并推送 `main`。
-5. 创建同版本 GitHub Release，上传安装器、同名 `.blockmap` 与 `latest.yml`。三者缺一不可，否则客户端不能完成热更新。
-6. 在另一台电脑执行本文件的“每次开始开发”命令，确认 `behind 0, ahead 0` 后再开始新的改动。
+只同步源码或安装包：
 
-## 同步范围
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/sync-project.ps1 -Mode Source
+powershell -ExecutionPolicy Bypass -File scripts/sync-project.ps1 -Mode Installer
+```
 
-提交到 GitHub：源码、文档、脱敏的 `config/local-test-profile.sanitized.json`、版本记录、构建配置。
+静默覆盖安装到统一目录：
 
-不得提交：API Key、Token、代理密码、聊天记录、长期记忆、真实本机员工配置、用户数据目录、上传附件、工作区文件和安装包缓存。另一台电脑导入脱敏配置后，在本机重新填写 API Key。
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/sync-project.ps1 -Mode Installer -Install
+```
 
-当一台电脑正在改动时，另一台电脑不得在旧提交上继续修改同一个文件。先提交并推送，另一端拉取后再接力；若远端不可达，保留本地改动，不要猜测对方状态或强行覆盖。
+默认安装目录为 `E:\AI办公会所\hermes-office-pro`。其他电脑可通过 `-InstallDirectory` 指定路径。
+
+## 安全规则
+
+- 脚本只读取系统 Git Credential Manager 中已有的 GitHub OAuth；不会在仓库保存或显示账号、密码、Token。
+- 新源码始终放进新目录，已有目录不会被递归覆盖。
+- API Key、聊天记录、长期记忆、真实员工配置、用户 Skill 和工作区文件不进入 GitHub。
+- 更新客户端时保留 Electron 用户数据目录，因此员工、团队、模型和聊天记录不会随安装目录覆盖而删除。
+
+## 开始开发
+
+进入同步命令输出的新源码目录后阅读：
+
+1. `docs/PROJECT_HANDOFF.md`
+2. `CHANGELOG.md`
+3. `package.json` 中的版本
+
+运行：
+
+```powershell
+npm.cmd run lint
+npm.cmd run build
+```
+
+## 完成交接
+
+1. 更新 `docs/PROJECT_HANDOFF.md`、`CHANGELOG.md` 和版本号。
+2. 运行 `npm.cmd run lint`、`npm.cmd run build`、`npm.cmd run dist:win`。
+3. 提交并发布到 GitHub `main`，创建同版本 Release。
+4. Release 必须包含安装器、`.blockmap` 和 `latest.yml`，否则客户端无法自动更新。
+5. 另一台电脑再次运行 `npm.cmd run sync:project`，即可从同一提交继续。

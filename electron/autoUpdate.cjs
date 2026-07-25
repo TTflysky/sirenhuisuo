@@ -92,11 +92,6 @@ function initAutoUpdater(mainWindow) {
     // Background update errors are diagnostic only. They are not application
     // or model-network errors and should not be displayed as such.
     log.warn('[autoUpdate] update check failed:', err?.message ?? err);
-    return;
-    mainWindow.webContents.send('update:status', {
-      status: 'error',
-      message: `更新出错：${err?.message ?? '未知错误'}`,
-    });
   });
 
   // 启动后延迟 3 秒检查更新（让窗口先加载完成）

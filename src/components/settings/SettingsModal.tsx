@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Modal, Switch, Input, Select, Button, Space, App, Tag, Tooltip, Segmented } from 'antd';
 import {
   ApiOutlined, BgColorsOutlined, CloudSyncOutlined, DatabaseOutlined, FolderOpenOutlined, RobotOutlined,
-  DeleteOutlined, MergeCellsOutlined, ScheduleOutlined, SettingOutlined, UserOutlined,
+  BorderOutlined, CloseOutlined, DeleteOutlined, MergeCellsOutlined, MinusOutlined,
+  ScheduleOutlined, SettingOutlined, UserOutlined,
 } from '@ant-design/icons';
 import {
   loadSettings, saveSettings,
@@ -92,11 +93,11 @@ export default function SettingsModal({ onClose, onSaved, standalone = false }: 
   if (standalone) {
     return <div className="settings-standalone">
       <div className="settings-native-titlebar">
-        <span>⚙️ 设置</span>
+        <span><SettingOutlined /> 设置</span>
         <div className="settings-native-actions">
-          <button className="titlebar-btn mac-traffic mac-minimize" title="最小化" onClick={() => window.electronAPI?.minimize()} />
-          <button className="titlebar-btn mac-traffic mac-maximize" title="最大化" onClick={() => window.electronAPI?.toggleMax()} />
-          <button className="titlebar-btn mac-traffic mac-close" title="关闭" onClick={onClose} />
+          <button className="titlebar-btn window-control" title="最小化" aria-label="最小化" onClick={() => window.electronAPI?.minimize()}><MinusOutlined /></button>
+          <button className="titlebar-btn window-control" title="最大化" aria-label="最大化" onClick={() => window.electronAPI?.toggleMax()}><BorderOutlined /></button>
+          <button className="titlebar-btn window-control window-control-close" title="关闭" aria-label="关闭" onClick={onClose}><CloseOutlined /></button>
         </div>
       </div>
       {content}

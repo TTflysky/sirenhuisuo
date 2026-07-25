@@ -1,7 +1,7 @@
 {
   "name": "hermes-office-pro",
   "private": true,
-  "version": "0.7.12",
+  "version": "0.7.13",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -11,8 +11,9 @@
     "preview": "vite preview",
     "start": "electron .",
     "status:project": "powershell -ExecutionPolicy Bypass -File scripts/project-status.ps1",
-    "dist:win": "npm run build && electron-builder --win --publish=never",
-    "release:win": "npm run build && electron-builder --win --publish=always",
+    "sync:project": "powershell -ExecutionPolicy Bypass -File scripts/sync-project.ps1 -Mode All",
+    "dist:win": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1",
+    "release:win": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1 -Publish",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
@@ -39,6 +40,7 @@
   "build": {
     "appId": "com.hermes.office",
     "productName": "私人办公会所",
+    "electronDist": "node_modules/electron/dist",
     "artifactName": "${name}-setup-${version}.${ext}",
     "files": [
       "dist/**",

@@ -24,9 +24,9 @@ if (typeof window !== 'undefined' && window.electronAPI?.onBroadcast) {
 // antd 主题：贴合现有「白调极简办公室」配色，圆角/字体与 theme.css 一致
 const antdTheme = {
   token: {
-    colorPrimary: '#1a1f36',
-    colorInfo: '#1a1f36',
-    borderRadius: 12,
+    colorPrimary: '#0a84ff',
+    colorInfo: '#0a84ff',
+    borderRadius: 6,
     fontFamily: 'var(--ui-font-family)',
     colorBgContainer: '#ffffff',
     colorBorder: '#e2e6ef',
@@ -34,7 +34,7 @@ const antdTheme = {
     colorText: '#1a1f36',
     colorTextSecondary: '#5c6b8a',
     colorTextTertiary: '#9aa4c2',
-    controlHeight: 32,
+    controlHeight: 34,
   },
 };
 
@@ -49,4 +49,3 @@ createRoot(document.getElementById('root')!).render(
     </ConfigProvider>
   </StrictMode>,
 );
-

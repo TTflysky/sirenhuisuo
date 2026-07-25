@@ -1,11 +1,11 @@
 # 项目交接手册
 
 > 最后整理：2026-07-25
-> 当前源码版本：`v0.7.12`
+> 当前源码版本：`v0.7.13`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 
-本文件是接手本项目的唯一工作入口。先执行 `npm.cmd run status:project -- -Fetch`，再读本文件、`README.md`、`CHANGELOG.md` 和相关模块；跨电脑接力的固定流程见 `docs/CROSS_DEVICE_WORKFLOW.md`。`开发资料全记录.md` 是早期历史档案，不能用来判断当前实现。
+本文件是接手本项目的唯一工作入口。先执行 `npm.cmd run sync:project`，再进入命令输出的最新源码目录阅读本文件、`README.md`、`CHANGELOG.md` 和相关模块；跨电脑接力的固定流程见 `docs/CROSS_DEVICE_WORKFLOW.md`。`开发资料全记录.md` 是早期历史档案，不能用来判断当前实现。
 
 ## 1. 产品目标与不可破坏的规则
 

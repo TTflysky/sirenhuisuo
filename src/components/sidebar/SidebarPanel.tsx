@@ -1,5 +1,15 @@
 import { useRef, useState } from 'react';
-import { UploadOutlined } from '@ant-design/icons';
+import {
+  DoubleLeftOutlined,
+  DoubleRightOutlined,
+  DownOutlined,
+  ReloadOutlined,
+  TeamOutlined,
+  UpOutlined,
+  UserAddOutlined,
+  UserOutlined,
+  UploadOutlined,
+} from '@ant-design/icons';
 import { useStore } from '../../store';
 import type { Employee } from '../../types';
 import EmployeeCard from './EmployeeCard';
@@ -18,7 +28,7 @@ export default function SidebarPanel() {
   const [collapsed, setCollapsed] = useState(false);
   const [employeesCollapsed, setEmployeesCollapsed] = useState(() => localStorage.getItem('hermes_office_sidebar_employees_collapsed') === '1');
   const [teamsCollapsed, setTeamsCollapsed] = useState(() => localStorage.getItem('hermes_office_sidebar_teams_collapsed') === '1');
-  const [sidebarWidth, setSidebarWidth] = useState(() => Number(localStorage.getItem('hermes_office_sidebar_width')) || 248);
+  const [sidebarWidth, setSidebarWidth] = useState(() => Number(localStorage.getItem('hermes_office_sidebar_width')) || 260);
   const [employeeHeight, setEmployeeHeight] = useState(() => Number(localStorage.getItem('hermes_office_sidebar_employee_height')) || 300);
   const [filter, setFilter] = useState<Filter>('all');
   const [showAddEmp, setShowAddEmp] = useState(false);
@@ -91,14 +101,14 @@ export default function SidebarPanel() {
     <>
       <div className={`sidebar ${collapsed ? 'collapsed' : ''}`} style={collapsed ? undefined : { width: sidebarWidth, minWidth: sidebarWidth }}>
         <div className="sidebar-header">
-          {!collapsed && <h3>👥 员工</h3>}
+          {!collapsed && <h3><UserOutlined /> 员工</h3>}
           <AssistantModelSelector />
           <button
-            className="btn btn-sm"
+            className="btn btn-sm sidebar-collapse-btn"
             onClick={() => setCollapsed(!collapsed)}
             title={collapsed ? '展开' : '收起'}
           >
-            {collapsed ? '▶' : '◀'}
+            {collapsed ? <DoubleRightOutlined /> : <DoubleLeftOutlined />}
           </button>
         </div>
 
@@ -107,23 +117,16 @@ export default function SidebarPanel() {
             <div className={`sidebar-resizable-panel employee-panel ${employeesCollapsed ? 'is-collapsed' : ''}`} style={employeesCollapsed ? undefined : { height: employeeHeight }}>
               <div className="sidebar-section-heading">
                 <span>员工列表 <small>{filtered.length}</small></span>
-                <button className="sidebar-fold-btn" onClick={toggleEmployees} title={employeesCollapsed ? '展开员工' : '折叠员工'}>{employeesCollapsed ? '⌄' : '⌃'}</button>
+                <button className="sidebar-fold-btn" onClick={toggleEmployees} title={employeesCollapsed ? '展开员工' : '折叠员工'} aria-label={employeesCollapsed ? '展开员工' : '折叠员工'}>{employeesCollapsed ? <DownOutlined /> : <UpOutlined />}</button>
               </div>
               {!employeesCollapsed && <div className="sidebar-section sidebar-filter-section" style={{ paddingTop: 6 }}>
               {(['all', 'online', 'working', 'idle'] as Filter[]).map((f) => (
                 <button
                   key={f}
-                  style={{
-                    padding: '4px 12px', margin: '0 8px', border: 'none',
-                    background: filter === f ? 'var(--bg-deep)' : 'transparent',
-                    borderRadius: 6, cursor: 'pointer', fontSize: 11,
-                    color: filter === f ? 'var(--text)' : 'var(--text-muted)',
-                    fontWeight: filter === f ? 600 : 400,
-                    transition: 'all 0.15s',
-                  }}
+                  className={`sidebar-filter-btn ${filter === f ? 'active' : ''}`}
                   onClick={() => setFilter(f)}
                 >
-                  {{ all: '全部', online: '在线 🟢', working: '工作中 💪', idle: '空闲 😴' }[f]}
+                  {{ all: '全部', online: '在线', working: '工作中', idle: '空闲' }[f]}
                 </button>
               ))}
               </div>}
@@ -158,35 +161,33 @@ export default function SidebarPanel() {
             <ConnectorPanel />
 
             {/* 底部操作 */}
-            <div style={{ padding: '10px 14px', display: 'flex', gap: 8 }}>
-              <button className="btn btn-sm" title="导入员工、团队和模型同步配置" onClick={() => syncInputRef.current?.click()}>
-                <UploadOutlined /> 同步
+            <div className="sidebar-footer">
+              <button className="btn btn-sm btn-primary sidebar-add-employee" onClick={() => setShowAddEmp(true)}>
+                <UserAddOutlined /> 添加员工
               </button>
               <input ref={syncInputRef} type="file" accept="application/json,.json" hidden onChange={handleSyncImport} />
-              <button className="btn btn-sm btn-primary" style={{ flex: 1 }} onClick={() => setShowAddEmp(true)}>
-                + 添加员工
-              </button>
-              <button
-                className="btn btn-sm"
-                onClick={() => setShowNewTeam(true)}
-                title="新建团队"
-              >
-                + 团队
-              </button>
-              <button
-                className="btn btn-sm"
-                title="清空缓存并重置为初始员工"
-                onClick={() => {
-                  if (confirm('清空所有本地数据（员工/团队/聊天）并恢复初始状态？')) {
-                    Object.keys(localStorage)
-                      .filter((k) => k.startsWith('hermes_office'))
-                      .forEach((k) => localStorage.removeItem(k));
-                    location.reload();
-                  }
-                }}
-              >
-                ↺
-              </button>
+              <div className="sidebar-footer-tools">
+                <button className="btn btn-sm" title="导入员工、团队和模型同步配置" onClick={() => syncInputRef.current?.click()}>
+                  <UploadOutlined /> 同步
+                </button>
+                <button className="btn btn-sm" onClick={() => setShowNewTeam(true)} title="新建团队">
+                  <TeamOutlined /> 团队
+                </button>
+                <button
+                  className="btn btn-sm"
+                  title="清空缓存并重置为初始员工"
+                  onClick={() => {
+                    if (confirm('清空所有本地数据（员工/团队/聊天）并恢复初始状态？')) {
+                      Object.keys(localStorage)
+                        .filter((k) => k.startsWith('hermes_office'))
+                        .forEach((k) => localStorage.removeItem(k));
+                      location.reload();
+                    }
+                  }}
+                >
+                  <ReloadOutlined /> 重置
+                </button>
+              </div>
             </div>
           </>
         )}
