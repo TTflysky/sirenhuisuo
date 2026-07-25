@@ -6,6 +6,13 @@ const MAX_OUTPUTS = 200;
 
 // ===== 内容类型 =====
 export type OutputContentType = 'markdown' | 'html' | 'code' | 'json' | 'csv' | 'image' | 'url' | 'text' | 'chart';
+export type OutputCategory = 'final' | 'working' | 'reference';
+
+export const OUTPUT_CATEGORY_META: Record<OutputCategory, { label: string; description: string }> = {
+  final: { label: '最终交付', description: '可以直接验收或交给用户使用的成品' },
+  working: { label: '工作文件', description: '草稿、方案、测试和中间过程文件' },
+  reference: { label: '参考资料', description: '输入样本、原始材料和检索资料' },
+};
 
 // ===== 作用域：每个产出物属于哪个对话 =====
 export type OutputScope = `team:${string}` | `dm:${string}` | 'assistant' | 'global';
@@ -26,6 +33,7 @@ export interface OutputRecord {
   language?: string;            // 代码语言（code 类型时）
   snippet?: string;             // 简短预览
   diskPath?: string;            // Electron 工作区中的真实文件路径
+  category?: OutputCategory;    // 交付层级（旧数据读取时自动推断）
 }
 
 // ===== 工具函数 =====
@@ -128,6 +136,14 @@ export function kindIcon(kind: string): string {
   }
 }
 
+export function inferOutputCategory(filename: string, explicit?: string): OutputCategory {
+  if (explicit === 'final' || explicit === 'working' || explicit === 'reference') return explicit;
+  const normalized = filename.replace(/\\/g, '/').toLowerCase();
+  if (/(^|\/)(references?|sources?|inputs?|uploads?|素材|参考资料|原始资料)(\/|$)|原始|素材|参考资料|无答案|题目版|输入样本/u.test(normalized)) return 'reference';
+  if (/(^|\/)(drafts?|working|temp|tmp|tests?|notes?|草稿|过程|工作文件)(\/|$)|草稿|初稿|中间版|过程|测试记录|诊断|日志|会议纪要/u.test(normalized)) return 'working';
+  return 'final';
+}
+
 // ===== CRUD =====
 
 export function loadOutputs(): OutputRecord[] {
@@ -140,6 +156,7 @@ export function loadOutputs(): OutputRecord[] {
         ...o,
         scope: (o as any).scope ?? 'global',
         contentType: (o as any).contentType ?? 'markdown',
+        category: inferOutputCategory(o.filename, (o as any).category),
       })).filter((output) => output.kind === 'file'
         && !output.id.startsWith('att-')
         && !output.title?.startsWith('附件：')
@@ -171,6 +188,7 @@ export function addOutput(r: Omit<OutputRecord, 'id' | 'ts'>): OutputRecord {
     ...r,
     scope: r.scope ?? 'global',
     contentType: r.contentType ?? contentTypeFromFilename(r.filename),
+    category: inferOutputCategory(r.filename, r.category),
   } as OutputRecord;
   // 自动计算 bytes
   if (!rec.bytes) {

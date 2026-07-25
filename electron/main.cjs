@@ -152,6 +152,7 @@ let lastActiveWindow = null;
 let ipcHandlersRegistered = false;
 let assistantCompanionWindow = null;
 let assistantCompanionManuallyClosed = false;
+let settingsWindow = null;
 let tray = null;
 let isQuitting = false;
 
@@ -251,11 +252,13 @@ function syncAssistantCompanion(owner = mainWindow) {
   }
   companion.setBounds(getAssistantCompanionBounds(owner, companion), false);
   if (!companion.isVisible()) companion.showInactive();
+  if (owner.isFocused()) companion.moveTop();
 }
 
 async function createAssistantCompanion(owner = mainWindow, { focus = false } = {}) {
   if (!owner || owner.isDestroyed()) return null;
   if (assistantCompanionWindow && !assistantCompanionWindow.isDestroyed()) {
+    if (assistantCompanionWindow.getParentWindow() !== owner) assistantCompanionWindow.setParentWindow(owner);
     syncAssistantCompanion(owner);
     if (focus) focusChatWindow(assistantCompanionWindow);
     return assistantCompanionWindow;
@@ -264,6 +267,8 @@ async function createAssistantCompanion(owner = mainWindow, { focus = false } = 
   assistantCompanionManuallyClosed = false;
   const companion = new BrowserWindow({
     ...getAssistantCompanionBounds(owner, null),
+    parent: owner,
+    modal: false,
     minWidth: ASSISTANT_COMPANION_MIN_WIDTH,
     minHeight: CHAT_WINDOW_MIN_HEIGHT,
     title: '私人办公会所 · 章北海助理',
@@ -308,6 +313,53 @@ async function createAssistantCompanion(owner = mainWindow, { focus = false } = 
   }
 }
 
+async function createSettingsWindow(sourceWindow = mainWindow) {
+  if (settingsWindow && !settingsWindow.isDestroyed()) {
+    focusChatWindow(settingsWindow);
+    return settingsWindow;
+  }
+
+  const sourceBounds = sourceWindow && !sourceWindow.isDestroyed()
+    ? sourceWindow.getBounds()
+    : screen.getPrimaryDisplay().workArea;
+  const workArea = screen.getDisplayMatching(sourceBounds).workArea;
+  const win = new BrowserWindow({
+    x: workArea.x + 24,
+    y: workArea.y + 24,
+    width: Math.max(980, workArea.width - 48),
+    height: Math.max(680, workArea.height - 48),
+    minWidth: 900,
+    minHeight: 620,
+    title: '私人办公会所 · 设置',
+    frame: false,
+    show: false,
+    backgroundColor: '#f5f6fa',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  settingsWindow = win;
+  trackActiveWindow(win);
+  win.once('ready-to-show', () => {
+    win.maximize();
+    win.show();
+    win.focus();
+  });
+  win.on('closed', () => {
+    if (settingsWindow === win) settingsWindow = null;
+  });
+  try {
+    if (!app.isPackaged) await win.loadURL('http://localhost:5173/#settings');
+    else await win.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'settings' });
+    return win;
+  } catch (error) {
+    if (!win.isDestroyed()) win.destroy();
+    throw error;
+  }
+}
+
 function trackActiveWindow(win) {
   lastActiveWindow = win;
   win.on('focus', () => {
@@ -348,6 +400,7 @@ function createWindow() {
   win.on('maximize', () => syncAssistantCompanion(win));
   win.on('unmaximize', () => syncAssistantCompanion(win));
   win.on('restore', () => syncAssistantCompanion(win));
+  win.on('focus', () => syncAssistantCompanion(win));
   win.on('show', () => {
     if (!assistantCompanionManuallyClosed) syncAssistantCompanion(win);
   });
@@ -741,6 +794,16 @@ function createWindow() {
     }
     chatWindows.clear();
     assistantCompanionWindow = null;
+  });
+
+  ipcMain.handle('win:openSettings', async (event) => {
+    try {
+      const existing = settingsWindow && !settingsWindow.isDestroyed();
+      await createSettingsWindow(BrowserWindow.fromWebContents(event.sender) ?? mainWindow);
+      return { ok: true, reused: existing };
+    } catch (error) {
+      return { ok: false, error: String(error?.message ?? error) };
+    }
   });
 }
 

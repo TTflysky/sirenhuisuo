@@ -5,7 +5,9 @@ import {
   kindIcon,
   loadOutputsByScope,
   openOutputInBrowser,
+  OUTPUT_CATEGORY_META,
   removeOutput,
+  type OutputCategory,
   type OutputRecord,
   type OutputScope,
 } from '../../data/outputs';
@@ -21,14 +23,13 @@ interface Props {
 export default function ChatOutputsPanel({ scope, maxHeight = 500, selectedFilename, onBack }: Props) {
   const [outputs, setOutputs] = useState<OutputRecord[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [expandedGroups, setExpandedGroups] = useState<Set<OutputCategory>>(() => new Set(['final']));
 
   useEffect(() => {
     const refresh = () => {
       const next = loadOutputsByScope(scope).sort((a, b) => a.filename.localeCompare(b.filename, 'zh-CN'));
       setOutputs(next);
-      setSelectedId((current) => current && next.some((item) => item.id === current)
-        ? current
-        : next[0]?.id ?? null);
+      setSelectedId((current) => current && next.some((item) => item.id === current) ? current : null);
     };
 
     refresh();
@@ -44,12 +45,17 @@ export default function ChatOutputsPanel({ scope, maxHeight = 500, selectedFilen
     () => outputs.find((item) => item.id === selectedId) ?? null,
     [outputs, selectedId],
   );
+  const grouped = useMemo(() => (['final', 'working', 'reference'] as OutputCategory[]).map((category) => ({
+    category,
+    outputs: outputs.filter((output) => (output.category ?? 'final') === category),
+  })).filter((group) => group.outputs.length > 0), [outputs]);
 
   useEffect(() => {
     if (!selectedFilename) return;
     const matched = outputs.find((output) => output.filename === selectedFilename);
     if (!matched) return;
     setSelectedId(matched.id);
+    setExpandedGroups((current) => new Set([...current, matched.category ?? 'final']));
     window.setTimeout(() => document.querySelector(`[data-output-id="${CSS.escape(matched.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 0);
   }, [outputs, selectedFilename]);
 
@@ -57,6 +63,12 @@ export default function ChatOutputsPanel({ scope, maxHeight = 500, selectedFilen
     removeOutput(output.id);
     setOutputs((current) => current.filter((item) => item.id !== output.id));
   };
+
+  const toggleGroup = (category: OutputCategory) => setExpandedGroups((current) => {
+    const next = new Set(current);
+    if (next.has(category)) next.delete(category); else next.add(category);
+    return next;
+  });
 
   if (outputs.length === 0) {
     return (
@@ -73,21 +85,27 @@ export default function ChatOutputsPanel({ scope, maxHeight = 500, selectedFilen
 
   return (
     <div className="chat-outputs-panel">
-      <div className="chat-outputs-list" style={{ maxHeight }}>
+      <div className={`chat-outputs-list ${selected ? 'with-preview' : ''}`} style={{ maxHeight }}>
         <div className="chat-outputs-list-head">
           {onBack && <button type="button" className="chat-outputs-back" onClick={onBack}>← 返回聊天</button>}
           <span>交付文件 ({outputs.length})</span>
         </div>
-        {outputs.map((output) => (
+        {grouped.map(({ category, outputs: groupOutputs }) => <section className="chat-outputs-group" key={category}>
+          <button type="button" className="chat-outputs-group-head" onClick={() => toggleGroup(category)} aria-expanded={expandedGroups.has(category)}>
+            <span className="chat-outputs-group-chevron">{expandedGroups.has(category) ? '⌄' : '›'}</span>
+            <span><strong>{OUTPUT_CATEGORY_META[category].label}</strong><small>{OUTPUT_CATEGORY_META[category].description}</small></span>
+            <code>{groupOutputs.length}</code>
+          </button>
+          {expandedGroups.has(category) && groupOutputs.map((output) => (
           <div
             className={`chat-outputs-item ${output.id === selectedId ? 'active' : ''}`}
             key={output.id}
             data-output-id={output.id}
-            onClick={() => setSelectedId(output.id)}
+            onClick={() => setSelectedId((current) => current === output.id ? null : output.id)}
             role="button"
             tabIndex={0}
             onKeyDown={(event) => {
-              if (event.key === 'Enter' || event.key === ' ') setSelectedId(output.id);
+              if (event.key === 'Enter' || event.key === ' ') setSelectedId((current) => current === output.id ? null : output.id);
             }}
           >
             <span className="chat-outputs-item-icon">{contentTypeIcon(output.contentType)}</span>
@@ -121,13 +139,14 @@ export default function ChatOutputsPanel({ scope, maxHeight = 500, selectedFilen
               ×
             </button>
           </div>
-        ))}
+          ))}
+        </section>)}
       </div>
 
       {selected && (
         <div className="chat-outputs-preview">
           <div className="chat-outputs-preview-head">
-            {onBack && <button type="button" className="chat-outputs-back" onClick={onBack}>← 返回聊天</button>}
+            <button type="button" className="chat-outputs-back" onClick={() => setSelectedId(null)}>⌄ 收起预览</button>
             <span className="chat-outputs-preview-title" title={selected.filename}>
               {selected.filename}
             </span>

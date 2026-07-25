@@ -581,6 +581,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     running: boolean;
     queued?: DiscussionOpts;
     scheduled?: DiscussionOpts;
+    steering?: string[];
     lastStartedAt?: number;
     keys: Set<string>;
   }>());
@@ -676,6 +677,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             inReplyToMessageId,
           };
           dispatch({ type: 'APPEND_CHAT', teamId, msgs: [msg] });
+          dispatch({ type: 'UPDATE_EMPLOYEE', id: emp.id, partial: { isWorking: false } });
           updateRun((run) => {
             const step = run.steps.find((item) => item.id === stepId) ?? run.steps.find((item) => item.employeeId === emp.id && item.status === 'running');
             if (!step) return;
@@ -752,7 +754,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // 清掉进度
           dispatch({ type: 'SET_PROGRESS', progress: null });
           dispatch({ type: 'SET_STATUS', partial: { demoRunning: false, activeDemoTeamId: undefined } });
-          for (const memberId of scheduledMemberIds) {
+          for (const memberId of team.memberIds) {
             dispatch({ type: 'UPDATE_EMPLOYEE', id: memberId, partial: { isWorking: false } });
           }
           updateRun((run) => {
@@ -774,10 +776,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             });
           });
         },
-      }, { shouldStop: () => !!opts?.runId && pausedRunIdsRef.current.has(opts.runId) }
+      }, {
+        shouldStop: () => !!opts?.runId && pausedRunIdsRef.current.has(opts.runId),
+        consumeSteeringMessages: () => {
+          const scheduler = schedulerRef.current.get(teamId);
+          return scheduler?.steering?.splice(0) ?? [];
+        },
+      }
     )).catch((error) => {
       updateRun((run) => { run.status = 'failed'; run.lastError = error instanceof Error ? error.message : String(error); });
     }).finally(() => {
+      for (const memberId of team.memberIds) {
+        dispatch({ type: 'UPDATE_EMPLOYEE', id: memberId, partial: { isWorking: false } });
+      }
       discussingRef.current.delete(teamId);
       const scheduler = schedulerRef.current.get(teamId);
       if (scheduler) {
@@ -804,6 +815,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (scheduler.keys.has(key)) return;
     scheduler.keys.add(key);
     if (scheduler.running || discussingRef.current.has(teamId)) {
+      if ((client.loadSettings().followUpMode ?? 'steer') === 'steer' && opts.userText) {
+        (scheduler.steering ??= []).push(opts.userText);
+        scheduler.keys.delete(key);
+        return;
+      }
       scheduler.queued = scheduler.queued ? {
         ...opts,
         userText: [scheduler.queued.userText, opts.userText].filter(Boolean).join('\n'),

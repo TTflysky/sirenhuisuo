@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Modal, Switch, Input, Select, Button, Space, App, Tag, Tooltip, Segmented } from 'antd';
 import {
   ApiOutlined, BgColorsOutlined, CloudSyncOutlined, DatabaseOutlined, FolderOpenOutlined, RobotOutlined,
-  ScheduleOutlined, SettingOutlined, UserOutlined,
+  DeleteOutlined, MergeCellsOutlined, ScheduleOutlined, SettingOutlined, UserOutlined,
 } from '@ant-design/icons';
 import {
   loadSettings, saveSettings,
@@ -10,12 +10,13 @@ import {
   type ModelEntry,
   testModelConnection, fetchAvailableModels, migrateToModelLibrary,
   loadUserProfile, saveUserProfile,
-  loadUserMemory, saveUserMemory, type UserMemoryItem,
+  loadUserMemory, saveUserMemory, organizeUserMemory, upsertUserMemory,
+  USER_MEMORY_CATEGORY_LABELS, type UserMemoryCategory, type UserMemoryItem,
 } from '../../data/hermesClient';
 import type { ModelConfig } from '../../types';
 import { useStore } from '../../store';
 import { KnowledgeConnectorManager } from '../sidebar/ConnectorPanel';
-import { getAssistantPrompt, saveAssistantPrompt } from './AssistantSettingsModal';
+import { DEFAULT_ASSISTANT_PROMPT, getAssistantPrompt, saveAssistantPrompt } from './AssistantSettingsModal';
 import { applySyncProfile } from '../../utils/configSync';
 import {
   FONT_OPTIONS, FONT_SIZE_OPTIONS, loadAppearanceSettings, saveAppearanceSettings,
@@ -27,15 +28,16 @@ type Tab = 'model' | 'profile' | 'appearance' | 'knowledge' | 'workspace' | 'mem
 interface Props {
   onClose: () => void;
   onSaved?: () => void;
+  standalone?: boolean;
 }
 
-export default function SettingsModal({ onClose, onSaved }: Props) {
+export default function SettingsModal({ onClose, onSaved, standalone = false }: Props) {
   const [tab, setTab] = useState<Tab>('model');
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const sections: Array<{ title: string; items: Array<{ key: Tab; label: string; icon: React.ReactNode }> }> = [
     { title: '配置', items: [
       { key: 'model', label: '模型', icon: <ApiOutlined /> },
-      { key: 'profile', label: '档案', icon: <UserOutlined /> },
+      { key: 'profile', label: '用户画像', icon: <UserOutlined /> },
       { key: 'appearance', label: '外观', icon: <BgColorsOutlined /> },
       { key: 'knowledge', label: '知识库', icon: <DatabaseOutlined /> },
       { key: 'workspace', label: '工作区', icon: <FolderOpenOutlined /> },
@@ -74,6 +76,33 @@ export default function SettingsModal({ onClose, onSaved }: Props) {
     window.addEventListener('pointerup', end, { once: true });
   };
 
+  const content = (
+    <div className="settings-center">
+      <aside className="settings-center-nav">
+        <div className="settings-center-brand" onPointerDown={standalone ? undefined : startDrag} title={standalone ? '设置中心' : '按住拖动设置窗口'}><SettingOutlined /><div><strong>设置</strong><small>私人办公会所</small></div></div>
+        {sections.map((section) => <div className="settings-nav-section" key={section.title}>
+          <div className="settings-nav-title">{section.title}</div>
+          {section.items.map((item) => <button className={tab === item.key ? 'active' : ''} key={item.key} onClick={() => setTab(item.key)}>{item.icon}<span>{item.label}</span><code>/{item.key}</code></button>)}
+        </div>)}
+      </aside>
+      <main className={`settings-center-content settings-page-${tab}`} onPointerDown={standalone ? undefined : startDrag}>{page}</main>
+    </div>
+  );
+
+  if (standalone) {
+    return <div className="settings-standalone">
+      <div className="settings-native-titlebar">
+        <span>⚙️ 设置</span>
+        <div className="settings-native-actions">
+          <button className="titlebar-btn mac-traffic mac-minimize" title="最小化" onClick={() => window.electronAPI?.minimize()} />
+          <button className="titlebar-btn mac-traffic mac-maximize" title="最大化" onClick={() => window.electronAPI?.toggleMax()} />
+          <button className="titlebar-btn mac-traffic mac-close" title="关闭" onClick={onClose} />
+        </div>
+      </div>
+      {content}
+    </div>;
+  }
+
   return (
     <Modal
       open
@@ -86,16 +115,7 @@ export default function SettingsModal({ onClose, onSaved }: Props) {
       styles={{ body: { padding: 0, height: 'min(720px, calc(100vh - 90px))', overflow: 'hidden' } }}
       modalRender={(modal) => <div className="settings-modal-drag-shell" style={{ transform: `translate(${dragOffset.x}px, ${dragOffset.y}px)` }}>{modal}</div>}
     >
-      <div className="settings-center">
-        <aside className="settings-center-nav">
-          <div className="settings-center-brand" onPointerDown={startDrag} title="按住拖动设置窗口"><SettingOutlined /><div><strong>设置</strong><small>私人办公会所</small></div></div>
-          {sections.map((section) => <div className="settings-nav-section" key={section.title}>
-            <div className="settings-nav-title">{section.title}</div>
-            {section.items.map((item) => <button className={tab === item.key ? 'active' : ''} key={item.key} onClick={() => setTab(item.key)}>{item.icon}<span>{item.label}</span><code>/{item.key}</code></button>)}
-          </div>)}
-        </aside>
-        <main className={`settings-center-content settings-page-${tab}`} onPointerDown={startDrag}>{page}</main>
-      </div>
+      {content}
     </Modal>
   );
 }
@@ -134,13 +154,14 @@ function PersonaTab() {
   const [prompt, setPrompt] = useState(() => getAssistantPrompt());
   const [saved, setSaved] = useState(false);
   const save = () => { saveAssistantPrompt(prompt); setSaved(true); setTimeout(() => setSaved(false), 1500); };
-  return <div className="settings-content-page"><header><h2>助理人格</h2><span>全局助理的角色与行为边界</span></header><Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={16} /><div className="settings-page-actions"><Button type="primary" onClick={save}>{saved ? '已保存' : '保存人格'}</Button></div></div>;
+  return <div className="settings-content-page"><header><h2>助理人格</h2><span>与章北海助理窗口共用同一份角色、工具和调度规则</span></header><Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={16} /><div className="settings-page-actions"><Button onClick={() => setPrompt(DEFAULT_ASSISTANT_PROMPT)}>应用新版默认人格</Button><Button type="primary" onClick={save}>{saved ? '已保存' : '保存人格'}</Button></div></div>;
 }
 
 function AutomationTab() {
   const [settings, setSettings] = useState(() => loadSettings());
   const change = (key: 'autoDiscuss' | 'autoPilot', value: boolean) => { const next = { ...loadSettings(), [key]: value }; saveSettings(next); setSettings(next); };
-  return <div className="settings-content-page"><header><h2>执行策略</h2><span>团队讨论与自主办公</span></header><div className="settings-switch-row"><div><strong>自动讨论</strong><small>收到任务后自动组织团队讨论</small></div><Switch checked={settings.autoDiscuss ?? false} onChange={(value) => change('autoDiscuss', value)} /></div><div className="settings-switch-row"><div><strong>自主办公</strong><small>确认项目后自动推进执行流程</small></div><Switch checked={settings.autoPilot ?? false} onChange={(value) => change('autoPilot', value)} /></div></div>;
+  const changeFollowUp = (followUpMode: 'queue' | 'steer') => { const next = { ...loadSettings(), followUpMode }; saveSettings(next); setSettings(next); };
+  return <div className="settings-content-page"><header><h2>执行策略</h2><span>团队讨论、自主办公与运行中跟进</span></header><div className="settings-field"><label>跟进行为</label><Segmented block value={settings.followUpMode ?? 'steer'} options={[{ label: '排队', value: 'queue' }, { label: '引导', value: 'steer' }]} onChange={(value) => changeFollowUp(value as 'queue' | 'steer')} /><small>引导会把新消息加入当前运行并调整后续工具与步骤；排队会在当前回复完成后处理。</small></div><div className="settings-switch-row"><div><strong>自动讨论</strong><small>收到任务后自动组织团队讨论</small></div><Switch checked={settings.autoDiscuss ?? false} onChange={(value) => change('autoDiscuss', value)} /></div><div className="settings-switch-row"><div><strong>自主办公</strong><small>确认项目后自动推进执行流程</small></div><Switch checked={settings.autoPilot ?? false} onChange={(value) => change('autoPilot', value)} /></div></div>;
 }
 
 function BackupTab() {
@@ -544,7 +565,7 @@ function ProfileTab() {
       <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
         描述你的身份、偏好、沟通风格、技术背景等。AI 会在每次对话时参考画像，提供更贴合你的回复。
         <br />
-        系统也会在对话中自动提炼你的习惯和思维模式，更新到画像中。
+        这里由你主动维护，系统不会用对话推测覆盖它；自动提炼的内容会进入“长期记忆”等待筛选和归并。
       </p>
       <Input.TextArea
         value={text}
@@ -568,18 +589,25 @@ function ProfileTab() {
 
 // ===== 长期记忆标签 =====
 function MemoryTab() {
-  const { modal } = App.useApp();
+  const { modal, message } = App.useApp();
   const [items, setItems] = useState<UserMemoryItem[]>(() => loadUserMemory());
   const [newText, setNewText] = useState('');
 
   const handleAdd = () => {
     const t = newText.trim();
     if (!t) return;
-    const newItem: UserMemoryItem = { ts: Date.now(), content: t, source: '手动添加' };
-    const next = [...items, newItem];
+    const result = upsertUserMemory({ ts: Date.now(), content: t, source: '手动添加', importance: 5, confidence: 1 });
+    setItems(result.items);
+    setNewText('');
+    message[result.action === 'ignored' ? 'info' : 'success'](result.action === 'ignored' ? '已有相同记忆，未重复添加' : result.action === 'updated' ? '已归并到相似记忆' : '已加入长期记忆');
+  };
+
+  const handleOrganize = () => {
+    const before = items.length;
+    const next = organizeUserMemory(items);
     saveUserMemory(next);
     setItems(next);
-    setNewText('');
+    message.success(`整理完成：归并 ${before - next.length} 条重复或相似记忆，保留 ${next.length} 条`);
   };
 
   const handleDelete = (idx: number) => {
@@ -605,13 +633,13 @@ function MemoryTab() {
   return (
     <div>
       <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>
-        📝 长期记忆
+        长期记忆
         <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 8 }}>
           共 {items.length} 条
         </span>
       </h3>
       <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
-        每次对话后系统会自动提炼你的习惯和思维模式追加到记忆。你也可以手动添加或删除。
+        系统只保留以后仍然有用的稳定事实，并自动去重、归并和更新冲突信息；一次性任务、闲聊、工具报错和未确认推测不会写入。
       </p>
 
       <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
@@ -624,10 +652,10 @@ function MemoryTab() {
         <Button type="primary" onClick={handleAdd} disabled={!newText.trim()}>添加</Button>
       </Space.Compact>
 
-      <div style={{ maxHeight: 300, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
+      <div style={{ maxHeight: 360, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
         {items.length === 0 && (
           <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
-            暂无记忆。开始对话后系统会自动提炼用户信息。
+            暂无有效长期记忆。系统会从后续对话中筛选值得长期保留的信息。
           </div>
         )}
         {items.map((item, i) => (
@@ -640,9 +668,14 @@ function MemoryTab() {
             }}
           >
             <div style={{ flex: 1 }}>
+              <div style={{ display: 'flex', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}>
+                <Tag color="blue">{USER_MEMORY_CATEGORY_LABELS[(item.category ?? 'identity') as UserMemoryCategory]}</Tag>
+                <Tag color={(item.importance ?? 3) >= 4 ? 'gold' : 'default'}>重要性 {item.importance ?? 3}/5</Tag>
+                {(item.confidence ?? 0.8) < 0.75 && <Tag color="orange">待确认</Tag>}
+              </div>
               <div style={{ color: 'var(--text)' }}>{item.content}</div>
               <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
-                {new Date(item.ts).toLocaleString('zh-CN')} · 来源：{item.source}
+                更新于 {new Date(item.updatedAt ?? item.ts).toLocaleString('zh-CN')} · 来源：{item.source}
               </div>
             </div>
             <Button
@@ -653,16 +686,19 @@ function MemoryTab() {
               title="删除"
               style={{ flexShrink: 0, fontSize: 12 }}
             >
-              ✕
+              <DeleteOutlined />
             </Button>
           </div>
         ))}
       </div>
 
       {items.length > 0 && (
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
+          <Button size="small" icon={<MergeCellsOutlined />} onClick={handleOrganize}>
+            整理现有记忆
+          </Button>
           <Button size="small" danger onClick={handleClearAll}>
-            🗑 清空所有记忆
+            <DeleteOutlined /> 清空所有记忆
           </Button>
         </div>
       )}

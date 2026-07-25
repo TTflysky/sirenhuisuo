@@ -26,14 +26,15 @@ export const TOOLS: ToolDef[] = [
     type: 'function',
     function: {
       name: 'write_file',
-      description: '输出一个文件。写入后文件会出现在 outputs/ 目录中，可以被后续 read_file 读取。参数：path 为文件名（不含路径前缀，自动写入 outputs/），content 为文件内容（markdown/html/code 等）。',
+      description: '输出一个真实文件并登记到交付物。category 必须按用途选择：final=用户可直接验收的最终成品，working=草稿/方案/测试/中间文件，reference=输入样本/原始材料/参考资料。不要把聊天回复或工具日志写成文件。',
       parameters: {
         type: 'object',
         properties: {
           path: { type: 'string', description: '文件名，如 "方案设计.md" 或 "index.html"' },
           content: { type: 'string', description: '文件内容' },
+          category: { type: 'string', enum: ['final', 'working', 'reference'], description: '交付分类：final、working 或 reference' },
         },
-        required: ['path', 'content'],
+        required: ['path', 'content', 'category'],
       },
     },
   },
@@ -257,6 +258,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
           language: ct === 'code' ? path.split('.').pop() : undefined,
           content,
           diskPath,
+          category: args.category as 'final' | 'working' | 'reference' | undefined,
         });
         return {
           toolCallId: id, name, success: true,

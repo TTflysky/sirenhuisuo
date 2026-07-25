@@ -64,6 +64,7 @@ declare global {
 
     // 打开原生聊天窗口（真实桌面窗口，可自由拖动）
     openChat: (opts: OpenChatOptions) => Promise<OpenChatResult>;
+    openSettings: () => Promise<{ ok: boolean; reused?: boolean; error?: string }>;
 
     // 窗口间广播总线：broadcast 向其他窗口广播，onBroadcast 接收来自其他窗口的消息
     broadcast: (channel: string, payload: unknown) => void;

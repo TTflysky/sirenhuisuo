@@ -1,16 +1,18 @@
 import { useState, useRef, useEffect } from 'react';
 import { ReloadOutlined, SettingOutlined, CloseOutlined } from '@ant-design/icons';
-import type { ChatMessage } from '../../types';
+import type { ChatMessage, ThoughtChainStep } from '../../types';
 import { useStore } from '../../store';
-import { loadDm, appendDm, runAgentLoop, resolveApiBase, extractUserInsights, getEmployeeModel, type ChatTurn, type Attachment } from '../../data/hermesClient';
+import { loadDm, appendDm, runAgentLoop, resolveApiBase, extractUserInsights, getEmployeeModel, loadSettings, type ChatTurn, type Attachment } from '../../data/hermesClient';
 import AgentAvatar from '../office/AgentAvatar';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
+import ChatMessageText from './ChatMessageText';
+import ThoughtChainView from './ThoughtChainView';
 import { copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
 import SkillMentionInput, { resolveSkillContext } from '../skills/SkillMentionInput';
 import SkillPickerButton from '../skills/SkillPickerButton';
 import type { SkillReference } from '../../types';
-import { linkify } from '../../utils/linkify';
+import type { OutputRecord } from '../../data/outputs';
 import {
   fileToAttachment, attachmentsFromClipboard, attachmentWorkspaceContext, formatFileSize, persistAttachments,
 } from '../../utils/attachments';
@@ -86,12 +88,13 @@ function craftReply(role: string, userText: string): string {
 }
 
 export default function DmChatApp({ empId }: Props) {
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
   const emp = state.employees.find((e) => e.id === empId);
   const [msgs, setMsgs] = useState<ChatMessage[]>(() => loadDm(empId));
   const [text, setText] = useState('');
   const [typing, setTyping] = useState(false);
   const [showOutputs, setShowOutputs] = useState(false);
+  const [selectedOutputFilename, setSelectedOutputFilename] = useState<string | null>(null);
   const [outputsWidth, setOutputsWidth] = useState(320);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [skillRefs, setSkillRefs] = useState<SkillReference[]>([]);
@@ -100,6 +103,7 @@ export default function DmChatApp({ empId }: Props) {
   const [retryJob, setRetryJob] = useState<DmRetryJob | null>(() => loadRetryJob(empId));
   const [retryNow, setRetryNow] = useState(Date.now());
   const runJobRef = useRef<(job: DmRetryJob) => Promise<void>>(async () => {});
+  const steeringMessagesRef = useRef<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const resizeOutputs = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -115,7 +119,7 @@ export default function DmChatApp({ empId }: Props) {
     const atts = await persistAttachments(`dm:${empId}`, await Promise.all(arr.map(fileToAttachment)));
     setAttachments((prev) => [...prev, ...atts]);
   };
-  const fileDrop = useFileDrop(addFiles, typing || !!retryJob);
+  const fileDrop = useFileDrop(addFiles, !!retryJob);
 
   const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const atts = await persistAttachments(`dm:${empId}`, await attachmentsFromClipboard(e));
@@ -170,6 +174,13 @@ export default function DmChatApp({ empId }: Props) {
       skillRefs: refs,
     });
 
+    if (typing) {
+      const mode = loadSettings().followUpMode ?? 'steer';
+      const followUp = [content, attachmentWorkspaceContext(atts), skillContext].filter(Boolean).join('\n\n');
+      steeringMessagesRef.current.push(mode === 'steer' ? followUp : `【排队跟进】先完成当前工作，再按顺序处理：${followUp}`);
+      return;
+    }
+
     const history: ChatTurn[] = msgs.slice(-8).map((m) => ({ role: m.roleId === 'human' ? 'user' : 'assistant', content: m.content }));
     void runDmJob({ id: `dm-retry-${Date.now()}`, userText: content, attachments: atts, skillContext, history, attempt: 0, status: 'waiting', lastError: '' });
 
@@ -186,9 +197,10 @@ export default function DmChatApp({ empId }: Props) {
 
   const runDmJob = async (job: DmRetryJob) => {
     setTyping(true);
+    dispatch({ type: 'UPDATE_EMPLOYEE', id: empId, partial: { isWorking: true } });
     try {
-      const { text: reply, usage } = await generateReply(job.userText, job.attachments, job.skillContext, job.history);
-      push({ id: `dm-${Date.now()}-${empId}`, authorId: empId, roleId: emp.role, content: reply, mentions: [], timestamp: Date.now(), kind: 'text', tokens: usage });
+      const { text: reply, usage, thoughtChain } = await generateReply(job.userText, job.attachments, job.skillContext, job.history);
+      push({ id: `dm-${Date.now()}-${empId}`, authorId: empId, roleId: emp.role, content: reply, mentions: [], timestamp: Date.now(), kind: 'text', tokens: usage, thoughtChain });
       setRetryJob(null);
       saveRetryJob(empId, null);
     } catch (error) {
@@ -204,6 +216,7 @@ export default function DmChatApp({ empId }: Props) {
       saveRetryJob(empId, next);
     } finally {
       setTyping(false);
+      dispatch({ type: 'UPDATE_EMPLOYEE', id: empId, partial: { isWorking: false, currentTask: undefined } });
     }
   };
   runJobRef.current = runDmJob;
@@ -223,7 +236,7 @@ export default function DmChatApp({ empId }: Props) {
   };
 
   // 优先真调 OpenAI 兼容模型（带员工提示词），失败/未配置则回落本地剧本
-  const generateReply = async (userText: string, atts: Attachment[] = [], skillContext = '', historyOverride?: ChatTurn[]): Promise<{ text: string; usage?: number }> => {
+  const generateReply = async (userText: string, atts: Attachment[] = [], skillContext = '', historyOverride?: ChatTurn[]): Promise<{ text: string; usage?: number; thoughtChain?: ThoughtChainStep[] }> => {
     // 文本类附件：直接拼进用户文本作为上下文
     let enriched = userText;
     const textAtts = atts.filter((a) => a.kind === 'text' && a.dataUrl);
@@ -246,12 +259,27 @@ export default function DmChatApp({ empId }: Props) {
     }
     const systemPrompt = emp.prompt?.trim() || `你是「${emp.name}」，一名${emp.title}。用简洁、专业的中文回复，语气贴合你的角色。需要产出文件时直接调用工具完成。`;
     const history = historyOverride ?? msgs.slice(-8).map((m): ChatTurn => ({ role: m.roleId === 'human' ? 'user' : 'assistant', content: m.content }));
+    const thoughtChain: ThoughtChainStep[] = [];
+    const showThoughtChain = loadSettings().showThoughtChain !== false;
     const r = await runAgentLoop({
       turns: [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content: enriched }],
       tools: TOOLS, scene: 'dm', label: emp.name, modelConfig: getEmployeeModel(emp),
       extraSystemContext: [emp.soul, skillContext].filter(Boolean).join('\n\n'), scope: `dm:${empId}`, attachments: imageAtts,
+      consumeSteeringMessages: () => steeringMessagesRef.current.splice(0),
+      onToolCall(name) {
+        dispatch({ type: 'UPDATE_EMPLOYEE', id: empId, partial: { isWorking: true, currentTask: `调用 ${name}` } });
+      },
+      onToolResult(name, args, result) {
+        if (!showThoughtChain) return;
+        thoughtChain.push({ toolName: name, args: args ?? '', result: result.slice(0, 2000), success: !/^工具执行错误|^未知工具|^⚠️/u.test(result), timestamp: Date.now() });
+      },
     });
-    return { text: r.content ?? '（无回复）', usage: r.usage.totalTokens };
+    return { text: r.content ?? '（无回复）', usage: r.usage.totalTokens, thoughtChain: thoughtChain.length ? thoughtChain : undefined };
+  };
+
+  const openOutputFromMessage = (output: OutputRecord) => {
+    setSelectedOutputFilename(output.filename);
+    setShowOutputs(true);
   };
 
   const handleCopyMsg = async (content: string) => { await copyToClipboard(content); };
@@ -320,12 +348,13 @@ export default function DmChatApp({ empId }: Props) {
                     </div>
                   )}
                   <div className="msg-row">
-                    <div className="msg-bubble">{linkify(msg.content)}</div>
+                    <div className="msg-bubble"><ChatMessageText content={msg.content} scope={`dm:${empId}`} onOpenOutput={openOutputFromMessage} /></div>
                     <button className="msg-copy-btn" onClick={() => handleCopyMsg(msg.content)} title="复制">📋</button>
                   </div>
                   {msg.tokens != null && (
                     <div className="msg-tokens">≈ {msg.tokens.toLocaleString()} tokens</div>
                   )}
+                  {msg.thoughtChain && msg.thoughtChain.length > 0 && <ThoughtChainView steps={msg.thoughtChain} />}
                 </div>
               );
             })}
@@ -367,7 +396,7 @@ export default function DmChatApp({ empId }: Props) {
               <button className="btn btn-sm" onClick={handleCopyAll} disabled={msgs.length === 0}>📋 复制全部</button>
               <button className="btn btn-sm" onClick={handleExport} disabled={msgs.length === 0}>📤 导出</button>
               <button className="btn btn-sm" onClick={() => fileInputRef.current?.click()} title="上传文件/图片">📎</button>
-              <SkillPickerButton selected={skillRefs} onSelectedChange={setSkillRefs} disabled={typing || !!retryJob} />
+              <SkillPickerButton selected={skillRefs} onSelectedChange={setSkillRefs} disabled={!!retryJob} />
               <button className={`btn btn-sm ${showRetrySettings ? 'btn-primary' : ''}`} onClick={() => setShowRetrySettings((value) => !value)} title="模型重试设置"><SettingOutlined />重试</button>
               <div style={{ flex: 1 }} />
               <ModelSelector />
@@ -391,9 +420,9 @@ export default function DmChatApp({ empId }: Props) {
                 ))}
               </div>
             )}
-            <SkillMentionInput value={text} onChange={setText} selected={skillRefs} onSelectedChange={setSkillRefs} onKeyDown={onKeyDown} onPaste={handlePaste} rows={2} disabled={typing || !!retryJob} placeholder={`发消息给 ${emp.name}...（输入 @ 选择技能）`} />
-            <button className="btn btn-primary btn-sm" style={{ alignSelf: 'flex-end' }} onClick={handleSend} disabled={typing || !!retryJob}>
-              发送
+            <SkillMentionInput value={text} onChange={setText} selected={skillRefs} onSelectedChange={setSkillRefs} onKeyDown={onKeyDown} onPaste={handlePaste} rows={2} disabled={!!retryJob} placeholder={typing ? `正在处理，可继续引导 ${emp.name}…` : `发消息给 ${emp.name}...（输入 @ 选择技能）`} />
+            <button className="btn btn-primary btn-sm" style={{ alignSelf: 'flex-end' }} onClick={handleSend} disabled={!!retryJob || (!text.trim() && attachments.length === 0)}>
+              {typing ? (loadSettings().followUpMode === 'queue' ? '排队' : '引导') : '发送'}
             </button>
             <input
               ref={fileInputRef}
@@ -408,7 +437,7 @@ export default function DmChatApp({ empId }: Props) {
         {/* 右侧产出物面板 */}
         {showOutputs && (
           <><div className="workspace-resize-handle" onPointerDown={resizeOutputs} title="拖动调整产出物面板宽度" /><div className="chat-outputs-wrap" style={{ width: outputsWidth, minWidth: outputsWidth }}>
-            <ChatOutputsPanel scope={`dm:${empId}`} maxHeight={500} onBack={() => setShowOutputs(false)} />
+            <ChatOutputsPanel scope={`dm:${empId}`} maxHeight={500} selectedFilename={selectedOutputFilename} onBack={() => { setShowOutputs(false); setSelectedOutputFilename(null); }} />
           </div>
           </>
         )}

@@ -14,13 +14,19 @@ import SkillLibraryView from './components/skills/SkillLibraryView';
 import { checkBackend } from './data/hermesClient';
 
 type View = 'office' | 'analytics' | 'autopilot' | 'skill-library';
-type ThemeName = 'light' | 'dark' | 'eye-care' | 'soft-gray';
+type ThemeName = 'light' | 'dark' | 'eye-care' | 'soft-gray' | 'ocean-blue' | 'quiet-blue' | 'glass-light' | 'glass-dark' | 'spruce' | 'graphite';
 
 const THEME_OPTIONS: Array<{ value: ThemeName; label: string; color: string }> = [
   { value: 'light', label: '明亮', color: '#f7f8fb' },
   { value: 'dark', label: '深色', color: '#242529' },
   { value: 'eye-care', label: '护眼', color: '#dfe9dc' },
   { value: 'soft-gray', label: '柔和灰', color: '#e5e7eb' },
+  { value: 'ocean-blue', label: '海湾蓝', color: '#cfe4f8' },
+  { value: 'quiet-blue', label: '静谧蓝', color: '#365f91' },
+  { value: 'glass-light', label: '玻璃晨光', color: 'rgba(236,246,255,.68)' },
+  { value: 'glass-dark', label: '玻璃深夜', color: 'rgba(35,48,63,.72)' },
+  { value: 'spruce', label: '云杉绿', color: '#294b43' },
+  { value: 'graphite', label: '石墨', color: '#535861' },
 ];
 
 export default function App() {
@@ -38,6 +44,7 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeName;
+    document.documentElement.dataset.colorMode = ['dark', 'quiet-blue', 'glass-dark', 'spruce', 'graphite'].includes(themeName) ? 'dark' : 'light';
     localStorage.setItem('hermes_office_theme', themeName);
     window.electronAPI?.broadcast?.('theme-changed', themeName);
   }, [themeName]);
@@ -65,6 +72,9 @@ export default function App() {
   const [isChatWindow] = useState(
     () => typeof location !== 'undefined' && location.hash.startsWith('#chat'),
   );
+  const [isSettingsWindow] = useState(
+    () => typeof location !== 'undefined' && location.hash.startsWith('#settings'),
+  );
 
   // 监听自动更新状态（仅在 Electron 桌面端生效）
   useEffect(() => {
@@ -84,6 +94,9 @@ export default function App() {
   // ===== 如果是原生聊天子窗口，只渲染聊天视图 =====
   if (isChatWindow) {
     return <ChatOnlyView hash={location.hash} />;
+  }
+  if (isSettingsWindow) {
+    return <SettingsModal standalone onClose={() => window.electronAPI?.close()} onSaved={() => checkBackend().then((online) => dispatch({ type: 'SET_STATUS', partial: { backendOnline: online } }))} />;
   }
 
   const handleStationClick = (emp: Employee) => openDmChat(emp.id);
@@ -179,7 +192,7 @@ export default function App() {
           <Button size="small" onClick={handleDemo} disabled={state.status.demoRunning}>
             ▶ 演示 OPC 协作
           </Button>
-          <Button size="small" onClick={() => setShowSettings(true)} title="API 接口配置">
+          <Button size="small" onClick={() => window.electronAPI?.openSettings?.() ?? setShowSettings(true)} title="API 接口配置">
             ⚙️ 设置
           </Button>
           <div className="titlebar-actions">

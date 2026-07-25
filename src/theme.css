@@ -347,7 +347,13 @@ html, body, #root, .app-root {
 .team-chat-header { display:flex; align-items:center; gap:12px; min-height:52px; padding:7px 14px; border-bottom:1px solid var(--border-light); background:var(--surface); flex-shrink:0; }
 .team-chat-title { display:flex; align-items:center; gap:7px; min-width:0; white-space:nowrap; }
 .team-chat-title strong { overflow:hidden; text-overflow:ellipsis; }
-.team-avatar-strip { display:flex; align-items:center; gap:6px; overflow-x:auto; min-width:0; padding:2px 3px; }
+.team-avatar-strip { display:flex; align-items:center; gap:6px; overflow-x:auto; min-width:0; padding:2px 3px; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+.team-avatar-strip::-webkit-scrollbar { height: 4px; }
+.team-avatar-strip::-webkit-scrollbar-thumb { border-radius: 999px; }
+.team-member-sidebar-head { min-height: 42px; padding: 7px 8px; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 6px; border-bottom: 1px solid var(--border-light); background: color-mix(in srgb, var(--surface-raised) 88%, transparent); }
+.team-member-sidebar-head strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 11px; }
+.team-member-sidebar-head button { width: 24px; height: 24px; padding: 0; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-muted); cursor: pointer; }
+.team-member-sidebar-head button:hover { border-color: var(--border); background: var(--bg-deep); color: var(--apple-accent); }
 .team-avatar-btn { border:0; background:transparent; padding:2px; cursor:pointer; border-radius:50%; flex:0 0 auto; }
 .team-avatar-btn:hover { background:var(--bg-deep); }
 .team-chat-body { display:flex; flex:1; min-height:0; min-width:0; }
@@ -638,7 +644,7 @@ html, body, #root, .app-root {
 }
 
 /* 滚动条 */
-::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
@@ -1433,6 +1439,72 @@ html, body, #root, .app-root {
   --apple-shadow: 0 12px 32px rgba(51, 60, 73, .12);
 }
 
+:root[data-theme='ocean-blue'] {
+  color-scheme: light;
+  --bg: #e8f2fb; --bg-deep: #d8e8f6; --surface: #f7fbff; --surface-raised: #ffffff;
+  --border: #a9c4dd; --border-light: #c9dced; --text: #18324a; --text-secondary: #46657f; --text-muted: #718da5;
+  --win-bg: #f7fbff; --win-title-bg: #deedf9; --win-title-border: #adc7de;
+  --sidebar-bg: #dcebf7; --sidebar-border: #abc5dc; --desk: #f7fbff;
+  --office-floor: linear-gradient(135deg, #eef7ff, #d9eaf7); --dock-bg: rgba(247,251,255,.9); --dock-border: rgba(138,174,205,.72);
+  --apple-glass: rgba(228,241,251,.86); --apple-glass-strong: rgba(247,251,255,.96); --apple-accent: #1677c8;
+  --apple-shadow: 0 13px 34px rgba(31,91,139,.16);
+}
+
+:root[data-theme='quiet-blue'] {
+  color-scheme: dark;
+  --bg: #1e2c3c; --bg-deep: #172433; --surface: #26384b; --surface-raised: #30465c;
+  --border: #58748f; --border-light: #3e5871; --text: #eff7ff; --text-secondary: #c1d4e5; --text-muted: #8fa9c0;
+  --win-bg: #26384b; --win-title-bg: #213448; --win-title-border: #526d87;
+  --sidebar-bg: #1c2e40; --sidebar-border: #49647e; --desk: #2b4055; --office-floor: #1b2a3a;
+  --dock-bg: rgba(35,53,72,.9); --dock-border: rgba(102,133,161,.62);
+  --apple-glass: rgba(35,54,74,.84); --apple-glass-strong: rgba(43,65,87,.94); --apple-accent: #67b7ff;
+  --apple-shadow: 0 18px 44px rgba(4,14,25,.44);
+}
+
+:root[data-theme='glass-light'] {
+  color-scheme: light;
+  --bg: #dfeaf3; --bg-deep: #cbdbe8; --surface: rgba(249,252,255,.68); --surface-raised: rgba(255,255,255,.82);
+  --border: rgba(118,145,169,.62); --border-light: rgba(151,174,193,.48); --text: #203344; --text-secondary: #536a7d; --text-muted: #74899a;
+  --win-bg: rgba(249,252,255,.7); --win-title-bg: rgba(239,247,253,.72); --win-title-border: rgba(120,148,172,.6);
+  --sidebar-bg: rgba(231,241,248,.66); --sidebar-border: rgba(113,143,168,.58); --desk: rgba(250,253,255,.7);
+  --office-floor: linear-gradient(135deg, #e9f3fb, #cddfec); --dock-bg: rgba(249,252,255,.58); --dock-border: rgba(120,151,176,.55);
+  --apple-glass: rgba(241,248,253,.58); --apple-glass-strong: rgba(250,253,255,.72); --apple-accent: #087fc1;
+  --apple-shadow: 0 18px 42px rgba(40,77,105,.18);
+}
+
+:root[data-theme='glass-dark'] {
+  color-scheme: dark;
+  --bg: #17212b; --bg-deep: #101922; --surface: rgba(39,53,67,.7); --surface-raised: rgba(52,69,85,.82);
+  --border: rgba(119,145,169,.68); --border-light: rgba(82,106,128,.58); --text: #f2f7fb; --text-secondary: #c3d0dc; --text-muted: #91a3b3;
+  --win-bg: rgba(39,53,67,.72); --win-title-bg: rgba(31,45,59,.76); --win-title-border: rgba(112,139,164,.65);
+  --sidebar-bg: rgba(27,40,53,.72); --sidebar-border: rgba(98,125,149,.62); --desk: rgba(45,61,76,.74); --office-floor: #14202a;
+  --dock-bg: rgba(34,48,62,.64); --dock-border: rgba(104,132,157,.58);
+  --apple-glass: rgba(34,48,62,.62); --apple-glass-strong: rgba(43,59,74,.76); --apple-accent: #70c5ff;
+  --apple-shadow: 0 22px 50px rgba(0,0,0,.48);
+}
+
+:root[data-theme='spruce'] {
+  color-scheme: dark;
+  --bg: #20332f; --bg-deep: #182824; --surface: #29413b; --surface-raised: #355149;
+  --border: #5e7b72; --border-light: #435f57; --text: #f0f7f4; --text-secondary: #bfd2cb; --text-muted: #8fa9a0;
+  --win-bg: #29413b; --win-title-bg: #243a35; --win-title-border: #58756c;
+  --sidebar-bg: #1d302c; --sidebar-border: #4b685f; --desk: #304a43; --office-floor: #1c2d29;
+  --dock-bg: rgba(38,60,54,.9); --dock-border: rgba(102,133,123,.6);
+  --apple-glass: rgba(39,62,56,.84); --apple-glass-strong: rgba(48,73,66,.95); --apple-accent: #6bc89f;
+  --apple-shadow: 0 18px 44px rgba(2,17,12,.43);
+}
+
+:root[data-theme='graphite'] {
+  color-scheme: dark;
+  --bg: #303238; --bg-deep: #27292e; --surface: #393c43; --surface-raised: #464a52;
+  --border: #686d77; --border-light: #50545d; --text: #f5f6f8; --text-secondary: #ced1d7; --text-muted: #9da2ac;
+  --win-bg: #393c43; --win-title-bg: #34373d; --win-title-border: #626771;
+  --sidebar-bg: #2d3035; --sidebar-border: #555a64; --desk: #41454d; --office-floor: #2b2d32;
+  --dock-bg: rgba(57,60,67,.9); --dock-border: rgba(116,121,132,.58);
+  --apple-glass: rgba(57,60,67,.84); --apple-glass-strong: rgba(68,72,80,.96); --apple-accent: #8ab4f8;
+  --apple-shadow: 0 18px 44px rgba(0,0,0,.42);
+}
+
 /* Keep role colors readable at night without the neon-on-black contrast. */
 :root[data-theme='dark'] [data-role='pm'] .station-avatar-ring,
 :root[data-theme='dark'] [data-role='pm'] .station-title,
@@ -1683,6 +1755,9 @@ body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
   --radius-panel: 14px;
   --radius-control: 10px;
   --radius-bubble: 13px;
+  --elevation-1: 0 2px 6px rgba(31, 41, 55, .10), 0 1px 2px rgba(31, 41, 55, .08);
+  --elevation-2: 0 10px 24px rgba(31, 41, 55, .14), 0 2px 5px rgba(31, 41, 55, .08);
+  --elevation-3: 0 20px 46px rgba(31, 41, 55, .20), 0 5px 12px rgba(31, 41, 55, .10);
 }
 
 .app-root {
@@ -1819,6 +1894,27 @@ body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
 :root[data-theme='dark'] .chat-main { background: #191a1e; }
 :root[data-theme='dark'] .chat-messages,
 :root[data-theme='dark'] .chat-composer { border-color: #454750; }
+
+.settings-standalone { width: 100%; height: 100%; display: flex; min-height: 0; flex-direction: column; overflow: hidden; background: var(--bg-deep); }
+.settings-native-titlebar { height: 42px; min-height: 42px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px 0 16px; border-bottom: 1px solid var(--border); background: var(--apple-glass-strong); color: var(--text); font-size: 13px; font-weight: 700; -webkit-app-region: drag; }
+.settings-native-actions { display: flex; align-items: center; gap: 8px; -webkit-app-region: no-drag; }
+.settings-native-actions .mac-traffic { width: 13px; height: 13px; min-width: 13px; padding: 0; border-radius: 50%; }
+.settings-native-actions .mac-minimize { background: #ffbd2e; border: 1px solid #e1a31d; }
+.settings-native-actions .mac-maximize { background: #34c759; border: 1px solid #239a43; }
+.settings-native-actions .mac-close { background: #ff5f57; border: 1px solid #db4e47; }
+.settings-standalone .settings-center { flex: 1; min-height: 0; }
+.settings-standalone .settings-center-nav { margin: 12px 8px 12px 12px; border: 1px solid var(--border); box-shadow: var(--elevation-1); }
+.settings-standalone .settings-center-content { margin: 12px 12px 12px 4px; border: 1px solid var(--border); box-shadow: var(--elevation-2); }
+
+/* Surface hierarchy: background < panels < transient controls. */
+.titlebar, .sidebar, .office-container, .chat-only-body,
+.team-member-sidebar, .team-task-sidebar, .chat-outputs-wrap { box-shadow: var(--elevation-2); }
+.sidebar-header, .sidebar-section, .connector-panel, .station-card,
+.chat-messages, .chat-composer, .assistant-activity, .team-chat-header,
+.dm-peer, .settings-field, .appearance-font-preview, .settings-action-list { box-shadow: var(--elevation-1); }
+.btn:hover, .ant-btn:hover, .employee-card:hover, .team-member-item:hover,
+.station-card.occupied:hover { box-shadow: var(--elevation-2); }
+:root[data-theme='dark'] { --elevation-1: 0 2px 7px rgba(0,0,0,.34), 0 1px 2px rgba(0,0,0,.28); --elevation-2: 0 12px 28px rgba(0,0,0,.42), 0 3px 7px rgba(0,0,0,.28); --elevation-3: 0 24px 56px rgba(0,0,0,.52), 0 6px 14px rgba(0,0,0,.36); }
 .msg.human .msg-copy-btn { opacity: 0; }
 .msg.human:hover .msg-copy-btn { opacity: 1; }
 
@@ -1835,6 +1931,49 @@ body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
   border-color: var(--border) !important;
 }
 :root[data-theme='dark'] { --border: #555861; --border-light: #404249; }
+
+/* Readability scaling without resizing the entire application geometry. */
+:root[data-font-size='small'] { --content-font-size: 12px; --content-line-height: 1.45; }
+:root[data-font-size='standard'] { --content-font-size: 13px; --content-line-height: 1.5; }
+:root[data-font-size='large'] { --content-font-size: 14px; --content-line-height: 1.55; }
+:root[data-font-size='extra-large'] { --content-font-size: 15px; --content-line-height: 1.62; }
+.msg-bubble, .chat-input, .form-input, .form-select, .form-textarea,
+.settings-center-content, .chat-outputs-panel { font-size: var(--content-font-size, 13px); line-height: var(--content-line-height, 1.5); }
+:root[data-font-size='large'] .emp-name,
+:root[data-font-size='extra-large'] .emp-name { font-size: 14px; }
+:root[data-font-size='large'] .emp-title,
+:root[data-font-size='extra-large'] .emp-title,
+:root[data-font-size='large'] .team-member-info strong,
+:root[data-font-size='extra-large'] .team-member-info strong { font-size: 12px; }
+:root[data-font-size='extra-large'] .settings-content-page header h2 { font-size: 24px; }
+:root[data-font-size='extra-large'] .settings-field { min-height: 54px; }
+:root[data-font-size='extra-large'] .settings-nav-section button { min-height: 38px; }
+:root[data-font-size='extra-large'] .chat-composer { max-height: 52%; }
+:root[data-font-size='extra-large'] .chat-input { min-height: 54px; }
+:root[data-font-size='extra-large'] .msg { max-width: 94%; }
+:root[data-font-size='large'] .titlebar,
+:root[data-font-size='extra-large'] .titlebar { font-size: 13px; }
+:root[data-font-size='large'] .titlebar-btn,
+:root[data-font-size='extra-large'] .titlebar-btn { font-size: 13px; }
+
+/* All dark presets share readable Ant Design controls and elevated surfaces. */
+:root[data-color-mode='dark'] .ant-segmented,
+:root[data-color-mode='dark'] .ant-select-selector,
+:root[data-color-mode='dark'] .ant-btn:not(.ant-btn-primary),
+:root[data-color-mode='dark'] .ant-input,
+:root[data-color-mode='dark'] .ant-input-affix-wrapper { background: var(--surface-raised) !important; border-color: var(--border) !important; color: var(--text) !important; }
+:root[data-color-mode='dark'] .ant-segmented-item,
+:root[data-color-mode='dark'] .ant-segmented-item-label,
+:root[data-color-mode='dark'] .ant-btn:not(.ant-btn-primary),
+:root[data-color-mode='dark'] .ant-select-selection-item,
+:root[data-color-mode='dark'] .ant-select-arrow,
+:root[data-color-mode='dark'] .ant-input { color: var(--text-secondary) !important; }
+:root[data-color-mode='dark'] .ant-segmented-item-selected { background: color-mix(in srgb, var(--surface-raised) 72%, white 8%) !important; box-shadow: inset 0 0 0 1px var(--border) !important; }
+:root[data-color-mode='dark'] .msg.human .msg-bubble { background: var(--apple-accent); color: #fff; }
+:root[data-color-mode='dark'] .settings-center,
+:root[data-color-mode='dark'] .settings-center-content { background: var(--surface); }
+:root[data-color-mode='dark'] .settings-center-nav { background: var(--sidebar-bg); }
+:root[data-color-mode='dark'] { --elevation-1: 0 2px 7px rgba(0,0,0,.34), 0 1px 2px rgba(0,0,0,.28); --elevation-2: 0 12px 28px rgba(0,0,0,.42), 0 3px 7px rgba(0,0,0,.28); --elevation-3: 0 24px 56px rgba(0,0,0,.52), 0 6px 14px rgba(0,0,0,.36); }
 
 /* ===== 聊天内产出物侧栏 ===== */
 .chat-outputs-wrap {
@@ -1887,7 +2026,10 @@ body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
 .chat-outputs-list {
   overflow-y: auto;
   border-bottom: 1px solid var(--border-light);
+  flex: 1;
+  min-height: 0;
 }
+.chat-outputs-list.with-preview { flex: 0 1 44%; min-height: 132px; }
 .chat-outputs-list-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 8px 12px;
@@ -1905,6 +2047,18 @@ body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
   transition: background 0.12s;
   border-bottom: 1px solid var(--border-light);
 }
+.chat-outputs-group { border-bottom: 1px solid var(--border-light); }
+.chat-outputs-group-head {
+  width: 100%; min-height: 48px; padding: 7px 10px;
+  display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 6px;
+  border: 0; background: color-mix(in srgb, var(--bg-deep) 72%, var(--surface)); color: var(--text); cursor: pointer; text-align: left;
+}
+.chat-outputs-group-head:hover { background: var(--bg-deep); }
+.chat-outputs-group-head > span:nth-child(2) { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.chat-outputs-group-head strong { font-size: 11px; }
+.chat-outputs-group-head small { color: var(--text-muted); font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-outputs-group-head code { min-width: 20px; padding: 1px 5px; border-radius: 8px; background: var(--surface-raised); color: var(--text-secondary); font: inherit; font-size: 9px; text-align: center; }
+.chat-outputs-group-chevron { color: var(--text-muted); font-size: 16px; line-height: 1; }
 .chat-outputs-item:hover { background: var(--bg-deep); }
 .chat-outputs-item.active { background: color-mix(in srgb, var(--apple-accent) 13%, var(--surface)); box-shadow: inset 3px 0 0 var(--apple-accent); }
 
@@ -1942,11 +2096,12 @@ body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
   transition: all 0.12s;
 }
 .chat-outputs-item:hover .chat-outputs-item-open { opacity: 1; }
+.chat-outputs-preview-head .chat-outputs-item-open { opacity: 1; }
 .chat-outputs-item-open:hover { background: #dbeafe; }
 
 /* 产出物预览区 */
 .chat-outputs-preview {
-  flex: 1; min-height: 0;
+  flex: 1 1 56%; min-height: 0;
   display: flex; flex-direction: column;
   overflow: hidden;
 }

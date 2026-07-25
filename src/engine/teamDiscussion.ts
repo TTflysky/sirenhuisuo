@@ -32,14 +32,14 @@ export interface TeamDiscussionOptions {
 
 // 角色在讨论中的职责描述（系统提示词扩展）
 const ROLE_DUTY: Record<string, string> = {
-  pm: `你是团队协调者（PM）。你的工具：write_file(输出文档)、read_file(读已有文件)、list_files(查看产出物)、web_search(搜索资料)。
+  pm: `你是团队协调者（PM）。你的工具：write_file(输出文档)、read_file(读已有文件)、list_files(查看产出物)、web_search(搜索资料)。PM 的需求拆解和计划用 category=working，只有用户明确要交付的项目说明才用 final。
 使用方式：需要产出文件时调 write_file，需要查资料时调 web_search。
 典型流程：接到任务 → web_search 查资料 → write_file 输出需求文档/PRD → @相关成员。
 发言简洁，像真实同事对话。每次工具调用后会立刻得到结果供你参考。`,
-  planner: `你是规划者（Planner/架构师）。你的工具：read_file(读PM的需求文档)、web_search(查技术方案)、write_file(输出架构方案)。
+  planner: `你是规划者（Planner/架构师）。你的工具：read_file(读PM的需求文档)、web_search(查技术方案)、write_file(输出架构方案)。内部架构草案用 category=working，用户要求的正式方案用 final，外部资料整理用 reference。
 使用方式：先 read_file 看有没有已有文档，再 write_file 输出技术方案（.md文件）、架构图说明或接口定义。
 发言务实，给出清晰的实现步骤，让编码者能直接照着写。`,
-  coder: `你是编码者（Coder/实现工程师）。你的工具：write_file(写代码文件)、read_file(读方案文档)、list_files(查看项目目录)、web_search(查API文档)。
+  coder: `你是编码者（Coder/实现工程师）。你的工具：write_file(写代码文件)、read_file(读方案文档)、list_files(查看项目目录)、web_search(查API文档)。可运行代码和必要配置都用 category=final；临时测试或诊断文件用 working。
 使用方式：read_file 读方案 → write_file 输出代码文件（.html/.js/.tsx等）→ 告知审查者验收。
 代码文件是真正可运行的，写完整、可执行。`,
   checker: `你是审查者（Checker/QA）。你的工具：read_file(读代码审查)、list_files(查看文件)、web_search(查安全标准)。
@@ -71,7 +71,8 @@ async function memberSpeak(
   attachments?: import('../data/hermesClient').Attachment[],
   skillContext = '',
   shouldStop?: () => boolean,
-  requireFileOutput = false
+  requireFileOutput = false,
+  consumeSteeringMessages?: () => string[]
 ): Promise<{ text: string; tokens?: number; failed?: boolean; producedFile?: boolean }> {
   const effectiveModel = getEmployeeModel(emp);
   if (!resolveApiBase(effectiveModel)) {
@@ -130,6 +131,7 @@ async function memberSpeak(
         onToolCall(name, args, result);
       },
       shouldStop,
+      consumeSteeringMessages,
     });
     if (requireFileOutput && !producedFile) {
       return { text: `⚠️ ${emp.name} 没有生成可交接文件，本步骤未完成。请点击继续执行，系统会保留上下文并要求补交实际产出。`, tokens: r.usage.totalTokens, failed: true };
@@ -161,7 +163,7 @@ export async function runTeamDiscussion(
   employees: Employee[],
   opts: TeamDiscussionOptions,
   handlers: DiscussionHandlers,
-  control?: { shouldStop?: () => boolean }
+  control?: { shouldStop?: () => boolean; consumeSteeringMessages?: () => string[] }
 ): Promise<void> {
   const task = opts.task;
   const plannedMembers = opts.participantPlan?.map((plan) => employees.find((employee) => employee.id === plan.memberId)).filter((employee): employee is Employee => !!employee);
@@ -198,9 +200,12 @@ export async function runTeamDiscussion(
     assignment: step.assignment, dependsOnStepIds: step.dependsOnStepIds, revisionOfStepId: step.revisionOfStepId,
   }));
   const completedWorkSteps: TaskPlanStep[] = [];
+  let latestGuidance = '';
   const executionLimit = Math.max(maxRounds, queue.length) + maxRevisions * 2;
   while (queue.length > 0 && round < executionLimit) {
     if (control?.shouldStop?.()) break;
+    const stepGuidance = control?.consumeSteeringMessages?.() ?? [];
+    if (stepGuidance.length) latestGuidance = stepGuidance.join('\n');
     const step = queue.shift()!;
     const emp = employees.find((employee) => employee.id === step.employeeId) ?? participants.find((employee) => employee.id === step.employeeId);
     if (!emp) continue;
@@ -216,7 +221,7 @@ export async function runTeamDiscussion(
       const r = await memberSpeak(emp, team, employees, contextMessages,
         task
           ? `团队接到新任务「${task.title}」${task.description ? `：${task.description}` : ''}。如有必要，可调工具产出文件或用 web_search 查资料。`
-          : `${assignment}\n老板的原始要求：\n「${opts.userText ?? ''}」`,
+          : `${assignment}\n老板的原始要求：\n「${opts.userText ?? ''}」${latestGuidance ? `\n\n老板运行中追加的最新指令（优先执行）：\n「${latestGuidance}」` : ''}`,
         (toolName, toolArgs, result) => {
           const argsStr = toolArgs ? (toolArgs.length > 80 ? toolArgs.slice(0, 80) + '…' : toolArgs) : '';
           handlers.onToolCall(emp, toolName, argsStr, result || '🔄 执行中…', step.id);
@@ -225,7 +230,8 @@ export async function runTeamDiscussion(
         opts.attachments,
         opts.extraSystemContext,
         control?.shouldStop,
-        step.kind !== 'review'
+        step.kind !== 'review',
+        control?.consumeSteeringMessages
       );
       content = r.text;
       tokens = r.tokens;

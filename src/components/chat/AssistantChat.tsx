@@ -4,12 +4,14 @@ import { runAgentLoop, resolveApiBase, resolveChatSettings, extractUserInsights,
 import { TOOLS } from '../../engine/tools';
 import { getConnectorTools } from '../../engine/connectorTools';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
+import ChatMessageText from './ChatMessageText';
+import ThoughtChainView from './ThoughtChainView';
 import { copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
 import SkillMentionInput, { resolveSkillContext } from '../skills/SkillMentionInput';
 import SkillPickerButton from '../skills/SkillPickerButton';
 import type { SkillReference } from '../../types';
-import { linkify } from '../../utils/linkify';
+import type { OutputRecord } from '../../data/outputs';
 import { fileToAttachment, attachmentsFromClipboard, attachmentWorkspaceContext, formatFileSize, persistAttachments } from '../../utils/attachments';
 import { useFileDrop } from '../../hooks/useFileDrop';
 import AssistantSettingsModal, { getAssistantPrompt } from '../settings/AssistantSettingsModal';
@@ -45,6 +47,7 @@ export default function AssistantChat() {
   const [status, setStatus] = useState('');
   const [activityStep, setActivityStep] = useState(0);
   const [showOutputs, setShowOutputs] = useState(false);
+  const [selectedOutputFilename, setSelectedOutputFilename] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [skillRefs, setSkillRefs] = useState<SkillReference[]>([]);
   const [showAssistantSettings, setShowAssistantSettings] = useState(false);
@@ -52,6 +55,7 @@ export default function AssistantChat() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const steeringMessagesRef = useRef<string[]>([]);
 
   const addFiles = async (files: FileList | File[]) => {
     const arr = Array.from(files);
@@ -59,7 +63,7 @@ export default function AssistantChat() {
     const atts = await persistAttachments('assistant', await Promise.all(arr.map(fileToAttachment)));
     setAttachments((prev) => [...prev, ...atts]);
   };
-  const fileDrop = useFileDrop(addFiles, busy);
+  const fileDrop = useFileDrop(addFiles, false);
 
   const handlePaste = async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const atts = await persistAttachments('assistant', await attachmentsFromClipboard(e));
@@ -85,17 +89,19 @@ export default function AssistantChat() {
     });
   }, []);
 
+  const openOutputFromMessage = (output: OutputRecord) => {
+    setSelectedOutputFilename(output.filename);
+    setShowOutputs(true);
+  };
+
   const handleSend = async () => {
     const content = text.trim();
-    if ((!content && attachments.length === 0) || busy) return;
+    if (!content && attachments.length === 0) return;
     const atts = attachments;
     const refs = skillRefs;
     const skillContext = await resolveSkillContext(refs);
     setSkillRefs([]);
     setText('');    setAttachments([]);
-    setBusy(true);
-    setStatus('思考中…');
-    setActivityStep(1);
 
     // 文本类附件：拼进消息文本
     let enriched = content;
@@ -112,6 +118,19 @@ export default function AssistantChat() {
       content: display, mentions: [], timestamp: Date.now(), kind: 'text', skillRefs: refs,
       attachments: atts,
     });
+
+    if (busy) {
+      const mode = loadSettings().followUpMode ?? 'steer';
+      steeringMessagesRef.current.push(mode === 'steer'
+        ? enriched
+        : `【排队跟进】先完成当前工作，再按顺序处理：${enriched}`);
+      setStatus(mode === 'steer' ? '已收到新指令，等待当前模型返回后调整…' : '新消息已排队…');
+      return;
+    }
+
+    setBusy(true);
+    setStatus('思考中…');
+    setActivityStep(1);
 
     // 无当前助理 API 时本地回复（支持助理独立模型配置）
     const assistantSettings = resolveChatSettings();
@@ -156,6 +175,7 @@ export default function AssistantChat() {
         scope: 'assistant',
         attachments: imageAtts,
         extraSystemContext: skillContext,
+        consumeSteeringMessages: () => steeringMessagesRef.current.splice(0),
         onToolCall(name, args) {
           setActivityStep(2);
           const argsStr = args ? (args.length > 100 ? args.slice(0, 100) + '…' : args) : '';
@@ -292,7 +312,7 @@ export default function AssistantChat() {
                     </div>
                   )}
                   <div className="msg-row">
-                    <div className="msg-bubble">{linkify(msg.content)}</div>
+                    <div className="msg-bubble"><ChatMessageText content={msg.content} scope="assistant" onOpenOutput={openOutputFromMessage} /></div>
                     <button className="msg-copy-btn" onClick={() => handleCopyMsg(msg.content)} title="复制">
                       📋
                     </button>
@@ -336,7 +356,7 @@ export default function AssistantChat() {
                 📁{showOutputs ? ' ✕' : ''}
               </button>
               <button className="btn btn-sm" onClick={() => fileInputRef.current?.click()} title="上传文件/图片">📎</button>
-              <SkillPickerButton selected={skillRefs} onSelectedChange={setSkillRefs} disabled={busy} />
+              <SkillPickerButton selected={skillRefs} onSelectedChange={setSkillRefs} />
               <div style={{ flex: 1 }} />
               <button className="btn btn-sm assistant-settings-btn" onClick={() => setShowAssistantSettings(true)} title="助理设置" aria-label="打开助理设置">⚙️</button>
             </div>
@@ -359,7 +379,7 @@ export default function AssistantChat() {
                 ))}
               </div>
             )}
-            <SkillMentionInput ref={textareaRef} value={text} onChange={setText} selected={skillRefs} onSelectedChange={setSkillRefs} onKeyDown={onKeyDown} onPaste={handlePaste} rows={2} disabled={busy} placeholder={busy ? '助手正在思考…' : '输入任何问题或需求…（输入 @ 选择技能）'} />
+            <SkillMentionInput ref={textareaRef} value={text} onChange={setText} selected={skillRefs} onSelectedChange={setSkillRefs} onKeyDown={onKeyDown} onPaste={handlePaste} rows={2} placeholder={busy ? '助手正在处理，可继续输入以引导当前运行…' : '输入任何问题或需求…（输入 @ 选择技能）'} />
             <div style={{ display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'flex-end', marginTop: 4 }}>
               <ModelSelector />
               <div style={{ flex: 1 }} />
@@ -375,8 +395,8 @@ export default function AssistantChat() {
               >
                 🗑 清空
               </button>
-              <button className="btn btn-primary btn-sm" onClick={handleSend} disabled={busy || (!text.trim() && attachments.length === 0)}>
-                发送
+              <button className="btn btn-primary btn-sm" onClick={handleSend} disabled={!text.trim() && attachments.length === 0}>
+                {busy ? (loadSettings().followUpMode === 'queue' ? '排队' : '引导') : '发送'}
               </button>
             </div>
             <input
@@ -392,7 +412,7 @@ export default function AssistantChat() {
         {/* 右侧产出物面板 */}
         {showOutputs && (
           <div className="chat-outputs-wrap">
-            <ChatOutputsPanel scope="assistant" maxHeight={500} onBack={() => setShowOutputs(false)} />
+            <ChatOutputsPanel scope="assistant" maxHeight={500} selectedFilename={selectedOutputFilename} onBack={() => { setShowOutputs(false); setSelectedOutputFilename(null); }} />
           </div>
         )}
       </div>
@@ -405,42 +425,6 @@ export default function AssistantChat() {
             refreshSettings((value) => value + 1);
           }}
         />
-      )}
-    </div>
-  );
-}
-
-/** 思维链可视化组件——展示 AI 的推理步骤 */
-function ThoughtChainView({ steps }: { steps: ThoughtChainStep[] }) {
-  const [open, setOpen] = useState(false);
-  if (steps.length === 0) return null;
-
-  return (
-    <div className="cot-wrap">
-      <button className="cot-toggle" onClick={() => setOpen(!open)}>
-        🧠 思维链 ({steps.length} 步) {open ? '▲' : '▼'}
-      </button>
-      {open && (
-        <div className="cot-steps">
-          {steps.map((s, i) => (
-            <div key={i} className={`cot-step ${s.success ? 'cot-ok' : 'cot-err'}`}>
-              <div className="cot-step-head">
-                <span className="cot-step-icon">{s.success ? '✅' : '❌'}</span>
-                <code className="cot-step-tool">{s.toolName}</code>
-              </div>
-              {s.args && (
-                <div className="cot-step-args">
-                  <span className="cot-label">参数：</span>
-                  <code>{s.args.length > 200 ? s.args.slice(0, 200) + '…' : s.args}</code>
-                </div>
-              )}
-              <div className="cot-step-result">
-                <span className="cot-label">结果：</span>
-                <pre>{s.result.length > 800 ? s.result.slice(0, 800) + '…' : s.result}</pre>
-              </div>
-            </div>
-          ))}
-        </div>
       )}
     </div>
   );

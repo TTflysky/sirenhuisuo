@@ -12,7 +12,6 @@ import {
   resolveApiBase,
   buildUserContext,
   loadUserProfile,
-  loadUserMemory,
   type ChatTurn,
 } from '../data/hermesClient';
 import type { ModelConfig } from '../types';
@@ -76,12 +75,10 @@ const STRATEGIST_SYSTEM = `你是 Hermes 办公室的首席战略官（PM 兼调
 export async function recommendProjects(ctx: AutopilotContext, modelConfig?: ModelConfig): Promise<ProjectPlan[]> {
   if (!resolveApiBase()) return [];
   const profile = loadUserProfile().trim();
-  const memory = loadUserMemory().slice(-12).map((m) => m.content);
   const userCtx = buildUserContext();
 
   const situation = [
     `## 用户画像\n${profile || '（无）'}`,
-    `## 长期记忆（最近 ${memory.length} 条）\n${memory.length ? memory.map((m) => `- ${m}`).join('\n') : '（无）'}`,
     `## 当前办公室团队\n${ctx.teams.length ? ctx.teams.map((t) => `- 「${t.name}」成员 ${t.members.length} 人；待办 ${t.openTasks.length ? t.openTasks.join('、') : '无'}`).join('\n') : '（还没有团队）'}`,
     `## 模型后端\n${ctx.backendOnline ? `在线（${ctx.model ?? '未知模型'}），团队可自主调用工具写码/跑命令` : '离线（仅能推荐，无法实际执行）'}`,
   ].join('\n\n');

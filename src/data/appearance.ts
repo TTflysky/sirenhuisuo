@@ -42,7 +42,9 @@ export function applyAppearanceSettings(settings: AppearanceSettings) {
   document.documentElement.style.setProperty('--ui-font-family', font.family);
   document.documentElement.style.setProperty('--ui-font-scale', String(size.factor));
   document.documentElement.dataset.fontSize = size.value;
-  window.electronAPI?.setZoomFactor?.(size.factor);
+  // Do not zoom the whole BrowserWindow: fixed toolbars, grids and sidebars
+  // would scale with the text and become geometrically distorted.
+  window.electronAPI?.setZoomFactor?.(1);
 }
 
 export function saveAppearanceSettings(settings: AppearanceSettings) {

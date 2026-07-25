@@ -1,7 +1,7 @@
 # 项目交接手册
 
 > 最后整理：2026-07-25
-> 当前源码版本：`v0.7.11`
+> 当前源码版本：`v0.7.12`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 
@@ -14,11 +14,11 @@
 以下规则是产品核心，改动前必须保留：
 
 1. 一个团队必须支持多个员工使用不同模型；员工未开启独立配置时继承全局模型，开启后只使用自己的模型。
-2. Hermes 助理是默认调度者：普通团队工作请求由助理先接收和拆解；用户明确 `@员工` 时，助理不能抢答或代替该员工完成任务。
+2. 章北海助理是默认调度者：普通团队工作请求由助理先接收和拆解；用户明确 `@员工` 时，助理不能抢答或代替该员工完成任务。
 3. 团队任务按计划顺序执行；模型超时或上一步没有返回结果时，后续步骤必须等待，不能跳过。审查不通过时只退回责任人对应步骤。
 4. 员工不能只口头承诺“已完成”。需要文件的任务必须通过工具写入真实工作区；界面需展示可观察的任务状态、工具调用和最终交付物。
 5. 助理、员工单聊、团队聊天的附件能力必须保持一致：选择文件、粘贴、拖拽、真实落盘、错误提示和工具可读取性不能只修其中一个入口。
-6. 产出物只显示最终交付文件，绝不能把聊天摘要、工具日志、附件占位或重复记录冒充产物。
+6. 交付物只登记真实文件，并分为最终交付、工作文件、参考资料；绝不能把聊天摘要、工具日志、附件占位或重复记录冒充产物。
 7. 每次功能发布必须：升级版本、构建 Windows 安装包、计算 SHA-256、提交并推送 `main`、创建 GitHub Release 并上传安装包和 blockmap。
 
 ## 2. 当前已交付的能力
@@ -33,6 +33,9 @@
 - 图片可作为视觉输入，文本/代码可直接读取；Excel、Word、PowerPoint、PDF、OpenDocument、RTF、EPUB 通过 `officeparser` 提取文本；其他二进制也会真实保存，并向模型返回可操作路径和明确说明。
 - 产出物按聊天 scope 隔离，显示路径、类型、大小、时间，可直接打开真实磁盘文件。
 - 项目编排：助理可生成待批准项目草案，按职责/专长/在线状态从全体员工匹配成员；批准后创建隔离项目团队并复用顺序任务运行器。
+- 人格、用户画像和长期记忆分层；记忆具备准入筛选、分类、去重、冲突替换、重要性排序和容量淘汰。
+- 章北海、员工私聊和团队执行支持运行中“排队 / 引导”，员工工作状态在所有窗口通过 Store 广播同步。
+- 章北海伴随窗是主窗口的 owned window，保持同一窗口层级但不跨应用永久置顶。
 
 最新安装包和历史发布在 GitHub Releases。源码最新功能以 `main` 为准。
 
@@ -46,10 +49,10 @@
 | `src/data/hermesClient.ts` | OpenAI 兼容请求、模型配置解析、聊天/员工/团队/Token 本地持久化、Agent 循环。 |
 | `src/engine/teamDiscussion.ts` | 计划步骤执行、员工发言、工具回调、审查与交接。 |
 | `src/engine/tools.ts` | `write_file`、`read_file`、`list_files`、`search_skills`、`read_skill`、`run_command` 和连接器工具。 |
-| `src/components/chat/AssistantChat.tsx` | Hermes 助理聊天。 |
+| `src/components/chat/AssistantChat.tsx` | 章北海助理聊天与运行中引导。 |
 | `src/components/chat/DmChatApp.tsx` | 员工单聊与失败重试。 |
 | `src/components/chat/TeamChatApp.tsx` | 团队聊天、任务过程和成员 @。 |
-| `src/components/outputs/ChatOutputsPanel.tsx` | 按 scope 展示真实最终交付文件。 |
+| `src/components/outputs/ChatOutputsPanel.tsx` | 按 scope 和用途分类、折叠、预览真实交付文件。 |
 | `src/utils/attachments.ts` | 三种聊天共用的附件分类、读取、落盘和工作区上下文。 |
 | `src/hooks/useFileDrop.ts` | 三种聊天共用的文件拖拽交互。 |
 

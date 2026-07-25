@@ -61,6 +61,7 @@ export interface AppSettings {
   activeModelId?: string;       // 当前全局使用的模型 ID（对应 modelLibrary 中的 entry.id）
   assistantModelId?: string;    // 助理机器人使用的模型 ID
   showThoughtChain?: boolean;   // 助理是否显示思维链（默认 true）
+  followUpMode?: 'queue' | 'steer'; // 运行中收到新消息：排队或引导当前执行
 }
 
 // ===== 服务商预设（国内主流大模型，OpenAI 兼容）=====
@@ -255,30 +256,192 @@ export function migrateToModelLibrary(): void {
 // ===== 用户长期记忆 =====
 const LS_USER_MEMORY = 'hermes_office_user_memory';
 const LS_USER_PROFILE = 'hermes_office_user_profile';
-const MAX_MEMORY_ITEMS = 200;
+const MAX_MEMORY_ITEMS = 100;
+
+export type UserMemoryCategory = 'identity' | 'preference' | 'constraint' | 'workflow' | 'decision' | 'project';
 
 export interface UserMemoryItem {
   ts: number;           // 记录时间
   content: string;      // 记忆内容（如"用户偏好红色主题"）
   source: string;       // 来源（如"私聊-张三"、"助手对话"）
+  category?: UserMemoryCategory;
+  importance?: number;  // 1-5，决定上下文注入和容量淘汰优先级
+  confidence?: number;  // 0-1，仅保留明确、可验证的信息
+  updatedAt?: number;
+  fingerprint?: string;
+}
+
+const MEMORY_CATEGORY_LABELS: Record<UserMemoryCategory, string> = {
+  identity: '身份背景',
+  preference: '长期偏好',
+  constraint: '明确约束',
+  workflow: '工作习惯',
+  decision: '长期决策',
+  project: '项目背景',
+};
+
+export const USER_MEMORY_CATEGORY_LABELS = MEMORY_CATEGORY_LABELS;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function normalizeMemoryText(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .replace(/^(用户|老板|该用户)[：:，,\s]*/u, '')
+    .replace(/[\s\p{P}\p{S}]+/gu, '');
+}
+
+function memoryFingerprint(text: string): string {
+  const normalized = normalizeMemoryText(text);
+  let hash = 2166136261;
+  for (let i = 0; i < normalized.length; i += 1) {
+    hash ^= normalized.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function memoryTokens(text: string): Set<string> {
+  const normalized = normalizeMemoryText(text);
+  const tokens = new Set<string>();
+  const latinWords = text.toLowerCase().match(/[a-z0-9][a-z0-9._+-]*/g) ?? [];
+  latinWords.forEach((word) => tokens.add(word));
+  for (let i = 0; i < normalized.length - 1; i += 1) tokens.add(normalized.slice(i, i + 2));
+  if (normalized.length === 1) tokens.add(normalized);
+  return tokens;
+}
+
+function memorySimilarity(a: string, b: string): number {
+  const na = normalizeMemoryText(a);
+  const nb = normalizeMemoryText(b);
+  if (!na || !nb) return 0;
+  if (na === nb) return 1;
+  if ((na.includes(nb) || nb.includes(na)) && Math.min(na.length, nb.length) / Math.max(na.length, nb.length) >= 0.72) return 0.9;
+  const left = memoryTokens(a);
+  const right = memoryTokens(b);
+  const intersection = [...left].filter((token) => right.has(token)).length;
+  const union = new Set([...left, ...right]).size;
+  return union ? intersection / union : 0;
+}
+
+function inferMemoryCategory(content: string): UserMemoryCategory {
+  if (/(必须|不能|不要|禁止|务必|每次|一律|约束|要求)/u.test(content)) return 'constraint';
+  if (/(偏好|喜欢|倾向|风格|希望|更喜欢)/u.test(content)) return 'preference';
+  if (/(流程|习惯|先.+再|工作方式|验收|测试|提交|发布)/u.test(content)) return 'workflow';
+  if (/(决定|确定|以后|长期|统一|采用|改为)/u.test(content)) return 'decision';
+  if (/(项目|产品|仓库|版本|应用|团队)/u.test(content)) return 'project';
+  return 'identity';
+}
+
+function normalizeMemoryItem(item: UserMemoryItem): UserMemoryItem | null {
+  const content = String(item?.content ?? '').trim();
+  if (!content) return null;
+  const ts = Number.isFinite(item.ts) ? item.ts : Date.now();
+  const category = Object.hasOwn(MEMORY_CATEGORY_LABELS, item.category ?? '')
+    ? item.category as UserMemoryCategory
+    : inferMemoryCategory(content);
+  return {
+    ts,
+    content: content.slice(0, 240),
+    source: String(item.source || '历史记忆'),
+    category,
+    importance: clamp(Math.round(Number(item.importance) || 3), 1, 5),
+    confidence: clamp(Number(item.confidence) || (item.source === '手动添加' ? 1 : 0.8), 0, 1),
+    updatedAt: Number.isFinite(item.updatedAt) ? item.updatedAt : ts,
+    fingerprint: memoryFingerprint(content),
+  };
+}
+
+function mergeMemorySources(a: string, b: string): string {
+  return [...new Set([...a.split('、'), ...b.split('、')].filter(Boolean))].slice(-3).join('、');
+}
+
+function trimMemoryCapacity(items: UserMemoryItem[]): UserMemoryItem[] {
+  if (items.length <= MAX_MEMORY_ITEMS) return items;
+  const ranked = [...items].sort((a, b) => {
+    const scoreA = (a.importance ?? 3) * 20 + (a.confidence ?? 0.8) * 10 + (a.updatedAt ?? a.ts) / 1e12;
+    const scoreB = (b.importance ?? 3) * 20 + (b.confidence ?? 0.8) * 10 + (b.updatedAt ?? b.ts) / 1e12;
+    return scoreB - scoreA;
+  }).slice(0, MAX_MEMORY_ITEMS);
+  return ranked.sort((a, b) => a.ts - b.ts);
+}
+
+export function organizeUserMemory(items: UserMemoryItem[] = loadUserMemory()): UserMemoryItem[] {
+  const organized: UserMemoryItem[] = [];
+  for (const raw of items) {
+    const item = normalizeMemoryItem(raw);
+    if (!item) continue;
+    const duplicateIndex = organized.findIndex((existing) =>
+      existing.fingerprint === item.fingerprint ||
+      (existing.category === item.category && memorySimilarity(existing.content, item.content) >= 0.82));
+    if (duplicateIndex < 0) {
+      organized.push(item);
+      continue;
+    }
+    const existing = organized[duplicateIndex];
+    const preferIncoming = (item.updatedAt ?? item.ts) >= (existing.updatedAt ?? existing.ts) && item.content.length >= existing.content.length * 0.75;
+    organized[duplicateIndex] = {
+      ...(preferIncoming ? item : existing),
+      ts: Math.min(existing.ts, item.ts),
+      updatedAt: Math.max(existing.updatedAt ?? existing.ts, item.updatedAt ?? item.ts),
+      importance: Math.max(existing.importance ?? 3, item.importance ?? 3),
+      confidence: Math.max(existing.confidence ?? 0.8, item.confidence ?? 0.8),
+      source: mergeMemorySources(existing.source, item.source),
+    };
+  }
+  return trimMemoryCapacity(organized);
 }
 
 export function loadUserMemory(): UserMemoryItem[] {
   try {
     const raw = localStorage.getItem(LS_USER_MEMORY);
-    if (raw) return JSON.parse(raw) as UserMemoryItem[];
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed.map(normalizeMemoryItem).filter((item): item is UserMemoryItem => Boolean(item)) : [];
+    }
   } catch {}
   return [];
 }
 export function saveUserMemory(items: UserMemoryItem[]): void {
   try {
-    localStorage.setItem(LS_USER_MEMORY, JSON.stringify(items.slice(-MAX_MEMORY_ITEMS)));
+    localStorage.setItem(LS_USER_MEMORY, JSON.stringify(trimMemoryCapacity(items.map(normalizeMemoryItem).filter((item): item is UserMemoryItem => Boolean(item)))));
   } catch {}
 }
-export function appendUserMemory(item: UserMemoryItem): void {
+export function upsertUserMemory(item: UserMemoryItem, replaces?: string): { action: 'added' | 'updated' | 'ignored'; items: UserMemoryItem[] } {
   const list = loadUserMemory();
-  list.push(item);
+  const incoming = normalizeMemoryItem(item);
+  if (!incoming) return { action: 'ignored', items: list };
+  let matchIndex = replaces
+    ? list.findIndex((existing) => memorySimilarity(existing.content, replaces) >= 0.72)
+    : -1;
+  if (matchIndex < 0) {
+    matchIndex = list.findIndex((existing) =>
+      existing.fingerprint === incoming.fingerprint ||
+      (existing.category === incoming.category && memorySimilarity(existing.content, incoming.content) >= 0.82));
+  }
+  if (matchIndex >= 0) {
+    const existing = list[matchIndex];
+    if (existing.fingerprint === incoming.fingerprint) {
+      return { action: 'ignored', items: list };
+    }
+    list[matchIndex] = {
+      ...incoming,
+      ts: existing.ts,
+      updatedAt: Date.now(),
+      source: mergeMemorySources(existing.source, incoming.source),
+    };
+    saveUserMemory(list);
+    return { action: 'updated', items: loadUserMemory() };
+  }
+  list.push(incoming);
   saveUserMemory(list);
+  return { action: 'added', items: loadUserMemory() };
+}
+export function appendUserMemory(item: UserMemoryItem): void {
+  upsertUserMemory(item);
 }
 
 export function loadUserProfile(): string {
@@ -301,8 +464,19 @@ export function buildUserContext(): string {
     ctx += `## 用户画像\n${profile}\n\n`;
   }
   if (memory.length > 0) {
-    const recent = memory.slice(-10).map(m => `- ${m.content}`).join('\n');
-    ctx += `## 长期记忆（最近 ${Math.min(memory.length, 10)} 条）\n${recent}\n`;
+    const selected: UserMemoryItem[] = [];
+    const ranked = [...memory].sort((a, b) =>
+      (b.importance ?? 3) - (a.importance ?? 3) || (b.updatedAt ?? b.ts) - (a.updatedAt ?? a.ts));
+    for (const category of Object.keys(MEMORY_CATEGORY_LABELS) as UserMemoryCategory[]) {
+      const candidate = ranked.find((item) => item.category === category && (item.confidence ?? 0.8) >= 0.65);
+      if (candidate) selected.push(candidate);
+    }
+    for (const item of ranked) {
+      if (selected.length >= 12) break;
+      if (!selected.includes(item) && (item.confidence ?? 0.8) >= 0.65) selected.push(item);
+    }
+    const important = selected.map(m => `- [${MEMORY_CATEGORY_LABELS[m.category ?? 'identity']}] ${m.content}`).join('\n');
+    ctx += `## 经筛选的长期记忆（${selected.length} 条）\n${important}\n`;
   }
   return ctx;
 }
@@ -321,7 +495,11 @@ export async function extractUserInsights(conversation: string, source: string):
   if (lines.length < 6) return;
 
   const existingProfile = loadUserProfile();
-  const existingMemory = loadUserMemory().slice(-5).map(m => m.content).join('; ');
+  const existingMemory = [...loadUserMemory()]
+    .sort((a, b) => (b.importance ?? 3) - (a.importance ?? 3) || (b.updatedAt ?? b.ts) - (a.updatedAt ?? a.ts))
+    .slice(0, 20)
+    .map(m => `[${MEMORY_CATEGORY_LABELS[m.category ?? 'identity']}] ${m.content}`)
+    .join('\n');
 
   try {
     const r = await chatCompletion([
@@ -332,15 +510,26 @@ export async function extractUserInsights(conversation: string, source: string):
 
 请以 JSON 格式回复：
 {
-  "newMemories": ["一条具体的用户习惯/偏好/思维模式...", "另一条..."],
-  "profileDelta": "对用户画像的更新描述（一段话，涵盖性格、偏好、思维特点等）"
+  "memories": [
+    {
+      "content": "一条脱离当前对话后仍然有用的长期事实",
+      "category": "identity|preference|constraint|workflow|decision|project",
+      "importance": 1,
+      "confidence": 0.9,
+      "action": "add|update|ignore",
+      "replaces": "更新时填写被替代的旧记忆原文，否则留空"
+    }
+  ]
 }
 
 注意：
-- newMemories 每条 10-30 字，具体的、可验证的事实
-- profileDelta 是 50-150 字的综合描述
-- 只提取对话中确实体现的信息，不要臆想
-- 如果对话没有有效信息，newMemories 返回空数组
+- 只分析用户本人明确表达的内容，不把助理或员工的回复当成用户事实
+- 仅记录稳定身份背景、长期偏好、明确约束、反复出现的工作流程或已确认的长期决策
+- 不记录一次性任务、临时指令、闲聊、情绪宣泄、未确认推测、工具状态、错误信息和助理自己的判断
+- 与已有记忆表达相同则 action=ignore；新信息明确取代旧信息时 action=update 并填写 replaces
+- 每条 10-60 字，必须具体、可验证；importance 为 1-5，confidence 为 0-1
+- 不能仅凭一次含糊表达推断性格或偏好；不确定时不要记录
+- 如果没有值得长期保留的信息，memories 返回空数组
 - 用中文回复` },
       { role: 'user', content: `对话记录（${source}）：\n\n${conversation.slice(0, 3000)}` },
     ], 'extract', '用户洞察提炼');
@@ -351,14 +540,22 @@ export async function extractUserInsights(conversation: string, source: string):
     if (!jsonMatch) return;
     const data = JSON.parse(jsonMatch[0]);
 
-    if (Array.isArray(data.newMemories) && data.newMemories.length > 0) {
+    if (Array.isArray(data.memories) && data.memories.length > 0) {
       const now = Date.now();
-      for (const mem of data.newMemories) {
-        appendUserMemory({ ts: now, content: mem, source });
+      for (const memory of data.memories.slice(0, 6)) {
+        if (!memory || typeof memory.content !== 'string' || memory.action === 'ignore') continue;
+        const confidence = clamp(Number(memory.confidence) || 0, 0, 1);
+        if (confidence < 0.65) continue;
+        upsertUserMemory({
+          ts: now,
+          content: memory.content,
+          source,
+          category: Object.hasOwn(MEMORY_CATEGORY_LABELS, memory.category) ? memory.category : inferMemoryCategory(memory.content),
+          importance: clamp(Math.round(Number(memory.importance) || 3), 1, 5),
+          confidence,
+          updatedAt: now,
+        }, memory.action === 'update' && typeof memory.replaces === 'string' ? memory.replaces : undefined);
       }
-    }
-    if (data.profileDelta && typeof data.profileDelta === 'string' && data.profileDelta.length > 10) {
-      saveUserProfile(data.profileDelta);
     }
   } catch {
     // 静默失败——提炼是辅助功能，不影响主流程
@@ -612,7 +809,7 @@ export async function chatCompletion(
         sys += `\n\n## 扩展上下文\n${extraSystemContext.slice(0, 160000)}`;
       }
       if (userCtx) {
-        sys += `\n\n## 关于当前用户\n${userCtx}\n（注意：每次对话后系统会自动更新用户画像和记忆。如果你注意到用户的新习惯或偏好，可以在回复末尾悄悄提醒「📝 已记录」）`;
+        sys += `\n\n## 关于当前用户\n${userCtx}\n（用户画像是用户主动确认的高优先级事实；长期记忆已经过筛选。不要自行声称“已记录”，记忆写入由独立提炼流程负责。）`;
       }
       finalTurns = finalTurns.map((t, i) => i === sysIdx ? { ...t, content: sys } : t);
     } else {
@@ -700,9 +897,10 @@ export interface AgentLoopOpts {
   scope?: OutputScope;        // 产出物作用域
   attachments?: Attachment[];  // 用户上传/粘贴的图片附件（多模态视觉）
   shouldStop?: () => boolean;  // 自主执行中断信号（如用户点「停止」）
+  consumeSteeringMessages?: () => string[]; // 运行中追加的老板指令
 }
 export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: string; usage: TokenUsage; model: string }> {
-  const { turns, tools, scene, label, onToolCall, onToolResult, modelConfig, extraSystemContext, scope, attachments, shouldStop } = opts;
+  const { turns, tools, scene, label, onToolCall, onToolResult, modelConfig, extraSystemContext, scope, attachments, shouldStop, consumeSteeringMessages } = opts;
   let currentTurns = [...turns];
 
   // 多模态：把最后一条 user 消息转为 [text, image_url] 数组
@@ -725,18 +923,30 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   let totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   let finalContent: string | null = null;
   let finalModel = '';
-  const maxIter = 6; // 最多6轮工具调用循环
+  const maxIter = 10; // 包含工具调用和中途引导，给调整方向留出余量
   const callLog: Array<{ name: string; args: string; result: string }> = [];
   const toolResultCache = new Map<string, string>();
   let stopped = false;
 
   for (let iter = 0; iter < maxIter; iter++) {
     if (shouldStop?.()) { stopped = true; break; } // 用户停止：本轮前中止
+    const beforeCallGuidance = consumeSteeringMessages?.() ?? [];
+    if (beforeCallGuidance.length) {
+      currentTurns.push({ role: 'user', content: `## 老板刚刚追加的指令（优先于之前要求）\n${beforeCallGuidance.join('\n')}` });
+    }
     const r = await chatCompletion(currentTurns, scene, label, tools, modelConfig, extraSystemContext);
     totalUsage.promptTokens += r.usage.promptTokens;
     totalUsage.completionTokens += r.usage.completionTokens;
     totalUsage.totalTokens += r.usage.totalTokens;
     if (!finalModel) finalModel = r.model;
+
+    // HTTP 请求无法在生成中途改写，但返回后必须先吸收最新指令，
+    // 不能继续执行已经过时的工具调用或下一步骤。
+    const afterCallGuidance = consumeSteeringMessages?.() ?? [];
+    if (afterCallGuidance.length) {
+      currentTurns.push({ role: 'user', content: `## 老板在你思考期间追加的指令（立即调整当前执行）\n${afterCallGuidance.join('\n')}` });
+      continue;
+    }
 
     if (r.toolCalls && r.toolCalls.length > 0) {
       // 模型返回了工具调用：执行，结果加入对话继续
@@ -773,21 +983,13 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       finalContent = '⛔ 已手动停止执行。已完成的部分已保存在工作区，可重新执行继续。';
     } else if (callLog.length > 0) {
       const blocks = callLog.map((c, i) => {
-        // 从 result 中提取有用的结论摘要
-        let status = '✅ 成功';
-        if (c.result.match(/❌|退出码 \d+|error|not found/i)) status = '❌ 失败';
-        // 从结果中提取有效信息（去掉技术噪音）
-        let detail = c.result
-          .replace(/STDOUT：[\s\S]*?STDERR：/g, '')
-          .replace(/输出已保存到 outputs\/cmd-.*/g, '')
-          .replace(/目录：.*/g, '')
-          .replace(/状态：(成功|失败).*/g, '')
-          .trim()
-          .slice(0, 200);
-        if (!detail) detail = status === '❌ 失败' ? '命令执行出错' : '已执行';
+        const failed = /❌|退出码 \d+|error|not found|失败|异常/iu.test(c.result);
+        const status = failed ? '❌ 失败' : '✅ 成功';
+        const written = c.result.match(/文件已写入：[^（\n]+/u)?.[0];
+        const detail = failed ? c.result.replace(/\s+/g, ' ').slice(0, 160) : written ?? '已完成';
         return `${i + 1}. ${c.name} → ${status}\n   ${detail}`;
       });
-      finalContent = `助手执行了 ${callLog.length} 个操作，以下是关键结果：\n\n${blocks.join('\n\n')}\n\n---\n如需要更详细的说明，请继续描述你的需求。`;
+      finalContent = `已执行 ${callLog.length} 个操作。详细过程已收纳在下方“执行过程”中：\n\n${blocks.join('\n\n')}`;
     } else {
       finalContent = '模型未调用任何工具也未给出回复，请重试或检查 API 配置。';
     }

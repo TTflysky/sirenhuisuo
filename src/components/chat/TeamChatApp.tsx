@@ -6,12 +6,13 @@ import { type Attachment } from '../../data/hermesClient';
 import AgentAvatar from '../office/AgentAvatar';
 import { loadOutputsByScope, type OutputRecord } from '../../data/outputs';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
+import ChatMessageText from './ChatMessageText';
+import RenameTeamModal from '../sidebar/RenameTeamModal';
 import { copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
 import SkillMentionInput, { resolveSkillContext } from '../skills/SkillMentionInput';
 import SkillPickerButton from '../skills/SkillPickerButton';
 import type { SkillReference } from '../../types';
-import { linkify } from '../../utils/linkify';
 import { fileToAttachment, attachmentsFromClipboard, formatFileSize, persistAttachments } from '../../utils/attachments';
 import { useFileDrop } from '../../hooks/useFileDrop';
 
@@ -21,7 +22,7 @@ interface Props {
 
 const supervisorMention: Employee = {
   id: 'assistant',
-  name: 'Hermes 助理',
+  name: '章北海助理',
   title: '监工调度',
   role: 'custom',
   avatar: 'a06',
@@ -34,7 +35,7 @@ const supervisorMention: Employee = {
 
 function SupervisorAvatar({ size = 34 }: { size?: number }) {
   return (
-    <span className="supervisor-avatar" style={{ width: size, height: size }} aria-label="Hermes 助理">
+    <span className="supervisor-avatar" style={{ width: size, height: size }} aria-label="章北海助理">
       <RobotOutlined style={{ fontSize: Math.round(size * 0.58) }} />
     </span>
   );
@@ -57,6 +58,7 @@ export default function TeamChatApp({ teamId }: Props) {
   const [selectedOutputFilename, setSelectedOutputFilename] = useState<string | null>(null);
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(320);
   const [showTaskList, setShowTaskList] = useState(false);
+  const [showRenameTeam, setShowRenameTeam] = useState(false);
   const [expandedExecutionIds, setExpandedExecutionIds] = useState<Set<string>>(() => new Set());
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [skillRefs, setSkillRefs] = useState<SkillReference[]>([]);
@@ -244,28 +246,7 @@ export default function TeamChatApp({ teamId }: Props) {
   };
 
   const renderTextWithOutputLinks = (value: string, keySeed: string): React.ReactNode[] => {
-    const outputs = [...new Map(availableOutputs.map((output) => [output.filename, output])).values()]
-      .filter((output) => output.filename && value.includes(output.filename));
-    if (outputs.length === 0) return linkify(value).map((node, index) => <span key={`${keySeed}-${index}`}>{node}</span>);
-    const nodes: React.ReactNode[] = [];
-    let cursor = 0;
-    let nodeIndex = 0;
-    while (cursor < value.length) {
-      let matched: OutputRecord | undefined;
-      let matchedAt = Number.POSITIVE_INFINITY;
-      for (const output of outputs) {
-        const index = value.indexOf(output.filename, cursor);
-        if (index >= 0 && index < matchedAt) { matched = output; matchedAt = index; }
-      }
-      if (!matched) {
-        nodes.push(...linkify(value.slice(cursor)).map((node) => <span key={`${keySeed}-${nodeIndex++}`}>{node}</span>));
-        break;
-      }
-      if (matchedAt > cursor) nodes.push(...linkify(value.slice(cursor, matchedAt)).map((node) => <span key={`${keySeed}-${nodeIndex++}`}>{node}</span>));
-      nodes.push(<button type="button" className="msg-output-link" key={`${keySeed}-output-${nodeIndex++}`} onClick={() => openOutputFromMessage(matched!)} title="在产出物中定位">{matched.filename}</button>);
-      cursor = matchedAt + matched.filename.length;
-    }
-    return nodes;
+    return [<ChatMessageText key={keySeed} content={value} scope={`team:${teamId}`} outputs={availableOutputs} onOpenOutput={openOutputFromMessage} />];
   };
 
   // 解析消息中的 @ 提及、链接和产出物引用
@@ -342,14 +323,13 @@ export default function TeamChatApp({ teamId }: Props) {
     <div className="chat-panel">
       <div className="chat-layout">
         <div className="chat-main">
-          <div className="team-chat-header">
-            <div className="team-chat-title"><span>{team.icon ?? '👥'}</span><strong>{team.name}</strong></div>
-            <div className="team-avatar-strip" aria-label="团队成员">
-              {[supervisorMention, ...teamMembers].map((emp) => <button key={emp.id} className={`team-avatar-btn${emp.id === supervisorMention.id ? ' supervisor-avatar-btn' : ''}`} onClick={() => insertMention(emp)} title={`@${emp.name}`}>{emp.id === supervisorMention.id ? <SupervisorAvatar size={30} /> : <AgentAvatar employee={emp} size={30} />}</button>)}
-            </div>
-          </div>
           <div className="team-chat-body">
             <aside className="team-member-sidebar" aria-label="团队成员列表">
+              <div className="team-member-sidebar-head">
+                <span>{team.icon ?? '👥'}</span>
+                <strong title={team.name}>{team.name}</strong>
+                <button type="button" onClick={() => setShowRenameTeam(true)} title="重命名团队" aria-label="重命名团队">✎</button>
+              </div>
               <button key={supervisorMention.id} className="team-member-item team-supervisor-item" onClick={() => insertMention(supervisorMention)} title={`@${supervisorMention.name}`}><SupervisorAvatar size={34} /><span className="team-member-info"><strong>{supervisorMention.name}</strong><small>{supervisorMention.title}</small><small className="is-working">随时可联系</small></span></button>
               {teamMembers.map((emp) => <button key={emp.id} className="team-member-item" onClick={() => insertMention(emp)} title={`@${emp.name}`}><span className="team-member-avatar"><AgentAvatar employee={emp} size={34} /><span className={`team-member-status ${!emp.isOnline ? 'offline' : emp.isWorking ? 'working' : 'idle'}`} /></span><span className="team-member-info"><strong>{emp.name}</strong><small style={{ color: emp.statusColor }}>{emp.title}</small><small className={emp.isWorking ? 'is-working' : ''}>{emp.isWorking ? '工作中' : emp.isOnline ? '在线' : '离线'}</small></span></button>)}
             </aside>
@@ -681,6 +661,7 @@ export default function TeamChatApp({ teamId }: Props) {
           </div></>
         )}
       </div>
+      {showRenameTeam && <RenameTeamModal teamId={team.id} currentName={team.name} onClose={() => setShowRenameTeam(false)} />}
     </div>
   );
 }
