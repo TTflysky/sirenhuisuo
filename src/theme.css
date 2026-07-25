@@ -644,6 +644,7 @@ html, body, #root, .app-root {
 .employee-avatar-library-modal .ant-modal-header { background: transparent !important; }
 .employee-avatar-library-modal .ant-modal-title,
 .employee-avatar-library-modal .ant-modal-close { color: var(--text) !important; }
+.employee-avatar-library-modal .ant-modal-body { max-height: calc(100vh - 170px); overflow-y: auto; padding-right: 3px; }
 .avatar-library-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .avatar-library-tabs {
   min-width: 0; padding: 3px; border: 1px solid var(--border); border-radius: 7px;
@@ -659,14 +660,26 @@ html, body, #root, .app-root {
   background: var(--surface); color: var(--text); box-shadow: 0 0 0 1px var(--border);
 }
 .avatar-library-tabs button span { color: var(--text-muted); font-size: 10px; }
+.avatar-library-actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; }
 .avatar-library-upload {
   height: 36px; padding: 0 12px; border: 1px solid var(--border); border-radius: 7px;
   background: var(--surface-raised); color: var(--text); cursor: pointer; font: inherit; font-size: 12px;
   display: inline-flex; align-items: center; justify-content: center; gap: 7px; white-space: nowrap;
 }
 .avatar-library-upload:hover { border-color: var(--apple-accent); color: var(--apple-accent); }
-.avatar-library-group-note { margin: 14px 0 8px; color: var(--text-muted); font-size: 11px; }
+.avatar-library-icon-button {
+  width: 36px; height: 36px; padding: 0; border: 1px solid var(--border); border-radius: 7px;
+  background: var(--surface-raised); color: var(--text); cursor: pointer; display: inline-flex;
+  align-items: center; justify-content: center; font-size: 14px;
+}
+.avatar-library-icon-button:hover { border-color: var(--apple-accent); color: var(--apple-accent); }
+.avatar-library-group-note { margin: 14px 0 8px; color: var(--text-muted); font-size: 11px; display: flex; justify-content: space-between; gap: 12px; }
+.avatar-library-error {
+  margin-bottom: 9px; padding: 8px 10px; border: 1px solid var(--offline); border-radius: 7px;
+  background: color-mix(in srgb, var(--offline) 9%, var(--surface)); color: var(--offline); font-size: 11px;
+}
 .avatar-library-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.avatar-library-grid.online { grid-template-columns: repeat(6, minmax(0, 1fr)); }
 .avatar-library-item {
   position: relative; min-width: 0; height: 126px; padding: 9px 7px 8px;
   border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised);
@@ -674,13 +687,20 @@ html, body, #root, .app-root {
   justify-content: space-between; gap: 6px; transition: border-color .16s, transform .16s, background .16s;
 }
 .avatar-library-item:hover { border-color: var(--apple-accent); background: var(--bg-deep); transform: translateY(-1px); }
+.avatar-library-item:disabled { cursor: wait; opacity: .62; transform: none; }
 .avatar-library-item.selected { border-color: var(--apple-accent); box-shadow: inset 0 0 0 1px var(--apple-accent); }
 .avatar-library-image { width: 88px; height: 88px; display: flex; align-items: center; justify-content: center; }
+.avatar-library-image.online { width: 82px; height: 82px; border-radius: 6px; overflow: hidden; background: var(--bg-deep); }
+.avatar-library-image.online img { width: 100%; height: 100%; display: block; object-fit: contain; image-rendering: pixelated; }
 .avatar-library-name { width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; text-align: center; }
 .avatar-library-check {
   position: absolute; top: 6px; right: 6px; width: 20px; height: 20px; border-radius: 50%;
   background: var(--apple-accent); color: var(--surface); display: flex; align-items: center;
   justify-content: center; font-size: 10px; box-shadow: 0 0 0 2px var(--surface);
+}
+.avatar-library-saving {
+  position: absolute; inset: 9px 7px 29px; border-radius: 6px; background: color-mix(in srgb, var(--surface) 78%, transparent);
+  color: var(--apple-accent); display: flex; align-items: center; justify-content: center; font-size: 22px;
 }
 .agent-avatar-frame { position: relative; display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; border-radius: 50%; box-sizing: content-box; isolation: isolate; }
 .agent-avatar-frame > img { width: 100% !important; height: 100% !important; border-radius: 50%; object-fit: cover; }
@@ -701,6 +721,9 @@ html, body, #root, .app-root {
   .avatar-library-tabs { width: 100%; }
   .avatar-library-tabs button { flex: 1; padding: 0 6px; }
   .avatar-library-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .avatar-library-grid.online { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .avatar-library-actions { width: 100%; }
+  .avatar-library-actions .avatar-library-upload:last-child { flex: 1; }
 }
 
 /* 多选框 */

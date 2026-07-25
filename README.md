@@ -1,4 +1,4 @@
-# 私人办公会所 v0.7.14
+# 私人办公会所 v0.7.15
 
 > 面向 Windows 的多模型 AI 虚拟办公室。创建员工、组建团队，让不同模型按照职责协作完成真实任务。
 
@@ -6,7 +6,7 @@
 
 ## 项目状态
 
-- 当前版本：`0.7.14`
+- 当前版本：`0.7.15`
 - 发布分支：`main`
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 33、React 19、TypeScript 6、Ant Design 6、Vite 8
@@ -89,7 +89,8 @@
 - 内置幼圆及 5 款中英文字体，并支持在设置中心调整全局字体和界面字号。
 - 主标题栏和设置窗口支持拖动客户端窗口。
 - 员工颜色可自由选择，并自动避免与其他员工重复。
-- 提供分类员工头像库，可从会所角色、像素宠物和经典头像中一键选择，也可上传自定义头像。
+- 提供分类员工头像库，可从会所角色、24 个在线像素角色和经典头像中一键选择，也可换一批或上传自定义头像。
+- 在线像素头像来自 [DiceBear Pixel Art](https://www.dicebear.com/styles/pixel-art/)，使用 `CC0 1.0` 授权；选中后保存到本地，不长期依赖外部图片地址。
 - 提供多款头像框和身份牌，状态点显示空闲、工作中或掉线。
 - 最小化的聊天窗口可以从应用内重新打开。
 
@@ -99,13 +100,13 @@
 
 最新安装包可从 GitHub Releases 下载：
 
-- [直接下载 v0.7.14 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.7.14/hermes-office-pro-setup-0.7.14.exe)
-- [查看 v0.7.14 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.7.14)
+- [直接下载 v0.7.15 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.7.15/hermes-office-pro-setup-0.7.15.exe)
+- [查看 v0.7.15 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.7.15)
 
 本地构建的安装程序生成在：
 
 ```text
-release/hermes-office-pro-setup-0.7.14.exe
+release/hermes-office-pro-setup-0.7.15.exe
 ```
 
 可以直接覆盖安装旧版本。应用数据保存在用户目录，正常覆盖安装不会删除员工、团队、聊天和模型配置。

@@ -39,7 +39,7 @@ export interface AvatarPreset {
 
 export const AVATAR_PRESET_GROUPS: AvatarPresetGroup[] = [
   { id: 'office', label: '会所角色', description: '当前会所成员形象' },
-  { id: 'pixel', label: '像素宠物', description: 'Q版低像素员工角色' },
+  { id: 'pixel', label: '在线像素', description: 'DiceBear Pixel Art 在线头像，选中后保存到本地' },
   { id: 'classic', label: '经典头像', description: '简洁中性的角色头像' },
 ];
 
