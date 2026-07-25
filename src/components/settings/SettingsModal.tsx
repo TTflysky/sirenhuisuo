@@ -31,6 +31,7 @@ interface Props {
 
 export default function SettingsModal({ onClose, onSaved }: Props) {
   const [tab, setTab] = useState<Tab>('model');
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const sections: Array<{ title: string; items: Array<{ key: Tab; label: string; icon: React.ReactNode }> }> = [
     { title: '配置', items: [
       { key: 'model', label: '模型', icon: <ApiOutlined /> },
@@ -55,6 +56,23 @@ export default function SettingsModal({ onClose, onSaved }: Props) {
     : tab === 'automation' ? <AutomationTab />
     : <BackupTab />;
 
+  const startDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const origin = dragOffset;
+    const move = (moveEvent: PointerEvent) => setDragOffset({
+      x: origin.x + moveEvent.clientX - startX,
+      y: origin.y + moveEvent.clientY - startY,
+    });
+    const end = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', end, { once: true });
+  };
+
   return (
     <Modal
       open
@@ -65,10 +83,11 @@ export default function SettingsModal({ onClose, onSaved }: Props) {
       destroyOnClose
       className="settings-center-modal"
       styles={{ body: { padding: 0, height: 'min(720px, calc(100vh - 90px))', overflow: 'hidden' } }}
+      modalRender={(modal) => <div className="settings-modal-drag-shell" style={{ transform: `translate(${dragOffset.x}px, ${dragOffset.y}px)` }}>{modal}</div>}
     >
       <div className="settings-center">
         <aside className="settings-center-nav">
-          <div className="settings-center-brand"><SettingOutlined /><div><strong>设置</strong><small>私人办公会所</small></div></div>
+          <div className="settings-center-brand" onPointerDown={startDrag} title="按住拖动设置窗口"><SettingOutlined /><div><strong>设置</strong><small>私人办公会所</small></div></div>
           {sections.map((section) => <div className="settings-nav-section" key={section.title}>
             <div className="settings-nav-title">{section.title}</div>
             {section.items.map((item) => <button className={tab === item.key ? 'active' : ''} key={item.key} onClick={() => setTab(item.key)}>{item.icon}<span>{item.label}</span><code>/{item.key}</code></button>)}
