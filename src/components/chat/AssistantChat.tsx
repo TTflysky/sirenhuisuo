@@ -38,7 +38,7 @@ function saveHistory(msgs: ChatMessage[]): void {
 }
 
 export default function AssistantChat() {
-  const { createProjectDraft } = useStore();
+  const { createProjectDraft, dispatch } = useStore();
   const [msgs, setMsgs] = useState<ChatMessage[]>(() => loadHistory());
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -94,6 +94,13 @@ export default function AssistantChat() {
     setText('');    setAttachments([]);
     setBusy(true);
     setStatus('思考中…');
+    const progressStartedAt = Date.now();
+    const updateProgress = (step: number, name = '章北海助理') => dispatch({ type: 'SET_PROGRESS', progress: {
+      teamId: 'assistant', teamName: '章北海助理', step, totalSteps: 3,
+      currentEmpName: name, currentRole: 'custom', scene: 'discussion',
+      startedAt: progressStartedAt, estimatedMs: 300000, lastUpdate: Date.now(),
+    } });
+    updateProgress(1);
 
     // 文本类附件：拼进消息文本
     let enriched = content;
@@ -154,6 +161,7 @@ export default function AssistantChat() {
         attachments: imageAtts,
         extraSystemContext: skillContext,
         onToolCall(name, args) {
+          updateProgress(2, `章北海助理 · ${name}`);
           const argsStr = args ? (args.length > 100 ? args.slice(0, 100) + '…' : args) : '';
           setStatus(`🔧 调用 ${name}${argsStr ? `(${argsStr})` : ''}`);
         },
@@ -171,6 +179,7 @@ export default function AssistantChat() {
       });
 
       const ts = Date.now();
+      updateProgress(3, '章北海助理 · 整理回复');
       push({
         id: `h-${ts}-ai`, authorId: 'assistant', roleId: 'custom',
         content: r.content, mentions: [], timestamp: ts, kind: 'text',
@@ -207,6 +216,7 @@ export default function AssistantChat() {
     }
     setBusy(false);
     setStatus('');
+    dispatch({ type: 'SET_PROGRESS', progress: null });
   };
 
   const handleCopyMsg = async (content: string) => {

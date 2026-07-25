@@ -427,7 +427,11 @@ async function apiFetch(path: string, init: RequestInit = {}, timeoutMs = 4000, 
   if (!base) throw new Error('no api base');
   const url = endpointUrl(base, path);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort(new DOMException(`模型请求超过 ${Math.round(timeoutMs / 1000)} 秒未返回`, 'TimeoutError'));
+  }, timeoutMs);
   const s = loadSettings();
   const headers: Record<string, string> = {
     Accept: 'application/json',
@@ -442,6 +446,8 @@ async function apiFetch(path: string, init: RequestInit = {}, timeoutMs = 4000, 
     return res;
   } catch (e) {
     clearTimeout(timer);
+    if (timedOut) throw new Error(`模型响应超时（${Math.round(timeoutMs / 1000)} 秒）。请检查模型服务负载、网络或稍后重试。`);
+    if (e instanceof DOMException && e.name === 'AbortError') throw new Error('模型请求已取消。');
     throw e;
   }
 }
@@ -604,7 +610,7 @@ export async function chatCompletion(
       stream: false,
       ...(tools && tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
     }),
-  }, 30000, merged.apiKey, base); // 传入合并后的 apiKey 和 base
+  }, 300000, merged.apiKey, base); // Long-running model/tool requests may take minutes on a busy provider.
   if (!res.ok) {
     const txt = await res.text().catch(() => '');
     throw new Error(`模型响应 ${res.status}: ${txt.slice(0, 120)}`);
