@@ -9,6 +9,11 @@ import a07 from '../assets/avatars/avatar-07-pink.png';
 import a08 from '../assets/avatars/avatar-08-orange.png';
 import a09 from '../assets/avatars/avatar-09-slate.png';
 import a10 from '../assets/avatars/avatar-10-rose.png';
+import member01 from '../assets/avatars/member-emp-1784688642878-q9x1l.png';
+import member02 from '../assets/avatars/member-emp-1784712230779-gv8ry.png';
+import member03 from '../assets/avatars/member-emp-1784875457261-wp6em.png';
+import member04 from '../assets/avatars/member-emp-1784878178584-hvot4.png';
+import member05 from '../assets/avatars/member-emp-1784881570164-qghbh.png';
 
 // ===== 10 个 AI 生成的员工头像（黑色剪影小人 + 不同围巾色）=====
 export interface AvatarPreset {
@@ -19,6 +24,11 @@ export interface AvatarPreset {
 }
 
 export const AVATAR_PRESETS: AvatarPreset[] = [
+  { key: 'member01', label: '会所成员 01', src: member01, scarf: '#e879a8' },
+  { key: 'member02', label: '会所成员 02', src: member02, scarf: '#f59e0b' },
+  { key: 'member03', label: '会所成员 03', src: member03, scarf: '#22c55e' },
+  { key: 'member04', label: '会所成员 04', src: member04, scarf: '#a855f7' },
+  { key: 'member05', label: '会所成员 05', src: member05, scarf: '#0ea5e9' },
   { key: 'a01', label: '红围巾', src: a01, scarf: '#ef4444' },
   { key: 'a02', label: '青围巾', src: a02, scarf: '#22d3ee' },
   { key: 'a03', label: '绿围巾', src: a03, scarf: '#22c55e' },
