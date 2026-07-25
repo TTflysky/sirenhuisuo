@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, shell, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, shell, dialog, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fsp = require('fs/promises');
@@ -52,6 +52,10 @@ const CHAT_WINDOW_HEIGHT = 700;
 const CHAT_WINDOW_MIN_WIDTH = 420;
 const CHAT_WINDOW_MIN_HEIGHT = 420;
 const CHAT_WINDOW_OFFSET = 28;
+const ASSISTANT_COMPANION_KEY = 'assistant-chat';
+const ASSISTANT_COMPANION_WIDTH = 480;
+const ASSISTANT_COMPANION_MIN_WIDTH = 400;
+const ASSISTANT_COMPANION_GAP = 10;
 
 function normalizeChatOptions(opts) {
   const type = opts?.type;
@@ -146,6 +150,163 @@ function getChatWindowBounds(sourceWindow) {
 let mainWindow = null;
 let lastActiveWindow = null;
 let ipcHandlersRegistered = false;
+let assistantCompanionWindow = null;
+let assistantCompanionManuallyClosed = false;
+let tray = null;
+let isQuitting = false;
+
+function showMainWindow() {
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+  if (!assistantCompanionManuallyClosed) {
+    createAssistantCompanion(win).then(() => syncAssistantCompanion(win)).catch((error) => {
+      console.error('Failed to restore assistant companion window:', error);
+    });
+  }
+}
+
+function showAssistantCompanion() {
+  showMainWindow();
+  assistantCompanionManuallyClosed = false;
+  createAssistantCompanion(mainWindow, { focus: true }).catch((error) => {
+    console.error('Failed to open assistant companion window:', error);
+  });
+}
+
+function createTray() {
+  if (tray) return tray;
+  // Keep the icon inside the application bundle so the installed client can
+  // remain in the tray after its main window is closed.
+  const iconPath = path.join(__dirname, '../public/tray-icon.png');
+  const icon = nativeImage.createFromPath(iconPath);
+  tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon.resize({ width: 20, height: 20 }));
+  tray.setToolTip('私人办公会所');
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: '打开私人办公会所', click: showMainWindow },
+    { label: '打开章北海助理', click: showAssistantCompanion },
+    { type: 'separator' },
+    {
+      label: '彻底退出',
+      click: () => {
+        isQuitting = true;
+        app.quit();
+      },
+    },
+  ]));
+  tray.on('click', showMainWindow);
+  tray.on('double-click', showMainWindow);
+  return tray;
+}
+
+function getAssistantCompanionBounds(owner, companion) {
+  const ownerBounds = owner.getBounds();
+  const display = screen.getDisplayMatching(ownerBounds);
+  const workArea = display.workArea;
+  const currentBounds = companion && !companion.isDestroyed() ? companion.getBounds() : null;
+  const width = Math.min(
+    Math.max(currentBounds?.width ?? ASSISTANT_COMPANION_WIDTH, ASSISTANT_COMPANION_MIN_WIDTH),
+    workArea.width,
+  );
+  const height = Math.min(Math.max(ownerBounds.height, CHAT_WINDOW_MIN_HEIGHT), workArea.height);
+  const y = Math.max(workArea.y, Math.min(ownerBounds.y, workArea.y + workArea.height - height));
+  const rightX = ownerBounds.x + ownerBounds.width + ASSISTANT_COMPANION_GAP;
+  const leftX = ownerBounds.x - width - ASSISTANT_COMPANION_GAP;
+
+  if (rightX + width <= workArea.x + workArea.width) {
+    return { x: rightX, y, width, height };
+  }
+  if (leftX >= workArea.x) {
+    return { x: leftX, y, width, height };
+  }
+
+  // A maximized or nearly full-screen owner leaves no external space. Keep the
+  // companion fully visible against the right edge until external space returns.
+  return { x: workArea.x + workArea.width - width, y, width, height };
+}
+
+function getInitialWindowBounds() {
+  const workArea = screen.getPrimaryDisplay().workArea;
+  const companionWidth = Math.min(ASSISTANT_COMPANION_WIDTH, workArea.width);
+  const availableMainWidth = workArea.width - companionWidth - ASSISTANT_COMPANION_GAP;
+  const width = Math.min(1280, Math.max(860, availableMainWidth));
+  const height = Math.min(820, workArea.height);
+  const groupWidth = Math.min(workArea.width, width + ASSISTANT_COMPANION_GAP + companionWidth);
+  return {
+    x: workArea.x + Math.max(0, Math.floor((workArea.width - groupWidth) / 2)),
+    y: workArea.y + Math.max(0, Math.floor((workArea.height - height) / 2)),
+    width,
+    height,
+  };
+}
+
+function syncAssistantCompanion(owner = mainWindow) {
+  const companion = assistantCompanionWindow;
+  if (!owner || owner.isDestroyed() || !companion || companion.isDestroyed()) return;
+  if (!owner.isVisible() || owner.isMinimized()) {
+    companion.hide();
+    return;
+  }
+  companion.setBounds(getAssistantCompanionBounds(owner, companion), false);
+  if (!companion.isVisible()) companion.showInactive();
+}
+
+async function createAssistantCompanion(owner = mainWindow, { focus = false } = {}) {
+  if (!owner || owner.isDestroyed()) return null;
+  if (assistantCompanionWindow && !assistantCompanionWindow.isDestroyed()) {
+    syncAssistantCompanion(owner);
+    if (focus) focusChatWindow(assistantCompanionWindow);
+    return assistantCompanionWindow;
+  }
+
+  assistantCompanionManuallyClosed = false;
+  const companion = new BrowserWindow({
+    ...getAssistantCompanionBounds(owner, null),
+    minWidth: ASSISTANT_COMPANION_MIN_WIDTH,
+    minHeight: CHAT_WINDOW_MIN_HEIGHT,
+    title: '私人办公会所 · 章北海助理',
+    skipTaskbar: true,
+    frame: false,
+    show: false,
+    backgroundColor: '#ffffff',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  assistantCompanionWindow = companion;
+  chatWindows.set(ASSISTANT_COMPANION_KEY, companion);
+  trackActiveWindow(companion);
+  companion.once('ready-to-show', () => {
+    if (owner.isVisible() && !owner.isMinimized()) {
+      syncAssistantCompanion(owner);
+      if (focus) focusChatWindow(companion);
+      else companion.showInactive();
+    }
+  });
+  companion.on('close', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) assistantCompanionManuallyClosed = true;
+  });
+  companion.on('closed', () => {
+    if (chatWindows.get(ASSISTANT_COMPANION_KEY) === companion) {
+      chatWindows.delete(ASSISTANT_COMPANION_KEY);
+    }
+    if (assistantCompanionWindow === companion) assistantCompanionWindow = null;
+  });
+
+  const hash = 'chat?type=assistant-chat&id=';
+  try {
+    if (!app.isPackaged) await companion.loadURL(`http://localhost:5173/#${hash}`);
+    else await companion.loadFile(path.join(__dirname, '../dist/index.html'), { hash });
+    return companion;
+  } catch (error) {
+    if (!companion.isDestroyed()) companion.destroy();
+    throw error;
+  }
+}
 
 function trackActiveWindow(win) {
   lastActiveWindow = win;
@@ -162,8 +323,7 @@ function trackActiveWindow(win) {
 
 function createWindow() {
   const win = new BrowserWindow({
-    width: 1280,
-    height: 820,
+    ...getInitialWindowBounds(),
     minWidth: 860,
     minHeight: 600,
     frame: false,
@@ -177,6 +337,28 @@ function createWindow() {
 
   mainWindow = win;
   trackActiveWindow(win);
+
+  win.once('ready-to-show', () => {
+    createAssistantCompanion(win).catch((error) => {
+      console.error('Failed to create assistant companion window:', error);
+    });
+  });
+  win.on('move', () => syncAssistantCompanion(win));
+  win.on('resize', () => syncAssistantCompanion(win));
+  win.on('maximize', () => syncAssistantCompanion(win));
+  win.on('unmaximize', () => syncAssistantCompanion(win));
+  win.on('restore', () => syncAssistantCompanion(win));
+  win.on('show', () => {
+    if (!assistantCompanionManuallyClosed) syncAssistantCompanion(win);
+  });
+  win.on('hide', () => assistantCompanionWindow?.hide());
+  win.on('minimize', () => assistantCompanionWindow?.hide());
+  win.on('close', (event) => {
+    if (isQuitting) return;
+    event.preventDefault();
+    win.hide();
+    assistantCompanionWindow?.hide();
+  });
 
   if (!app.isPackaged) {
     win.loadURL('http://localhost:5173');
@@ -214,6 +396,15 @@ function createWindow() {
     const normalized = normalizeChatOptions(opts);
     if (!normalized) return { ok: false, error: '无效的聊天窗口参数' };
     const { type, refId, key } = normalized;
+    if (type === 'assistant-chat') {
+      try {
+        const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : BrowserWindow.fromWebContents(event.sender);
+        await createAssistantCompanion(owner, { focus: true });
+        return { ok: true, reused: true };
+      } catch (error) {
+        return { ok: false, error: String(error?.message ?? error) };
+      }
+    }
     const existing = chatWindows.get(key);
     if (existing && !existing.isDestroyed()) {
       focusChatWindow(existing);
@@ -544,11 +735,12 @@ function createWindow() {
 
   // 主窗口关闭时，关闭所有原生聊天子窗口
   win.on('closed', () => {
+    mainWindow = null;
     for (const child of [...chatWindows.values()]) {
       try { child.close(); } catch {}
     }
     chatWindows.clear();
-    if (mainWindow === win) mainWindow = null;
+    assistantCompanionWindow = null;
   });
 }
 
@@ -558,20 +750,23 @@ if (!hasSingleInstanceLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    const target = lastActiveWindow && !lastActiveWindow.isDestroyed()
-      ? lastActiveWindow
-      : mainWindow;
-    focusChatWindow(target);
+    showMainWindow();
   });
 
   app.whenReady().then(() => {
+    createTray();
     createWindow();
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow();
+      if (!mainWindow || mainWindow.isDestroyed()) createWindow();
+      else showMainWindow();
     });
   });
 }
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  if (isQuitting && process.platform !== 'darwin') app.quit();
+});
+
+app.on('before-quit', () => {
+  isQuitting = true;
 });

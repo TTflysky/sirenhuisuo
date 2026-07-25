@@ -26,7 +26,7 @@ const antdTheme = {
   token: {
     colorPrimary: '#1a1f36',
     colorInfo: '#1a1f36',
-    borderRadius: 8,
+    borderRadius: 12,
     fontFamily: 'var(--ui-font-family)',
     colorBgContainer: '#ffffff',
     colorBorder: '#e2e6ef',
