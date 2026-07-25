@@ -1,11 +1,11 @@
 # 项目交接手册
 
-> 最后整理：2026-07-24
-> 当前源码/发布版本：`v0.5.9`
+> 最后整理：2026-07-25
+> 当前源码版本：`v0.6.4`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 
-本文件是接手本项目的唯一工作入口。先读本文件，再读 `README.md`、`CHANGELOG.md` 和相关模块；`开发资料全记录.md` 是早期历史档案，不能用来判断当前实现。
+本文件是接手本项目的唯一工作入口。先执行 `npm.cmd run status:project -- -Fetch`，再读本文件、`README.md`、`CHANGELOG.md` 和相关模块；跨电脑接力的固定流程见 `docs/CROSS_DEVICE_WORKFLOW.md`。`开发资料全记录.md` 是早期历史档案，不能用来判断当前实现。
 
 ## 1. 产品目标与不可破坏的规则
 
@@ -59,7 +59,7 @@
 | `electron/main.cjs` | 窗口管理、工作区安全边界、文件 IPC、命令执行、Office/PDF 解析。 |
 | `electron/preload.cjs` | 受限的 `window.electronAPI` 桥接。新增 IPC 必须同步更新此文件和 `src/electron.d.ts`。 |
 | `electron/skills.cjs` | 扫描 `%USERPROFILE%/.workbuddy/skills`、项目 `skills/` 和 `.workbuddy/skills`。 |
-| `electron/autoUpdate.cjs` | 自动更新代码已保留，但发布 URL 仍是占位地址，当前以 GitHub Release 覆盖安装升级为准。 |
+| `electron/autoUpdate.cjs` | 通过 GitHub Releases 检查并下载更新；后台检查失败只写诊断日志，不冒充模型网络故障。 |
 
 ## 4. 数据位置与隐私边界
 
@@ -99,7 +99,7 @@
 
 - 将“后台调度和实际工具执行”进一步做成更紧凑、可展开的聊天内状态流，避免铺满屏幕。
 - 完善用户数据导出/导入，支持迁移员工、团队、设置和必要工作区文件，而不是依赖手工复制。
-- 自动更新改为 GitHub Releases 或自有 HTTPS 更新源，并配套 `latest.yml`，再启用真正热更新。
+- 验证 GitHub Release 的安装器、`.blockmap` 和 `latest.yml` 都已上传，并用已安装旧版验证热更新提示与下载。
 - 给关键逻辑补自动化测试：模型继承/独立配置、任务退回、附件落盘、Office 读取、产出物过滤、跨窗口同步。
 
 ### P2：工程债务
@@ -119,7 +119,7 @@ npm.cmd run lint
 $env:ELECTRON_BUILDER_CACHE='E:\私人办公会所项目\.electron-builder-cache'
 $env:CSC_IDENTITY_AUTO_DISCOVERY='false'
 npm.cmd run dist:win
-Get-FileHash -Algorithm SHA256 'release\私人办公会所 Setup <version>.exe'
+Get-FileHash -Algorithm SHA256 'release\hermes-office-pro-setup-<version>.exe'
 ```
 
 发布检查清单：
@@ -128,8 +128,8 @@ Get-FileHash -Algorithm SHA256 'release\私人办公会所 Setup <version>.exe'
 2. `npm.cmd run build` 必须通过；`npm.cmd run lint` 的新增警告必须为零；`git diff --check` 必须通过。
 3. 构建安装包并记录绝对路径、文件大小和 SHA-256。
 4. `git add`、`git commit`、通过本机代理推送 `main`。
-5. 创建 `v<version>` GitHub Release，上传 ASCII 名称的 `Setup.<version>.exe` 和 `.blockmap`。
-6. 用 GitHub API 或 Release 页面确认：远端 `main`、README 版本、Release 标签、两个资产都存在。
+5. 创建 `v<version>` GitHub Release，上传 `hermes-office-pro-setup-<version>.exe`、同名 `.blockmap` 和 `latest.yml`。
+6. 用 GitHub API 或 Release 页面确认：远端 `main`、README 版本、Release 标签和三个发布资产都存在。
 
 本机网络若需要代理，Git/GitHub 使用：`http://127.0.0.1:65532`。不要把 GitHub Token、代理凭据或 API Key 写进代码、文档和提交记录。
 
