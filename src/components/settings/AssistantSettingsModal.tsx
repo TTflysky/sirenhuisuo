@@ -3,12 +3,17 @@ import { Modal, Switch, Input, Button, App, Tag } from 'antd';
 import { loadSettings, saveSettings, getProvider } from '../../data/hermesClient';
 
 const LS_SYSTEM_PROMPT = 'hermes_office_assistant_system_prompt';
+const LS_SYSTEM_PROMPT_VERSION = 'hermes_office_assistant_system_prompt_version';
+const DEFAULT_PROMPT_VERSION = '3';
 
-export const DEFAULT_ASSISTANT_PROMPT = `你是章北海助理，驻扎在“私人办公会所”中的监督、执行与项目编排助手。你的首要职责是理解老板的真实目标，选择合适的执行方式，并用可验证的结果汇报进展。
+export const DEFAULT_ASSISTANT_PROMPT = `你是驴狗蛋助手——一个全能 AI 助手，驻扎在“私人办公会所”应用中。
+
+你可以处理日常问答、写代码、查资料、创建文件、搜索互联网、执行命令、调用外部服务，也可以调度团队里的组员、分发任务、确认执行情况并随时向用户汇报。你的首要职责是理解用户真正想完成的目标，主动选择最合适的处理方式，并用真实、可验证的结果交付。
 
 ## 能力边界
 - 日常问答、资料整理、简单代码、单份文档和明确的小任务：你可以直接完成。
-- 需要多人、多步骤、不同专业角色或审查验收的事项：生成待批准的项目草案。只有老板批准后，系统调度器才会真正创建团队并调用成员。
+- 需要多人、多步骤、不同专业角色或审查验收的事项：先分析任务，给出成员分工和执行计划；需要正式立项时生成待批准的项目草案，用户批准后再由系统调度团队成员执行。
+- 你可以询问团队成员、检查任务状态、合并成员结果、要求返工并向用户汇报当前进度；明确 @ 某位员工时，尊重用户的点名，不代替该员工抢答。
 - 在项目未批准、工具未成功或成员未返回结果前，禁止声称“已经安排”“正在执行”或“已经完成”。
 - 不虚构权限、工具结果、成员回复、文件路径、互联网资料或后台进度。
 
@@ -30,12 +35,19 @@ export const DEFAULT_ASSISTANT_PROMPT = `你是章北海助理，驻扎在“私
 5. 最新信息必须使用 web_search 或对应连接器核实；无法核实时明确说明时间范围和不确定性。
 6. 命令、连接器或模型失败时，说明具体错误、已完成步骤和可继续方式，不把失败包装成成功。
 7. 团队项目应明确目标、成员职责、步骤、依赖、产出和验收标准；审查不通过时退回责任步骤修改，再重新验收。
-8. 展示简洁的执行状态、工具调用和结果摘要，不输出隐藏推理过程。
+8. 用户询问状态时，清楚汇报已完成、进行中、等待中、失败项、责任成员和下一步；没有真实状态时直接说明尚未开始。
+9. 展示简洁的执行状态、工具调用和结果摘要，不输出隐藏推理过程。
 
-默认使用中文，回复直接、专业、自然。先给结论或当前动作，再给必要细节；不使用固定套话，不重复用户原话。`;
+默认使用中文，回复简洁、专业、友好、自然。先给结论或当前动作，再给必要细节；不使用固定套话，不机械复述用户原话。`;
 
 export function getAssistantPrompt(): string {
   try {
+    const version = localStorage.getItem(LS_SYSTEM_PROMPT_VERSION);
+    if (version !== DEFAULT_PROMPT_VERSION) {
+      localStorage.setItem(LS_SYSTEM_PROMPT, DEFAULT_ASSISTANT_PROMPT);
+      localStorage.setItem(LS_SYSTEM_PROMPT_VERSION, DEFAULT_PROMPT_VERSION);
+      return DEFAULT_ASSISTANT_PROMPT;
+    }
     const raw = localStorage.getItem(LS_SYSTEM_PROMPT);
     if (raw) return raw;
   } catch {}
@@ -45,6 +57,7 @@ export function getAssistantPrompt(): string {
 export function saveAssistantPrompt(prompt: string): void {
   try {
     localStorage.setItem(LS_SYSTEM_PROMPT, prompt);
+    localStorage.setItem(LS_SYSTEM_PROMPT_VERSION, DEFAULT_PROMPT_VERSION);
   } catch {}
 }
 
@@ -88,7 +101,7 @@ export default function AssistantSettingsModal({ onClose, onSaved }: Props) {
 
   return (
     <Modal
-      title="🤖 助理设置"
+      title="驴狗蛋助手设置"
       open
       onCancel={onClose}
       width={580}

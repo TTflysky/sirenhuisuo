@@ -22,7 +22,7 @@ interface Props {
 
 const supervisorMention: Employee = {
   id: 'assistant',
-  name: '章北海助理',
+  name: '驴狗蛋助手',
   title: '监工调度',
   role: 'custom',
   avatar: 'a06',
@@ -35,7 +35,7 @@ const supervisorMention: Employee = {
 
 function SupervisorAvatar({ size = 34 }: { size?: number }) {
   return (
-    <span className="supervisor-avatar" style={{ width: size, height: size }} aria-label="章北海助理">
+    <span className="supervisor-avatar" style={{ width: size, height: size }} aria-label="驴狗蛋助手">
       <RobotOutlined style={{ fontSize: Math.round(size * 0.58) }} />
     </span>
   );

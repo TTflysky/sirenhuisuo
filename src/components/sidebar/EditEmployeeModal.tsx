@@ -6,6 +6,7 @@ import { PROVIDER_PRESETS, getProvider, loadSettings } from '../../data/hermesCl
 import type { ModelEntry } from '../../data/hermesClient';
 import AgentAvatar from '../office/AgentAvatar';
 import EmployeeAppearanceFields from './EmployeeAppearanceFields';
+import EmployeeAvatarPicker from './EmployeeAvatarPicker';
 
 interface Props {
   employee: Employee;
@@ -25,6 +26,8 @@ export default function EditEmployeeModal({ employee, onClose }: Props) {
   const [showThoughtChain, setShowThoughtChain] = useState(employee.showThoughtChain ?? true);
   const [statusColor, setStatusColor] = useState(employee.statusColor);
   const [avatarFrame, setAvatarFrame] = useState<AvatarFrameConfig>(employee.avatarFrame ?? { presetId: 'standard' });
+  const [avatar, setAvatar] = useState(employee.avatar);
+  const [avatarKind, setAvatarKind] = useState<'preset' | 'custom'>(employee.avatarKind);
 
   // 模型配置
   const mc = employee.modelConfig;
@@ -121,6 +124,8 @@ export default function EditEmployeeModal({ employee, onClose }: Props) {
         showThoughtChain,
         statusColor,
         avatarFrame,
+        avatar,
+        avatarKind,
       },
     });
     onClose();
@@ -155,7 +160,7 @@ export default function EditEmployeeModal({ employee, onClose }: Props) {
       ]}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <AgentAvatar employee={employee} size={48} />
+        <AgentAvatar employee={{ ...employee, avatar, avatarKind, statusColor, avatarFrame }} size={48} />
         <div>
           <div style={{ fontSize: 15, fontWeight: 700 }}>{employee.name}</div>
           <div style={{ fontSize: 12, color: employee.statusColor }}>{employee.title}</div>
@@ -171,6 +176,18 @@ export default function EditEmployeeModal({ employee, onClose }: Props) {
           <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6 }}>身份牌</div>
           <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="如：技术总监" />
         </div>
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6 }}>员工头像</div>
+        <EmployeeAvatarPicker
+          avatar={avatar}
+          avatarKind={avatarKind}
+          onChange={(nextAvatar, nextKind) => {
+            setAvatar(nextAvatar);
+            setAvatarKind(nextKind);
+          }}
+        />
       </div>
 
       <div style={{ marginBottom: 14 }}>

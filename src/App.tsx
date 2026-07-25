@@ -183,8 +183,8 @@ export default function App() {
           </span>
           <button
             className="titlebar-btn assistant-launch-btn"
-            title="打开章北海助理"
-            aria-label="打开章北海助理"
+            title="打开驴狗蛋助手"
+            aria-label="打开驴狗蛋助手"
             onClick={openAssistantChat}
           >
             <RobotOutlined />
@@ -225,7 +225,7 @@ export default function App() {
       </div>
 
       {/* 主体 */}
-      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+      <div className="app-body">
         {view === 'office' ? (
           <>
             <SidebarPanel />

@@ -155,7 +155,7 @@ function PersonaTab() {
   const [prompt, setPrompt] = useState(() => getAssistantPrompt());
   const [saved, setSaved] = useState(false);
   const save = () => { saveAssistantPrompt(prompt); setSaved(true); setTimeout(() => setSaved(false), 1500); };
-  return <div className="settings-content-page"><header><h2>助理人格</h2><span>与章北海助理窗口共用同一份角色、工具和调度规则</span></header><Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={16} /><div className="settings-page-actions"><Button onClick={() => setPrompt(DEFAULT_ASSISTANT_PROMPT)}>应用新版默认人格</Button><Button type="primary" onClick={save}>{saved ? '已保存' : '保存人格'}</Button></div></div>;
+  return <div className="settings-content-page"><header><h2>助理人格</h2><span>与驴狗蛋助手窗口共用同一份角色、工具和调度规则</span></header><Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={16} /><div className="settings-page-actions"><Button onClick={() => setPrompt(DEFAULT_ASSISTANT_PROMPT)}>应用新版默认人格</Button><Button type="primary" onClick={save}>{saved ? '已保存' : '保存人格'}</Button></div></div>;
 }
 
 function AutomationTab() {

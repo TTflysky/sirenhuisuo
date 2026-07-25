@@ -16,6 +16,15 @@ import { fileToAttachment, attachmentsFromClipboard, attachmentWorkspaceContext,
 import { useFileDrop } from '../../hooks/useFileDrop';
 import AssistantSettingsModal, { getAssistantPrompt } from '../settings/AssistantSettingsModal';
 import { useStore } from '../../store';
+import {
+  CopyOutlined,
+  DeleteOutlined,
+  ExportOutlined,
+  FolderOpenOutlined,
+  PaperClipOutlined,
+  RobotOutlined,
+  SettingOutlined,
+} from '@ant-design/icons';
 
 const LS_KEY = 'hermes_office_assistant_chat';
 
@@ -137,7 +146,7 @@ export default function AssistantChat() {
     if (!resolveApiBase(assistantSettings)) {
       push({
         id: `h-${Date.now()}-ai`, authorId: 'assistant', roleId: 'custom',
-        content: '我是章北海助理。当前未配置 AI 接口，请在 ⚙️ 设置中填入模型服务地址和 API Key 后重试。',
+        content: '我是驴狗蛋助手。当前未配置 AI 接口，请在设置中填入模型服务地址和 API Key 后重试。',
         mentions: [], timestamp: Date.now(), kind: 'text',
       });
       setBusy(false);
@@ -171,7 +180,7 @@ export default function AssistantChat() {
         ],
         tools: allTools,
         scene: 'assistant',
-        label: '章北海助理',
+        label: '驴狗蛋助手',
         scope: 'assistant',
         attachments: imageAtts,
         extraSystemContext: skillContext,
@@ -222,7 +231,7 @@ export default function AssistantChat() {
           const who = m.roleId === 'human' ? '用户' : '助手';
           return `${who}: ${m.content.slice(0, 200)}`;
         }).join('\n');
-        extractUserInsights(chatText, '章北海助理对话').catch(() => {});
+        extractUserInsights(chatText, '驴狗蛋助手对话').catch(() => {});
       }
     } catch (e: any) {
       push({
@@ -242,7 +251,7 @@ export default function AssistantChat() {
 
   const handleCopyAll = async () => {
     const text = msgs.map((m) => {
-      const head = m.roleId === 'human' ? '你' : '🤖 章北海助理';
+      const head = m.roleId === 'human' ? '你' : '驴狗蛋助手';
       return `[${head}] ${m.content}`;
     }).join('\n\n');
     await copyToClipboard(text);
@@ -251,13 +260,13 @@ export default function AssistantChat() {
   const handleExport = () => {
     const md = messagesToMarkdown(
       msgs.map((m) => ({
-        role: m.roleId === 'human' ? '你' : '章北海助理',
+        role: m.roleId === 'human' ? '你' : '驴狗蛋助手',
         content: m.content,
         time: new Date(m.timestamp).toLocaleString('zh-CN'),
       })),
-      '章北海助理对话记录'
+      '驴狗蛋助手对话记录'
     );
-    downloadTextFile(`章北海助理-对话-${new Date().toISOString().slice(0, 10)}.md`, md);
+    downloadTextFile(`驴狗蛋助手-对话-${new Date().toISOString().slice(0, 10)}.md`, md);
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -274,10 +283,10 @@ export default function AssistantChat() {
           {busy && (
             <div className="assistant-activity" role="status" aria-live="polite">
               <div className="assistant-activity-glow" />
-              <span className="assistant-activity-icon">🤖</span>
+              <span className="assistant-activity-icon"><RobotOutlined /></span>
               <div className="assistant-activity-copy">
                 <strong>{status || '思考中…'}</strong>
-                <span>章北海助理正在处理当前对话</span>
+                <span>驴狗蛋助手正在处理当前对话</span>
               </div>
               <span className="assistant-activity-step">{Math.max(1, activityStep)}/3</span>
             </div>
@@ -286,8 +295,8 @@ export default function AssistantChat() {
           <div className="chat-messages">
             {msgs.length === 0 && (
               <div className="assistant-welcome">
-                <div className="assistant-welcome-icon">🤖</div>
-                <h3>章北海助理</h3>
+                <div className="assistant-welcome-icon"><RobotOutlined /></div>
+                <h3>驴狗蛋助手</h3>
                 <p>全能 AI 助手，可查资料、写代码、创建文件、搜索互联网、执行命令。</p>
                 <div className="assistant-welcome-tips">
                   <span>试试：</span>
@@ -304,7 +313,7 @@ export default function AssistantChat() {
                   {!isMe && (
                     <div className="msg-meta">
                       <span className="msg-author" style={{ color: '#3b82f6' }}>
-                        🤖 章北海助理
+                        <RobotOutlined /> 驴狗蛋助手
                       </span>
                       <span className="msg-time">
                         {new Date(msg.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
@@ -314,7 +323,7 @@ export default function AssistantChat() {
                   <div className="msg-row">
                     <div className="msg-bubble"><ChatMessageText content={msg.content} scope="assistant" onOpenOutput={openOutputFromMessage} /></div>
                     <button className="msg-copy-btn" onClick={() => handleCopyMsg(msg.content)} title="复制">
-                      📋
+                      <CopyOutlined />
                     </button>
                   </div>
                   {/* 思维链展示 */}
@@ -330,7 +339,7 @@ export default function AssistantChat() {
             {busy && status && (
               <div className="msg">
                 <div className="msg-meta">
-                  <span className="msg-author" style={{ color: '#3b82f6' }}>🤖 章北海助理</span>
+                  <span className="msg-author" style={{ color: 'var(--apple-accent)' }}><RobotOutlined /> 驴狗蛋助手</span>
                 </div>
                 <div className="msg-bubble typing">
                   {status === '思考中…' ? (
@@ -353,12 +362,12 @@ export default function AssistantChat() {
                 onClick={() => setShowOutputs(!showOutputs)}
                 title="产出物"
               >
-                📁{showOutputs ? ' ✕' : ''}
+                <FolderOpenOutlined />
               </button>
-              <button className="btn btn-sm" onClick={() => fileInputRef.current?.click()} title="上传文件/图片">📎</button>
+              <button className="btn btn-sm composer-icon-btn" onClick={() => fileInputRef.current?.click()} title="上传文件或图片" aria-label="上传文件或图片"><PaperClipOutlined /></button>
               <SkillPickerButton selected={skillRefs} onSelectedChange={setSkillRefs} />
               <div style={{ flex: 1 }} />
-              <button className="btn btn-sm assistant-settings-btn" onClick={() => setShowAssistantSettings(true)} title="助理设置" aria-label="打开助理设置">⚙️</button>
+              <button className="btn btn-sm assistant-settings-btn composer-icon-btn" onClick={() => setShowAssistantSettings(true)} title="助理设置" aria-label="打开助理设置"><SettingOutlined /></button>
             </div>
             {/* 附件预览 */}
             {attachments.length > 0 && (
@@ -384,16 +393,16 @@ export default function AssistantChat() {
               <ModelSelector />
               <div style={{ flex: 1 }} />
               <button className="btn btn-sm" onClick={handleCopyAll} disabled={msgs.length === 0} title="复制全部对话">
-                📋 复制全部
+                <CopyOutlined /> 复制全部
               </button>
               <button className="btn btn-sm" onClick={handleExport} disabled={msgs.length === 0} title="下载 Markdown 对话记录">
-                📤 导出
+                <ExportOutlined /> 导出
               </button>
               <button
                 className="btn btn-sm"
                 onClick={() => { if (confirm('清空所有对话？')) { setMsgs([]); localStorage.removeItem(LS_KEY); } }}
               >
-                🗑 清空
+                <DeleteOutlined /> 清空
               </button>
               <button className="btn btn-primary btn-sm" onClick={handleSend} disabled={!text.trim() && attachments.length === 0}>
                 {busy ? (loadSettings().followUpMode === 'queue' ? '排队' : '引导') : '发送'}

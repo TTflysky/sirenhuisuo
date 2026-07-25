@@ -2,6 +2,7 @@ import { useStore } from '../../store';
 import DmChatApp from './DmChatApp';
 import TeamChatApp from './TeamChatApp';
 import AssistantChat from './AssistantChat';
+import { BorderOutlined, CloseOutlined, MessageOutlined, MinusOutlined, RobotOutlined, TeamOutlined } from '@ant-design/icons';
 
 interface Props {
   hash: string;
@@ -27,24 +28,35 @@ export default function ChatOnlyView({ hash }: Props) {
   const { type, id } = parseChatHash(hash);
 
   let title = '聊天';
+  let subtitle = '私人办公会所';
+  let titleIcon = <MessageOutlined />;
   if (type === 'dm-chat' || type === 'dm') {
     const emp = state.employees.find((e) => e.id === id);
-    title = emp ? `💬 与 ${emp.name} 私聊` : '💬 私聊';
+    title = emp ? `与 ${emp.name} 私聊` : '员工私聊';
+    subtitle = emp?.title ?? '员工对话';
   } else if (type === 'team-chat' || type === 'team') {
     const team = state.teams.find((t) => t.id === id);
-    title = team ? `${team.icon ?? '💬'} ${team.name}` : '💬 团队';
+    title = team?.name ?? '团队协作';
+    subtitle = team ? `${team.memberIds.length} 名成员` : '团队对话';
+    titleIcon = <TeamOutlined />;
   } else if (type === 'assistant-chat' || type === 'assistant') {
-    title = '🤖 章北海助理';
+    title = '驴狗蛋助手';
+    subtitle = '执行、调度与交付';
+    titleIcon = <RobotOutlined />;
   }
 
   return (
     <div className="chat-only-view">
       {/* 原生标题栏（可拖动） */}
       <div className="chat-only-titlebar">
-        <span className="chat-only-title">{title}</span>
+        <div className="chat-window-heading">
+          <span className="chat-window-icon">{titleIcon}</span>
+          <span className="chat-only-title"><strong>{title}</strong><small>{subtitle}</small></span>
+        </div>
         <div className="chat-only-traffic">
-          <button type="button" className="titlebar-btn mac-traffic mac-minimize" title="最小化" aria-label="最小化聊天窗口" onClick={() => window.electronAPI?.minimize()} />
-          <button type="button" className="titlebar-btn mac-traffic mac-close" title="关闭" aria-label="关闭聊天窗口" onClick={() => window.electronAPI?.close()} />
+          <button type="button" className="titlebar-btn window-control" title="最小化" aria-label="最小化聊天窗口" onClick={() => window.electronAPI?.minimize()}><MinusOutlined /></button>
+          <button type="button" className="titlebar-btn window-control" title="最大化" aria-label="最大化聊天窗口" onClick={() => window.electronAPI?.toggleMax()}><BorderOutlined /></button>
+          <button type="button" className="titlebar-btn window-control window-control-close" title="关闭" aria-label="关闭聊天窗口" onClick={() => window.electronAPI?.close()}><CloseOutlined /></button>
         </div>
       </div>
 

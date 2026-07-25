@@ -22,6 +22,8 @@ export default function OfficeView({ employees, isWorking, onStationClick }: Pro
   }
 
   const stations = [];
+  const onlineCount = employees.filter((employee) => employee.isOnline).length;
+  const workingCount = employees.filter((employee) => employee.isOnline && (employee.isWorking || isWorking(employee))).length;
   for (let i = 0; i < MAX_STATIONS; i++) {
     const emp = stationMap.get(i);
     stations.push(
@@ -36,10 +38,24 @@ export default function OfficeView({ employees, isWorking, onStationClick }: Pro
   }
 
   return (
-    <div className="office-container">
-      <div className="office-grid">
-        {stations}
+    <section className="office-workspace">
+      <header className="office-overview">
+        <div className="office-overview-copy">
+          <span className="office-kicker">WORKSPACE</span>
+          <h1>办公室</h1>
+          <p>团队成员、当前状态与工作席位</p>
+        </div>
+        <div className="office-summary" aria-label="办公室状态">
+          <div><strong>{employees.length}</strong><span>成员</span></div>
+          <div><strong>{onlineCount}</strong><span>在线</span></div>
+          <div className={workingCount ? 'is-active' : ''}><strong>{workingCount}</strong><span>工作中</span></div>
+        </div>
+      </header>
+      <div className="office-container">
+        <div className="office-grid">
+          {stations}
+        </div>
       </div>
-    </div>
+    </section>
   );
 }

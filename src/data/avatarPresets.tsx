@@ -14,40 +14,64 @@ import member02 from '../assets/avatars/member-emp-1784712230779-gv8ry.png';
 import member03 from '../assets/avatars/member-emp-1784875457261-wp6em.png';
 import member04 from '../assets/avatars/member-emp-1784878178584-hvot4.png';
 import member05 from '../assets/avatars/member-emp-1784881570164-qghbh.png';
+import pixelPet01 from '../assets/avatars/pixel-pet-01.png';
+import pixelPet02 from '../assets/avatars/pixel-pet-02.png';
+import pixelPet03 from '../assets/avatars/pixel-pet-03.png';
+import pixelPet04 from '../assets/avatars/pixel-pet-04.png';
+import pixelPet05 from '../assets/avatars/pixel-pet-05.png';
 
-// ===== 10 个 AI 生成的员工头像（黑色剪影小人 + 不同围巾色）=====
+export type AvatarPresetGroupId = 'office' | 'pixel' | 'classic';
+
+export interface AvatarPresetGroup {
+  id: AvatarPresetGroupId;
+  label: string;
+  description: string;
+}
+
 export interface AvatarPreset {
   key: string;
   label: string;
-  src: string;   // 图片资源
-  scarf: string; // 主题色（用于色环/标识）
+  src: string;
+  scarf: string;
+  group: AvatarPresetGroupId;
+  pixelated?: boolean;
 }
 
-export const AVATAR_PRESETS: AvatarPreset[] = [
-  { key: 'member01', label: '会所成员 01', src: member01, scarf: '#e879a8' },
-  { key: 'member02', label: '会所成员 02', src: member02, scarf: '#f59e0b' },
-  { key: 'member03', label: '会所成员 03', src: member03, scarf: '#22c55e' },
-  { key: 'member04', label: '会所成员 04', src: member04, scarf: '#a855f7' },
-  { key: 'member05', label: '会所成员 05', src: member05, scarf: '#0ea5e9' },
-  { key: 'a01', label: '红围巾', src: a01, scarf: '#ef4444' },
-  { key: 'a02', label: '青围巾', src: a02, scarf: '#22d3ee' },
-  { key: 'a03', label: '绿围巾', src: a03, scarf: '#22c55e' },
-  { key: 'a04', label: '紫围巾', src: a04, scarf: '#a855f7' },
-  { key: 'a05', label: '金围巾', src: a05, scarf: '#f59e0b' },
-  { key: 'a06', label: '蓝围巾', src: a06, scarf: '#3b82f6' },
-  { key: 'a07', label: '粉围巾', src: a07, scarf: '#ec4899' },
-  { key: 'a08', label: '橙围巾', src: a08, scarf: '#f97316' },
-  { key: 'a09', label: '灰围巾', src: a09, scarf: '#64748b' },
-  { key: 'a10', label: '玫红围巾', src: a10, scarf: '#f43f5e' },
+export const AVATAR_PRESET_GROUPS: AvatarPresetGroup[] = [
+  { id: 'office', label: '会所角色', description: '当前会所成员形象' },
+  { id: 'pixel', label: '像素宠物', description: 'Q版低像素员工角色' },
+  { id: 'classic', label: '经典头像', description: '简洁中性的角色头像' },
 ];
 
-export const PRESET_KEYS = AVATAR_PRESETS.map((p) => p.key);
+export const AVATAR_PRESETS: AvatarPreset[] = [
+  { key: 'member01', label: '会所猫员工', src: member01, scarf: '#e879a8', group: 'office' },
+  { key: 'member02', label: '会所犬员工', src: member02, scarf: '#f59e0b', group: 'office' },
+  { key: 'member03', label: '会所鸡员工', src: member03, scarf: '#22c55e', group: 'office' },
+  { key: 'member04', label: '会所兔员工', src: member04, scarf: '#a855f7', group: 'office' },
+  { key: 'member05', label: '会所鹿员工', src: member05, scarf: '#0ea5e9', group: 'office' },
+  { key: 'pixelPet01', label: '像素猫员工', src: pixelPet01, scarf: '#e879a8', group: 'pixel', pixelated: true },
+  { key: 'pixelPet02', label: '像素犬员工', src: pixelPet02, scarf: '#f59e0b', group: 'pixel', pixelated: true },
+  { key: 'pixelPet03', label: '像素鸡员工', src: pixelPet03, scarf: '#22c55e', group: 'pixel', pixelated: true },
+  { key: 'pixelPet04', label: '像素兔员工', src: pixelPet04, scarf: '#a855f7', group: 'pixel', pixelated: true },
+  { key: 'pixelPet05', label: '像素鹿员工', src: pixelPet05, scarf: '#0ea5e9', group: 'pixel', pixelated: true },
+  { key: 'a01', label: '红围巾', src: a01, scarf: '#ef4444', group: 'classic' },
+  { key: 'a02', label: '青围巾', src: a02, scarf: '#22d3ee', group: 'classic' },
+  { key: 'a03', label: '绿围巾', src: a03, scarf: '#22c55e', group: 'classic' },
+  { key: 'a04', label: '紫围巾', src: a04, scarf: '#a855f7', group: 'classic' },
+  { key: 'a05', label: '金围巾', src: a05, scarf: '#f59e0b', group: 'classic' },
+  { key: 'a06', label: '蓝围巾', src: a06, scarf: '#3b82f6', group: 'classic' },
+  { key: 'a07', label: '粉围巾', src: a07, scarf: '#ec4899', group: 'classic' },
+  { key: 'a08', label: '橙围巾', src: a08, scarf: '#f97316', group: 'classic' },
+  { key: 'a09', label: '灰围巾', src: a09, scarf: '#64748b', group: 'classic' },
+  { key: 'a10', label: '玫红围巾', src: a10, scarf: '#f43f5e', group: 'classic' },
+];
+
+export const PRESET_KEYS = AVATAR_PRESETS.map((preset) => preset.key);
 
 export function getPreset(key: string): AvatarPreset {
-  return AVATAR_PRESETS.find((p) => p.key === key) ?? AVATAR_PRESETS[0];
+  return AVATAR_PRESETS.find((preset) => preset.key === key) ?? AVATAR_PRESETS[0];
 }
 
-// 渲染 AI 头像图片（圆形裁切）
 export function renderPresetAvatar(key: string, size: number = 48): ReactNode {
   const preset = getPreset(key);
   return (
@@ -63,6 +87,7 @@ export function renderPresetAvatar(key: string, size: number = 48): ReactNode {
         objectFit: 'cover',
         display: 'block',
         background: '#eef0f6',
+        imageRendering: preset.pixelated ? 'pixelated' : 'auto',
       }}
     />
   );
