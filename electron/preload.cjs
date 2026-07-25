@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 打开原生聊天窗口（真实桌面窗口，可自由拖动）
   openChat: (opts) => ipcRenderer.invoke('win:openChat', opts),
   openSettings: () => ipcRenderer.invoke('win:openSettings'),
+  openTool: (opts) => ipcRenderer.invoke('win:openTool', opts),
+  getToolPayload: (session) => ipcRenderer.invoke('win:getToolPayload', session),
 
   // ===== 自主代理工作区文件系统（沙箱到 userData/workspace）=====
   getWorkspace: () => ipcRenderer.invoke('fs:getWorkspace'),

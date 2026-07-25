@@ -22,6 +22,7 @@ import SettingsModal from './components/settings/SettingsModal';
 import Analytics from './components/analytics/Analytics';
 import AutopilotPanel from './components/autopilot/AutopilotPanel';
 import ChatOnlyView from './components/chat/ChatOnlyView';
+import ToolWindowView from './components/windows/ToolWindowView';
 import SkillLibraryView from './components/skills/SkillLibraryView';
 import { checkBackend } from './data/hermesClient';
 
@@ -87,6 +88,9 @@ export default function App() {
   const [isSettingsWindow] = useState(
     () => typeof location !== 'undefined' && location.hash.startsWith('#settings'),
   );
+  const [isToolWindow] = useState(
+    () => typeof location !== 'undefined' && location.hash.startsWith('#tool'),
+  );
 
   // 监听自动更新状态（仅在 Electron 桌面端生效）
   useEffect(() => {
@@ -109,6 +113,9 @@ export default function App() {
   }
   if (isSettingsWindow) {
     return <SettingsModal standalone onClose={() => window.electronAPI?.close()} onSaved={() => checkBackend().then((online) => dispatch({ type: 'SET_STATUS', partial: { backendOnline: online } }))} />;
+  }
+  if (isToolWindow) {
+    return <ToolWindowView hash={location.hash} />;
   }
 
   const handleStationClick = (emp: Employee) => openDmChat(emp.id);

@@ -613,8 +613,29 @@ html, body, #root, .app-root {
 }
 .avatar-preset-option.selected { border-color: var(--text); box-shadow: 0 0 0 2px rgba(26,31,54,0.15); }
 .avatar-preset-option:hover { transform: scale(1.08); }
-.employee-editor-modal { width: min(520px, calc(100vw - 32px)); }
-.employee-editor-modal h2 { display: flex; align-items: center; gap: 8px; }
+.employee-editor-modal {
+  width: min(520px, calc(100vw - 32px));
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  will-change: transform;
+}
+.employee-editor-titlebar {
+  min-height: 34px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.employee-editor-titlebar:active { cursor: grabbing; }
+.employee-editor-titlebar.is-native-drag { -webkit-app-region: drag; }
+.employee-editor-titlebar > span { display: inline-flex; align-items: center; gap: 8px; }
+.employee-editor-drag-icon { color: var(--text-muted); font-size: 15px; }
+.employee-editor-body { min-height: 0; overflow-y: auto; padding-right: 3px; }
 .employee-editor-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .employee-editor-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 .employee-avatar-picker-trigger {
@@ -1900,6 +1921,33 @@ body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
 .station-card { border-radius: var(--radius-window); }
 
 .chat-only-view { padding: 0; gap: 0; background: var(--bg-deep); }
+.tool-window-view { position: fixed; inset: 0; overflow: hidden; background: var(--bg); }
+.tool-window-titlebar {
+  position: fixed; inset: 0 0 auto; z-index: 5000; height: 40px;
+  display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid var(--border); background: var(--apple-glass-strong);
+  -webkit-app-region: drag; user-select: none;
+}
+.tool-window-title { min-width: 0; padding-left: 12px; display: inline-flex; align-items: center; gap: 8px; color: var(--text); font-size: 12px; }
+.tool-window-title > .anticon { color: var(--apple-accent); }
+.tool-window-controls { align-self: stretch; display: flex; -webkit-app-region: no-drag; }
+.tool-window-controls button { width: 42px; height: 100%; border: 0; border-radius: 0; background: transparent; color: var(--text-muted); cursor: pointer; }
+.tool-window-controls button:hover { background: color-mix(in srgb, var(--text) 8%, transparent); color: var(--text); }
+.tool-window-controls .tool-window-close:hover { background: #c42b1c; color: #fff; }
+.tool-window-body { position: absolute; inset: 40px 0 0; overflow: hidden; }
+.tool-window-view .modal-overlay { top: 40px; }
+.tool-window-view .ant-modal-root .ant-modal-mask,
+.tool-window-view .ant-modal-root .ant-modal-wrap { top: 40px; }
+.tool-window-view .modal-box h2,
+.tool-window-view .ant-modal-header { -webkit-app-region: drag; cursor: grab; user-select: none; }
+.tool-window-view .ant-modal-close,
+.tool-window-view button,
+.tool-window-view input,
+.tool-window-view textarea,
+.tool-window-view select { -webkit-app-region: no-drag; }
+.tool-window-loading, .tool-window-error { height: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--text-muted); font-size: 12px; }
+.tool-window-error { flex-direction: column; }
+.tool-window-error strong { color: var(--text); font-size: 14px; }
 .chat-only-titlebar {
   height: 40px;
   min-height: 40px;

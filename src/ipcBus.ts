@@ -58,4 +58,6 @@ export const BUS_CHANNELS = {
   STORE_ACTION: 'store:action',
   /** 产出物变更：某作用域新增/删除了产出物 */
   OUTPUTS_CHANGED: 'outputs:changed',
+  CONNECTORS_CHANGED: 'connectors:changed',
+  ASSISTANT_SETTINGS_CHANGED: 'assistant-settings:changed',
 } as const;

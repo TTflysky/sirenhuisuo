@@ -35,7 +35,10 @@ export default function TeamList({ onTeamClick, onNewTeam, collapsed = false, on
   };
 
   const handleRename = (team: Team) => {
-    setRenamingId(team.id);
+    if (!window.electronAPI?.openTool) { setRenamingId(team.id); return; }
+    void window.electronAPI.openTool({ type: 'rename-team', refId: team.id }).then((result) => {
+      if (!result.ok) setRenamingId(team.id);
+    });
   };
 
   const handleArchive = (team: Team) => {

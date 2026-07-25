@@ -328,7 +328,12 @@ export default function TeamChatApp({ teamId }: Props) {
               <div className="team-member-sidebar-head">
                 <span>{team.icon ?? '👥'}</span>
                 <strong title={team.name}>{team.name}</strong>
-                <button type="button" onClick={() => setShowRenameTeam(true)} title="重命名团队" aria-label="重命名团队">✎</button>
+                <button type="button" onClick={() => {
+                  if (!window.electronAPI?.openTool) { setShowRenameTeam(true); return; }
+                  void window.electronAPI.openTool({ type: 'rename-team', refId: team.id }).then((result) => {
+                    if (!result.ok) setShowRenameTeam(true);
+                  });
+                }} title="重命名团队" aria-label="重命名团队">✎</button>
               </div>
               <button key={supervisorMention.id} className="team-member-item team-supervisor-item" onClick={() => insertMention(supervisorMention)} title={`@${supervisorMention.name}`}><SupervisorAvatar size={34} /><span className="team-member-info"><strong>{supervisorMention.name}</strong><small>{supervisorMention.title}</small><small className="is-working">随时可联系</small></span></button>
               {teamMembers.map((emp) => <button key={emp.id} className="team-member-item" onClick={() => insertMention(emp)} title={`@${emp.name}`}><span className="team-member-avatar"><AgentAvatar employee={emp} size={34} /><span className={`team-member-status ${!emp.isOnline ? 'offline' : emp.isWorking ? 'working' : 'idle'}`} /></span><span className="team-member-info"><strong>{emp.name}</strong><small style={{ color: emp.statusColor }}>{emp.title}</small><small className={emp.isWorking ? 'is-working' : ''}>{emp.isWorking ? '工作中' : emp.isOnline ? '在线' : '离线'}</small></span></button>)}

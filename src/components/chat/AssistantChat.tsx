@@ -378,7 +378,12 @@ export default function AssistantChat() {
               <button className="btn btn-sm composer-icon-btn" onClick={() => fileInputRef.current?.click()} title="上传文件或图片" aria-label="上传文件或图片"><PaperClipOutlined /></button>
               <SkillPickerButton selected={skillRefs} onSelectedChange={setSkillRefs} />
               <div style={{ flex: 1 }} />
-              <button className="btn btn-sm assistant-settings-btn composer-icon-btn" onClick={() => setShowAssistantSettings(true)} title="助理设置" aria-label="打开助理设置"><SettingOutlined /></button>
+              <button className="btn btn-sm assistant-settings-btn composer-icon-btn" onClick={() => {
+                if (!window.electronAPI?.openTool) { setShowAssistantSettings(true); return; }
+                void window.electronAPI.openTool({ type: 'assistant-settings' }).then((result) => {
+                  if (!result.ok) setShowAssistantSettings(true);
+                });
+              }} title="助理设置" aria-label="打开助理设置"><SettingOutlined /></button>
             </div>
             {/* 附件预览 */}
             {attachments.length > 0 && (

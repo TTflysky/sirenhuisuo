@@ -5,7 +5,15 @@ import { seedTeams } from './defaultTeams';
 import type { OutputScope } from './outputs';
 import { loadTaskRuns } from './taskRuns';
 import { ensureDistinctEmployeeColors } from './employeeColors';
-import { getToolStage, humanizeExecutionError, isToolResultSuccessful } from './assistantPresentation';
+import {
+  AUTONOMOUS_EXECUTION_GUIDE,
+  EXECUTION_SELF_REVIEW_GUIDE,
+  buildRecoveryGuide,
+  getToolStage,
+  guardInstallationSummary,
+  humanizeExecutionError,
+  isToolResultSuccessful,
+} from './assistantPresentation';
 
 const LS_EMPLOYEES = 'hermes_office_employees';
 const LS_TEAMS = 'hermes_office_teams';
@@ -903,6 +911,13 @@ export interface AgentLoopOpts {
 export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: string; usage: TokenUsage; model: string }> {
   const { turns, tools, scene, label, onToolCall, onToolResult, modelConfig, extraSystemContext, scope, attachments, shouldStop, consumeSteeringMessages } = opts;
   let currentTurns = [...turns];
+  const originalUserContent = [...turns].reverse().find((turn) => turn.role === 'user')?.content;
+  const originalUserText = typeof originalUserContent === 'string'
+    ? originalUserContent
+    : (originalUserContent ?? []).filter((part): part is ContentPart => part.type === 'text').map((part) => part.text).join('\n');
+  const isInstallationTask = /安装|装好|装上|安装包|部署/u.test(originalUserText);
+  const isSkillInstallation = isInstallationTask && /skill|技能|插件/iu.test(originalUserText);
+  currentTurns = [{ role: 'system', content: AUTONOMOUS_EXECUTION_GUIDE }, ...currentTurns];
 
   // 多模态：把最后一条 user 消息转为 [text, image_url] 数组
   if (attachments && attachments.length > 0) {
@@ -928,8 +943,10 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   const callLog: Array<{ name: string; args: string; result: string; success: boolean }> = [];
   const toolResultCache = new Map<string, { output: string; success: boolean }>();
   let stopped = false;
+  let finalReviewRequested = false;
+  let consecutiveFailures = 0;
 
-  for (let iter = 0; iter < maxIter; iter++) {
+  for (let iter = 0; iter < maxIter + 2; iter++) {
     if (shouldStop?.()) { stopped = true; break; } // 用户停止：本轮前中止
     const beforeCallGuidance = consumeSteeringMessages?.() ?? [];
     if (beforeCallGuidance.length) {
@@ -952,6 +969,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     if (r.toolCalls && r.toolCalls.length > 0) {
       // 模型返回了工具调用：执行，结果加入对话继续
       const { executeTool } = await import('../engine/tools');
+      let iterationHadFailure = false;
       for (const tc of r.toolCalls) {
         onToolCall?.(tc.name, tc.arguments);
         const cacheKey = `${tc.name}:${tc.arguments}`;
@@ -960,6 +978,12 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
           ? { toolCallId: tc.id, name: tc.name, success: cached.success, output: `相同工具调用已执行过，复用结果：\n${cached.output}` }
           : await executeTool({ id: tc.id, name: tc.name, args: (() => { try { return JSON.parse(tc.arguments); } catch { return {}; } })(), scope });
         const resultSuccess = result.success && isToolResultSuccessful(result.output, result.success);
+        if (resultSuccess) {
+          consecutiveFailures = 0;
+        } else {
+          consecutiveFailures += 1;
+          iterationHadFailure = true;
+        }
         if (cached === undefined) toolResultCache.set(cacheKey, { output: result.output.slice(0, 6000), success: resultSuccess });
         onToolResult?.(tc.name, tc.arguments, result.output, resultSuccess);
         callLog.push({ name: tc.name, args: tc.arguments, result: result.output.slice(0, 200), success: resultSuccess });
@@ -970,8 +994,17 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         if (shouldStop?.()) { stopped = true; break; } // 用户停止：工具执行后中止
       }
       if (stopped) break;
+      if (iterationHadFailure) {
+        currentTurns.push({ role: 'system', content: buildRecoveryGuide(consecutiveFailures) });
+      }
     } else if (r.content) {
-      // 模型返回了文本：完成
+      if (callLog.length > 0 && !finalReviewRequested) {
+        currentTurns.push({ role: 'assistant', content: r.content });
+        currentTurns.push({ role: 'system', content: EXECUTION_SELF_REVIEW_GUIDE });
+        finalReviewRequested = true;
+        continue;
+      }
+      // 执行过工具的任务必须经过一次独立自检，再接受最终答复。
       finalContent = r.content;
       break;
     } else {
@@ -982,20 +1015,31 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   // 工具循环用尽但模型未产出最终文本：只给普通用户看得懂的结果，技术记录由折叠执行过程承载。
   if (!finalContent) {
     if (stopped) {
-      finalContent = '已经停止了。之前完成的内容仍然保留，需要时可以从中断的位置继续。';
+      finalContent = isInstallationTask
+        ? '还没有安装好，任务已经停止。\n\n停止前完成的内容仍然保留。你可以重新发送安装要求，我会从没有完成的步骤继续；详细记录可以在下方“执行过程”中查看。'
+        : '还没有完成，任务已经停止。\n\n停止前完成的内容仍然保留。需要时可以重新发送要求，从没有完成的步骤继续；详细记录可以在下方“执行过程”中查看。';
     } else if (callLog.length > 0) {
       const failures = callLog.filter((call) => !call.success);
       const lastCall = callLog.at(-1)!;
       if (failures.length === 0) {
-        finalContent = '已经处理好了。所有步骤都顺利完成，详细记录可以在下方“执行过程”中查看。';
+        finalContent = isSkillInstallation
+          ? '目前还不能确认这个技能已经完全可用。\n\n技能相关的操作已经执行完，但还没有拿到“版本正确、必要配置完成、实际调用通过”三项完整验收结果。请让我继续做最后检查；详细记录可以在下方“执行过程”中查看。'
+          : isInstallationTask
+            ? '目前还不能确认已经完全安装好。\n\n安装相关的操作已经执行完，但还缺最后的版本、配置和实际打开检查。完成这些检查后才能正式确认；详细记录可以在下方“执行过程”中查看。'
+            : '已经处理好了。\n\n这次需要的步骤已经全部完成并做了最后检查。你可以直接回到刚才的功能继续使用；详细记录可以在下方“执行过程”中查看。';
       } else if (lastCall.success) {
-        finalContent = `本轮处理已经完成。中途有 ${failures.length} 步没有成功，后来换了方法继续完成了最后一步。详细记录可以在下方“执行过程”中查看。`;
+        finalContent = isInstallationTask
+          ? '安装已经有进展，但目前还不能确认完全可用。\n\n中途有步骤没有成功；后来完成的最后一步只代表该步骤成功，仍需核对版本、必要配置和实际使用结果。请让我继续完成验收；详细记录可以在下方“执行过程”中查看。'
+          : '任务已经有进展，但目前还不能确认整个目标完成。\n\n中途有步骤没有成功；后来完成的最后一步只代表该步骤成功，仍需回到最初目标重新验收。详细记录可以在下方“执行过程”中查看。';
       } else {
-        finalContent = `还没有处理好。最后卡在“${getToolStage(lastCall.name)}”这一步。${humanizeExecutionError(lastCall.result)}`;
+        finalContent = `${isInstallationTask ? '还没有安装好' : '还没有处理好'}。\n\n最后卡在“${getToolStage(lastCall.name)}”这一步。${humanizeExecutionError(lastCall.result)}\n\n请按上面的原因检查后重新发送要求，我会从这一步继续；原始记录可以在下方“执行过程”中查看。`;
       }
     } else {
-      finalContent = '还没有拿到有效结果。请重新发送一次；如果仍然没有回复，请打开“设置 → 模型”检查模型是否可用。';
+      finalContent = `${isInstallationTask ? '还没有安装好' : '还没有拿到有效结果'}。\n\n这次没有收到可以确认的结果，所以不能把它当作成功。请重新发送一次；如果仍然没有回复，请打开“设置 → 模型”检查当前模型是否可用。`;
     }
+  }
+  if (isInstallationTask) {
+    finalContent = guardInstallationSummary(finalContent, originalUserText, callLog.map((call) => call.result).join('\n'));
   }
   return { content: finalContent, usage: totalUsage, model: finalModel };
 }

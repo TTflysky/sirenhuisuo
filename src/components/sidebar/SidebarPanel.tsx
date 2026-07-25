@@ -36,6 +36,12 @@ export default function SidebarPanel() {
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const syncInputRef = useRef<HTMLInputElement>(null);
 
+  const openToolWindow = async (options: import('../../electron').OpenToolOptions, fallback: () => void) => {
+    if (!window.electronAPI?.openTool) { fallback(); return; }
+    const result = await window.electronAPI.openTool(options);
+    if (!result.ok) fallback();
+  };
+
   const startSidebarResize = (event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     const startX = event.clientX;
@@ -141,7 +147,7 @@ export default function SidebarPanel() {
                   progress={state.status.progress}
                   teams={state.teams}
                   onClick={() => openDmChat(emp.id)}
-                  onEdit={setEditingEmployee}
+                  onEdit={(employee) => void openToolWindow({ type: 'edit-employee', refId: employee.id }, () => setEditingEmployee(employee))}
                 />
               ))}
               {filtered.length === 0 && (
@@ -154,7 +160,7 @@ export default function SidebarPanel() {
 
             {/* 团队列表 */}
             <div className={`sidebar-resizable-panel team-panel ${teamsCollapsed ? 'is-collapsed' : ''}`}>
-              <TeamList onTeamClick={openTeamChat} onNewTeam={() => setShowNewTeam(true)} collapsed={teamsCollapsed} onToggle={toggleTeams} />
+              <TeamList onTeamClick={openTeamChat} onNewTeam={() => void openToolWindow({ type: 'create-team' }, () => setShowNewTeam(true))} collapsed={teamsCollapsed} onToggle={toggleTeams} />
             </div>
 
             {/* 连接器区域 */}
@@ -162,7 +168,7 @@ export default function SidebarPanel() {
 
             {/* 底部操作 */}
             <div className="sidebar-footer">
-              <button className="btn btn-sm btn-primary sidebar-add-employee" onClick={() => setShowAddEmp(true)}>
+              <button className="btn btn-sm btn-primary sidebar-add-employee" onClick={() => void openToolWindow({ type: 'add-employee' }, () => setShowAddEmp(true))}>
                 <UserAddOutlined /> 添加员工
               </button>
               <input ref={syncInputRef} type="file" accept="application/json,.json" hidden onChange={handleSyncImport} />
@@ -170,7 +176,7 @@ export default function SidebarPanel() {
                 <button className="btn btn-sm" title="导入员工、团队和模型同步配置" onClick={() => syncInputRef.current?.click()}>
                   <UploadOutlined /> 同步
                 </button>
-                <button className="btn btn-sm" onClick={() => setShowNewTeam(true)} title="新建团队">
+                <button className="btn btn-sm" onClick={() => void openToolWindow({ type: 'create-team' }, () => setShowNewTeam(true))} title="新建团队">
                   <TeamOutlined /> 团队
                 </button>
                 <button

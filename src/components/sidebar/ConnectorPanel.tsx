@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DeleteOutlined, FolderOpenOutlined, LinkOutlined, PlusOutlined, ReloadOutlined, SettingOutlined } from '@ant-design/icons';
 import { App, Button } from 'antd';
 import {
@@ -10,6 +10,7 @@ import {
   upsertConnector,
 } from '../../data/connectors';
 import ConnectorConfigModal from './ConnectorConfigModal';
+import { BUS_CHANNELS, onBus } from '../../ipcBus';
 
 function connectorIcon(connector: Connector) {
   if (connector.kind === 'obsidian') return <FolderOpenOutlined />;
@@ -29,13 +30,21 @@ export function KnowledgeConnectorManager({ compact = false, onChange }: { compa
   const [configConnector, setConfigConnector] = useState<Connector | null>(null);
   const [testing, setTesting] = useState<string | null>(null);
   const ordered = useMemo(() => [...connectors].sort((a, b) => Number(b.kind !== 'legacy') - Number(a.kind !== 'legacy')), [connectors]);
-  const refresh = () => {
+  const refresh = useCallback(() => {
     const next = [...loadConnectors()];
     setConnectors(next);
     onChange?.(next);
+  }, [onChange]);
+
+  useEffect(() => onBus(BUS_CHANNELS.CONNECTORS_CHANGED, refresh), [refresh]);
+
+  const configure = async (connector: Connector) => {
+    if (!window.electronAPI?.openTool) { setConfigConnector(connector); return; }
+    const result = await window.electronAPI.openTool({ type: 'connector-config', refId: connector.id, payload: connector });
+    if (!result.ok) setConfigConnector(connector);
   };
 
-  const addWebKnowledge = () => setConfigConnector({
+  const addWebKnowledge = () => void configure({
     id: `knowledge-${Date.now()}`,
     label: '网页知识库',
     icon: '🔗',
@@ -105,7 +114,7 @@ export function KnowledgeConnectorManager({ compact = false, onChange }: { compa
             </div>
             <div className="knowledge-connector-tools">
               <button title="检查连接" onClick={() => void test(connector)} disabled={testing === connector.id}><ReloadOutlined spin={testing === connector.id} /></button>
-              <button title="配置" onClick={() => setConfigConnector(connector)}><SettingOutlined /></button>
+              <button title="配置" onClick={() => void configure(connector)}><SettingOutlined /></button>
               <button title="移除" onClick={() => remove(connector)}><DeleteOutlined /></button>
             </div>
           </div>

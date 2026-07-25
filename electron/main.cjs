@@ -47,6 +47,9 @@ function safeJoin(...parts) {
 }
 
 const chatWindows = new Map();
+const toolWindows = new Map();
+const toolWindowPayloads = new Map();
+const TOOL_WINDOW_TYPES = new Set(['add-employee', 'edit-employee', 'create-team', 'rename-team', 'connector-config', 'assistant-settings']);
 const CHAT_WINDOW_WIDTH = 560;
 const CHAT_WINDOW_HEIGHT = 700;
 const CHAT_WINDOW_MIN_WIDTH = 420;
@@ -155,6 +158,73 @@ let assistantCompanionManuallyClosed = false;
 let settingsWindow = null;
 let tray = null;
 let isQuitting = false;
+
+function normalizeToolWindowOptions(opts) {
+  const type = typeof opts?.type === 'string' ? opts.type : '';
+  if (!TOOL_WINDOW_TYPES.has(type)) return null;
+  const refId = typeof opts?.refId === 'string' ? opts.refId.trim() : '';
+  if (['edit-employee', 'rename-team'].includes(type) && !refId) return null;
+  return { type, refId, payload: opts?.payload ?? null, key: `${type}:${refId || 'new'}` };
+}
+
+function getToolWindowSpec(type) {
+  if (type === 'edit-employee') return { width: 650, height: 820, minWidth: 560, minHeight: 620, title: '私人办公会所 · 编辑员工' };
+  if (type === 'connector-config') return { width: 620, height: 700, minWidth: 540, minHeight: 520, title: '私人办公会所 · 配置连接器' };
+  if (type === 'assistant-settings') return { width: 660, height: 760, minWidth: 560, minHeight: 560, title: '私人办公会所 · 助手设置' };
+  if (type === 'create-team') return { width: 520, height: 620, minWidth: 440, minHeight: 460, title: '私人办公会所 · 新建团队' };
+  if (type === 'rename-team') return { width: 420, height: 260, minWidth: 360, minHeight: 220, title: '私人办公会所 · 重命名团队' };
+  return { width: 560, height: 760, minWidth: 460, minHeight: 560, title: '私人办公会所 · 添加员工' };
+}
+
+async function createToolWindow(opts, requester = mainWindow) {
+  const normalized = normalizeToolWindowOptions(opts);
+  if (!normalized) throw new Error('无效的工具窗口参数');
+  const existing = toolWindows.get(normalized.key);
+  if (existing && !existing.isDestroyed()) {
+    focusChatWindow(existing);
+    return { win: existing, reused: true };
+  }
+  if (existing) toolWindows.delete(normalized.key);
+
+  const spec = getToolWindowSpec(normalized.type);
+  const sourceBounds = requester && !requester.isDestroyed() ? requester.getBounds() : screen.getPrimaryDisplay().workArea;
+  const workArea = screen.getDisplayMatching(sourceBounds).workArea;
+  const win = new BrowserWindow({
+    width: spec.width,
+    height: spec.height,
+    minWidth: spec.minWidth,
+    minHeight: spec.minHeight,
+    x: Math.min(Math.max(workArea.x, sourceBounds.x + 36), workArea.x + Math.max(0, workArea.width - spec.width)),
+    y: Math.min(Math.max(workArea.y, sourceBounds.y + 36), workArea.y + Math.max(0, workArea.height - spec.height)),
+    title: spec.title,
+    frame: false,
+    show: false,
+    backgroundColor: '#f5f6fa',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+  const session = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  toolWindows.set(normalized.key, win);
+  toolWindowPayloads.set(session, { windowId: win.id, payload: normalized.payload });
+  trackActiveWindow(win);
+  win.once('ready-to-show', () => bringToFront(win));
+  win.on('closed', () => {
+    if (toolWindows.get(normalized.key) === win) toolWindows.delete(normalized.key);
+    toolWindowPayloads.delete(session);
+  });
+  const hash = `tool?type=${encodeURIComponent(normalized.type)}&id=${encodeURIComponent(normalized.refId)}&session=${encodeURIComponent(session)}`;
+  try {
+    if (!app.isPackaged) await win.loadURL(`http://localhost:5173/#${hash}`);
+    else await win.loadFile(path.join(__dirname, '../dist/index.html'), { hash });
+    return { win, reused: false };
+  } catch (error) {
+    if (!win.isDestroyed()) win.destroy();
+    throw error;
+  }
+}
 
 function showMainWindow() {
   const win = mainWindow;
@@ -804,6 +874,20 @@ function createWindow() {
     } catch (error) {
       return { ok: false, error: String(error?.message ?? error) };
     }
+  });
+
+  ipcMain.handle('win:openTool', async (event, opts) => {
+    try {
+      const result = await createToolWindow(opts, BrowserWindow.fromWebContents(event.sender) ?? mainWindow);
+      return { ok: true, reused: result.reused };
+    } catch (error) {
+      return { ok: false, error: String(error?.message ?? error) };
+    }
+  });
+  ipcMain.handle('win:getToolPayload', (event, session) => {
+    const record = toolWindowPayloads.get(String(session ?? ''));
+    const sender = BrowserWindow.fromWebContents(event.sender);
+    return record && sender?.id === record.windowId ? record.payload : null;
   });
 }
 

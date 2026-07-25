@@ -23,6 +23,9 @@ export interface FsZipResult { ok: boolean; path?: string; error?: string; }
 export type ChatWindowType = 'dm-chat' | 'team-chat' | 'assistant-chat';
 export interface OpenChatOptions { type: ChatWindowType; refId: string; }
 export interface OpenChatResult { ok: boolean; reused?: boolean; error?: string; }
+export type ToolWindowType = 'add-employee' | 'edit-employee' | 'create-team' | 'rename-team' | 'connector-config' | 'assistant-settings';
+export interface OpenToolOptions { type: ToolWindowType; refId?: string; payload?: unknown; }
+export interface OpenToolResult { ok: boolean; reused?: boolean; error?: string; }
 
 export interface SkillListResult { ok: boolean; skills?: import('./types').Skill[]; error?: string; }
 export interface SkillReadResult { ok: boolean; skill?: { id: string; name: string; content: string }; error?: string; }
@@ -65,6 +68,8 @@ declare global {
     // 打开原生聊天窗口（真实桌面窗口，可自由拖动）
     openChat: (opts: OpenChatOptions) => Promise<OpenChatResult>;
     openSettings: () => Promise<{ ok: boolean; reused?: boolean; error?: string }>;
+    openTool: (opts: OpenToolOptions) => Promise<OpenToolResult>;
+    getToolPayload: (session: string) => Promise<unknown>;
 
     // 窗口间广播总线：broadcast 向其他窗口广播，onBroadcast 接收来自其他窗口的消息
     broadcast: (channel: string, payload: unknown) => void;
