@@ -116,7 +116,7 @@ export default function AssistantChat() {
     if (!resolveApiBase(assistantSettings)) {
       push({
         id: `h-${Date.now()}-ai`, authorId: 'assistant', roleId: 'custom',
-        content: '我是 Hermes 助手。当前未配置 AI 接口，请在 ⚙️ 设置中填入模型服务地址和 API Key 后重试。',
+        content: '我是章北海助理。当前未配置 AI 接口，请在 ⚙️ 设置中填入模型服务地址和 API Key 后重试。',
         mentions: [], timestamp: Date.now(), kind: 'text',
       });
       setBusy(false);
@@ -149,7 +149,7 @@ export default function AssistantChat() {
         ],
         tools: allTools,
         scene: 'assistant',
-        label: 'Hermes助手',
+        label: '章北海助理',
         scope: 'assistant',
         attachments: imageAtts,
         extraSystemContext: skillContext,
@@ -196,7 +196,7 @@ export default function AssistantChat() {
           const who = m.roleId === 'human' ? '用户' : '助手';
           return `${who}: ${m.content.slice(0, 200)}`;
         }).join('\n');
-        extractUserInsights(chatText, 'Hermes助手对话').catch(() => {});
+        extractUserInsights(chatText, '章北海助理对话').catch(() => {});
       }
     } catch (e: any) {
       push({
@@ -215,7 +215,7 @@ export default function AssistantChat() {
 
   const handleCopyAll = async () => {
     const text = msgs.map((m) => {
-      const head = m.roleId === 'human' ? '你' : '🤖 Hermes 助手';
+      const head = m.roleId === 'human' ? '你' : '🤖 章北海助理';
       return `[${head}] ${m.content}`;
     }).join('\n\n');
     await copyToClipboard(text);
@@ -224,13 +224,13 @@ export default function AssistantChat() {
   const handleExport = () => {
     const md = messagesToMarkdown(
       msgs.map((m) => ({
-        role: m.roleId === 'human' ? '你' : 'Hermes 助手',
+        role: m.roleId === 'human' ? '你' : '章北海助理',
         content: m.content,
         time: new Date(m.timestamp).toLocaleString('zh-CN'),
       })),
-      'Hermes 助手对话记录'
+      '章北海助理对话记录'
     );
-    downloadTextFile(`Hermes助手-对话-${new Date().toISOString().slice(0, 10)}.md`, md);
+    downloadTextFile(`章北海助理-对话-${new Date().toISOString().slice(0, 10)}.md`, md);
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -245,7 +245,7 @@ export default function AssistantChat() {
       <div className="chat-layout">
         <div className="chat-main">
           <div className="assistant-chat-toolbar">
-            <strong>Hermes 助手</strong>
+            <strong>章北海助理</strong>
             <div style={{ flex: 1 }} />
             <button className="btn btn-sm" onClick={() => setShowAssistantSettings(true)} title="助理设置" aria-label="打开助理设置">⚙️ 设置</button>
           </div>
@@ -254,7 +254,7 @@ export default function AssistantChat() {
             {msgs.length === 0 && (
               <div className="assistant-welcome">
                 <div className="assistant-welcome-icon">🤖</div>
-                <h3>Hermes 助手</h3>
+                <h3>章北海助理</h3>
                 <p>全能 AI 助手，可查资料、写代码、创建文件、搜索互联网、执行命令。</p>
                 <div className="assistant-welcome-tips">
                   <span>试试：</span>
@@ -271,7 +271,7 @@ export default function AssistantChat() {
                   {!isMe && (
                     <div className="msg-meta">
                       <span className="msg-author" style={{ color: '#3b82f6' }}>
-                        🤖 Hermes 助手
+                        🤖 章北海助理
                       </span>
                       <span className="msg-time">
                         {new Date(msg.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
@@ -297,7 +297,7 @@ export default function AssistantChat() {
             {busy && status && (
               <div className="msg">
                 <div className="msg-meta">
-                  <span className="msg-author" style={{ color: '#3b82f6' }}>🤖 Hermes 助手</span>
+                  <span className="msg-author" style={{ color: '#3b82f6' }}>🤖 章北海助理</span>
                 </div>
                 <div className="msg-bubble typing">
                   {status === '思考中…' ? (

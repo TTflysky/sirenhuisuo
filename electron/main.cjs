@@ -230,7 +230,7 @@ function createWindow() {
       minHeight: CHAT_WINDOW_MIN_HEIGHT,
       // Keep chat windows independent. On Windows this gives a minimized chat a
       // normal taskbar entry instead of a hard-to-restore grey child-window item.
-      title: type === 'team-chat' ? '私人办公会所 · 团队聊天' : type === 'dm-chat' ? '私人办公会所 · 员工私聊' : '私人办公会所 · Hermes 助理',
+      title: type === 'team-chat' ? '私人办公会所 · 团队聊天' : type === 'dm-chat' ? '私人办公会所 · 员工私聊' : '私人办公会所 · 章北海助理',
       skipTaskbar: false,
       frame: false,
       show: false,

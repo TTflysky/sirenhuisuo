@@ -498,7 +498,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       name: project.title,
       icon: '📌', memberIds, projectId,
       chatMessages: [{ id: `msg-project-${Date.now()}`, authorId: 'assistant', roleId: 'custom',
-        content: `项目已批准。Hermes 将按既定步骤调度成员，最终产出须经审查后交付。`, mentions: memberIds, timestamp: Date.now(), kind: 'text' }],
+        content: `项目已批准。章北海助理将按既定步骤调度成员，最终产出须经审查后交付。`, mentions: memberIds, timestamp: Date.now(), kind: 'text' }],
       tasks: [],
     };
     dispatch({ type: 'ADD_TEAM', team });
@@ -881,12 +881,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         { role: 'user', content: `老板@你说：${content}` },
       ];
       if (!client.resolveApiBase(assistantModel)) {
-        const reply = `⚠️ Hermes 助理没有可用模型配置，无法进行真实对话或调度。请在设置中激活全局模型，或为助理选择模型后重试。`;
+        const reply = `⚠️ 章北海助理没有可用模型配置，无法进行真实对话或调度。请在设置中激活全局模型，或为助理选择模型后重试。`;
         appendSupervisorMessage(reply);
         return reply;
       }
       const result = await client.chatCompletion(turns, 'assistant-supervisor', `监工/${team.name}`, undefined, assistantModel);
-      const reply = result.content?.trim().replace(/@Hermes(?:\s+助理)?/gu, 'Hermes 助理');
+      const reply = result.content?.trim().replace(/@Hermes(?:\s+助理)?|@章北海(?:\s+助理)?/gu, '章北海助理');
       if (!reply) return undefined;
       appendSupervisorMessage(reply, result.usage.totalTokens);
       client.extractUserInsights(`老板：${content}\n监工回复：${reply}`, `团队监工-${team.name}`).catch(() => {});
@@ -894,7 +894,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.warn('[supervisor] reply failed:', error);
       const reason = error instanceof Error ? error.message : String(error);
-      const reply = `⚠️ Hermes 助理本次模型调用失败：${reason.slice(0, 180)}。任务没有被伪装为已执行；请检查模型连接后重试。`;
+      const reply = `⚠️ 章北海助理本次模型调用失败：${reason.slice(0, 180)}。任务没有被伪装为已执行；请检查模型连接后重试。`;
       appendSupervisorMessage(reply);
       return reply;
     } finally {

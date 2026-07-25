@@ -47,7 +47,7 @@ export default function SidebarPanel() {
       <div className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-header">
           {!collapsed && <h3>👥 员工</h3>}
-          <button className="btn btn-sm" onClick={openAssistantChat} title="打开 Hermes 通用助手" style={{ marginRight: 4 }}>
+          <button className="btn btn-sm" onClick={openAssistantChat} title="打开章北海助理" style={{ marginRight: 4 }}>
             🤖 助手
           </button>
           <AssistantModelSelector />

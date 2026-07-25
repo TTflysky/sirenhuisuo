@@ -34,7 +34,7 @@ export default function ChatOnlyView({ hash }: Props) {
     const team = state.teams.find((t) => t.id === id);
     title = team ? `${team.icon ?? '💬'} ${team.name}` : '💬 团队';
   } else if (type === 'assistant-chat' || type === 'assistant') {
-    title = '🤖 Hermes 助手';
+    title = '🤖 章北海助理';
   }
 
   return (
