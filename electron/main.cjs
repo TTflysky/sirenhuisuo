@@ -233,7 +233,7 @@ function showMainWindow() {
   win.show();
   win.focus();
   if (!assistantCompanionManuallyClosed) {
-    createAssistantCompanion(win).then(() => syncAssistantCompanion(win)).catch((error) => {
+    createAssistantCompanion(win).catch((error) => {
       console.error('Failed to restore assistant companion window:', error);
     });
   }
@@ -313,23 +313,9 @@ function getInitialWindowBounds() {
   };
 }
 
-function syncAssistantCompanion(owner = mainWindow) {
-  const companion = assistantCompanionWindow;
-  if (!owner || owner.isDestroyed() || !companion || companion.isDestroyed()) return;
-  if (!owner.isVisible() || owner.isMinimized()) {
-    companion.hide();
-    return;
-  }
-  companion.setBounds(getAssistantCompanionBounds(owner, companion), false);
-  if (!companion.isVisible()) companion.showInactive();
-  if (owner.isFocused()) companion.moveTop();
-}
-
 async function createAssistantCompanion(owner = mainWindow, { focus = false } = {}) {
   if (!owner || owner.isDestroyed()) return null;
   if (assistantCompanionWindow && !assistantCompanionWindow.isDestroyed()) {
-    if (assistantCompanionWindow.getParentWindow() !== owner) assistantCompanionWindow.setParentWindow(owner);
-    syncAssistantCompanion(owner);
     if (focus) focusChatWindow(assistantCompanionWindow);
     return assistantCompanionWindow;
   }
@@ -337,12 +323,11 @@ async function createAssistantCompanion(owner = mainWindow, { focus = false } = 
   assistantCompanionManuallyClosed = false;
   const companion = new BrowserWindow({
     ...getAssistantCompanionBounds(owner, null),
-    parent: owner,
     modal: false,
     minWidth: ASSISTANT_COMPANION_MIN_WIDTH,
     minHeight: CHAT_WINDOW_MIN_HEIGHT,
     title: '私人办公会所 · 驴狗蛋助手',
-    skipTaskbar: true,
+    skipTaskbar: false,
     frame: false,
     show: false,
     backgroundColor: '#ffffff',
@@ -356,11 +341,8 @@ async function createAssistantCompanion(owner = mainWindow, { focus = false } = 
   chatWindows.set(ASSISTANT_COMPANION_KEY, companion);
   trackActiveWindow(companion);
   companion.once('ready-to-show', () => {
-    if (owner.isVisible() && !owner.isMinimized()) {
-      syncAssistantCompanion(owner);
-      if (focus) focusChatWindow(companion);
-      else companion.showInactive();
-    }
+    if (focus) focusChatWindow(companion);
+    else companion.showInactive();
   });
   companion.on('close', () => {
     if (mainWindow && !mainWindow.isDestroyed()) assistantCompanionManuallyClosed = true;
@@ -465,22 +447,10 @@ function createWindow() {
       console.error('Failed to create assistant companion window:', error);
     });
   });
-  win.on('move', () => syncAssistantCompanion(win));
-  win.on('resize', () => syncAssistantCompanion(win));
-  win.on('maximize', () => syncAssistantCompanion(win));
-  win.on('unmaximize', () => syncAssistantCompanion(win));
-  win.on('restore', () => syncAssistantCompanion(win));
-  win.on('focus', () => syncAssistantCompanion(win));
-  win.on('show', () => {
-    if (!assistantCompanionManuallyClosed) syncAssistantCompanion(win);
-  });
-  win.on('hide', () => assistantCompanionWindow?.hide());
-  win.on('minimize', () => assistantCompanionWindow?.hide());
   win.on('close', (event) => {
     if (isQuitting) return;
     event.preventDefault();
     win.hide();
-    assistantCompanionWindow?.hide();
   });
 
   if (!app.isPackaged) {
@@ -660,13 +630,14 @@ function createWindow() {
     const maxOutput = 100 * 1024; // 100KB 截断
 
     return new Promise((resolve) => {
-      const child = exec(cmd, {
+      const options = {
         cwd: projectRoot,
         timeout: timeoutMs,
         maxBuffer: 1024 * 1024,
         windowsHide: true,
         env: { ...process.env, FORCE_COLOR: '0' },
-      }, (err, stdout, stderr) => {
+      };
+      const done = (err, stdout, stderr) => {
         resolve({
           success: !err,
           exitCode: err ? ((err.code) || -1) : 0,
@@ -675,7 +646,13 @@ function createWindow() {
           signal: err && err.killed ? 'TIMEOUT' : undefined,
           cwd: projectRoot,
         });
-      });
+      };
+      const child = process.platform === 'win32'
+        ? execFile('powershell.exe', [
+            '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
+            `[Console]::OutputEncoding = [Text.UTF8Encoding]::new(); $OutputEncoding = [Text.UTF8Encoding]::new(); $ProgressPreference = 'SilentlyContinue'; & { ${cmd} }`,
+          ], options, done)
+        : exec(cmd, options, done);
 
       // 超时强制 kill
       const timer = setTimeout(() => {

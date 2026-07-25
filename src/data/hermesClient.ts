@@ -8,6 +8,7 @@ import { ensureDistinctEmployeeColors } from './employeeColors';
 import {
   AUTONOMOUS_EXECUTION_GUIDE,
   EXECUTION_SELF_REVIEW_GUIDE,
+  buildContinuationGuide,
   buildRecoveryGuide,
   getToolStage,
   guardInstallationSummary,
@@ -846,7 +847,6 @@ export async function chatCompletion(
       }
     }
   }
-
   const res = await apiFetch('/chat/completions', {
     method: 'POST',
     body: JSON.stringify({
@@ -935,19 +935,44 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       }
     }
   }
+  const checkpointBaseTurns = [...currentTurns];
 
   let totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   let finalContent: string | null = null;
   let finalModel = '';
-  const maxIter = 14; // 给连续工具操作留出空间，并确保模型有机会生成最终说明
+  const iterationsPerPhase = 10;
+  const maxPhases = 5;
+  const maxIter = iterationsPerPhase * maxPhases;
   const callLog: Array<{ name: string; args: string; result: string; success: boolean }> = [];
   const toolResultCache = new Map<string, { output: string; success: boolean }>();
+  const successfulCalls = new Set<string>();
   let stopped = false;
   let finalReviewRequested = false;
   let consecutiveFailures = 0;
+  let phaseStartSuccessCount = 0;
+  let phaseStartLogIndex = 0;
+  let stalledPhases = 0;
 
-  for (let iter = 0; iter < maxIter + 2; iter++) {
+  for (let iter = 0; iter < maxIter; iter++) {
     if (shouldStop?.()) { stopped = true; break; } // 用户停止：本轮前中止
+    if (iter > 0 && iter % iterationsPerPhase === 0) {
+      const phaseCalls = callLog.slice(phaseStartLogIndex);
+      const madeProgress = successfulCalls.size > phaseStartSuccessCount;
+      stalledPhases = madeProgress ? 0 : stalledPhases + 1;
+      const summaryRows = phaseCalls.slice(-14).map((call, index) => {
+        const state = call.success ? '完成' : `未完成（${humanizeExecutionError(call.result)}）`;
+        return `${index + 1}. ${getToolStage(call.name)}：${state}`;
+      });
+      const summary = summaryRows.length > 0 ? summaryRows.join('\n') : '这一阶段没有产生有效操作。';
+      currentTurns = [
+        ...checkpointBaseTurns,
+        { role: 'system', content: buildContinuationGuide(summary, stalledPhases) },
+      ];
+      phaseStartSuccessCount = successfulCalls.size;
+      phaseStartLogIndex = callLog.length;
+      consecutiveFailures = 0;
+      finalReviewRequested = false;
+    }
     const beforeCallGuidance = consumeSteeringMessages?.() ?? [];
     if (beforeCallGuidance.length) {
       currentTurns.push({ role: 'user', content: `## 老板刚刚追加的指令（优先于之前要求）\n${beforeCallGuidance.join('\n')}` });
@@ -978,6 +1003,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
           ? { toolCallId: tc.id, name: tc.name, success: cached.success, output: `相同工具调用已执行过，复用结果：\n${cached.output}` }
           : await executeTool({ id: tc.id, name: tc.name, args: (() => { try { return JSON.parse(tc.arguments); } catch { return {}; } })(), scope });
         const resultSuccess = result.success && isToolResultSuccessful(result.output, result.success);
+        if (resultSuccess) successfulCalls.add(cacheKey);
         if (resultSuccess) {
           consecutiveFailures = 0;
         } else {

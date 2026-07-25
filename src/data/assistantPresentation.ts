@@ -30,6 +30,13 @@ export const EXECUTION_SELF_REVIEW_GUIDE = `## 最终交付前自检（把上一
 5. 如果缺少只有用户才能提供的 API Key、密码、验证码或授权，保留已经完成的部分，清楚询问用户，不要继续假装验证，也不要把整个任务说成毫无进展。
 6. 最终只输出面向普通用户的结论、完成情况和下一步。命令、工具名、参数、退出码和原始错误留在折叠的“执行过程”中。`;
 
+export function buildContinuationGuide(summary: string, stalledPhases: number): string {
+  const strategy = stalledPhases > 0
+    ? '上一阶段没有产生足够的新进展。重新检查原先假设，并选择本质不同的工具或实现路线，禁止只改写并重复旧操作。'
+    : '上一阶段产生了新进展。保留成果，从尚未满足的完成标准继续，不要重新做已经完成的步骤。';
+  return `## 自主执行检查点\n${strategy}\n\n以下是已压缩的执行记忆：\n${summary}\n\n回到用户最初目标继续处理。能自行发现和解决的问题不要停下来询问；只有确认缺少用户专属凭据、授权或业务选择时才交接给用户。`;
+}
+
 export function buildRecoveryGuide(consecutiveFailures: number): string {
   const escalation = consecutiveFailures >= 3
     ? '已经连续失败多次。不要再沿用相同假设或只改写同一条命令；先重新检查环境和目标，选择本质不同的实现路线。'
@@ -68,9 +75,45 @@ const TOOL_ACTIONS: Record<string, { active: string; stage: string }> = {
   run_command: { active: '正在执行安装或检查…', stage: '安装或检查' },
 };
 
-export function getToolActivity(name: string): string {
-  if (name.startsWith('connector_')) return '正在连接外部服务…';
-  return TOOL_ACTIONS[name]?.active ?? '正在处理下一步…';
+function toolArgs(args: string): Record<string, string> {
+  try { return JSON.parse(args) as Record<string, string>; } catch { return {}; }
+}
+
+export function getToolActionLabel(name: string, args = ''): string {
+  const parsed = toolArgs(args);
+  if (name === 'run_command') {
+    const command = String(parsed.cmd ?? '').toLowerCase();
+    if (/invoke-webrequest|start-bitstransfer|curl|wget|download/.test(command)) return '下载所需文件';
+    if (/expand-archive|unzip|\btar\b|7z/.test(command)) return '解压安装文件';
+    if (/npm\s+(?:i|install)|pnpm\s+(?:i|install)|yarn\s+add|pip\s+install/.test(command)) return '安装所需组件';
+    if (/--version|\bversion\b|版本/.test(command)) return '核对版本';
+    if (/api[_ -]?key|client[_ -]?id|\$env:|set-content|out-file/.test(command)) return '配置连接信息';
+    if (/test-path|get-item|get-childitem|select-string|\bdir\b|\bls\b/.test(command)) return '检查文件和配置';
+    if (/node\s|python\s|npm\s+test|npm\s+run/.test(command)) return '运行验证脚本';
+    return '执行系统操作';
+  }
+  if (name === 'search_skills') return '查找合适的技能';
+  if (name === 'read_skill') return '读取技能说明';
+  if (name === 'write_file') return parsed.path ? `保存 ${String(parsed.path).split(/[\\/]/).pop()}` : '保存文件';
+  if (name === 'read_file') return parsed.path ? `读取 ${String(parsed.path).split(/[\\/]/).pop()}` : '读取文件';
+  if (name === 'list_files') return '检查工作区文件';
+  if (name === 'web_search') return '搜索最新资料';
+  if (name.startsWith('connector_')) return '查询外部服务';
+  return TOOL_ACTIONS[name]?.stage ?? '处理下一步';
+}
+
+export function getToolReport(name: string, args = ''): string {
+  const action = getToolActionLabel(name, args);
+  if (name === 'search_skills' || name === 'read_skill') return `技能库 · ${action}`;
+  if (name === 'read_file' || name === 'write_file' || name === 'list_files') return `文件工具 · ${action}`;
+  if (name === 'run_command') return `终端工具 · ${action}`;
+  if (name === 'web_search') return `网络搜索 · ${action}`;
+  if (name.startsWith('connector_')) return `连接器 · ${action}`;
+  return `执行工具 · ${action}`;
+}
+
+export function getToolActivity(name: string, args = ''): string {
+  return `执行中 · ${getToolReport(name, args)}`;
 }
 
 export function getToolStage(name: string): string {
@@ -91,6 +134,19 @@ export function humanizeExecutionError(raw: string): string {
   if (/EACCES|EPERM|permission|权限|拒绝访问/iu.test(raw)) return '系统不允许这一步操作，需要确认安装权限。';
   if (/(?:退出码|exit\s*code)\s*[:：]?\s*[1-9]\d*/iu.test(raw)) return '这一步没有顺利完成，需要换一种方法重试。';
   return '这一步没有顺利完成，详细记录已放在下方“执行过程”中。';
+}
+
+export function summarizeToolResult(name: string, result: string, success: boolean): string {
+  if (!success) return humanizeExecutionError(result);
+  if (name === 'search_skills') return '已找到候选技能，正在继续筛选。';
+  if (name === 'read_skill') return '技能说明已读取。';
+  if (name === 'read_file') return '文件内容已读取。';
+  if (name === 'list_files') return '工作区内容已检查。';
+  if (name === 'write_file') return '文件已经保存。';
+  if (name === 'web_search') return '资料搜索已完成。';
+  if (name === 'run_command') return '这一步已经完成。';
+  if (name.startsWith('connector_')) return '外部服务已经回应。';
+  return '这一步已经完成。';
 }
 
 export function simplifyLegacyAssistantContent(content: string): string {

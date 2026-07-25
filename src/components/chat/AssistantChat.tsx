@@ -19,6 +19,7 @@ import { useStore } from '../../store';
 import {
   BEGINNER_RESPONSE_GUIDE,
   getToolActivity,
+  getToolReport,
   getToolStage,
   humanizeExecutionError,
   isToolResultSuccessful,
@@ -65,6 +66,7 @@ export default function AssistantChat() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
   const [activityStep, setActivityStep] = useState(0);
+  const [liveActivities, setLiveActivities] = useState<Array<{ id: string; matchKey: string; label: string; state: 'active' | 'success' | 'error' }>>([]);
   const [showOutputs, setShowOutputs] = useState(false);
   const [selectedOutputFilename, setSelectedOutputFilename] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -150,6 +152,7 @@ export default function AssistantChat() {
     setBusy(true);
     setStatus('思考中…');
     setActivityStep(1);
+    setLiveActivities([]);
 
     // 无当前助理 API 时本地回复（支持助理独立模型配置）
     const assistantSettings = resolveChatSettings();
@@ -196,18 +199,35 @@ export default function AssistantChat() {
         attachments: imageAtts,
         extraSystemContext: skillContext,
         consumeSteeringMessages: () => steeringMessagesRef.current.splice(0),
-        onToolCall(name) {
+        onToolCall(name, args) {
           setActivityStep(2);
           lastStage = getToolStage(name);
-          setStatus(getToolActivity(name));
+          setStatus(getToolActivity(name, args));
+          const matchKey = `${name}:${args}`;
+          setLiveActivities((current) => [
+            ...current,
+            { id: `${Date.now()}-${current.length}`, matchKey, label: getToolReport(name, args), state: 'active' as const },
+          ].slice(-5));
         },
         onToolResult(name, args, result, success) {
+          const matchKey = `${name}:${args}`;
+          const resultSuccess = isToolResultSuccessful(result, success);
+          setLiveActivities((current) => {
+            let index = -1;
+            for (let cursor = current.length - 1; cursor >= 0; cursor -= 1) {
+              if (current[cursor].matchKey === matchKey && current[cursor].state === 'active') { index = cursor; break; }
+            }
+            const nextState: 'success' | 'error' = resultSuccess ? 'success' : 'error';
+            return index < 0 ? current : current.map((item, itemIndex) => itemIndex === index
+              ? { ...item, state: nextState }
+              : item);
+          });
           if (showCoT) {
             cotSteps.push({
               toolName: name,
               args: args ?? '',
               result: result.slice(0, 2000),  // 限制单步结果
-              success: isToolResultSuccessful(result, success),
+              success: resultSuccess,
               timestamp: Date.now(),
             });
           }
@@ -356,7 +376,16 @@ export default function AssistantChat() {
                   {status === '思考中…' ? (
                     <><span className="dot" /><span className="dot" /><span className="dot" /></>
                   ) : (
-                    <span style={{ fontSize: 12 }}>{status}</span>
+                    <div className="assistant-live-content">
+                      <strong>{status}</strong>
+                      {liveActivities.length > 0 && <div className="assistant-live-activities">
+                        {liveActivities.map((item) => <span key={item.id} className={`assistant-live-activity is-${item.state}`}>
+                          <i>{item.state === 'success' ? '✓' : item.state === 'error' ? '!' : '•'}</i>
+                          <span>{item.label}</span>
+                          <small>{item.state === 'success' ? '完成' : item.state === 'error' ? '换方法处理中' : '进行中'}</small>
+                        </span>)}
+                      </div>}
+                    </div>
                   )}
                 </div>
               </div>

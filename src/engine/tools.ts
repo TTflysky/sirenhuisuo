@@ -110,7 +110,7 @@ export const TOOLS: ToolDef[] = [
     type: 'function',
     function: {
       name: 'run_command',
-      description: `执行 Windows PowerShell 命令（仅 Electron 桌面版可用）。命令在自主代理工作区（workspace）内执行，最长 30 秒超时，输出上限 100KB。不要使用 bash heredoc（例如 python - <<'PY'）；多行脚本先用 write_file 保存，再运行脚本文件，短脚本使用 python -c。
+      description: `执行 Windows PowerShell 命令（仅 Electron 桌面版可用）。命令由 PowerShell 运行，不是 cmd 或 bash；最长 30 秒超时，输出上限 100KB。不要使用 bash heredoc（例如 python - <<'PY'）；多行脚本先用 write_file 保存，再运行脚本文件，短脚本使用 python -c。
 可用命令示例：
 - "npm install package-name" 安装依赖
 - "npm run build" 构建项目
