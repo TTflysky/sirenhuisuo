@@ -58,6 +58,7 @@ export default function SettingsModal({ onClose, onSaved }: Props) {
 
   const startDrag = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
+    if ((event.target as HTMLElement).closest('button, input, textarea, select, [role="combobox"], .ant-select, .ant-switch')) return;
     const startX = event.clientX;
     const startY = event.clientY;
     const origin = dragOffset;
@@ -93,7 +94,7 @@ export default function SettingsModal({ onClose, onSaved }: Props) {
             {section.items.map((item) => <button className={tab === item.key ? 'active' : ''} key={item.key} onClick={() => setTab(item.key)}>{item.icon}<span>{item.label}</span><code>/{item.key}</code></button>)}
           </div>)}
         </aside>
-        <main className={`settings-center-content settings-page-${tab}`}>{page}</main>
+        <main className={`settings-center-content settings-page-${tab}`} onPointerDown={startDrag}>{page}</main>
       </div>
     </Modal>
   );

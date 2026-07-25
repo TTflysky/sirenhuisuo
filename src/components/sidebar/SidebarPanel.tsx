@@ -14,7 +14,7 @@ import { applySyncProfile } from '../../utils/configSync';
 type Filter = 'all' | 'online' | 'working' | 'idle';
 
 export default function SidebarPanel() {
-  const { state, openTeamChat, openDmChat, openAssistantChat } = useStore();
+  const { state, openTeamChat, openDmChat } = useStore();
   const [collapsed, setCollapsed] = useState(false);
   const [filter, setFilter] = useState<Filter>('all');
   const [showAddEmp, setShowAddEmp] = useState(false);
@@ -47,9 +47,6 @@ export default function SidebarPanel() {
       <div className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-header">
           {!collapsed && <h3>👥 员工</h3>}
-          <button className="btn btn-sm" onClick={openAssistantChat} title="打开章北海助理" style={{ marginRight: 4 }}>
-            🤖 助手
-          </button>
           <AssistantModelSelector />
           <button
             className="btn btn-sm"

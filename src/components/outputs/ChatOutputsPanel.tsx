@@ -61,7 +61,7 @@ export default function ChatOutputsPanel({ scope, maxHeight = 500, selectedFilen
   if (outputs.length === 0) {
     return (
       <div className="chat-outputs-panel">
-        <div className="chat-outputs-preview-head chat-outputs-empty-head"><button type="button" className="chat-outputs-back" onClick={onBack} disabled={!onBack}>← 返回聊天</button><strong>产出物</strong></div>
+        <div className="chat-outputs-preview-head chat-outputs-empty-head">{onBack && <button type="button" className="chat-outputs-back" onClick={onBack}>← 返回聊天</button>}<strong>产出物</strong></div>
         <div className="chat-outputs-empty">
           <span className="chat-outputs-empty-icon">{kindIcon('default')}</span>
           <span className="chat-outputs-empty-text">暂无交付文件</span>

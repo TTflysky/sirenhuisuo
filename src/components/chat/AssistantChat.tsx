@@ -389,7 +389,7 @@ export default function AssistantChat() {
         {/* 右侧产出物面板 */}
         {showOutputs && (
           <div className="chat-outputs-wrap">
-            <ChatOutputsPanel scope="assistant" maxHeight={500} />
+            <ChatOutputsPanel scope="assistant" maxHeight={500} onBack={() => setShowOutputs(false)} />
           </div>
         )}
       </div>

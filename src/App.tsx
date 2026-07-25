@@ -9,6 +9,7 @@ import OfficeView from './components/office/OfficeView';
 import SettingsModal from './components/settings/SettingsModal';
 import Analytics from './components/analytics/Analytics';
 import AutopilotPanel from './components/autopilot/AutopilotPanel';
+import AssistantChat from './components/chat/AssistantChat';
 import ChatOnlyView from './components/chat/ChatOnlyView';
 import SkillLibraryView from './components/skills/SkillLibraryView';
 import { checkBackend } from './data/hermesClient';
@@ -156,11 +157,16 @@ export default function App() {
         {view === 'office' ? (
           <>
             <SidebarPanel />
-            <OfficeView
-              employees={state.employees}
-              isWorking={(e) => e.isWorking}
-              onStationClick={handleStationClick}
-            />
+            <div className="office-workspace">
+              <OfficeView
+                employees={state.employees}
+                isWorking={(e) => e.isWorking}
+                onStationClick={handleStationClick}
+              />
+              <section className="office-assistant-dock" aria-label="章北海助理默认聊天">
+                <AssistantChat />
+              </section>
+            </div>
           </>
         ) : view === 'autopilot' ? (
           <AutopilotPanel />

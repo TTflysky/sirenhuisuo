@@ -677,7 +677,7 @@ export default function TeamChatApp({ teamId }: Props) {
         {/* 右侧产出物面板 */}
         {showOutputs && (
           <><div className="workspace-resize-handle" onPointerDown={startPanelResize} title="拖动调整产出物面板宽度" /><div className="chat-outputs-wrap" style={{ width: workspacePanelWidth, minWidth: workspacePanelWidth }}>
-            <ChatOutputsPanel scope={`team:${teamId}`} maxHeight={500} selectedFilename={selectedOutputFilename} />
+            <ChatOutputsPanel scope={`team:${teamId}`} maxHeight={500} selectedFilename={selectedOutputFilename} onBack={() => { setShowOutputs(false); setSelectedOutputFilename(null); }} />
           </div></>
         )}
       </div>
