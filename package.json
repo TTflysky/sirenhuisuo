@@ -1,7 +1,7 @@
 {
   "name": "hermes-office-pro",
   "private": true,
-  "version": "0.6.2",
+  "version": "0.6.3",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -38,7 +38,7 @@
   "build": {
     "appId": "com.hermes.office",
     "productName": "私人办公会所",
-    "artifactName": "${productName} Setup ${version}.${ext}",
+    "artifactName": "${name}-setup-${version}.${ext}",
     "files": [
       "dist/**",
       "electron/**",
@@ -57,9 +57,10 @@
     },
     "publish": [
       {
-        "provider": "generic",
-        "url": "https://hermes-update.example.com/releases",
-        "channel": "latest"
+        "provider": "github",
+        "owner": "TTflysky",
+        "repo": "sirenhuisuo",
+        "releaseType": "release"
       }
     ],
     "win": {
