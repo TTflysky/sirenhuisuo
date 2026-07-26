@@ -166,8 +166,8 @@ export interface AvatarFrameConfig {
 }
 
 // ===== 可恢复任务运行（v0.4 调度内核） =====
-export type TaskRunStatus = 'queued' | 'running' | 'paused' | 'failed' | 'completed';
-export type TaskStepStatus = 'queued' | 'running' | 'paused' | 'failed' | 'completed';
+export type TaskRunStatus = 'queued' | 'running' | 'paused' | 'stopped' | 'failed' | 'completed';
+export type TaskStepStatus = 'queued' | 'running' | 'paused' | 'stopped' | 'failed' | 'completed';
 export type TaskStepKind = 'work' | 'review' | 'revision';
 export type TaskRunPhase = 'preflight' | 'executing' | 'verifying' | 'blocked' | 'completed';
 export type TaskEvidence = { ts: number; source: 'tool' | 'member' | 'review' | 'system'; summary: string; verified?: boolean };

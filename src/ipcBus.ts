@@ -63,4 +63,7 @@ export const BUS_CHANNELS = {
   OUTPUTS_CHANGED: 'outputs:changed',
   CONNECTORS_CHANGED: 'connectors:changed',
   ASSISTANT_SETTINGS_CHANGED: 'assistant-settings:changed',
+  ASSISTANT_RUN_REQUEST: 'assistant:run-request',
+  ASSISTANT_ACTIVITY_CHANGED: 'assistant:activity-changed',
+  ASSISTANT_EXECUTION_COMMAND: 'assistant:execution-command',
 } as const;

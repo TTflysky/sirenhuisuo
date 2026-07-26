@@ -47,7 +47,7 @@ export default function ToolWindowView({ hash }: Props) {
     if (type === 'connector-config') {
       if (payload === undefined) return <div className="tool-window-loading">正在读取连接器配置…</div>;
       if (!payload) return <WindowError text="没有读取到连接器配置，请关闭后重新打开。" />;
-      return <ConnectorConfigModal connector={payload as Connector} onClose={close} onSaved={() => sendBus(BUS_CHANNELS.CONNECTORS_CHANGED, { updatedAt: Date.now() })} />;
+      return <ConnectorConfigModal standalone connector={payload as Connector} onClose={close} onSaved={() => sendBus(BUS_CHANNELS.CONNECTORS_CHANGED, { updatedAt: Date.now() })} />;
     }
     if (type === 'assistant-settings') return <AssistantSettingsModal onClose={close} onSaved={() => sendBus(BUS_CHANNELS.ASSISTANT_SETTINGS_CHANGED, { updatedAt: Date.now() })} />;
     return <WindowError text="无法识别这个窗口。" />;

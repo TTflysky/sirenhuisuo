@@ -1,12 +1,15 @@
 import { useState } from 'react';
-import { DownloadOutlined, FolderOpenOutlined, LinkOutlined } from '@ant-design/icons';
+import { CheckCircleOutlined, DownloadOutlined, FolderOpenOutlined, LinkOutlined, RobotOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { App, Button, Input, Modal, Select, Switch } from 'antd';
 import type { Connector, ConnectorAuth } from '../../data/connectors';
 import { checkConnector, connectorMissingFields, findConnectorPreset, upsertConnector } from '../../data/connectors';
+import { BUS_CHANNELS, sendBus } from '../../ipcBus';
 
-interface Props { connector: Connector; onClose: () => void; onSaved: () => void; }
+const LS_PENDING_REQUEST = 'hermes_office_assistant_pending_request';
 
-export default function ConnectorConfigModal({ connector, onClose, onSaved }: Props) {
+interface Props { connector: Connector; onClose: () => void; onSaved: () => void; standalone?: boolean; }
+
+export default function ConnectorConfigModal({ connector, onClose, onSaved, standalone = false }: Props) {
   const { message } = App.useApp();
   const preset = findConnectorPreset(connector.mcpServerName || connector.label);
   const [label, setLabel] = useState(connector.label);
@@ -59,7 +62,30 @@ export default function ConnectorConfigModal({ connector, onClose, onSaved }: Pr
     setSaving(false);
     onSaved();
     if (result.status === 'connected') { message.success(`${draft.label} 已配置并连接`); onClose(); }
-    else message.warning(result.error ?? '配置已保存，连接测试未通过');
+    else if (isSkillBridge && result.status === 'unknown') {
+      const request = {
+        id: `connector-verification-${draft.id}-${Date.now()}`,
+        display: `验证 ${draft.label} 连接器`,
+        createdAt: Date.now(),
+        prompt: `请继续完成“${draft.label}”连接器的真实验证，不要重新向我索要已经保存的凭据，也不要在回复或工具参数中显示密钥内容。
+
+必须按下面顺序自主完成：
+1. 调用 inspect_connectors，核对连接器 ID“${draft.id}”的配置状态和真实接入方式。
+2. 调用 read_skill，读取已安装 Skill ID“${draft.installedSkillId}”的完整说明。
+3. 只采用 Skill 说明中明确提供的健康检查或最小查询命令，不得猜测接口、路径或命令。
+4. 调用 run_command 执行该命令，并同时传 connector="${draft.id}"、verification=true，让客户端仅在该 Skill 进程中注入已保存凭据。
+5. 真实调用成功才能说明“已连接”；失败时请用通俗中文说清卡在哪一步、原因和下一步需要我做什么。`,
+      };
+      try { localStorage.setItem(LS_PENDING_REQUEST, JSON.stringify(request)); } catch {}
+      const opened = await window.electronAPI?.openChat?.({ type: 'assistant-chat', refId: '' });
+      if (opened && !opened.ok) {
+        message.error(opened.error ?? '配置已保存，但无法打开助手进行验证');
+        return;
+      }
+      sendBus(BUS_CHANNELS.ASSISTANT_RUN_REQUEST, request);
+      message.success('配置已保存，助手正在按 Skill 说明做真实验证');
+      onClose();
+    } else message.warning(result.error ?? '配置已保存，连接测试未通过');
   };
 
   const installSkillPackage = async () => {
@@ -79,9 +105,28 @@ export default function ConnectorConfigModal({ connector, onClose, onSaved }: Pr
   const isKnowledge = connector.kind === 'knowledge-url' || connector.kind === 'obsidian';
   const isSkillBridge = connector.kind === 'skill-bridge';
   return (
-    <Modal title={connector.kind === 'obsidian' ? '配置 Obsidian' : connector.kind === 'knowledge-url' ? '配置网页知识库' : `配置 ${connector.label}`} open onCancel={onClose} footer={null} width={560} destroyOnClose>
-      <div className="knowledge-config-form">
-        <div className="knowledge-config-summary"><span>{connector.kind === 'obsidian' ? <FolderOpenOutlined /> : <LinkOutlined />}</span><div><strong>{preset?.label ?? connector.label}</strong><small>{preset?.desc ?? connector.type}</small></div></div>
+    <Modal
+      title={connector.kind === 'obsidian' ? '配置 Obsidian' : connector.kind === 'knowledge-url' ? '配置网页知识库' : `配置 ${connector.label}`}
+      open
+      onCancel={onClose}
+      footer={null}
+      width={620}
+      destroyOnClose
+      closable={!standalone}
+      mask={!standalone}
+      className={`connector-config-modal${standalone ? ' is-standalone' : ''}`}
+      getContainer={standalone ? false : undefined}
+    >
+      <div className="knowledge-config-form connector-config-form">
+        <div className="connector-config-scroll">
+        <div className="knowledge-config-summary"><span>{connector.kind === 'obsidian' ? <FolderOpenOutlined /> : isSkillBridge ? <RobotOutlined /> : <LinkOutlined />}</span><div><strong>{preset?.label ?? connector.label}</strong><small>{preset?.desc ?? connector.type}</small></div></div>
+        {isSkillBridge && (
+          <div className="connector-config-steps" aria-label="配置步骤">
+            <span className={installedSkillId ? 'is-done' : 'is-current'}><i>{installedSkillId ? <CheckCircleOutlined /> : '1'}</i>安装 Skill</span>
+            <span className={installedSkillId ? 'is-current' : ''}><i>2</i>填写凭据</span>
+            <span><i>3</i>真实验证</span>
+          </div>
+        )}
         <label><span>名称</span><Input value={label} onChange={(event) => setLabel(event.target.value)} /></label>
         {connector.kind === 'knowledge-url' && <label><span>知识库链接</span><Input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="https://docs.example.com/knowledge" /></label>}
         {connector.kind === 'obsidian' && <label><span>Vault 目录</span><div className="knowledge-path-row"><Input value={localPath} readOnly placeholder="选择 Obsidian Vault" /><Button icon={<FolderOpenOutlined />} onClick={() => void pickVault()}>选择</Button></div></label>}
@@ -89,7 +134,7 @@ export default function ConnectorConfigModal({ connector, onClose, onSaved }: Pr
           <>
             <label><span>官方说明页</span><div className="knowledge-path-row"><Input value={documentationUrl} onChange={(event) => setDocumentationUrl(event.target.value)} placeholder="由助手阅读官方说明后填写" /><Button icon={<LinkOutlined />} disabled={!documentationUrl.trim()} onClick={() => void window.electronAPI?.openExternal(documentationUrl.trim())}>打开</Button></div></label>
             <label><span>官方 Skill 下载地址</span><div className="knowledge-path-row"><Input value={skillSourceUrl} onChange={(event) => { setSkillSourceUrl(event.target.value); setInstalledSkillId(''); }} placeholder="SKILL.md、GitHub 目录或 ZIP" /><Button icon={<DownloadOutlined />} loading={installingSkill} onClick={() => void installSkillPackage()}>{installedSkillId ? '重装' : '安装'}</Button></div></label>
-            {installedSkillId && <div className="knowledge-skill-status">Skill 已安装并关联</div>}
+            {installedSkillId && <div className="knowledge-skill-status"><CheckCircleOutlined /> Skill 已安装并关联，保存后由助手按说明验证</div>}
             {(preset?.credentialFields ?? connector.credentialFields ?? []).map((field) => (
               <label key={field.key}><span>{field.label}{field.required ? ' *' : ''}</span>{field.secret
                 ? <Input.Password value={credentials[field.key] ?? ''} onChange={(event) => setCredentials((current) => ({ ...current, [field.key]: event.target.value }))} placeholder={field.placeholder} />
@@ -105,8 +150,10 @@ export default function ConnectorConfigModal({ connector, onClose, onSaved }: Pr
             <label><span>自定义 Headers</span><Input.TextArea value={headers} onChange={(event) => setHeaders(event.target.value)} rows={3} /></label>
           </>
         )}
-        <div className="knowledge-enable-row"><span>启用</span><Switch checked={enabled} onChange={setEnabled} /></div>
-        <div className="knowledge-config-actions"><Button onClick={onClose}>取消</Button><Button type="primary" loading={saving} onClick={() => void handleSave()}>一键配置</Button></div>
+        <div className="knowledge-enable-row"><span><strong>启用连接器</strong><small>关闭后保留配置，但助手不会调用它</small></span><Switch checked={enabled} onChange={setEnabled} /></div>
+        {isSkillBridge && <div className="connector-credential-note"><SafetyCertificateOutlined /><span>凭据只会在本机验证进程中临时注入，不会发送到聊天记录。</span></div>}
+        </div>
+        <div className="knowledge-config-actions"><Button onClick={onClose}>取消</Button><Button type="primary" icon={isSkillBridge ? <RobotOutlined /> : undefined} loading={saving} onClick={() => void handleSave()}>{isSkillBridge ? '保存并交给助手验证' : '保存并测试'}</Button></div>
       </div>
     </Modal>
   );

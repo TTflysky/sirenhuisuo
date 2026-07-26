@@ -15,8 +15,10 @@ import type { SkillReference } from '../../types';
 import type { OutputRecord } from '../../data/outputs';
 import { fileToAttachment, attachmentsFromClipboard, attachmentWorkspaceContext, formatFileSize, persistAttachments } from '../../utils/attachments';
 import { useFileDrop } from '../../hooks/useFileDrop';
+import { formatExecutionDuration, useAgentExecutionControl } from '../../hooks/useAgentExecutionControl';
 import AssistantSettingsModal, { getAssistantPrompt } from '../settings/AssistantSettingsModal';
 import { useStore } from '../../store';
+import { BUS_CHANNELS, onBus, sendBus } from '../../ipcBus';
 import {
   BEGINNER_RESPONSE_GUIDE,
   getToolActivity,
@@ -32,11 +34,22 @@ import {
   ExportOutlined,
   FolderOpenOutlined,
   PaperClipOutlined,
+  PauseCircleOutlined,
+  PlayCircleOutlined,
   RobotOutlined,
   SettingOutlined,
+  StopOutlined,
 } from '@ant-design/icons';
 
 const LS_KEY = 'hermes_office_assistant_chat';
+const LS_PENDING_REQUEST = 'hermes_office_assistant_pending_request';
+
+interface PendingAssistantRequest {
+  id: string;
+  prompt: string;
+  display?: string;
+  createdAt: number;
+}
 
 // 构建 API 上下文时排除的中间消息前缀（工具调用状态、错误提示等非实质对话）
 const NON_DIALOG_PREFIXES = ['🔧 调用工具', '⚠️ 出错了'];
@@ -66,7 +79,8 @@ export default function AssistantChat() {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
-  const [activityStep, setActivityStep] = useState(0);
+  const [completedActionCount, setCompletedActionCount] = useState(0);
+  const [pendingRequest, setPendingRequest] = useState<PendingAssistantRequest | null>(null);
   const [liveActivities, setLiveActivities] = useState<Array<{ id: string; matchKey: string; label: string; args: string; state: 'active' | 'error' }>>([]);
   const [liveExecutionSteps, setLiveExecutionSteps] = useState<ThoughtChainStep[]>([]);
   const [showOutputs, setShowOutputs] = useState(false);
@@ -79,6 +93,10 @@ export default function AssistantChat() {
   const endRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const steeringMessagesRef = useRef<string[]>([]);
+  const executionControl = useAgentExecutionControl(busy);
+  const pauseExecution = executionControl.pause;
+  const resumeExecution = executionControl.resume;
+  const stopExecution = executionControl.stop;
 
   const addFiles = async (files: FileList | File[]) => {
     const arr = Array.from(files);
@@ -117,14 +135,18 @@ export default function AssistantChat() {
     setShowOutputs(true);
   };
 
-  const handleSend = async () => {
-    const content = text.trim();
-    if (!content && attachments.length === 0) return;
-    const atts = attachments;
-    const refs = skillRefs;
+  const handleSend = async (contentOverride?: string, displayOverride?: string) => {
+    const externalRequest = typeof contentOverride === 'string';
+    const content = (contentOverride ?? text).trim();
+    const atts = externalRequest ? [] : attachments;
+    if (!content && atts.length === 0) return;
+    const refs = externalRequest ? [] : skillRefs;
     const skillContext = await resolveSkillContext(refs);
-    setSkillRefs([]);
-    setText('');    setAttachments([]);
+    if (!externalRequest) {
+      setSkillRefs([]);
+      setText('');
+      setAttachments([]);
+    }
 
     // 文本类附件：拼进消息文本
     let enriched = content;
@@ -135,7 +157,7 @@ export default function AssistantChat() {
     enriched += attachmentWorkspaceContext(atts);
     const imageAtts = atts.filter((a) => a.kind === 'image');
 
-    const display = [content, ...atts.map((a) => `[📎 ${a.name}]`)].filter(Boolean).join('\n');
+    const display = displayOverride ?? [content, ...atts.map((a) => `[📎 ${a.name}]`)].filter(Boolean).join('\n');
     push({
       id: `h-${Date.now()}-me`, authorId: 'me', roleId: 'human',
       content: display, mentions: [], timestamp: Date.now(), kind: 'text', skillRefs: refs,
@@ -160,9 +182,10 @@ export default function AssistantChat() {
 
     setBusy(true);
     setStatus('思考中…');
-    setActivityStep(1);
+    setCompletedActionCount(0);
     setLiveActivities([]);
     setLiveExecutionSteps([]);
+    executionControl.reset();
 
     // 无当前助理 API 时本地回复（支持助理独立模型配置）
     const assistantSettings = resolveChatSettings();
@@ -174,7 +197,6 @@ export default function AssistantChat() {
       });
       setBusy(false);
       setStatus('');
-      setActivityStep(0);
       return;
     }
 
@@ -219,9 +241,10 @@ ${employeeDirectory}
         scope: 'assistant',
         attachments: imageAtts,
         extraSystemContext: [organizationContext, skillContext].filter(Boolean).join('\n\n'),
+        shouldStop: executionControl.shouldStop,
+        waitIfPaused: executionControl.waitIfPaused,
         consumeSteeringMessages: () => steeringMessagesRef.current.splice(0),
         onToolCall(name, args) {
-          setActivityStep(2);
           lastStage = getToolStage(name);
           setStatus(getToolActivity(name, args));
           const matchKey = `${name}:${args}`;
@@ -230,6 +253,7 @@ ${employeeDirectory}
         onToolResult(name, args, result, success) {
           const matchKey = `${name}:${args}`;
           const resultSuccess = isToolResultSuccessful(result, success);
+          setCompletedActionCount((count) => count + 1);
           setLiveActivities((current) => {
             let index = -1;
             for (let cursor = current.length - 1; cursor >= 0; cursor -= 1) {
@@ -256,7 +280,6 @@ ${employeeDirectory}
       });
 
       const ts = Date.now();
-      setActivityStep(3);
       setStatus('正在整理清楚的结果…');
       push({
         id: `h-${ts}-ai`, authorId: 'assistant', roleId: 'custom',
@@ -296,8 +319,58 @@ ${employeeDirectory}
     }
     setBusy(false);
     setStatus('');
-    setActivityStep(0);
   };
+
+  useEffect(() => {
+    const acceptRequest = (payload: unknown) => {
+      const request = payload as Partial<PendingAssistantRequest>;
+      if (!request || typeof request.id !== 'string' || typeof request.prompt !== 'string' || !request.prompt.trim()) return;
+      setPendingRequest({ id: request.id, prompt: request.prompt, display: request.display, createdAt: Number(request.createdAt) || Date.now() });
+    };
+    const unsubscribe = onBus(BUS_CHANNELS.ASSISTANT_RUN_REQUEST, acceptRequest);
+    try {
+      const raw = localStorage.getItem(LS_PENDING_REQUEST);
+      if (raw) acceptRequest(JSON.parse(raw));
+    } catch {}
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    if (busy || !pendingRequest) return;
+    if (Date.now() - pendingRequest.createdAt > 10 * 60 * 1000) {
+      setPendingRequest(null);
+      localStorage.removeItem(LS_PENDING_REQUEST);
+      return;
+    }
+    const request = pendingRequest;
+    setPendingRequest(null);
+    localStorage.removeItem(LS_PENDING_REQUEST);
+    void handleSend(request.prompt, request.display);
+    // handleSend intentionally consumes the latest component state when the request becomes runnable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy, pendingRequest]);
+
+  useEffect(() => {
+    const activity = {
+      state: busy ? executionControl.executionState : 'idle',
+      status: busy
+        ? executionControl.executionState === 'paused' ? '已暂停' : executionControl.executionState === 'stopping' ? '正在停止…' : status || '思考中…'
+        : '',
+      completedActions: completedActionCount,
+      elapsedSeconds: executionControl.elapsedSeconds,
+      updatedAt: Date.now(),
+    };
+    try { localStorage.setItem('hermes_office_assistant_activity', JSON.stringify(activity)); } catch {}
+    sendBus(BUS_CHANNELS.ASSISTANT_ACTIVITY_CHANGED, activity);
+  }, [busy, completedActionCount, executionControl.elapsedSeconds, executionControl.executionState, status]);
+
+  useEffect(() => onBus(BUS_CHANNELS.ASSISTANT_EXECUTION_COMMAND, (payload) => {
+    if (!busy || !payload || typeof payload !== 'object') return;
+    const command = (payload as { command?: unknown }).command;
+    if (command === 'pause') pauseExecution();
+    if (command === 'resume') resumeExecution();
+    if (command === 'stop') stopExecution();
+  }), [busy, pauseExecution, resumeExecution, stopExecution]);
 
   const handleCopyMsg = async (content: string) => {
     await copyToClipboard(content);
@@ -326,7 +399,7 @@ ${employeeDirectory}
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      void handleSend();
     }
   };
 
@@ -339,10 +412,15 @@ ${employeeDirectory}
               <div className="assistant-activity-glow" />
               <span className="assistant-activity-icon"><RobotOutlined /></span>
               <div className="assistant-activity-copy">
-                <strong>{status || '思考中…'}</strong>
-                <span>驴狗蛋助手正在处理当前对话</span>
+                <strong>{executionControl.executionState === 'paused' ? '任务已暂停' : executionControl.executionState === 'stopping' ? '正在安全停止…' : status || '思考中…'}</strong>
+                <span>已完成 {completedActionCount} 个动作 · 已运行 {formatExecutionDuration(executionControl.elapsedSeconds)}</span>
               </div>
-              <span className="assistant-activity-step">{Math.max(1, activityStep)}/3</span>
+              <div className="assistant-activity-controls">
+                {executionControl.executionState === 'paused'
+                  ? <button type="button" onClick={executionControl.resume} title="继续任务"><PlayCircleOutlined /><span>继续</span></button>
+                  : <button type="button" onClick={executionControl.pause} disabled={executionControl.executionState === 'stopping'} title="完成当前动作后暂停"><PauseCircleOutlined /><span>暂停</span></button>}
+                <button type="button" className="is-stop" onClick={executionControl.stop} disabled={executionControl.executionState === 'stopping'} title="完成当前动作后停止"><StopOutlined /><span>停止</span></button>
+              </div>
             </div>
           )}
           {/* 消息流 */}
@@ -480,7 +558,7 @@ ${employeeDirectory}
               >
                 <DeleteOutlined /> 清空
               </button>
-              <button className="btn btn-primary btn-sm" onClick={handleSend} disabled={!text.trim() && attachments.length === 0}>
+              <button className="btn btn-primary btn-sm" onClick={() => void handleSend()} disabled={!text.trim() && attachments.length === 0}>
                 {busy ? (loadSettings().followUpMode === 'queue' ? '排队' : '引导') : '发送'}
               </button>
             </div>

@@ -115,6 +115,18 @@ async function readSkill(projectRoot, id) {
   return { id: found.id, name: found.name, content: content.slice(0, MAX_BODY_BYTES) };
 }
 
+async function resolveSkillDirectory(projectRoot, id) {
+  if (typeof id !== 'string' || id.length > 200) throw new Error('无效技能 ID');
+  const found = (await scanSkills(projectRoot)).find((item) => item.id === id);
+  if (!found) throw new Error('技能不存在或已移除');
+  for (const root of uniqueRoots(projectRoot)) {
+    try {
+      if (await insideRealRoot(root, found._path)) return path.dirname(found._path);
+    } catch {}
+  }
+  throw new Error('技能路径不安全');
+}
+
 async function deleteSkill(projectRoot, id) {
   if (typeof id !== 'string' || id.length > 200) throw new Error('无效技能 ID');
   const all = await scanSkills(projectRoot);
@@ -397,4 +409,4 @@ async function installSkill(projectRoot, input) {
   return { ok: true, skill: installed ? (({ _path, ...item }) => item)(installed) : { name, source: slug }, resolvedUrl };
 }
 
-module.exports = { listSkills, readSkill, deleteSkill, installSkill, validateZipArchive, MAX_BODY_BYTES };
+module.exports = { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill, validateZipArchive, MAX_BODY_BYTES };

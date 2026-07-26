@@ -269,6 +269,7 @@ interface StoreCtx {
   triggerDiscussion: (teamId: string, opts?: { task?: TeamTask; userText?: string; extraSystemContext?: string; attachments?: import('./data/hermesClient').Attachment[]; participantPlan?: import('./types').DiscussionParticipantPlan[]; triggerMessageId?: string; discussionId?: string; forcedMemberIds?: string[]; maxRounds?: number }) => void;
   pauseTaskRun: (runId: string) => void;
   resumeTaskRun: (runId: string) => void;
+  stopTaskRun: (runId: string) => void;
   closeTaskRun: (runId: string) => void;
   clearTeamExecution: (teamId: string) => void;
 }
@@ -590,6 +591,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   stateRef.current = state;
   const supervisorBusyRef = React.useRef(new Set<string>());
   const pausedRunIdsRef = React.useRef(new Set<string>());
+  const stoppedRunIdsRef = React.useRef(new Set<string>());
 
   const isTeamControlRequest = (text: string): boolean => {
     const pause = /(?:暂停|停止|先停|停下|别做|不要继续).{0,12}(?:工作|任务|手上|当前|执行)|(?:工作|任务).{0,8}(?:暂停|停止)/u.test(text);
@@ -792,11 +794,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }
           updateRun((run) => {
             const paused = pausedRunIdsRef.current.has(run.id);
+            const stopped = stoppedRunIdsRef.current.has(run.id);
             const hasFailed = run.steps.some((step) => step.status === 'failed') || !!run.lastError;
-            const hasUnfinished = run.steps.some((step) => step.status !== 'completed' && step.status !== 'failed');
-            run.status = paused ? 'paused' : hasFailed || hasUnfinished ? 'failed' : 'completed';
-            run.phase = paused ? 'blocked' : hasFailed || hasUnfinished ? 'blocked' : 'verifying';
-            if (!paused && hasUnfinished) {
+            const hasUnfinished = run.steps.some((step) => step.status !== 'completed' && step.status !== 'failed' && step.status !== 'stopped');
+            run.status = stopped ? 'stopped' : paused ? 'paused' : hasFailed || hasUnfinished ? 'failed' : 'completed';
+            run.phase = stopped || paused ? 'blocked' : hasFailed || hasUnfinished ? 'blocked' : 'verifying';
+            if (!stopped && !paused && hasUnfinished) {
               run.lastError = '部分成员未完成执行，可点击继续执行重试。';
               run.steps.forEach((step) => {
                 if (step.status === 'queued' || step.status === 'running') {
@@ -808,7 +811,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             if (paused) run.steps.forEach((step) => {
               if (step.status === 'running') { step.status = 'paused'; step.events.push({ ts: Date.now(), type: 'status', detail: '已暂停，等待继续' }); }
             });
-            if (!paused && !hasFailed && !hasUnfinished) {
+            if (stopped) {
+              run.lastError = undefined;
+              run.steps.forEach((step) => {
+                if (step.status !== 'completed' && step.status !== 'failed') {
+                  step.status = 'stopped';
+                  step.events.push({ ts: Date.now(), type: 'status', detail: '用户已停止任务' });
+                }
+              });
+              run.handoff = {
+                ts: Date.now(),
+                completed: run.steps.filter((step) => step.status === 'completed').map((step) => step.title),
+                blocked: '任务已由用户停止。',
+                nextAction: '已完成内容会保留；需要继续时请重新发起任务。',
+              };
+            }
+            if (!stopped && !paused && !hasFailed && !hasUnfinished) {
               run.phase = 'completed';
               run.preflight = (run.preflight ?? []).map((item) => item.label === '确认最终验收'
                 ? { ...item, status: 'passed', detail: '所有任务步骤已完成并通过最终汇总' }
@@ -817,7 +835,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           });
         },
       }, {
-        shouldStop: () => !!opts?.runId && pausedRunIdsRef.current.has(opts.runId),
+        shouldStop: () => !!opts?.runId && (pausedRunIdsRef.current.has(opts.runId) || stoppedRunIdsRef.current.has(opts.runId)),
         consumeSteeringMessages: () => {
           const scheduler = schedulerRef.current.get(teamId);
           return scheduler?.steering?.splice(0) ?? [];
@@ -1010,6 +1028,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const resumeTaskRun = (runId: string) => {
     pausedRunIdsRef.current.delete(runId);
+    stoppedRunIdsRef.current.delete(runId);
     const run = stateRef.current.taskRuns.find((item) => item.id === runId);
     if (!run) return;
     const pendingSteps = run.steps.filter((step) => step.status === 'paused' || step.status === 'failed' || step.status === 'queued');
@@ -1021,6 +1040,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       next.steps.forEach((step) => { if (pendingStepIds.has(step.id)) step.status = 'queued'; });
     }) });
     void buildSkillContext(run.skillRefs ?? []).then((skillContext) => enqueueDiscussion(run.teamId, { userText: run.request, triggerMessageId: run.sourceMessageId, discussionId: run.id, forcedMemberIds: pending, runSteps: pendingSteps, maxRounds: pendingSteps.length, runId, extraSystemContext: skillContext }, 50));
+  };
+
+  const stopTaskRun = (runId: string) => {
+    stoppedRunIdsRef.current.add(runId);
+    pausedRunIdsRef.current.delete(runId);
+    const run = stateRef.current.taskRuns.find((item) => item.id === runId);
+    if (run) dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
+      next.status = 'stopped';
+      next.phase = 'blocked';
+      next.lastError = undefined;
+      next.steps.forEach((step) => {
+        if (step.status === 'queued' || step.status === 'running' || step.status === 'paused') {
+          step.status = 'stopped';
+          step.events.push({ ts: Date.now(), type: 'status', detail: '用户已停止任务' });
+        }
+      });
+      next.handoff = {
+        ts: Date.now(),
+        completed: next.steps.filter((step) => step.status === 'completed').map((step) => step.title),
+        blocked: '任务已由用户停止。',
+        nextAction: '已完成内容会保留；需要继续时请重新发起任务。',
+      };
+    }) });
   };
 
   const closeTaskRun = (runId: string) => {
@@ -1144,6 +1186,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         triggerDiscussion,
         pauseTaskRun,
         resumeTaskRun,
+        stopTaskRun,
         closeTaskRun,
         clearTeamExecution,
       }}

@@ -990,6 +990,7 @@ export interface AgentLoopOpts {
   workspaceId?: string;
   attachments?: Attachment[];  // 用户上传/粘贴的图片附件（多模态视觉）
   shouldStop?: () => boolean;  // 自主执行中断信号（如用户点「停止」）
+  waitIfPaused?: () => Promise<void>; // 在模型调用和工具调用之间等待用户继续
   consumeSteeringMessages?: () => string[]; // 运行中追加的老板指令
 }
 
@@ -1017,7 +1018,7 @@ function getUserActionForFailure(raw: string): string {
 }
 
 export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: string; usage: TokenUsage; contextUsage?: ContextUsage; model: string }> {
-  const { turns, tools, scene, label, onToolCall, onToolResult, modelConfig, extraSystemContext, scope, attachments, shouldStop, consumeSteeringMessages } = opts;
+  const { turns, tools, scene, label, onToolCall, onToolResult, modelConfig, extraSystemContext, scope, attachments, shouldStop, waitIfPaused, consumeSteeringMessages } = opts;
   let currentTurns = [...turns];
   const originalUserContent = [...turns].reverse().find((turn) => turn.role === 'user')?.content;
   const originalUserText = typeof originalUserContent === 'string'
@@ -1082,6 +1083,8 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     const evidence: string[] = [];
     const runRecoveryTool = async (name: 'search_skills' | 'web_search', args: Record<string, string>) => {
       if (toolCallsThisPhase >= maxToolCallsPerPhase) return undefined;
+      await waitIfPaused?.();
+      if (shouldStop?.()) return undefined;
       const argumentsText = JSON.stringify(args);
       onToolCall?.(name, argumentsText);
       const recovered = await executeTool({
@@ -1117,6 +1120,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   };
 
   for (let iter = 0; iter < maxIter; iter++) {
+    await waitIfPaused?.();
     if (shouldStop?.()) { stopped = true; break; } // 用户停止：本轮前中止
     if (phaseToolBudgetReached) {
       const phaseCalls = callLog.slice(phaseStartLogIndex);
@@ -1190,6 +1194,8 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       const { executeTool } = await import('../engine/tools');
       let iterationHadFailure = false;
       for (const tc of r.toolCalls) {
+        await waitIfPaused?.();
+        if (shouldStop?.()) { stopped = true; break; }
         if (toolCallsThisPhase >= maxToolCallsPerPhase) {
           phaseToolBudgetReached = true;
           break;

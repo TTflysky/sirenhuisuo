@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { RobotOutlined } from '@ant-design/icons';
+import { PauseCircleOutlined, PlayCircleOutlined, RobotOutlined, StopOutlined } from '@ant-design/icons';
 import type { Team, Employee, TaskRun } from '../../types';
 import { useStore } from '../../store';
 import { type Attachment } from '../../data/hermesClient';
@@ -45,7 +45,7 @@ function SupervisorAvatar({ size = 34 }: { size?: number }) {
 export default function TeamChatApp({ teamId }: Props) {
   const {
     state, sendMessage,
-    publishTask, claimTask, advanceTask, triggerDiscussion, pauseTaskRun, resumeTaskRun, closeTaskRun, clearTeamExecution,
+    publishTask, claimTask, advanceTask, triggerDiscussion, pauseTaskRun, resumeTaskRun, stopTaskRun, closeTaskRun, clearTeamExecution,
   } = useStore();
   const team = state.teams.find((t: Team) => t.id === teamId);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -94,8 +94,8 @@ export default function TeamChatApp({ teamId }: Props) {
   const progress = state.status.progress;
   const myProgress = progress && progress.teamId === teamId ? progress : null;
   const taskRuns = state.taskRuns.filter((run) => run.teamId === teamId).reverse();
-  const activeTaskRuns = taskRuns.filter((run) => run.status !== 'completed');
-  const completedTaskRuns = taskRuns.filter((run) => run.status === 'completed');
+  const activeTaskRuns = taskRuns.filter((run) => run.status !== 'completed' && run.status !== 'stopped');
+  const completedTaskRuns = taskRuns.filter((run) => run.status === 'completed' || run.status === 'stopped');
   const availableOutputs = loadOutputsByScope(`team:${teamId}`);
   const jumpMessages = (team?.chatMessages ?? []).filter((message) => message.kind !== 'execution').slice(-24);
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
@@ -286,7 +286,7 @@ export default function TeamChatApp({ teamId }: Props) {
         })} onContextMenu={(event) => {
           event.preventDefault(); setExpandedRunIds((previous) => { const next = new Set(previous); if (next.has(run.id)) next.delete(run.id); else next.add(run.id); return next; });
         }}>
-          <span className="task-run-state">{run.status === 'running' ? '执行中' : run.status === 'queued' ? '排队中' : run.status === 'paused' ? '已暂停' : run.status === 'failed' ? '待恢复' : '已完成'}</span>
+          <span className="task-run-state">{run.status === 'running' ? '执行中' : run.status === 'queued' ? '排队中' : run.status === 'paused' ? '已暂停' : run.status === 'stopped' ? '已停止' : run.status === 'failed' ? '待恢复' : '已完成'}</span>
           <strong>{run.title}</strong><span>{completed}/{run.steps.length}</span><span className="task-run-toggle">{expanded ? '收起' : '详情'}</span>
         </button>
         <button type="button" className="task-run-close" title="关闭并从任务列表移除" onClick={() => closeTaskRun(run.id)}>×</button>
@@ -302,7 +302,11 @@ export default function TeamChatApp({ teamId }: Props) {
           return <div key={step.id} className="task-run-step"><div><span className="task-step-order">{step.order}</span><strong>{emp?.name ?? step.title}</strong><span className={`task-step-kind kind-${step.kind}`}>{step.kind === 'review' ? '审查' : step.kind === 'revision' ? '修订' : '执行'}</span><span className={`task-step-status status-${step.status}`}>{step.status}</span><small>{model || '默认模型'} · 尝试 {step.attempts} 次</small></div><p className="task-step-assignment">{step.assignment}</p>{step.reviewDecision && <p className={`task-review-decision ${step.reviewDecision}`}>{step.reviewDecision === 'pass' ? '审查通过' : `退回：${step.reviewReason ?? '需要修改'}`}</p>}{step.lastError && <p className="task-step-error">{step.lastError}</p>}{step.events.slice(-4).map((event, index) => <p key={`${event.ts}-${index}`} className="task-step-event">{new Date(event.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} {event.detail}</p>)}</div>;
         })}
         {run.handoff && <div className="task-run-handoff"><strong>当前交接</strong><p>{run.handoff.blocked}</p>{run.handoff.completed.length > 0 && <p>已完成：{run.handoff.completed.join('、')}</p>}<p>下一步：{run.handoff.nextAction}</p></div>}
-        <div className="task-run-actions">{active && <button className="btn btn-sm" onClick={() => pauseTaskRun(run.id)}>暂停</button>}{(run.status === 'paused' || run.status === 'failed') && <button className="btn btn-sm btn-primary" onClick={() => resumeTaskRun(run.id)}>继续执行</button>}</div>
+        <div className="task-run-actions">
+          {active && <button className="btn btn-sm" onClick={() => pauseTaskRun(run.id)}><PauseCircleOutlined />暂停</button>}
+          {(run.status === 'paused' || run.status === 'failed') && <button className="btn btn-sm btn-primary" onClick={() => resumeTaskRun(run.id)}><PlayCircleOutlined />继续执行</button>}
+          {(active || run.status === 'paused' || run.status === 'failed') && <button className="btn btn-sm btn-danger" onClick={() => stopTaskRun(run.id)}><StopOutlined />停止</button>}
+        </div>
       </div>}
     </section>;
   };

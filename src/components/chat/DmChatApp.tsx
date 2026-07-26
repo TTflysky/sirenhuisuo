@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ReloadOutlined, SettingOutlined, CloseOutlined } from '@ant-design/icons';
+import { CloseOutlined, PauseCircleOutlined, PlayCircleOutlined, ReloadOutlined, SettingOutlined, StopOutlined } from '@ant-design/icons';
 import type { ChatMessage, ThoughtChainStep } from '../../types';
 import { useStore } from '../../store';
 import { loadDm, appendDm, runAgentLoop, resolveApiBase, extractUserInsights, getEmployeeModel, loadSettings, type ChatTurn, type Attachment, type ContextUsage } from '../../data/hermesClient';
@@ -20,6 +20,7 @@ import {
 import { TOOLS } from '../../engine/tools';
 import { getConnectorTools } from '../../engine/connectorTools';
 import { useFileDrop } from '../../hooks/useFileDrop';
+import { formatExecutionDuration, useAgentExecutionControl } from '../../hooks/useAgentExecutionControl';
 import {
   BEGINNER_RESPONSE_GUIDE,
   getToolActivity,
@@ -102,7 +103,7 @@ export default function DmChatApp({ empId }: Props) {
   const [text, setText] = useState('');
   const [typing, setTyping] = useState(false);
   const [status, setStatus] = useState('');
-  const [activityStep, setActivityStep] = useState(0);
+  const [completedActionCount, setCompletedActionCount] = useState(0);
   const [liveActivities, setLiveActivities] = useState<Array<{ id: string; matchKey: string; label: string; args: string; state: 'active' | 'error' }>>([]);
   const [liveExecutionSteps, setLiveExecutionSteps] = useState<ThoughtChainStep[]>([]);
   const [showOutputs, setShowOutputs] = useState(false);
@@ -118,6 +119,7 @@ export default function DmChatApp({ empId }: Props) {
   const steeringMessagesRef = useRef<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const executionControl = useAgentExecutionControl(typing);
   const resizeOutputs = (event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     const move = (moveEvent: PointerEvent) => setOutputsWidth(Math.max(240, Math.min(520, window.innerWidth - moveEvent.clientX)));
@@ -218,13 +220,13 @@ export default function DmChatApp({ empId }: Props) {
   const runDmJob = async (job: DmRetryJob) => {
     setTyping(true);
     setStatus('思考中…');
-    setActivityStep(1);
+    setCompletedActionCount(0);
     setLiveActivities([]);
     setLiveExecutionSteps([]);
+    executionControl.reset();
     dispatch({ type: 'UPDATE_EMPLOYEE', id: empId, partial: { isWorking: true } });
     try {
       const { text: reply, usage, contextUsage, thoughtChain } = await generateReply(job.userText, job.attachments, job.skillContext, job.history);
-      setActivityStep(3);
       setStatus('正在整理清晰的结果…');
       push({ id: `dm-${Date.now()}-${empId}`, authorId: empId, roleId: emp.role, content: reply, mentions: [], timestamp: Date.now(), kind: 'text', tokens: usage, contextUsage, thoughtChain });
       setRetryJob(null);
@@ -243,7 +245,6 @@ export default function DmChatApp({ empId }: Props) {
     } finally {
       setTyping(false);
       setStatus('');
-      setActivityStep(0);
       setLiveActivities([]);
       setLiveExecutionSteps([]);
       dispatch({ type: 'UPDATE_EMPLOYEE', id: empId, partial: { isWorking: false, currentTask: undefined } });
@@ -282,6 +283,8 @@ export default function DmChatApp({ empId }: Props) {
     if (!resolveApiBase(getEmployeeModel(emp))) {
       // 未配置 API：本地剧本 + 短延迟模拟
       await new Promise((r) => setTimeout(r, 700 + Math.random() * 900));
+      await executionControl.waitIfPaused();
+      if (executionControl.shouldStop()) return { text: '还没有完成，任务已经停止。停止前的内容会保留。' };
       const t = emp.prompt
         ? `（按人设：${emp.prompt.slice(0, 30)}${emp.prompt.length > 30 ? '…' : ''}）${craftReply(emp.role, enriched)}`
         : craftReply(emp.role, enriched);
@@ -296,9 +299,10 @@ export default function DmChatApp({ empId }: Props) {
       turns: [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content: enriched }],
       tools: [...TOOLS, ...getConnectorTools()], scene: 'dm', label: emp.name, modelConfig: getEmployeeModel(emp),
       extraSystemContext: [emp.soul, skillContext].filter(Boolean).join('\n\n'), scope: `dm:${empId}`, attachments: imageAtts,
+      shouldStop: executionControl.shouldStop,
+      waitIfPaused: executionControl.waitIfPaused,
       consumeSteeringMessages: () => steeringMessagesRef.current.splice(0),
       onToolCall(name, args) {
-        setActivityStep(2);
         setStatus(getToolActivity(name, args));
         const matchKey = `${name}:${args}`;
         const report = getToolReport(name, args);
@@ -308,6 +312,7 @@ export default function DmChatApp({ empId }: Props) {
       onToolResult(name, args, result, success) {
         const matchKey = `${name}:${args}`;
         const resultSuccess = isToolResultSuccessful(result, success);
+        setCompletedActionCount((count) => count + 1);
         setLiveActivities((current) => {
           let index = -1;
           for (let cursor = current.length - 1; cursor >= 0; cursor -= 1) {
@@ -383,10 +388,15 @@ export default function DmChatApp({ empId }: Props) {
               <div className="assistant-activity-glow" />
               <span className="assistant-activity-icon"><AgentAvatar employee={emp} size={22} /></span>
               <div className="assistant-activity-copy">
-                <strong>{status || '思考中…'}</strong>
-                <span>{emp.name} 正在处理当前对话</span>
+                <strong>{executionControl.executionState === 'paused' ? '任务已暂停' : executionControl.executionState === 'stopping' ? '正在安全停止…' : status || '思考中…'}</strong>
+                <span>已完成 {completedActionCount} 个动作 · 已运行 {formatExecutionDuration(executionControl.elapsedSeconds)}</span>
               </div>
-              <span className="assistant-activity-step">{Math.max(1, activityStep)}/3</span>
+              <div className="assistant-activity-controls">
+                {executionControl.executionState === 'paused'
+                  ? <button type="button" onClick={executionControl.resume} title="继续任务"><PlayCircleOutlined /><span>继续</span></button>
+                  : <button type="button" onClick={executionControl.pause} disabled={executionControl.executionState === 'stopping'} title="完成当前动作后暂停"><PauseCircleOutlined /><span>暂停</span></button>}
+                <button type="button" className="is-stop" onClick={executionControl.stop} disabled={executionControl.executionState === 'stopping'} title="完成当前动作后停止"><StopOutlined /><span>停止</span></button>
+              </div>
             </div>
           )}
 

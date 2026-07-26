@@ -8,7 +8,7 @@ export interface ExecCommandResult {
   signal?: string;
   cwd: string;
 }
-export interface ExecCommandPolicy { sandboxEnabled?: boolean; env?: Record<string, string>; }
+export interface ExecCommandPolicy { sandboxEnabled?: boolean; env?: Record<string, string>; skillId?: string; }
 
 export interface FsEntry {
   name: string;

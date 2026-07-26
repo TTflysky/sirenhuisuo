@@ -752,7 +752,11 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
 
         try {
           const beforeFiles = await workspaceFileVersions(call.scope ?? 'global', api, physicalWorkspace);
-          const result = await api.execCommand(cmd, physicalWorkspace, { sandboxEnabled: approval.policy.sandboxEnabled, env: injectedEnv });
+          const result = await api.execCommand(cmd, physicalWorkspace, {
+            sandboxEnabled: approval.policy.sandboxEnabled,
+            env: injectedEnv,
+            skillId: connectorForCommand?.kind === 'skill-bridge' ? connectorForCommand.installedSkillId : undefined,
+          });
           const { success, exitCode, stdout, stderr, signal: sig, cwd } = result as any;
           if (connectorForCommand && String(args.verification).toLowerCase() === 'true') {
             const { updateConnector } = await import('../data/connectors');

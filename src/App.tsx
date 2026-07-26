@@ -9,9 +9,11 @@ import {
   HomeOutlined,
   LockOutlined,
   MinusOutlined,
+  PauseCircleOutlined,
   PlayCircleOutlined,
   RobotOutlined,
   SettingOutlined,
+  StopOutlined,
   ThunderboltOutlined,
   UnlockOutlined,
 } from '@ant-design/icons';
@@ -28,9 +30,19 @@ import ToolWindowView from './components/windows/ToolWindowView';
 import SkillLibraryView from './components/skills/SkillLibraryView';
 import { checkBackend } from './data/hermesClient';
 import { APP_VERSION } from './appVersion';
+import { BUS_CHANNELS, onBus, sendBus } from './ipcBus';
+import { formatExecutionDuration } from './hooks/useAgentExecutionControl';
 
 type View = 'office' | 'analytics' | 'autopilot' | 'skill-library';
-type ThemeName = 'light' | 'dark' | 'eye-care' | 'soft-gray' | 'ocean-blue' | 'quiet-blue' | 'glass-light' | 'glass-dark' | 'spruce' | 'graphite';
+type ThemeName = 'light' | 'dark' | 'eye-care' | 'soft-gray' | 'ocean-blue' | 'quiet-blue' | 'glass-light' | 'glass-dark' | 'spruce' | 'graphite' | 'cyberpunk';
+
+interface AssistantActivity {
+  state: 'idle' | 'running' | 'paused' | 'stopping';
+  status: string;
+  completedActions: number;
+  elapsedSeconds: number;
+  updatedAt: number;
+}
 
 const THEME_OPTIONS: Array<{ value: ThemeName; label: string; color: string }> = [
   { value: 'light', label: '明亮', color: '#f7f8fb' },
@@ -43,6 +55,7 @@ const THEME_OPTIONS: Array<{ value: ThemeName; label: string; color: string }> =
   { value: 'glass-dark', label: '玻璃深夜', color: 'rgba(35,48,63,.72)' },
   { value: 'spruce', label: '云杉绿', color: '#294b43' },
   { value: 'graphite', label: '石墨', color: '#535861' },
+  { value: 'cyberpunk', label: '霓虹赛博', color: '#20e3ff' },
 ];
 
 export default function App() {
@@ -53,6 +66,14 @@ export default function App() {
   const [view, setView] = useState<View>('office');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [assistantLocked, setAssistantLocked] = useState(false);
+  const [assistantActivity, setAssistantActivity] = useState<AssistantActivity>(() => {
+    try {
+      const value = JSON.parse(localStorage.getItem('hermes_office_assistant_activity') || 'null') as AssistantActivity | null;
+      return value?.state ? value : { state: 'idle', status: '', completedActions: 0, elapsedSeconds: 0, updatedAt: 0 };
+    } catch {
+      return { state: 'idle', status: '', completedActions: 0, elapsedSeconds: 0, updatedAt: 0 };
+    }
+  });
   const [themeName, setThemeName] = useState<ThemeName>(() => {
     const saved = localStorage.getItem('hermes_office_theme');
     return THEME_OPTIONS.some((option) => option.value === saved) ? saved as ThemeName : 'light';
@@ -61,7 +82,7 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = themeName;
-    document.documentElement.dataset.colorMode = ['dark', 'quiet-blue', 'glass-dark', 'spruce', 'graphite'].includes(themeName) ? 'dark' : 'light';
+    document.documentElement.dataset.colorMode = ['dark', 'quiet-blue', 'glass-dark', 'spruce', 'graphite', 'cyberpunk'].includes(themeName) ? 'dark' : 'light';
     localStorage.setItem('hermes_office_theme', themeName);
     window.electronAPI?.broadcast?.('theme-changed', themeName);
   }, [themeName]);
@@ -86,6 +107,11 @@ export default function App() {
   useEffect(() => {
     window.electronAPI?.getAssistantLock?.().then(({ locked }) => setAssistantLocked(locked)).catch(() => {});
   }, []);
+
+  useEffect(() => onBus(BUS_CHANNELS.ASSISTANT_ACTIVITY_CHANGED, (payload) => {
+    const next = payload as AssistantActivity;
+    if (next && ['idle', 'running', 'paused', 'stopping'].includes(next.state)) setAssistantActivity(next);
+  }), []);
 
   // 子窗口检测：原生聊天子窗口的 URL 附带 #chat 路由。
   // 仅在首次渲染时读一次 location.hash——主窗口永远不带 #chat（v0.1.13 已移除 hash fallback），
@@ -142,6 +168,10 @@ export default function App() {
   const toggleAssistantLock = async () => {
     const result = await window.electronAPI?.setAssistantLock?.(!assistantLocked);
     if (result) setAssistantLocked(result.locked);
+  };
+
+  const controlAssistant = (command: 'pause' | 'resume' | 'stop') => {
+    sendBus(BUS_CHANNELS.ASSISTANT_EXECUTION_COMMAND, { command, requestedAt: Date.now() });
   };
 
   const progress = state.status.progress;
@@ -202,8 +232,25 @@ export default function App() {
             <i className={state.status.backendOnline ? 'is-online' : 'is-offline'} />
             <span>{state.status.backendOnline ? '模型可用' : '模型离线'}</span>
           </span>
+          {assistantActivity.state !== 'idle' && (
+            <div className={`assistant-background-status is-${assistantActivity.state}`} role="status" aria-live="polite">
+              <button className="assistant-background-open" onClick={openAssistantChat} title="打开助手查看当前任务">
+                <i />
+                <span>
+                  <strong>{assistantActivity.state === 'paused' ? '助手已暂停' : assistantActivity.state === 'stopping' ? '助手正在停止' : assistantActivity.status || '助手执行中'}</strong>
+                  <small>已完成 {assistantActivity.completedActions} 个动作 · {formatExecutionDuration(assistantActivity.elapsedSeconds)}</small>
+                </span>
+              </button>
+              <span className="assistant-background-controls">
+                {assistantActivity.state === 'paused'
+                  ? <button onClick={() => controlAssistant('resume')} title="继续后台任务" aria-label="继续后台任务"><PlayCircleOutlined /></button>
+                  : <button onClick={() => controlAssistant('pause')} disabled={assistantActivity.state === 'stopping'} title="完成当前动作后暂停" aria-label="暂停后台任务"><PauseCircleOutlined /></button>}
+                <button className="is-stop" onClick={() => controlAssistant('stop')} disabled={assistantActivity.state === 'stopping'} title="完成当前动作后停止" aria-label="停止后台任务"><StopOutlined /></button>
+              </span>
+            </div>
+          )}
           <button
-            className="titlebar-btn assistant-launch-btn"
+            className={`titlebar-btn assistant-launch-btn ${assistantActivity.state !== 'idle' ? 'is-busy' : ''}`}
             title="打开驴狗蛋助手"
             aria-label="打开驴狗蛋助手"
             onClick={openAssistantChat}

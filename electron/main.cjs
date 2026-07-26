@@ -6,7 +6,7 @@ const { exec, execFile } = require('child_process');
 const officeParser = require('officeparser');
 const { AlignmentType, Document, HeadingLevel, Packer, Paragraph, TextRun } = require('docx');
 const { initAutoUpdater } = require('./autoUpdate.cjs');
-const { listSkills, readSkill, deleteSkill, installSkill } = require('./skills.cjs');
+const { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill } = require('./skills.cjs');
 const { testObsidianVault, searchObsidianVault, readObsidianNote, fetchKnowledgeUrl, searchWeb } = require('./knowledge.cjs');
 const { version: APP_VERSION } = require('../package.json');
 const { sanitizeInjectedEnv, redactInjectedValues } = require('./secretSafety.cjs');
@@ -470,6 +470,9 @@ async function createAssistantCompanion(owner = mainWindow, { focus = false } = 
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      // The assistant is a task runner as well as a window. Hiding its window
+      // must not throttle timers or pause an in-flight agent loop.
+      backgroundThrottling: false,
     },
   });
   assistantCompanionWindow = companion;
@@ -480,8 +483,11 @@ async function createAssistantCompanion(owner = mainWindow, { focus = false } = 
     if (focus) focusChatWindow(companion);
     else companion.showInactive();
   });
-  companion.on('close', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) assistantCompanionManuallyClosed = true;
+  companion.on('close', (event) => {
+    if (isQuitting) return;
+    event.preventDefault();
+    assistantCompanionManuallyClosed = true;
+    companion.hide();
   });
   companion.on('closed', () => {
     if (chatWindows.get(ASSISTANT_COMPANION_KEY) === companion) {
@@ -828,9 +834,16 @@ function createWindow() {
     const scope = typeof payload === 'object' && typeof payload?.scope === 'string'
       ? payload.scope.split(/[\\/]+/).map((part) => part.replace(/[^a-zA-Z0-9_-]/g, '_')).filter(Boolean).join('/') || 'global'
       : 'global';
-    const projectRoot = safeJoin(scope);
+    let projectRoot = safeJoin(scope);
     const sandboxEnabled = typeof payload !== 'object' || payload?.sandboxEnabled !== false;
     const extraEnv = sanitizeInjectedEnv(payload && typeof payload === 'object' ? payload.env : undefined);
+    if (typeof payload === 'object' && typeof payload?.skillId === 'string' && payload.skillId.trim()) {
+      try {
+        projectRoot = await resolveSkillDirectory(path.resolve(__dirname, '..'), payload.skillId.trim());
+      } catch (error) {
+        return { success: false, exitCode: -1, stdout: '', stderr: `无法进入已安装 Skill：${String(error?.message ?? error)}`, cwd: projectRoot };
+      }
+    }
     await fsp.mkdir(projectRoot, { recursive: true });
     const timeoutMs = 30000;
     const maxOutput = 100 * 1024; // 100KB 截断
