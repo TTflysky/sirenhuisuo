@@ -123,4 +123,28 @@ async function fetchKnowledgeUrl(rawUrl) {
   return { ok: true, url: response.url, title: content.split('\n').find(Boolean)?.slice(0, 160) || url.hostname, content: content.slice(0, 50000) };
 }
 
-module.exports = { testObsidianVault, searchObsidianVault, readObsidianNote, fetchKnowledgeUrl };
+async function searchWeb(rawQuery) {
+  const query = typeof rawQuery === 'string' ? rawQuery.trim().slice(0, 300) : '';
+  if (!query) throw new Error('搜索关键词不能为空');
+  const url = `https://www.bing.com/search?format=rss&q=${encodeURIComponent(query)}`;
+  const response = await fetch(url, {
+    headers: { 'User-Agent': 'Taiji-Web-Research/1.0', Accept: 'application/rss+xml,application/xml,text/xml' },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!response.ok) throw new Error(`搜索服务返回 HTTP ${response.status}`);
+  const xml = await response.text();
+  if (Buffer.byteLength(xml, 'utf8') > MAX_WEB_BYTES) throw new Error('搜索结果超过大小限制');
+  const field = (item, tag) => {
+    const match = item.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i'));
+    if (!match) return '';
+    return decodeHtml(match[1].replace(/^<!\[CDATA\[|\]\]>$/g, '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
+  };
+  const results = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)].slice(0, 8).map((match) => ({
+    title: field(match[1], 'title').slice(0, 240),
+    url: field(match[1], 'link').slice(0, 2048),
+    snippet: field(match[1], 'description').slice(0, 600),
+  })).filter((item) => item.title && /^https?:\/\//i.test(item.url));
+  return { ok: true, results };
+}
+
+module.exports = { testObsidianVault, searchObsidianVault, readObsidianNote, fetchKnowledgeUrl, searchWeb };

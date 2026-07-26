@@ -15,14 +15,24 @@ export interface ConnectorAuth {
   prefix?: string;
 }
 
+export interface ConnectorCredentialField {
+  key: string;
+  label: string;
+  required?: boolean;
+  secret?: boolean;
+  /** Environment variable exposed only to the connector-backed Skill process. */
+  envName?: string;
+  placeholder?: string;
+}
+
 /** 连接器定义 */
 export interface Connector {
   id: string;
   label: string;
   icon: string;
   type: 'mcp' | 'custom';
-  kind?: 'knowledge-url' | 'obsidian' | 'legacy';
-  runtime?: 'native-mcp' | 'http';
+  kind?: 'knowledge-url' | 'obsidian' | 'skill-bridge' | 'legacy';
+  runtime?: 'native-mcp' | 'http' | 'skill';
   mcpServerName?: string;
   status: 'connected' | 'disconnected' | 'unknown';
   runtimeStatus?: 'available' | 'unavailable' | 'unknown';
@@ -38,6 +48,13 @@ export interface Connector {
   auth?: ConnectorAuth;
   /** 自定义 headers */
   headers?: Record<string, string>;
+  /** Named credentials for services that require more than one field. */
+  credentials?: Record<string, string>;
+  credentialFields?: ConnectorCredentialField[];
+  documentationUrl?: string;
+  skillSourceUrl?: string;
+  skillName?: string;
+  installedSkillId?: string;
 }
 
 /** 连接器操作（工具）定义 */
@@ -82,6 +99,10 @@ export interface ConnectorPreset {
   desc: string;
   baseUrl?: string;
   authType?: ConnectorAuth['type'];
+  credentialFields?: ConnectorCredentialField[];
+  documentationUrl?: string;
+  skillSourceUrl?: string;
+  skillName?: string;
   actions: ConnectorAction[];
 }
 
@@ -125,66 +146,14 @@ export const CONNECTOR_PRESETS: ConnectorPreset[] = [
   },
   {
     key: 'ima',
-    label: 'ima 知识库', icon: '📚', type: 'custom', mcpServerName: 'ima-mcp',
-    desc: '腾讯 IMA 知识库搜索与笔记管理',
-    baseUrl: 'https://ima.qq.com/openapi',
-    authType: 'apikey',
-    actions: [
-      {
-        name: 'ima_search_knowledge',
-        description: '在 IMA 知识库中搜索知识内容',
-        parameters: {
-          type: 'object',
-          properties: {
-            query: { type: 'string', description: '搜索关键词' },
-            kbId: { type: 'string', description: '知识库 ID（可选，留空搜全部）' },
-          },
-          required: ['query'],
-        },
-        http: {
-          method: 'POST',
-          path: '/wiki/v1/search',
-          bodyTemplate: '{"query":"{query}","knowledge_base_id":"{kbId}","limit":10}',
-          paramStyle: 'body',
-        },
-      },
-      {
-        name: 'ima_list_knowledge',
-        description: '列出 IMA 知识库中的知识列表',
-        parameters: {
-          type: 'object',
-          properties: {
-            kbId: { type: 'string', description: '知识库 ID（可选）' },
-          },
-          required: [],
-        },
-        http: {
-          method: 'POST',
-          path: '/wiki/v1/list',
-          bodyTemplate: '{"knowledge_base_id":"{kbId}"}',
-          paramStyle: 'body',
-        },
-      },
-      {
-        name: 'ima_add_knowledge',
-        description: '向 IMA 知识库中添加新知识',
-        parameters: {
-          type: 'object',
-          properties: {
-            kbId: { type: 'string', description: '目标知识库 ID' },
-            title: { type: 'string', description: '知识标题' },
-            content: { type: 'string', description: '知识内容（Markdown 格式）' },
-          },
-          required: ['kbId', 'title', 'content'],
-        },
-        http: {
-          method: 'POST',
-          path: '/wiki/v1/add',
-          bodyTemplate: '{"knowledge_base_id":"{kbId}","title":"{title}","content":"{content}"}',
-          paramStyle: 'body',
-        },
-      },
+    label: 'ima 知识库', icon: '📚', type: 'custom', kind: 'skill-bridge', mcpServerName: 'ima-skill',
+    desc: '按照 IMA 官方 Skill 说明安装，并配置 API Key 与 Client ID',
+    skillName: 'ima',
+    credentialFields: [
+      { key: 'apiKey', label: 'API Key', required: true, secret: true, envName: 'IMA_API_KEY', placeholder: '从 IMA 官方页面获取' },
+      { key: 'clientId', label: 'Client ID', required: true, secret: false, envName: 'IMA_CLIENT_ID', placeholder: '从同一凭据窗口获取' },
     ],
+    actions: [],
   },
   {
     key: 'qq-mail',
@@ -340,6 +309,13 @@ export function connectorMissingFields(connector: Connector): string[] {
     if (!connector.localPath) missing.push('Obsidian Vault 目录');
     return missing;
   }
+  if (connector.kind === 'skill-bridge') {
+    if (!connector.installedSkillId) missing.push('已安装的 Skill');
+    for (const field of connector.credentialFields ?? []) {
+      if (field.required && !connector.credentials?.[field.key]) missing.push(field.label);
+    }
+    return missing;
+  }
   if (!connector.baseUrl) missing.push(connector.type === 'mcp' ? 'MCP 服务地址' : '服务地址');
   if (connector.auth?.type !== 'none' && !connector.auth?.token) missing.push('认证凭据');
   return missing;
@@ -347,21 +323,28 @@ export function connectorMissingFields(connector: Connector): string[] {
 
 /** Build a credential-free configuration draft from any preset. */
 export function createConnectorDraft(preset: ConnectorPreset, existing?: Connector): Connector {
+  const skillBridge = preset.kind === 'skill-bridge';
   return {
     id: existing?.id ?? `connector-${preset.key}-${Date.now()}`,
     label: existing?.label || preset.label,
     icon: preset.icon,
     type: preset.type,
     kind: preset.kind ?? 'legacy',
-    runtime: preset.type === 'mcp' ? 'native-mcp' : 'http',
+    runtime: skillBridge ? 'skill' : preset.type === 'mcp' ? 'native-mcp' : 'http',
     mcpServerName: preset.mcpServerName,
     status: existing?.status ?? 'unknown',
     runtimeStatus: existing?.runtimeStatus ?? (preset.type === 'mcp' ? 'unknown' : undefined),
     enabled: existing?.enabled ?? true,
-    baseUrl: existing?.baseUrl ?? preset.baseUrl,
+    baseUrl: skillBridge ? undefined : existing?.baseUrl ?? preset.baseUrl,
     localPath: existing?.localPath,
-    auth: existing?.auth ?? (preset.authType && preset.authType !== 'none' ? { type: preset.authType } : undefined),
-    headers: existing?.headers,
+    auth: skillBridge ? undefined : existing?.auth ?? (preset.authType && preset.authType !== 'none' ? { type: preset.authType } : undefined),
+    headers: skillBridge ? undefined : existing?.headers,
+    credentials: existing?.credentials,
+    credentialFields: preset.credentialFields ?? existing?.credentialFields,
+    documentationUrl: existing?.documentationUrl ?? preset.documentationUrl,
+    skillSourceUrl: existing?.skillSourceUrl ?? preset.skillSourceUrl,
+    skillName: existing?.skillName ?? preset.skillName,
+    installedSkillId: existing?.installedSkillId,
     discoveredActions: existing?.discoveredActions,
     lastChecked: existing?.lastChecked,
     error: existing?.error,
@@ -374,12 +357,34 @@ export function loadConnectors(): Connector[] {
   try {
     const raw = localStorage.getItem(LS_CONNECTORS);
     if (raw) {
-      return (JSON.parse(raw) as Connector[]).map(c => ({
-        ...c,
-        kind: c.kind ?? (c.mcpServerName === 'knowledge-url' ? 'knowledge-url' : c.mcpServerName === 'obsidian-vault' ? 'obsidian' : 'legacy'),
-        runtime: c.runtime ?? (c.type === 'mcp' ? 'native-mcp' : 'http'),
-        runtimeStatus: c.runtimeStatus ?? (c.type === 'mcp' ? 'unknown' : undefined),
-      }));
+      let sanitizedLegacyIma = false;
+      const normalized = (JSON.parse(raw) as Connector[]).map(c => {
+        if (c.mcpServerName === 'ima-mcp' || c.mcpServerName === 'ima-skill') {
+          const preset = CONNECTOR_PRESETS.find((item) => item.key === 'ima')!;
+          if (c.kind !== 'skill-bridge' || c.auth?.token || (c.headers && Object.keys(c.headers).length > 0)) sanitizedLegacyIma = true;
+          return {
+            ...c,
+            kind: 'skill-bridge' as const,
+            runtime: 'skill' as const,
+            mcpServerName: 'ima-skill',
+            baseUrl: undefined,
+            auth: undefined,
+            headers: undefined,
+            credentialFields: preset.credentialFields,
+            skillName: c.skillName ?? preset.skillName,
+            status: c.kind === 'skill-bridge' ? c.status : 'unknown',
+            error: c.kind === 'skill-bridge' ? c.error : '旧版 HTTP 配置已停用，请按官方 Skill 说明重新配置',
+          };
+        }
+        return {
+          ...c,
+          kind: c.kind ?? (c.mcpServerName === 'knowledge-url' ? 'knowledge-url' : c.mcpServerName === 'obsidian-vault' ? 'obsidian' : 'legacy'),
+          runtime: c.runtime ?? (c.type === 'mcp' ? 'native-mcp' : 'http'),
+          runtimeStatus: c.runtimeStatus ?? (c.type === 'mcp' ? 'unknown' : undefined),
+        };
+      });
+      if (sanitizedLegacyIma) localStorage.setItem(LS_CONNECTORS, JSON.stringify(normalized));
+      return normalized;
     }
   } catch {}
   return [];
@@ -428,6 +433,15 @@ export async function checkConnector(c: Connector): Promise<{ status: Connector[
     if (!c.localPath) return { status: 'disconnected', error: '未选择 Obsidian Vault' };
     const result = await window.electronAPI?.knowledgeTestObsidian?.(c.localPath);
     return result?.ok ? { status: 'connected' } : { status: 'disconnected', error: result?.error ?? 'Obsidian Vault 不可用' };
+  }
+  if (c.kind === 'skill-bridge') {
+    const missing = connectorMissingFields(c);
+    if (missing.length > 0) return { status: 'disconnected', error: `还缺少：${missing.join('、')}` };
+    const listed = await window.electronAPI?.skillsList?.();
+    if (!listed?.ok) return { status: 'disconnected', error: listed?.error ?? '无法检查本机 Skill' };
+    const installed = listed.skills?.some((skill) => skill.id === c.installedSkillId);
+    if (!installed) return { status: 'disconnected', error: '已关联的 Skill 不存在或已被移除' };
+    return { status: 'unknown', error: '安装和凭据已保存；还需要按 Skill 说明执行一次真实调用才能确认可用' };
   }
   if (c.type === 'mcp') {
     if (!c.baseUrl) return { status: 'disconnected', runtimeStatus: 'unavailable', actions: [], error: '未配置 MCP endpoint' };

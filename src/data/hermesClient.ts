@@ -1072,7 +1072,8 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   let phaseToolBudgetReached = false;
 
   const runSkillRecovery = async (reason: 'stale-read' | 'no-local-match', failedResult: string) => {
-    if (connectorTask) return;
+    const connectorSkillRouteConfirmed = callLog.some((call) => call.name === 'inspect_connectors' && call.success && /接入方式:\s*Skill/u.test(call.result));
+    if (connectorTask && !connectorSkillRouteConfirmed) return;
     const recoveryKey = `${reason}:${failedResult.slice(0, 180)}`;
     if (automaticSkillRecoveries.size >= 2 || automaticSkillRecoveries.has(recoveryKey)) return;
     automaticSkillRecoveries.add(recoveryKey);
@@ -1197,9 +1198,10 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         const cacheKey = `${tc.name}:${tc.arguments}`;
         const cached = toolResultCache.get(cacheKey);
         const repeatedFailedSkillRead = tc.name === 'read_skill' && failedSkillReads.has(tc.arguments);
-        const misroutedConnectorSkill = connectorSetupTask && (tc.name === 'search_skills' || tc.name === 'read_skill');
+        const connectorSkillRouteConfirmed = callLog.some((call) => call.name === 'inspect_connectors' && call.success && /接入方式:\s*Skill/u.test(call.result));
+        const misroutedConnectorSkill = connectorSetupTask && (tc.name === 'search_skills' || tc.name === 'read_skill') && !connectorSkillRouteConfirmed;
         const result = misroutedConnectorSkill
-          ? { toolCallId: tc.id, name: tc.name, success: false, output: '能力路由已阻止这次操作：当前目标是配置连接器或知识库，不是安装 Skill。请立即调用 inspect_connectors，再按结果使用 prepare_connector 和 test_connector。' }
+          ? { toolCallId: tc.id, name: tc.name, success: false, output: '请先调用 inspect_connectors 确认这个外部服务究竟使用 HTTP、MCP 还是 Skill。只有检查结果明确显示 Skill 后，才安装或读取对应 Skill。' }
           : repeatedFailedSkillRead
           ? { toolCallId: tc.id, name: tc.name, success: false, output: '这个 Skill ID 已经读取失败，已阻止重复尝试。下一步必须改用 search_skills 换关键词检索；没有可用候选时直接使用 web_search 搜索替代方案或官方资料。' }
           : cached !== undefined
@@ -1223,7 +1225,8 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         const truncated = result.output.slice(0, 1500);
         currentTurns.push({ role: 'assistant', content: null, tool_calls: [{ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments } }] } as any);
         currentTurns.push({ role: 'tool', content: truncated, tool_call_id: tc.id } as any);
-        if (!connectorTask && (tc.name === 'read_skill' || tc.name === 'search_skills') && !resultSuccess) {
+        const mayRecoverSkill = !connectorTask || callLog.some((call) => call.name === 'inspect_connectors' && call.success && /接入方式:\s*Skill/u.test(call.result));
+        if (mayRecoverSkill && (tc.name === 'read_skill' || tc.name === 'search_skills') && !resultSuccess) {
           await runSkillRecovery(tc.name === 'read_skill' ? 'stale-read' : 'no-local-match', result.output);
         }
         if (shouldStop?.()) { stopped = true; break; } // 用户停止：工具执行后中止
@@ -1286,7 +1289,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       const failures = callLog.filter((call) => !call.success);
       const lastCall = callLog.at(-1)!;
       if (failures.length === 0) {
-        const connectorVerified = callLog.some((call) => call.name === 'test_connector' && call.success);
+        const connectorVerified = callLog.some((call) => call.success && (call.name === 'test_connector' || (call.name === 'run_command' && /"verification"\s*:\s*(?:true|"true")/iu.test(call.args) && /"connector"\s*:/iu.test(call.args))));
         const connectorPrepared = callLog.some((call) => call.name === 'prepare_connector' && call.success);
         finalContent = connectorSetupTask && !connectorVerified
           ? connectorPrepared
@@ -1314,11 +1317,11 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     const lastFailure = failuresBeforeSummary.at(-1)!;
     finalContent += `\n\n你现在需要这样做：${getUserActionForFailure(lastFailure.result)}`;
   }
-  if (isInstallationTask) {
+  if (isInstallationTask && !connectorTask) {
     finalContent = guardInstallationSummary(finalContent, originalUserText, callLog.map((call) => call.result).join('\n'));
   }
   if (connectorSetupTask) {
-    const connectorVerified = callLog.some((call) => call.name === 'test_connector' && call.success);
+    const connectorVerified = callLog.some((call) => call.success && (call.name === 'test_connector' || (call.name === 'run_command' && /"verification"\s*:\s*(?:true|"true")/iu.test(call.args) && /"connector"\s*:/iu.test(call.args))));
     const connectorPrepared = callLog.some((call) => call.name === 'prepare_connector' && call.success);
     const falselyClaimsReady = /(?:已经|已)(?:成功)?(?:完成|配置|连接|关联)|处理好了|现在可以(?:使用|调用)/u.test(finalContent);
     if (!connectorVerified && falselyClaimsReady) {

@@ -27,8 +27,8 @@ export const CAPABILITY_ROUTING_GUIDE = `## 能力路由（所有助手、员工
 先判断用户要解决的是哪一类能力，再选择工具；一个例子暴露的问题要按同类任务统一处理。
 
 1. 模型任务：模型地址、API Key、上下文或模型不可用，检查模型设置与真实连接，不要搜索 Skill 代替模型。
-2. 连接器任务：凡是连接器、MCP、知识库、Obsidian、邮箱、GitHub 或外部服务的安装、配置、关联、查询，先调用 inspect_connectors。未配置就调用 prepare_connector 打开对应配置，用户保存后调用 test_connector；只有测试通过才能说已连接。
-3. Skill 任务：只有用户明确要找、安装、更新或使用可复用 Skill 时，才使用 search_skills/read_skill。Skill 与连接器不是同一类能力，禁止用 Skill 搜索代替连接器配置。
+2. 连接器任务：凡是连接器、MCP、知识库、Obsidian、邮箱、GitHub 或外部服务的安装、配置、关联、查询，先调用 inspect_connectors 判断真实接入方式。HTTP/本地/MCP 才直接 prepare_connector；如果检查结果或官方说明明确要求 Skill，则先 read_web_page 阅读说明、install_skill 安装、read_skill 核对配置和验证命令，再打开多字段配置。不得把所有外部能力硬塞进同一种表单。
+3. Skill 任务：用户明确要找、安装、更新或使用 Skill，或连接器检查明确显示“接入方式: Skill”时，才使用 search_skills/read_skill/install_skill。Skill 文件安装完成不代表外部服务可用，还要配置说明要求的凭据并执行真实调用。
 4. 文件任务：读取、编辑、生成或验收文件，使用文件工具并实际重新读取或打开验证；聊天里说“已生成”不算交付。
 5. 员工和团队任务：先使用客户端实时提供的员工、团队目录核对对象，再调度；不要凭旧对话断言某人不存在。
 6. 外部服务缺少用户专属地址、密钥、登录、验证码或授权时，先完成能自动完成的配置草稿并打开正确入口，再用通俗话告诉用户只需填写哪一项。不得编造凭据，不得绕回无关工具消耗步骤。
@@ -89,6 +89,8 @@ const TOOL_ACTIONS: Record<string, { active: string; stage: string }> = {
   read_file: { active: '正在读取文件…', stage: '读取文件' },
   list_files: { active: '正在检查文件…', stage: '检查文件' },
   web_search: { active: '正在查询最新资料…', stage: '查询资料' },
+  read_web_page: { active: '正在阅读官方说明…', stage: '阅读官方说明' },
+  install_skill: { active: '正在安装技能包…', stage: '安装技能包' },
   run_command: { active: '正在执行安装或检查…', stage: '安装或检查' },
   inspect_connectors: { active: '正在检查连接器状态…', stage: '检查连接器' },
   prepare_connector: { active: '正在准备连接器配置…', stage: '准备连接器配置' },
@@ -102,6 +104,7 @@ function toolArgs(args: string): Record<string, string> {
 export function getToolActionLabel(name: string, args = ''): string {
   const parsed = toolArgs(args);
   if (name === 'run_command') {
+    if (String(parsed.verification).toLowerCase() === 'true' && parsed.connector) return '验证外部服务是否可用';
     const command = String(parsed.cmd ?? '').toLowerCase();
     if (/invoke-webrequest|start-bitstransfer|curl|wget|download/.test(command)) return '下载所需文件';
     if (/expand-archive|unzip|\btar\b|7z/.test(command)) return '解压安装文件';
@@ -118,6 +121,8 @@ export function getToolActionLabel(name: string, args = ''): string {
   if (name === 'read_file') return parsed.path ? `读取 ${String(parsed.path).split(/[\\/]/).pop()}` : '读取文件';
   if (name === 'list_files') return '检查工作区文件';
   if (name === 'web_search') return '搜索最新资料';
+  if (name === 'read_web_page') return '阅读官方说明';
+  if (name === 'install_skill') return '安装官方技能包';
   if (name === 'inspect_connectors') return '检查连接器和可用预设';
   if (name === 'prepare_connector') return '打开连接器配置';
   if (name === 'test_connector') return '验证连接器是否可用';
@@ -131,6 +136,8 @@ export function getToolReport(name: string, args = ''): string {
   if (name === 'read_file' || name === 'write_file' || name === 'list_files') return `文件工具 · ${action}`;
   if (name === 'run_command') return `终端工具 · ${action}`;
   if (name === 'web_search') return `网络搜索 · ${action}`;
+  if (name === 'read_web_page') return `网页工具 · ${action}`;
+  if (name === 'install_skill') return `技能库 · ${action}`;
   if (name.startsWith('connector_') || name === 'inspect_connectors' || name === 'prepare_connector' || name === 'test_connector') return `连接器 · ${action}`;
   return `执行工具 · ${action}`;
 }
@@ -167,6 +174,8 @@ export function summarizeToolResult(name: string, result: string, success: boole
   if (name === 'list_files') return '工作区内容已检查。';
   if (name === 'write_file') return '文件已经保存。';
   if (name === 'web_search') return '资料搜索已完成。';
+  if (name === 'read_web_page') return '官方说明已经读取。';
+  if (name === 'install_skill') return '技能包已经安装，正在继续配置和验证。';
   if (name === 'run_command') return '这一步已经完成。';
   if (name === 'inspect_connectors') return '连接器状态已经检查。';
   if (name === 'prepare_connector') return '配置窗口已经打开，正在等待填写并验证。';

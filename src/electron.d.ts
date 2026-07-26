@@ -8,7 +8,7 @@ export interface ExecCommandResult {
   signal?: string;
   cwd: string;
 }
-export interface ExecCommandPolicy { sandboxEnabled?: boolean; }
+export interface ExecCommandPolicy { sandboxEnabled?: boolean; env?: Record<string, string>; }
 
 export interface FsEntry {
   name: string;
@@ -95,6 +95,7 @@ declare global {
     knowledgeSearchObsidian: (root: string, query: string) => Promise<{ ok: boolean; results?: Array<{ path: string; title: string; snippet: string }>; scanned?: number; error?: string }>;
     knowledgeReadObsidian: (root: string, path: string) => Promise<{ ok: boolean; path?: string; content?: string; size?: number; error?: string }>;
     knowledgeFetchUrl: (url: string) => Promise<{ ok: boolean; url?: string; title?: string; content?: string; error?: string }>;
+    knowledgeSearchWeb: (query: string) => Promise<{ ok: boolean; results?: Array<{ title: string; url: string; snippet?: string }>; error?: string }>;
   }
   interface Window {
     electronAPI?: ElectronAPI;

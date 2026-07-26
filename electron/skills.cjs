@@ -1,12 +1,17 @@
 const path = require('path');
 const fs = require('fs/promises');
 const crypto = require('crypto');
+const os = require('os');
+const extractZip = require('extract-zip');
+const yauzl = require('yauzl');
 
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_SKILLS = 2000;
 const SKILL_DOWNLOAD_TIMEOUT_MS = 15000;
 const MAX_SKILL_BUNDLE_FILES = 160;
 const MAX_SKILL_BUNDLE_BYTES = 8 * 1024 * 1024;
+const MAX_SKILL_ARCHIVE_BYTES = 12 * 1024 * 1024;
+const MAX_SKILL_EXPANDED_BYTES = 16 * 1024 * 1024;
 
 function uniqueRoots(projectRoot) {
   const userProfile = process.env.USERPROFILE || process.env.HOME || '';
@@ -240,10 +245,132 @@ async function downloadSkillMarkdown(sourceUrl) {
   throw new Error(`技能下载失败：${lastError}`);
 }
 
+function validateZipArchive(zipPath) {
+  return new Promise((resolve, reject) => {
+    yauzl.open(zipPath, { lazyEntries: true, autoClose: true }, (openError, zip) => {
+      if (openError || !zip) { reject(new Error(`ZIP 无法打开：${openError?.message ?? '未知错误'}`)); return; }
+      let files = 0;
+      let expandedBytes = 0;
+      let settled = false;
+      const fail = (message) => {
+        if (settled) return;
+        settled = true;
+        try { zip.close(); } catch {}
+        reject(new Error(message));
+      };
+      zip.on('error', (error) => fail(`ZIP 读取失败：${error.message}`));
+      zip.on('entry', (entry) => {
+        const normalized = String(entry.fileName || '').replace(/\\/g, '/');
+        if (!normalized || normalized.startsWith('/') || /^[a-z]:\//i.test(normalized) || /(^|\/)\.\.(\/|$)/.test(normalized)) {
+          fail('ZIP 中包含不安全路径'); return;
+        }
+        const unixMode = (entry.externalFileAttributes >>> 16) & 0xffff;
+        if ((unixMode & 0o170000) === 0o120000) { fail('ZIP 中包含不允许的符号链接'); return; }
+        if (!normalized.endsWith('/')) files += 1;
+        expandedBytes += Number(entry.uncompressedSize) || 0;
+        if (files > MAX_SKILL_BUNDLE_FILES) { fail(`ZIP 文件超过 ${MAX_SKILL_BUNDLE_FILES} 个`); return; }
+        if (expandedBytes > MAX_SKILL_EXPANDED_BYTES) { fail('ZIP 解压后超过 16MB'); return; }
+        zip.readEntry();
+      });
+      zip.on('end', () => {
+        if (settled) return;
+        settled = true;
+        if (files === 0) reject(new Error('ZIP 中没有文件'));
+        else resolve({ files, expandedBytes });
+      });
+      zip.readEntry();
+    });
+  });
+}
+
+async function findSkillManifests(root) {
+  const found = [];
+  const walk = async (dir, depth) => {
+    if (depth > 6 || found.length > 10) return;
+    const entries = await fs.readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isSymbolicLink() || entry.name.startsWith('.')) continue;
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) await walk(full, depth + 1);
+      else if (entry.isFile() && entry.name.toLowerCase() === 'skill.md') found.push(full);
+    }
+  };
+  await walk(root, 0);
+  return found.sort((a, b) => a.split(path.sep).length - b.split(path.sep).length || a.localeCompare(b));
+}
+
+async function installZipSkill(projectRoot, sourceUrl, requestedName) {
+  const response = await fetch(sourceUrl, {
+    headers: { 'User-Agent': 'Taiji-Skill-Installer/1.0', Accept: 'application/zip,application/octet-stream,*/*' },
+    signal: AbortSignal.timeout(SKILL_DOWNLOAD_TIMEOUT_MS * 2),
+  });
+  if (!response.ok) throw new Error(`技能 ZIP 下载失败：HTTP ${response.status}`);
+  const declaredBytes = Number(response.headers.get('content-length') || 0);
+  if (declaredBytes > MAX_SKILL_ARCHIVE_BYTES) throw new Error('技能 ZIP 超过 12MB');
+  const archive = Buffer.from(await response.arrayBuffer());
+  if (archive.length > MAX_SKILL_ARCHIVE_BYTES) throw new Error('技能 ZIP 超过 12MB');
+  if (archive.length < 4 || archive[0] !== 0x50 || archive[1] !== 0x4b) throw new Error('下载内容不是有效 ZIP 技能包');
+
+  const tempRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'taiji-skill-'));
+  const zipPath = path.join(tempRoot, 'skill.zip');
+  const extractedRoot = path.join(tempRoot, 'expanded');
+  await fs.mkdir(extractedRoot, { recursive: true });
+  try {
+    await fs.writeFile(zipPath, archive);
+    const archiveInfo = await validateZipArchive(zipPath);
+    await extractZip(zipPath, { dir: extractedRoot });
+    const manifests = await findSkillManifests(extractedRoot);
+    if (manifests.length === 0) throw new Error('ZIP 中没有找到 SKILL.md');
+    const manifestPath = manifests[0];
+    const skillRoot = path.dirname(manifestPath);
+    const content = await fs.readFile(manifestPath, 'utf8');
+    if (Buffer.byteLength(content, 'utf8') > MAX_BODY_BYTES) throw new Error('SKILL.md 超过 256KB');
+    const frontmatter = parseFrontmatter(content);
+    const fallbackName = path.basename(skillRoot) || 'installed-skill';
+    const name = requestedName || frontmatter.name || fallbackName;
+    const slug = name.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff_-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+    if (!slug) throw new Error('无法生成安全的技能目录名');
+    const userProfile = process.env.USERPROFILE || process.env.HOME || '';
+    if (!userProfile) throw new Error('无法定位当前用户目录');
+    const skillsRoot = path.resolve(userProfile, '.workbuddy', 'skills');
+    const targetDir = path.resolve(skillsRoot, slug);
+    if (path.relative(skillsRoot, targetDir).startsWith('..')) throw new Error('技能目录不安全');
+    await fs.mkdir(skillsRoot, { recursive: true });
+    const stageDir = path.join(skillsRoot, `.install-${slug}-${crypto.randomBytes(5).toString('hex')}`);
+    const backupDir = path.join(skillsRoot, `.backup-${slug}-${Date.now()}`);
+    await fs.cp(skillRoot, stageDir, { recursive: true, errorOnExist: true, force: false });
+    await fs.writeFile(path.join(stageDir, '.taiji-skill.json'), JSON.stringify({
+      schema: 1,
+      installMode: 'zip',
+      sourceUrl: response.url || sourceUrl,
+      files: archiveInfo.files,
+      installedAt: new Date().toISOString(),
+    }, null, 2), 'utf8');
+    let backedUp = false;
+    try {
+      try { await fs.rename(targetDir, backupDir); backedUp = true; } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+      await fs.rename(stageDir, targetDir);
+      if (backedUp) await fs.rm(backupDir, { recursive: true, force: true });
+    } catch (error) {
+      try { await fs.rm(stageDir, { recursive: true, force: true }); } catch {}
+      if (backedUp) { try { await fs.rename(backupDir, targetDir); } catch {} }
+      throw error;
+    }
+    const installed = (await scanSkills(projectRoot)).find((item) => item._path === path.join(targetDir, 'SKILL.md'));
+    return { ok: true, skill: installed ? (({ _path, ...item }) => item)(installed) : { name, source: slug }, resolvedUrl: response.url || sourceUrl };
+  } finally {
+    await fs.rm(tempRoot, { recursive: true, force: true });
+  }
+}
+
 async function installSkill(projectRoot, input) {
   const sourceUrl = typeof input?.sourceUrl === 'string' ? input.sourceUrl.trim() : '';
   const requestedName = typeof input?.name === 'string' ? input.name.trim().slice(0, 80) : '';
   if (!sourceUrl || sourceUrl.length > 2048) throw new Error('请填写有效的技能地址');
+  let parsedSource;
+  try { parsedSource = new URL(sourceUrl); } catch { throw new Error('技能地址不是有效 URL'); }
+  if (parsedSource.protocol !== 'https:') throw new Error('技能地址必须使用 HTTPS');
+  if (/\.zip$/i.test(parsedSource.pathname)) return installZipSkill(projectRoot, parsedSource.toString(), requestedName);
   const { content, resolvedUrl } = await downloadSkillMarkdown(sourceUrl);
   const frontmatter = parseFrontmatter(content);
   const fallbackName = path.basename(new URL(resolvedUrl).pathname, '.md') || 'installed-skill';
@@ -270,4 +397,4 @@ async function installSkill(projectRoot, input) {
   return { ok: true, skill: installed ? (({ _path, ...item }) => item)(installed) : { name, source: slug }, resolvedUrl };
 }
 
-module.exports = { listSkills, readSkill, deleteSkill, installSkill, MAX_BODY_BYTES };
+module.exports = { listSkills, readSkill, deleteSkill, installSkill, validateZipArchive, MAX_BODY_BYTES };

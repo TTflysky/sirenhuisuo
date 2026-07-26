@@ -11,7 +11,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setZoomFactor: (factor) => webFrame.setZoomFactor(Math.max(0.8, Math.min(1.3, Number(factor) || 1))),
 
   // 命令执行：renderer 调用，main 进程 exec，返回 { success, stdout, stderr, exitCode, cwd }
-  execCommand: (cmd, scope, policy) => ipcRenderer.invoke('exec:command', { cmd, scope, sandboxEnabled: policy?.sandboxEnabled !== false }),
+  execCommand: (cmd, scope, policy) => ipcRenderer.invoke('exec:command', { cmd, scope, sandboxEnabled: policy?.sandboxEnabled !== false, env: policy?.env }),
   skillsList: () => ipcRenderer.invoke('skills:list'),
   skillsRead: (id) => ipcRenderer.invoke('skills:read', id),
   skillsDelete: (id) => ipcRenderer.invoke('skills:delete', id),
@@ -45,6 +45,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   knowledgeSearchObsidian: (root, query) => ipcRenderer.invoke('knowledge:searchObsidian', { root, query }),
   knowledgeReadObsidian: (root, path) => ipcRenderer.invoke('knowledge:readObsidian', { root, path }),
   knowledgeFetchUrl: (url) => ipcRenderer.invoke('knowledge:fetchUrl', url),
+  knowledgeSearchWeb: (query) => ipcRenderer.invoke('knowledge:searchWeb', query),
   // broadcast: 向其他窗口广播一条消息（{ channel, payload }）
   broadcast: (channel, payload) => ipcRenderer.send('win:broadcast', { channel, payload }),
   // onBroadcast: 监听来自其他窗口的广播，返回取消订阅函数

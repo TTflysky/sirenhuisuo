@@ -6,6 +6,8 @@
  * - read_file    : 读取已产出文件或上传的内容
  * - list_files   : 浏览 outputs/ 目录
  * - web_search   : 搜互联网（DuckDuckGo 免费 API）
+ * - read_web_page: 直接读取用户或搜索结果中的说明页
+ * - install_skill: 安装 Markdown、GitHub 目录或 ZIP 技能包
  * - inspect_connectors / prepare_connector / test_connector: 管理外部服务连接
  * - run_command  : 按当前审批策略执行，默认限沙箱工作区
  */
@@ -87,6 +89,18 @@ export const TOOLS: ToolDef[] = [
   {
     type: 'function',
     function: {
+      name: 'read_web_page',
+      description: '直接读取指定网页、官方文档或公开说明页的正文。安装第三方能力前，应先读取用户提供或搜索结果中的官方说明，确认实际接入方式、下载地址、配置字段和验收方法。',
+      parameters: {
+        type: 'object',
+        properties: { url: { type: 'string', description: '完整 HTTP/HTTPS 页面地址' } },
+        required: ['url'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'search_skills',
       description: '检索本机技能库。开始处理任务前使用，根据任务目标搜索可用 Skill，返回技能 ID、名称和说明。',
       parameters: {
@@ -105,6 +119,22 @@ export const TOOLS: ToolDef[] = [
         type: 'object',
         properties: { id: { type: 'string', description: 'search_skills 返回的技能 ID' } },
         required: ['id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'install_skill',
+      description: '从官方 HTTPS 地址安装 Skill。支持 SKILL.md、GitHub 仓库/目录和包含 SKILL.md 的 ZIP 技能包；安装后必须再读取 Skill 说明并按其中要求配置、执行和验证。',
+      parameters: {
+        type: 'object',
+        properties: {
+          sourceUrl: { type: 'string', description: '从官方说明中确认的 SKILL.md、GitHub 或 ZIP 下载地址' },
+          name: { type: 'string', description: '可选，技能显示名称' },
+          connector: { type: 'string', description: '可选，要关联的连接器 ID 或名称' },
+        },
+        required: ['sourceUrl'],
       },
     },
   },
@@ -134,6 +164,9 @@ export const TOOLS: ToolDef[] = [
           label: { type: 'string', description: '可选，自定义显示名称' },
           baseUrl: { type: 'string', description: '可选，用户已经明确提供的服务地址；不得猜测' },
           localPath: { type: 'string', description: '可选，用户已经明确提供的本地目录；不得猜测' },
+          documentationUrl: { type: 'string', description: '可选，已经读取确认的官方说明页地址' },
+          skillSourceUrl: { type: 'string', description: '可选，官方说明中给出的 Skill 下载地址' },
+          installedSkillId: { type: 'string', description: '可选，install_skill 返回并已实际安装的 Skill ID' },
         },
         required: ['preset'],
       },
@@ -171,6 +204,8 @@ export const TOOLS: ToolDef[] = [
         type: 'object',
         properties: {
           cmd: { type: 'string', description: '完整命令，如 "npm install react" 或 "git log --oneline -5"' },
+          connector: { type: 'string', description: '可选，按官方 Skill 说明执行时关联的连接器 ID/名称；所需凭据只作为环境变量注入，不会返回给模型' },
+          verification: { type: 'boolean', description: '仅当该命令是官方说明规定的真实连通测试时设为 true；成功后更新连接器状态' },
         },
         required: ['cmd'],
       },
@@ -450,6 +485,14 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
 
       case 'web_search': {
         const q = encodeURIComponent(args.query ?? '');
+        const api = getFsApi();
+        if (api?.knowledgeSearchWeb) {
+          const searched = await api.knowledgeSearchWeb(args.query ?? '');
+          if (searched?.ok) {
+            const rows = (searched.results ?? []).map((item: any, index: number) => `${index + 1}. ${item.title}\n${item.url}\n${item.snippet ?? ''}`);
+            return { toolCallId: id, name, success: rows.length > 0, output: rows.length ? `搜索结果：\n\n${rows.join('\n\n')}` : '没有找到可用搜索结果，请核对关键词或使用用户提供的官方地址。' };
+          }
+        }
         // 用 DuckDuckGo 免费 Instant Answer API
         try {
           const res = await fetch(`https://api.duckduckgo.com/?q=${q}&format=json&no_html=1&skip_disambig=1`, {
@@ -474,6 +517,26 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         }
       }
 
+      case 'read_web_page': {
+        const rawUrl = (args.url ?? '').trim();
+        let parsed: URL;
+        try { parsed = new URL(rawUrl); } catch { return { toolCallId: id, name, success: false, output: '网页地址无效。' }; }
+        if (!['https:', 'http:'].includes(parsed.protocol)) return { toolCallId: id, name, success: false, output: '只支持读取 HTTP/HTTPS 网页。' };
+        const api = getFsApi();
+        if (api?.knowledgeFetchUrl) {
+          const result = await api.knowledgeFetchUrl(parsed.toString());
+          if (!result?.ok) return { toolCallId: id, name, success: false, output: `说明页读取失败：${result?.error ?? '页面没有正常回应'}` };
+          return { toolCallId: id, name, success: true, output: `页面：${result.title ?? parsed.hostname}\n地址：${result.url ?? parsed.toString()}\n\n${String(result.content ?? '').slice(0, 50000)}` };
+        }
+        try {
+          const response = await fetch(parsed.toString(), { signal: AbortSignal.timeout(15000) });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return { toolCallId: id, name, success: true, output: (await response.text()).slice(0, 50000) };
+        } catch (error: any) {
+          return { toolCallId: id, name, success: false, output: `说明页读取失败：${error?.message ?? '网络错误'}` };
+        }
+      }
+
       case 'search_skills': {
         const query = (args.query ?? '').trim();
         if (!query) return { toolCallId: id, name, success: false, output: '技能检索关键词不能为空' };
@@ -494,6 +557,32 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         return { toolCallId: id, name, success: true, output: `已读取 Skill「${skill.name}」：\n${skill.content.slice(0, 12000)}` };
       }
 
+      case 'install_skill': {
+        const sourceUrl = (args.sourceUrl ?? '').trim();
+        let parsed: URL;
+        try { parsed = new URL(sourceUrl); } catch { return { toolCallId: id, name, success: false, output: 'Skill 下载地址无效。' }; }
+        if (parsed.protocol !== 'https:') return { toolCallId: id, name, success: false, output: 'Skill 必须从 HTTPS 地址安装。' };
+        const policy = getExecutionPolicy();
+        if (policy.approvalMode !== 'full' && !approvalPrompt('需要你的审核', `助手准备从以下地址下载并安装 Skill：\n${parsed.toString()}\n\n安装后仍会读取说明并做真实验证。`, policy)) {
+          return { toolCallId: id, name, success: false, output: 'Skill 安装没有获得批准，因此没有下载或写入任何文件。' };
+        }
+        const api = getFsApi();
+        if (!api?.skillsInstall) return { toolCallId: id, name, success: false, output: '当前环境不支持安装 Skill，请使用桌面客户端。' };
+        const result = await api.skillsInstall({ sourceUrl: parsed.toString(), name: args.name?.trim() || undefined });
+        if (!result?.ok || !result.skill) return { toolCallId: id, name, success: false, output: `Skill 安装失败：${result?.error ?? '安装器没有返回有效结果'}` };
+        if (args.connector?.trim()) {
+          const { loadConnectors, updateConnector } = await import('../data/connectors');
+          const query = args.connector.trim().toLocaleLowerCase();
+          const connector = loadConnectors().find((item) => item.id.toLocaleLowerCase() === query || item.label.toLocaleLowerCase() === query || item.mcpServerName?.toLocaleLowerCase() === query);
+          if (connector) {
+            updateConnector(connector.id, { installedSkillId: result.skill.id, skillSourceUrl: parsed.toString(), status: 'unknown', error: undefined });
+            const { BUS_CHANNELS, sendBus } = await import('../ipcBus');
+            sendBus(BUS_CHANNELS.CONNECTORS_CHANGED, { connectorId: connector.id, reason: 'skill-installed' });
+          }
+        }
+        return { toolCallId: id, name, success: true, output: `Skill 已安装到本机技能库。\nID: ${result.skill.id}\n名称: ${result.skill.name}\n来源: ${result.resolvedUrl ?? parsed.toString()}\n健康状态: ${result.skill.health ?? '尚未检查'}\n\n下一步必须调用 read_skill 读取这个 ID，按真实说明配置依赖和凭据，并执行其中的验证步骤；仅安装文件不代表外部服务已经可用。` };
+      }
+
       case 'inspect_connectors': {
         const { CONNECTOR_PRESETS, connectorMissingFields, loadConnectors } = await import('../data/connectors');
         const query = (args.query ?? '').trim().toLocaleLowerCase();
@@ -503,15 +592,20 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         const configuredRows = configured.map((connector) => {
           const missing = connectorMissingFields(connector);
           const checked = connector.lastChecked ? new Date(connector.lastChecked).toLocaleString('zh-CN') : '尚未测试';
+          const namedCredentialFields = connector.credentialFields ?? [];
+          const namedCredentialCount = namedCredentialFields.filter((field) => Boolean(connector.credentials?.[field.key])).length;
+          const credentialState = namedCredentialFields.length > 0
+            ? `${namedCredentialCount}/${namedCredentialFields.length} 项已填写`
+            : connector.auth?.token ? '已填写' : connector.auth?.type && connector.auth.type !== 'none' ? '未填写' : '不需要';
           return [
             `- ${connector.label}（ID: ${connector.id}）`,
             `  状态: ${connector.status === 'connected' ? '已连接' : connector.status === 'disconnected' ? '连接失败' : '尚未确认'}；${connector.enabled ? '已启用' : '未启用'}`,
-            `  配置: 地址${connector.baseUrl ? '已填写' : '未填写'}；本地目录${connector.localPath ? '已选择' : '未选择'}；凭据${connector.auth?.token ? '已填写' : connector.auth?.type && connector.auth.type !== 'none' ? '未填写' : '不需要'}`,
+            `  配置: 地址${connector.baseUrl ? '已填写' : '未填写'}；本地目录${connector.localPath ? '已选择' : '未选择'}；凭据${credentialState}`,
             `  检查: ${checked}${connector.error ? `；上次原因: ${connector.error}` : ''}`,
             missing.length ? `  还缺: ${missing.join('、')}` : '  还缺: 无（仍需真实测试）',
           ].join('\n');
         });
-        const presetRows = presets.map((preset) => `- ${preset.label}（预设: ${preset.key}）: ${preset.desc}`);
+        const presetRows = presets.map((preset) => `- ${preset.label}（预设: ${preset.key}；接入方式: ${preset.kind === 'skill-bridge' ? 'Skill' : preset.type === 'mcp' ? 'MCP' : 'HTTP/本地'}）: ${preset.desc}`);
         return {
           toolCallId: id,
           name,
@@ -547,7 +641,10 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         if (args.label?.trim()) draft.label = args.label.trim();
         if (args.baseUrl?.trim()) draft.baseUrl = args.baseUrl.trim();
         if (args.localPath?.trim()) draft.localPath = args.localPath.trim();
-        if (args.baseUrl?.trim() || args.localPath?.trim()) {
+        if (args.documentationUrl?.trim()) draft.documentationUrl = args.documentationUrl.trim();
+        if (args.skillSourceUrl?.trim()) draft.skillSourceUrl = args.skillSourceUrl.trim();
+        if (args.installedSkillId?.trim()) draft.installedSkillId = args.installedSkillId.trim();
+        if (args.baseUrl?.trim() || args.localPath?.trim() || args.skillSourceUrl?.trim() || args.installedSkillId?.trim()) {
           draft.status = 'unknown';
           draft.error = undefined;
           draft.lastChecked = undefined;
@@ -563,11 +660,14 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         if (!opened?.ok) {
           return { toolCallId: id, name, success: false, output: `已保留“${draft.label}”配置草稿，但配置窗口没有打开：${opened?.error ?? '未知原因'}。请在连接器列表中手动点击设置。配置尚未完成。` };
         }
+        const nextStep = draft.kind === 'skill-bridge'
+          ? `已为“${draft.label}”打开文档驱动配置窗口。先确认并填写官方说明页与 Skill 下载地址，安装后读取 Skill 说明，再填写其中要求的命名凭据。当前仍未通过真实调用，不得宣布完成。`
+          : `已为“${draft.label}”打开配置窗口。现在只是准备好了配置入口，并未连接成功。请用户填写服务要求的地址、目录或认证凭据并点击“一键配置”；保存后必须调用 test_connector 做真实测试。不得索要或编造密码、API Key、验证码。`;
         return {
           toolCallId: id,
           name,
           success: true,
-          output: `已为“${draft.label}”打开配置窗口。现在只是准备好了配置入口，并未连接成功。请用户填写服务要求的地址、目录或认证凭据并点击“一键配置”；保存后必须调用 test_connector 做真实测试。不得索要或编造密码、API Key、验证码。`,
+          output: nextStep,
         };
       }
 
@@ -604,6 +704,9 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         const { BUS_CHANNELS, sendBus } = await import('../ipcBus');
         sendBus(BUS_CHANNELS.CONNECTORS_CHANGED, { connectorId: connector.id, reason: 'tested', status: result.status });
         if (result.status !== 'connected') {
+          if (connector.kind === 'skill-bridge' && result.status === 'unknown') {
+            return { toolCallId: id, name, success: false, output: `“${connector.label}”的 Skill 和凭据已经准备好，但还没有做真实外部调用。请读取已安装 Skill 的说明，找到官方规定的健康检查或最小查询命令，然后调用 run_command，并传 connector="${connector.id}"、verification=true。只有该命令真实成功后才算已连接。` };
+          }
           return { toolCallId: id, name, success: false, output: `“${connector.label}”真实连接测试没有通过：${result.error ?? '服务没有正常回应'}。配置已保留，但不能宣布完成。请根据这个原因修正配置后再测试。` };
         }
         return { toolCallId: id, name, success: true, output: `“${connector.label}”已通过真实连接测试，现在可以确认连接器可用。${result.actions?.length ? `已发现 ${result.actions.length} 个可调用操作。` : ''}` };
@@ -612,6 +715,21 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
       case 'run_command': {
         const cmd = (args.cmd ?? '').trim();
         if (!cmd) return { toolCallId: id, name, success: false, output: '命令不能为空' };
+
+        let connectorForCommand: import('../data/connectors').Connector | undefined;
+        const injectedEnv: Record<string, string> = {};
+        if (args.connector?.trim()) {
+          const { connectorMissingFields, loadConnectors } = await import('../data/connectors');
+          const query = args.connector.trim().toLocaleLowerCase();
+          connectorForCommand = loadConnectors().find((item) => item.id.toLocaleLowerCase() === query || item.label.toLocaleLowerCase() === query || item.mcpServerName?.toLocaleLowerCase() === query);
+          if (!connectorForCommand) return { toolCallId: id, name, success: false, output: `没有找到要关联的连接器“${args.connector}”。请先调用 inspect_connectors。` };
+          const missing = connectorMissingFields(connectorForCommand);
+          if (missing.length > 0) return { toolCallId: id, name, success: false, output: `“${connectorForCommand.label}”还缺少：${missing.join('、')}。请先完成配置，密钥不会交给模型查看。` };
+          for (const field of connectorForCommand.credentialFields ?? []) {
+            const value = connectorForCommand.credentials?.[field.key];
+            if (field.envName && value) injectedEnv[field.envName] = value;
+          }
+        }
 
         const approval = requestCommandApproval(cmd);
         if (!approval.allowed) {
@@ -634,8 +752,14 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
 
         try {
           const beforeFiles = await workspaceFileVersions(call.scope ?? 'global', api, physicalWorkspace);
-          const result = await api.execCommand(cmd, physicalWorkspace, { sandboxEnabled: approval.policy.sandboxEnabled });
+          const result = await api.execCommand(cmd, physicalWorkspace, { sandboxEnabled: approval.policy.sandboxEnabled, env: injectedEnv });
           const { success, exitCode, stdout, stderr, signal: sig, cwd } = result as any;
+          if (connectorForCommand && String(args.verification).toLowerCase() === 'true') {
+            const { updateConnector } = await import('../data/connectors');
+            updateConnector(connectorForCommand.id, { status: success ? 'connected' : 'disconnected', error: success ? undefined : (stderr || stdout || '真实调用失败').slice(0, 500), lastChecked: Date.now() });
+            const { BUS_CHANNELS, sendBus } = await import('../ipcBus');
+            sendBus(BUS_CHANNELS.CONNECTORS_CHANGED, { connectorId: connectorForCommand.id, reason: 'skill-verified', status: success ? 'connected' : 'disconnected' });
+          }
           const syncedFiles = await syncWorkspaceFiles(call.scope ?? 'global', api, beforeFiles, physicalWorkspace);
 
           const out = [

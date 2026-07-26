@@ -7,8 +7,9 @@ const officeParser = require('officeparser');
 const { AlignmentType, Document, HeadingLevel, Packer, Paragraph, TextRun } = require('docx');
 const { initAutoUpdater } = require('./autoUpdate.cjs');
 const { listSkills, readSkill, deleteSkill, installSkill } = require('./skills.cjs');
-const { testObsidianVault, searchObsidianVault, readObsidianNote, fetchKnowledgeUrl } = require('./knowledge.cjs');
+const { testObsidianVault, searchObsidianVault, readObsidianNote, fetchKnowledgeUrl, searchWeb } = require('./knowledge.cjs');
 const { version: APP_VERSION } = require('../package.json');
+const { sanitizeInjectedEnv, redactInjectedValues } = require('./secretSafety.cjs');
 const APP_TITLE = `私人办公会所 v${APP_VERSION}`;
 const WINDOW_PREFERENCES_PATH = path.join(app.getPath('userData'), 'window-preferences.json');
 
@@ -817,6 +818,10 @@ function createWindow() {
     try { return await fetchKnowledgeUrl(url); }
     catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
   });
+  ipcMain.handle('knowledge:searchWeb', async (_event, query) => {
+    try { return await searchWeb(query); }
+    catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
 
   ipcMain.handle('exec:command', async (_event, payload) => {
     const cmd = typeof payload === 'string' ? payload : payload?.cmd;
@@ -825,6 +830,7 @@ function createWindow() {
       : 'global';
     const projectRoot = safeJoin(scope);
     const sandboxEnabled = typeof payload !== 'object' || payload?.sandboxEnabled !== false;
+    const extraEnv = sanitizeInjectedEnv(payload && typeof payload === 'object' ? payload.env : undefined);
     await fsp.mkdir(projectRoot, { recursive: true });
     const timeoutMs = 30000;
     const maxOutput = 100 * 1024; // 100KB 截断
@@ -848,14 +854,14 @@ function createWindow() {
         timeout: timeoutMs,
         maxBuffer: 1024 * 1024,
         windowsHide: true,
-        env: { ...process.env, FORCE_COLOR: '0' },
+        env: { ...process.env, ...extraEnv, FORCE_COLOR: '0' },
       };
       const done = (err, stdout, stderr) => {
         resolve({
           success: !err,
           exitCode: err ? ((err.code) || -1) : 0,
-          stdout: (stdout || '').slice(0, maxOutput),
-          stderr: (stderr || '').slice(0, maxOutput),
+          stdout: redactInjectedValues(stdout, extraEnv).slice(0, maxOutput),
+          stderr: redactInjectedValues(stderr, extraEnv).slice(0, maxOutput),
           signal: err && err.killed ? 'TIMEOUT' : undefined,
           cwd: projectRoot,
         });
