@@ -260,7 +260,7 @@ function normalizeToolWindowOptions(opts) {
 
 function getToolWindowSpec(type) {
   if (type === 'edit-employee') return { width: 650, height: 820, minWidth: 560, minHeight: 620, title: `${APP_TITLE} · 编辑员工` };
-  if (type === 'connector-config') return { width: 620, height: 700, minWidth: 540, minHeight: 520, title: `${APP_TITLE} · 配置连接器` };
+  if (type === 'connector-config') return { width: 620, height: 820, minWidth: 540, minHeight: 620, title: `${APP_TITLE} · 配置连接器` };
   if (type === 'assistant-settings') return { width: 660, height: 760, minWidth: 560, minHeight: 560, title: `${APP_TITLE} · 助手设置` };
   if (type === 'create-team') return { width: 520, height: 620, minWidth: 440, minHeight: 460, title: `${APP_TITLE} · 新建团队` };
   if (type === 'rename-team') return { width: 420, height: 260, minWidth: 360, minHeight: 220, title: `${APP_TITLE} · 重命名团队` };
@@ -280,13 +280,22 @@ async function createToolWindow(opts, requester = mainWindow) {
   const spec = getToolWindowSpec(normalized.type);
   const sourceBounds = requester && !requester.isDestroyed() ? requester.getBounds() : screen.getPrimaryDisplay().workArea;
   const workArea = screen.getDisplayMatching(sourceBounds).workArea;
+  const edgeGap = 8;
+  const width = Math.min(spec.width, Math.max(1, workArea.width - edgeGap * 2));
+  const height = Math.min(spec.height, Math.max(1, workArea.height - edgeGap * 2));
+  const minWidth = Math.min(spec.minWidth, width);
+  const minHeight = Math.min(spec.minHeight, height);
+  const preferredX = sourceBounds.x + 36;
+  const preferredY = sourceBounds.y + 36;
+  const x = Math.min(Math.max(workArea.x + edgeGap, preferredX), workArea.x + workArea.width - width - edgeGap);
+  const y = Math.min(Math.max(workArea.y + edgeGap, preferredY), workArea.y + workArea.height - height - edgeGap);
   const win = new BrowserWindow({
-    width: spec.width,
-    height: spec.height,
-    minWidth: spec.minWidth,
-    minHeight: spec.minHeight,
-    x: Math.min(Math.max(workArea.x, sourceBounds.x + 36), workArea.x + Math.max(0, workArea.width - spec.width)),
-    y: Math.min(Math.max(workArea.y, sourceBounds.y + 36), workArea.y + Math.max(0, workArea.height - spec.height)),
+    width,
+    height,
+    minWidth,
+    minHeight,
+    x,
+    y,
     title: spec.title,
     frame: false,
     show: false,

@@ -13,6 +13,7 @@ export function useAgentExecutionControl(active: boolean) {
   const pausedRef = useRef(false);
   const pauseResolversRef = useRef<Array<() => void>>([]);
   const startedAtRef = useRef<number | null>(null);
+  const modelRequestControllerRef = useRef<AbortController>(new AbortController());
   const [executionState, setExecutionState] = useState<AgentExecutionState>('running');
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
@@ -22,6 +23,8 @@ export function useAgentExecutionControl(active: boolean) {
   }, []);
 
   const reset = useCallback(() => {
+    modelRequestControllerRef.current.abort();
+    modelRequestControllerRef.current = new AbortController();
     stopRequestedRef.current = false;
     pausedRef.current = false;
     releasePauseWaiters();
@@ -46,9 +49,21 @@ export function useAgentExecutionControl(active: boolean) {
   const stop = useCallback(() => {
     stopRequestedRef.current = true;
     pausedRef.current = false;
+    modelRequestControllerRef.current.abort();
     setExecutionState('stopping');
     releasePauseWaiters();
   }, [releasePauseWaiters]);
+
+  const interruptForSteering = useCallback(() => {
+    if (stopRequestedRef.current) return;
+    modelRequestControllerRef.current.abort();
+    modelRequestControllerRef.current = new AbortController();
+    // Wake a paused loop so it can answer the new message, while keeping the
+    // original task paused after that response.
+    releasePauseWaiters();
+  }, [releasePauseWaiters]);
+
+  const getModelRequestSignal = useCallback(() => modelRequestControllerRef.current.signal, []);
 
   const shouldStop = useCallback(() => stopRequestedRef.current, []);
   const waitIfPaused = useCallback(async () => {
@@ -69,7 +84,10 @@ export function useAgentExecutionControl(active: boolean) {
     return () => window.clearInterval(timer);
   }, [active]);
 
-  useEffect(() => () => releasePauseWaiters(), [releasePauseWaiters]);
+  useEffect(() => () => {
+    modelRequestControllerRef.current.abort();
+    releasePauseWaiters();
+  }, [releasePauseWaiters]);
 
-  return { executionState, elapsedSeconds, reset, pause, resume, stop, shouldStop, waitIfPaused };
+  return { executionState, elapsedSeconds, reset, pause, resume, stop, shouldStop, waitIfPaused, interruptForSteering, getModelRequestSignal };
 }

@@ -16,6 +16,7 @@ export interface DiscussionHandlers {
   onStepAdded?: (step: TaskPlanStep) => void;
   onReviewDecision?: (stepId: string, approved: boolean, reason?: string, responsibleEmployeeId?: string) => void;
   onRunFailed?: (error: string) => void;
+  onSteeringReply?: (emp: Employee, content: string, tokens?: number, contextUsage?: ContextUsage, stepId?: string) => void;
 }
 
 export interface TeamDiscussionOptions {
@@ -74,7 +75,9 @@ async function memberSpeak(
   skillContext = '',
   shouldStop?: () => boolean,
   requireFileOutput = false,
-  consumeSteeringMessages?: () => string[]
+  consumeSteeringMessages?: () => string[],
+  getModelRequestSignal?: () => AbortSignal,
+  onSteeringReply?: (content: string, tokens?: number, contextUsage?: ContextUsage) => void,
 ): Promise<{ text: string; tokens?: number; contextUsage?: ContextUsage; failed?: boolean; producedFile?: boolean }> {
   const effectiveModel = getEmployeeModel(emp);
   if (!resolveApiBase(effectiveModel)) {
@@ -134,6 +137,10 @@ async function memberSpeak(
       },
       shouldStop,
       consumeSteeringMessages,
+      getModelRequestSignal,
+      onSteeringReply(content, usage, contextUsage) {
+        onSteeringReply?.(content, usage.totalTokens || undefined, contextUsage);
+      },
     });
     if (requireFileOutput && !producedFile) {
       return { text: `⚠️ ${emp.name} 没有生成可交接文件，本步骤未完成。系统会保留上下文并要求补交实际产出。`, tokens: r.usage.totalTokens, contextUsage: r.contextUsage, failed: true };
@@ -165,7 +172,7 @@ export async function runTeamDiscussion(
   employees: Employee[],
   opts: TeamDiscussionOptions,
   handlers: DiscussionHandlers,
-  control?: { shouldStop?: () => boolean; consumeSteeringMessages?: () => string[] }
+  control?: { shouldStop?: () => boolean; consumeSteeringMessages?: () => string[]; getModelRequestSignal?: () => AbortSignal }
 ): Promise<void> {
   const task = opts.task;
   const plannedMembers = opts.participantPlan?.map((plan) => employees.find((employee) => employee.id === plan.memberId)).filter((employee): employee is Employee => !!employee);
@@ -234,7 +241,9 @@ export async function runTeamDiscussion(
         opts.extraSystemContext,
         control?.shouldStop,
         step.kind !== 'review',
-        control?.consumeSteeringMessages
+        control?.consumeSteeringMessages,
+        control?.getModelRequestSignal,
+        (reply, replyTokens, replyContextUsage) => handlers.onSteeringReply?.(emp, reply, replyTokens, replyContextUsage, step.id),
       );
       content = r.text;
       tokens = r.tokens;

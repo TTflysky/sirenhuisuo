@@ -21,6 +21,7 @@ import { TOOLS } from '../../engine/tools';
 import { getConnectorTools } from '../../engine/connectorTools';
 import { useFileDrop } from '../../hooks/useFileDrop';
 import { formatExecutionDuration, useAgentExecutionControl } from '../../hooks/useAgentExecutionControl';
+import { getDirectExecutionControl, isExplicitPauseSteering, isExplicitResumeSteering, shouldHoldTaskForFeedback } from '../../engine/agentGuardrails.mjs';
 import {
   BEGINNER_RESPONSE_GUIDE,
   getToolActivity,
@@ -117,6 +118,9 @@ export default function DmChatApp({ empId }: Props) {
   const [retryNow, setRetryNow] = useState(Date.now());
   const runJobRef = useRef<(job: DmRetryJob) => Promise<void>>(async () => {});
   const steeringMessagesRef = useRef<string[]>([]);
+  const queuedFollowUpsRef = useRef<Array<{ userText: string; attachments: Attachment[]; skillContext: string }>>([]);
+  const msgsRef = useRef(msgs);
+  const previousExecutionStateRef = useRef<'running' | 'paused' | 'stopping'>('running');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const executionControl = useAgentExecutionControl(typing);
@@ -159,12 +163,34 @@ export default function DmChatApp({ empId }: Props) {
     return () => { window.clearTimeout(timer); window.clearInterval(ticker); };
   }, [retryJob]);
 
-  if (!emp) return <div style={{ padding: 20 }}>员工不存在</div>;
-
   const push = (m: ChatMessage) => {
-    setMsgs((prev) => [...prev, m]);
+    msgsRef.current = [...msgsRef.current, m];
+    setMsgs(msgsRef.current);
     appendDm(empId, [m]);
   };
+
+  useEffect(() => {
+    const previous = previousExecutionStateRef.current;
+    const current = executionControl.executionState;
+    previousExecutionStateRef.current = current;
+    if (!typing || previous === current || !emp) return;
+    if (current === 'paused') {
+      push({
+        id: `dm-${Date.now()}-${empId}-paused`, authorId: empId, roleId: emp.role,
+        content: '任务已暂停，原来的步骤不会自行恢复。你仍可以继续发消息，我会先回答；只有点击“继续”或明确让我继续，原任务才会恢复。',
+        mentions: [], timestamp: Date.now(), kind: 'text',
+      });
+    } else if (current === 'running' && previous === 'paused') {
+      push({
+        id: `dm-${Date.now()}-${empId}-resumed`, authorId: empId, roleId: emp.role,
+        content: '任务已继续，我会从暂停时保留的进度接着处理。', mentions: [], timestamp: Date.now(), kind: 'text',
+      });
+    }
+    // push is intentionally tied to this employee chat instance.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [typing, executionControl.executionState, empId, emp]);
+
+  if (!emp) return <div style={{ padding: 20 }}>员工不存在</div>;
 
   const handleSend = async () => {
     const content = text.trim();
@@ -191,15 +217,38 @@ export default function DmChatApp({ empId }: Props) {
     if (typing) {
       const mode = loadSettings().followUpMode ?? 'steer';
       const followUp = [content, attachmentWorkspaceContext(atts), skillContext].filter(Boolean).join('\n\n');
-      steeringMessagesRef.current.push(mode === 'steer' ? followUp : `【排队跟进】先完成当前工作，再按顺序处理：${followUp}`);
-      push({
-        id: `dm-${Date.now()}-${empId}-ack`, authorId: empId, roleId: emp.role,
-        content: mode === 'steer'
-          ? '收到。我会把这条作为当前工作的最新要求，完成手头这一步后马上调整。'
-          : '收到。这条要求已经排好队，我会先完成当前工作，再接着处理。',
-        mentions: [], timestamp: Date.now(), kind: 'text',
-      });
-      setStatus(mode === 'steer' ? '已收到新要求，正在调整当前操作…' : '已收到新要求，等待接续处理…');
+      const controlIntent = getDirectExecutionControl(content);
+      if (controlIntent === 'stop') {
+        executionControl.stop();
+        setStatus('正在安全停止，已经完成的内容会保留…');
+        return;
+      }
+      if (controlIntent === 'pause') {
+        executionControl.pause();
+        setStatus('任务已暂停');
+        return;
+      }
+      if (controlIntent === 'resume') {
+        executionControl.resume();
+        setStatus('正在从暂停位置继续…');
+        return;
+      }
+      if (mode === 'steer') {
+        const holdForFeedback = shouldHoldTaskForFeedback(followUp);
+        if (isExplicitPauseSteering([followUp]) || holdForFeedback) executionControl.pause();
+        if (isExplicitResumeSteering([followUp])) executionControl.resume();
+        steeringMessagesRef.current.push(followUp);
+        executionControl.interruptForSteering();
+        setStatus(holdForFeedback ? '已挂起原任务，正在回答你的反馈…' : '正在优先处理你刚刚说的话…');
+      } else {
+        queuedFollowUpsRef.current.push({ userText: followUp, attachments: [], skillContext: '' });
+        push({
+          id: `dm-${Date.now()}-${empId}-ack`, authorId: empId, roleId: emp.role,
+          content: '收到。这条要求已经排到当前任务之后，不会混进正在执行的步骤。',
+          mentions: [], timestamp: Date.now(), kind: 'text',
+        });
+        setStatus('当前任务继续执行，新要求已排队…');
+      }
       return;
     }
 
@@ -248,6 +297,20 @@ export default function DmChatApp({ empId }: Props) {
       setLiveActivities([]);
       setLiveExecutionSteps([]);
       dispatch({ type: 'UPDATE_EMPLOYEE', id: empId, partial: { isWorking: false, currentTask: undefined } });
+      const queued = queuedFollowUpsRef.current.shift();
+      if (queued) {
+        const history = msgsRef.current.slice(-8).map((m): ChatTurn => ({ role: m.roleId === 'human' ? 'user' : 'assistant', content: m.content }));
+        window.setTimeout(() => void runDmJob({
+          id: `dm-queued-${Date.now()}`,
+          userText: queued.userText,
+          attachments: queued.attachments,
+          skillContext: queued.skillContext,
+          history,
+          attempt: 0,
+          status: 'waiting',
+          lastError: '',
+        }), 0);
+      }
     }
   };
   runJobRef.current = runDmJob;
@@ -302,6 +365,15 @@ export default function DmChatApp({ empId }: Props) {
       shouldStop: executionControl.shouldStop,
       waitIfPaused: executionControl.waitIfPaused,
       consumeSteeringMessages: () => steeringMessagesRef.current.splice(0),
+      getModelRequestSignal: executionControl.getModelRequestSignal,
+      onSteeringReply(content, usage, contextUsage) {
+        push({
+          id: `dm-${Date.now()}-${empId}-steering`, authorId: empId, roleId: emp.role,
+          content, mentions: [], timestamp: Date.now(), kind: 'text',
+          tokens: usage.totalTokens || undefined, contextUsage,
+        });
+        setStatus('已结合新要求重新判断…');
+      },
       onToolCall(name, args) {
         setStatus(getToolActivity(name, args));
         const matchKey = `${name}:${args}`;

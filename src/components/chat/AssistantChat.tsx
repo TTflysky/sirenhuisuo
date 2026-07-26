@@ -19,6 +19,7 @@ import { formatExecutionDuration, useAgentExecutionControl } from '../../hooks/u
 import AssistantSettingsModal, { getAssistantPrompt } from '../settings/AssistantSettingsModal';
 import { useStore } from '../../store';
 import { BUS_CHANNELS, onBus, sendBus } from '../../ipcBus';
+import { getDirectExecutionControl, isExplicitPauseSteering, isExplicitResumeSteering, shouldHoldTaskForFeedback } from '../../engine/agentGuardrails.mjs';
 import {
   BEGINNER_RESPONSE_GUIDE,
   getToolActivity,
@@ -49,6 +50,7 @@ interface PendingAssistantRequest {
   prompt: string;
   display?: string;
   createdAt: number;
+  alreadyDisplayed?: boolean;
 }
 
 // 构建 API 上下文时排除的中间消息前缀（工具调用状态、错误提示等非实质对话）
@@ -93,6 +95,8 @@ export default function AssistantChat() {
   const endRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const steeringMessagesRef = useRef<string[]>([]);
+  const queuedFollowUpsRef = useRef<Array<{ prompt: string; display: string }>>([]);
+  const previousExecutionStateRef = useRef<'running' | 'paused' | 'stopping'>('running');
   const executionControl = useAgentExecutionControl(busy);
   const pauseExecution = executionControl.pause;
   const resumeExecution = executionControl.resume;
@@ -135,7 +139,7 @@ export default function AssistantChat() {
     setShowOutputs(true);
   };
 
-  const handleSend = async (contentOverride?: string, displayOverride?: string) => {
+  const handleSend = async (contentOverride?: string, displayOverride?: string, alreadyDisplayed = false) => {
     const externalRequest = typeof contentOverride === 'string';
     const content = (contentOverride ?? text).trim();
     const atts = externalRequest ? [] : attachments;
@@ -158,25 +162,47 @@ export default function AssistantChat() {
     const imageAtts = atts.filter((a) => a.kind === 'image');
 
     const display = displayOverride ?? [content, ...atts.map((a) => `[📎 ${a.name}]`)].filter(Boolean).join('\n');
-    push({
-      id: `h-${Date.now()}-me`, authorId: 'me', roleId: 'human',
-      content: display, mentions: [], timestamp: Date.now(), kind: 'text', skillRefs: refs,
-      attachments: atts,
-    });
+    if (!alreadyDisplayed) {
+      push({
+        id: `h-${Date.now()}-me`, authorId: 'me', roleId: 'human',
+        content: display, mentions: [], timestamp: Date.now(), kind: 'text', skillRefs: refs,
+        attachments: atts,
+      });
+    }
 
     if (busy) {
+      const controlIntent = getDirectExecutionControl(enriched);
+      if (controlIntent === 'stop') {
+        executionControl.stop();
+        setStatus('正在安全停止，已经完成的内容会保留…');
+        return;
+      }
+      if (controlIntent === 'pause') {
+        executionControl.pause();
+        setStatus('任务已暂停');
+        return;
+      }
+      if (controlIntent === 'resume') {
+        executionControl.resume();
+        setStatus('正在从暂停位置继续…');
+        return;
+      }
       const mode = loadSettings().followUpMode ?? 'steer';
-      steeringMessagesRef.current.push(mode === 'steer'
-        ? enriched
-        : `【排队跟进】先完成当前工作，再按顺序处理：${enriched}`);
-      const acknowledgement = mode === 'steer'
-        ? '收到。我会把这条作为当前工作的最新要求，完成手头这一步后马上调整。'
-        : '收到。这条要求已经排好队，我会先完成当前工作，再接着处理。';
-      push({
-        id: `h-${Date.now()}-ack`, authorId: 'assistant', roleId: 'custom',
-        content: acknowledgement, mentions: [], timestamp: Date.now(), kind: 'text',
-      });
-      setStatus(mode === 'steer' ? '已收到新要求，正在调整当前操作…' : '已收到新要求，等待接续处理…');
+      if (mode === 'steer') {
+        const holdForFeedback = shouldHoldTaskForFeedback(enriched);
+        if (isExplicitPauseSteering([enriched]) || holdForFeedback) executionControl.pause();
+        if (isExplicitResumeSteering([enriched])) executionControl.resume();
+        steeringMessagesRef.current.push(enriched);
+        executionControl.interruptForSteering();
+        setStatus(holdForFeedback ? '已挂起原任务，正在回答你的反馈…' : '正在优先处理你刚刚说的话…');
+      } else {
+        queuedFollowUpsRef.current.push({ prompt: enriched, display });
+        push({
+          id: `h-${Date.now()}-ack`, authorId: 'assistant', roleId: 'custom',
+          content: '收到。这条要求已经排到当前任务之后，不会混进正在执行的步骤。', mentions: [], timestamp: Date.now(), kind: 'text',
+        });
+        setStatus('当前任务继续执行，新要求已排队…');
+      }
       return;
     }
 
@@ -197,6 +223,8 @@ export default function AssistantChat() {
       });
       setBusy(false);
       setStatus('');
+      const queued = queuedFollowUpsRef.current.shift();
+      if (queued) setPendingRequest({ id: `queued-${Date.now()}`, prompt: queued.prompt, display: queued.display, createdAt: Date.now(), alreadyDisplayed: true });
       return;
     }
 
@@ -244,6 +272,15 @@ ${employeeDirectory}
         shouldStop: executionControl.shouldStop,
         waitIfPaused: executionControl.waitIfPaused,
         consumeSteeringMessages: () => steeringMessagesRef.current.splice(0),
+        getModelRequestSignal: executionControl.getModelRequestSignal,
+        onSteeringReply(content, usage, contextUsage) {
+          push({
+            id: `h-${Date.now()}-steering`, authorId: 'assistant', roleId: 'custom',
+            content: simplifyLegacyAssistantContent(content), mentions: [], timestamp: Date.now(), kind: 'text',
+            tokens: usage.totalTokens || undefined, contextUsage,
+          });
+          setStatus('已结合新要求重新判断…');
+        },
         onToolCall(name, args) {
           lastStage = getToolStage(name);
           setStatus(getToolActivity(name, args));
@@ -319,6 +356,8 @@ ${employeeDirectory}
     }
     setBusy(false);
     setStatus('');
+    const queued = queuedFollowUpsRef.current.shift();
+    if (queued) setPendingRequest({ id: `queued-${Date.now()}`, prompt: queued.prompt, display: queued.display, createdAt: Date.now(), alreadyDisplayed: true });
   };
 
   useEffect(() => {
@@ -345,10 +384,29 @@ ${employeeDirectory}
     const request = pendingRequest;
     setPendingRequest(null);
     localStorage.removeItem(LS_PENDING_REQUEST);
-    void handleSend(request.prompt, request.display);
+    void handleSend(request.prompt, request.display, request.alreadyDisplayed);
     // handleSend intentionally consumes the latest component state when the request becomes runnable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy, pendingRequest]);
+
+  useEffect(() => {
+    const previous = previousExecutionStateRef.current;
+    const current = executionControl.executionState;
+    previousExecutionStateRef.current = current;
+    if (!busy || previous === current) return;
+    if (current === 'paused') {
+      push({
+        id: `h-${Date.now()}-paused`, authorId: 'assistant', roleId: 'custom',
+        content: '任务已暂停，原来的步骤不会自行恢复。你仍可以继续发消息，我会先结合当前进度回答；只有点击“继续”或明确让我继续，原任务才会恢复。',
+        mentions: [], timestamp: Date.now(), kind: 'text',
+      });
+    } else if (current === 'running' && previous === 'paused') {
+      push({
+        id: `h-${Date.now()}-resumed`, authorId: 'assistant', roleId: 'custom',
+        content: '任务已继续，我会从暂停时保留的进度接着处理。', mentions: [], timestamp: Date.now(), kind: 'text',
+      });
+    }
+  }, [busy, executionControl.executionState, push]);
 
   useEffect(() => {
     const activity = {

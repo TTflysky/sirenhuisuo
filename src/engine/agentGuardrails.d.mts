@@ -1,0 +1,10 @@
+export function canonicalToolCallKey(name: string, argumentsText: string): string;
+export function toolResourceKey(name: string, argumentsText: string): string;
+export function isPreparationOnlyTool(name: string): boolean;
+export function getToolCallLimit(name: string, connectorTask: boolean): number;
+export function isExplicitStopSteering(messages: string[]): boolean;
+export function isExplicitPauseSteering(messages: string[]): boolean;
+export function isExplicitResumeSteering(messages: string[]): boolean;
+export function getDirectExecutionControl(message: string): 'pause' | 'resume' | 'stop' | null;
+export function shouldHoldTaskForFeedback(message: string): boolean;
+export function isConversationOnlyMessage(message: string): boolean;

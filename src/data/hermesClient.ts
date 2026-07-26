@@ -6,6 +6,14 @@ import type { OutputScope } from './outputs';
 import { loadTaskRuns } from './taskRuns';
 import { ensureDistinctEmployeeColors } from './employeeColors';
 import {
+  canonicalToolCallKey,
+  getToolCallLimit,
+  isConversationOnlyMessage,
+  isExplicitStopSteering,
+  isPreparationOnlyTool,
+  toolResourceKey,
+} from '../engine/agentGuardrails.mjs';
+import {
   AUTONOMOUS_EXECUTION_GUIDE,
   BEGINNER_RESPONSE_GUIDE,
   CAPABILITY_ROUTING_GUIDE,
@@ -684,12 +692,19 @@ function endpointUrl(base: string, path: string): string {
 }
 
 // 带超时的 fetch（含 API key，可选覆盖 base 和 key）
-async function apiFetch(path: string, init: RequestInit = {}, timeoutMs = 4000, overrideKey?: string, overrideBase?: string): Promise<Response> {
+async function apiFetch(path: string, init: RequestInit = {}, timeoutMs = 4000, overrideKey?: string, overrideBase?: string, externalSignal?: AbortSignal): Promise<Response> {
   const base = overrideBase ?? resolveApiBase();
   if (!base) throw new Error('no api base');
   const url = endpointUrl(base, path);
   const controller = new AbortController();
   let timedOut = false;
+  let externallyAborted = false;
+  const abortFromExternal = () => {
+    externallyAborted = true;
+    controller.abort();
+  };
+  if (externalSignal?.aborted) abortFromExternal();
+  else externalSignal?.addEventListener('abort', abortFromExternal, { once: true });
   const timer = setTimeout(() => {
     timedOut = true;
     controller.abort(new DOMException(`模型请求超过 ${Math.round(timeoutMs / 1000)} 秒未返回`, 'TimeoutError'));
@@ -704,13 +719,19 @@ async function apiFetch(path: string, init: RequestInit = {}, timeoutMs = 4000, 
   if (key) headers['Authorization'] = `Bearer ${key}`;
   try {
     const res = await fetch(url, { ...init, headers, signal: controller.signal });
-    clearTimeout(timer);
     return res;
   } catch (e) {
-    clearTimeout(timer);
     if (timedOut) throw new Error(`模型响应超时（${Math.round(timeoutMs / 1000)} 秒）。请检查模型服务负载、网络或稍后重试。`);
+    if (externallyAborted) {
+      const interruption = new Error('模型请求已被新的运行中指令中断。');
+      interruption.name = 'ExternalAbortError';
+      throw interruption;
+    }
     if (e instanceof DOMException && e.name === 'AbortError') throw new Error('模型请求已取消。');
     throw e;
+  } finally {
+    clearTimeout(timer);
+    externalSignal?.removeEventListener('abort', abortFromExternal);
   }
 }
 
@@ -856,6 +877,7 @@ export async function chatCompletion(
   modelConfig?: ModelConfig,  // 新增参数：员工独立模型配置
   extraSystemContext?: string,  // 额外的系统上下文（如 soul.md）
   attachments?: Attachment[],   // 用户上传/粘贴的附件（图片走多模态视觉）
+  requestSignal?: AbortSignal,  // 运行中收到新要求时，仅中断当前模型请求并重新规划
 ): Promise<ChatResult> {
   const merged = resolveChatSettings(modelConfig); // 合并配置
   const base = resolveApiBase(merged);
@@ -912,7 +934,7 @@ export async function chatCompletion(
       stream: false,
       ...(tools && tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
     }),
-  }, 300000, merged.apiKey, base); // Long-running model/tool requests may take minutes on a busy provider.
+  }, 300000, merged.apiKey, base, requestSignal); // Long-running model/tool requests may take minutes on a busy provider.
   if (!res.ok) {
     const txt = await res.text().catch(() => '');
     throw new Error(`模型响应 ${res.status}: ${txt.slice(0, 120)}`);
@@ -992,6 +1014,8 @@ export interface AgentLoopOpts {
   shouldStop?: () => boolean;  // 自主执行中断信号（如用户点「停止」）
   waitIfPaused?: () => Promise<void>; // 在模型调用和工具调用之间等待用户继续
   consumeSteeringMessages?: () => string[]; // 运行中追加的老板指令
+  getModelRequestSignal?: () => AbortSignal; // 新指令可以中断正在等待的模型响应
+  onSteeringReply?: (content: string, usage: TokenUsage, contextUsage?: ContextUsage) => void;
 }
 
 function getUserActionForFailure(raw: string): string {
@@ -1018,7 +1042,11 @@ function getUserActionForFailure(raw: string): string {
 }
 
 export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: string; usage: TokenUsage; contextUsage?: ContextUsage; model: string }> {
-  const { turns, tools, scene, label, onToolCall, onToolResult, modelConfig, extraSystemContext, scope, attachments, shouldStop, waitIfPaused, consumeSteeringMessages } = opts;
+  const {
+    turns, tools, scene, label, onToolCall, onToolResult, modelConfig, extraSystemContext,
+    scope, attachments, shouldStop, waitIfPaused, consumeSteeringMessages,
+    getModelRequestSignal, onSteeringReply,
+  } = opts;
   let currentTurns = [...turns];
   const originalUserContent = [...turns].reverse().find((turn) => turn.role === 'user')?.content;
   const originalUserText = typeof originalUserContent === 'string'
@@ -1028,7 +1056,10 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   const connectorTask = isConnectorTask(originalUserText);
   const connectorSetupTask = connectorTask && /安装|配置|添加|接入|连接|关联|绑定|启用|设置|装好|装上/iu.test(originalUserText);
   const isSkillInstallation = isInstallationTask && !connectorTask && /skill|技能|插件/iu.test(originalUserText);
-  currentTurns = [{ role: 'system', content: `${AUTONOMOUS_EXECUTION_GUIDE}\n\n${CAPABILITY_ROUTING_GUIDE}\n\n${SKILL_RECOVERY_GUIDE}` }, ...currentTurns];
+  const conversationOnly = isConversationOnlyMessage(originalUserText);
+  currentTurns = conversationOnly
+    ? [{ role: 'system', content: '当前用户消息是在询问状态、纠正行为、表达反馈或进行普通对话。必须直接结合最近上下文回答这条消息，不得调用工具，不得自动恢复、重放或继续上一项任务。只有用户明确提出新的执行目标或明确要求继续时，才能重新开始执行。' }, ...currentTurns]
+    : [{ role: 'system', content: `${AUTONOMOUS_EXECUTION_GUIDE}\n\n${CAPABILITY_ROUTING_GUIDE}\n\n${SKILL_RECOVERY_GUIDE}` }, ...currentTurns];
 
   // 多模态：把最后一条 user 消息转为 [text, image_url] 数组
   if (attachments && attachments.length > 0) {
@@ -1047,17 +1078,22 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     }
   }
   const checkpointBaseTurns = [...currentTurns];
+  const steeringCheckpointTurns: ChatTurn[] = [];
 
   let totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   let finalContent: string | null = null;
   let finalModel = '';
   let latestContextUsage: ContextUsage | undefined;
-  const iterationsPerPhase = 10;
-  const maxIter = 240;
-  const maxToolCallsPerPhase = 20;
-  const maxAutonomousToolPhases = 8;
+  const iterationsPerPhase = connectorSetupTask ? 6 : 10;
+  const maxIter = connectorSetupTask ? 60 : 180;
+  const maxToolCallsPerPhase = connectorSetupTask ? 10 : 16;
+  const maxAutonomousToolPhases = connectorSetupTask ? 2 : 6;
+  const maxTotalToolAttempts = connectorSetupTask ? 24 : 96;
+  const maxPreparationOnlyStreak = connectorSetupTask ? 6 : 12;
   const callLog: Array<{ name: string; args: string; result: string; success: boolean }> = [];
   const toolResultCache = new Map<string, { output: string; success: boolean }>();
+  const toolCallCounts = new Map<string, number>();
+  const resourceReadCounts = new Map<string, number>();
   const failedSkillReads = new Set<string>();
   const successfulCalls = new Set<string>();
   const automaticSkillRecoveries = new Set<string>();
@@ -1069,6 +1105,9 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   let stalledPhases = 0;
   let executionBudgetReached = false;
   let toolCallsThisPhase = 0;
+  let totalToolAttempts = 0;
+  let preparationOnlyStreak = 0;
+  let duplicateOrBlockedStreak = 0;
   let completedToolPhases = 0;
   let phaseToolBudgetReached = false;
 
@@ -1095,7 +1134,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         workspaceId: opts.workspaceId,
       });
       const useful = isUsefulToolOutcome(name, recovered.success, recovered.output);
-      if (useful) successfulCalls.add(`${name}:${argumentsText}`);
+      if (useful && !isPreparationOnlyTool(name)) successfulCalls.add(`${name}:${argumentsText}`);
       else consecutiveFailures += 1;
       onToolResult?.(name, argumentsText, recovered.output, useful);
       callLog.push({ name, args: argumentsText, result: recovered.output.slice(0, 1200), success: useful });
@@ -1119,10 +1158,74 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     });
   };
 
+  const respondToSteering = async (initialMessages: string[]): Promise<{ stopped: boolean }> => {
+    const pendingMessages = [...initialMessages];
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const instruction = pendingMessages.join('\n').trim();
+      if (!instruction) return { stopped: false };
+      const userTurn: ChatTurn = {
+        role: 'user',
+        content: `## 用户刚刚插话（优先于当前计划）\n${instruction}`,
+      };
+      try {
+        const response = await chatCompletion([
+          ...currentTurns,
+          userTurn,
+          {
+            role: 'system',
+            content: '立刻只回应用户刚刚插入的话。结合已经完成的动作、真实证据和当前阻塞，用通俗中文说明现在的情况、是否会调整原计划以及下一步。不要调用工具，不要复读旧计划，不要声称尚未验证的结果。用户没有明确要求继续时，不得擅自恢复已暂停或已停止的任务。',
+          },
+        ], scene, `${label} · 处理中回应`, undefined, modelConfig, extraSystemContext, undefined, getModelRequestSignal?.());
+        totalUsage.promptTokens += response.usage.promptTokens;
+        totalUsage.completionTokens += response.usage.completionTokens;
+        totalUsage.totalTokens += response.usage.totalTokens;
+        latestContextUsage = response.contextUsage;
+        if (!finalModel) finalModel = response.model;
+
+        const newerMessages = consumeSteeringMessages?.() ?? [];
+        if (newerMessages.length > 0) {
+          pendingMessages.push(...newerMessages);
+          continue;
+        }
+
+        const content = response.content?.trim()
+          || '我收到你的新要求了。我会先按最新信息重新判断，不再机械重复刚才的操作。';
+        const assistantTurn: ChatTurn = { role: 'assistant', content };
+        currentTurns.push(userTurn, assistantTurn);
+        steeringCheckpointTurns.push(userTurn, assistantTurn);
+        finalReviewRequested = false;
+        onSteeringReply?.(content, response.usage, response.contextUsage);
+        return { stopped: isExplicitStopSteering(pendingMessages) };
+      } catch (error: any) {
+        const newerMessages = consumeSteeringMessages?.() ?? [];
+        if (error?.name === 'ExternalAbortError' && newerMessages.length > 0) {
+          pendingMessages.push(...newerMessages);
+          continue;
+        }
+        if (shouldStop?.()) return { stopped: true };
+        const content = '我已经收到你的新要求。当前步骤不会再继续扩展；等模型恢复后，我会从这条最新要求重新判断。';
+        currentTurns.push(userTurn, { role: 'assistant', content });
+        steeringCheckpointTurns.push(userTurn, { role: 'assistant', content });
+        onSteeringReply?.(content, { promptTokens: 0, completionTokens: 0, totalTokens: 0 });
+        return { stopped: isExplicitStopSteering(pendingMessages) };
+      }
+    }
+    return { stopped: isExplicitStopSteering(pendingMessages) };
+  };
+
   for (let iter = 0; iter < maxIter; iter++) {
+    // 暂停中的插话会临时唤醒等待者。唤醒后必须先消费最新消息，
+    // 不能先让旧计划多跑一次模型或工具调用。
     await waitIfPaused?.();
-    if (shouldStop?.()) { stopped = true; break; } // 用户停止：本轮前中止
+    if (shouldStop?.()) { stopped = true; break; }
+    const atTurnStartGuidance = consumeSteeringMessages?.() ?? [];
+    if (atTurnStartGuidance.length > 0) {
+      const steering = await respondToSteering(atTurnStartGuidance);
+      if (steering.stopped) { stopped = true; break; }
+      continue;
+    }
     if (phaseToolBudgetReached) {
+      if (executionBudgetReached) break;
       const phaseCalls = callLog.slice(phaseStartLogIndex);
       const madeProgress = successfulCalls.size > phaseStartSuccessCount;
       stalledPhases = madeProgress ? 0 : stalledPhases + 1;
@@ -1138,6 +1241,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       completedToolPhases += 1;
       currentTurns = [
         ...checkpointBaseTurns,
+        ...steeringCheckpointTurns,
         { role: 'system', content: `${buildContinuationGuide(summary, stalledPhases)}\n\n已自动完成第 ${completedToolPhases} 个执行阶段的上下文压缩。不要向用户索要“继续”，请直接从未完成目标进入下一阶段，并优先验证能否换工具、换路径或补齐验收。` },
       ];
       phaseStartSuccessCount = successfulCalls.size;
@@ -1163,6 +1267,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       }
       currentTurns = [
         ...checkpointBaseTurns,
+        ...steeringCheckpointTurns,
         { role: 'system', content: buildContinuationGuide(summary, stalledPhases) },
       ];
       phaseStartSuccessCount = successfulCalls.size;
@@ -1170,11 +1275,19 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       consecutiveFailures = 0;
       finalReviewRequested = false;
     }
-    const beforeCallGuidance = consumeSteeringMessages?.() ?? [];
-    if (beforeCallGuidance.length) {
-      currentTurns.push({ role: 'user', content: `## 老板刚刚追加的指令（优先于之前要求）\n${beforeCallGuidance.join('\n')}` });
+    let r: ChatResult;
+    try {
+      r = await chatCompletion(currentTurns, scene, label, conversationOnly ? undefined : tools, modelConfig, extraSystemContext, undefined, getModelRequestSignal?.());
+    } catch (error: any) {
+      const interruptedMessages = consumeSteeringMessages?.() ?? [];
+      if (error?.name === 'ExternalAbortError' && interruptedMessages.length > 0) {
+        const steering = await respondToSteering(interruptedMessages);
+        if (steering.stopped) { stopped = true; break; }
+        continue;
+      }
+      if (shouldStop?.()) { stopped = true; break; }
+      throw error;
     }
-    const r = await chatCompletion(currentTurns, scene, label, tools, modelConfig, extraSystemContext);
     totalUsage.promptTokens += r.usage.promptTokens;
     totalUsage.completionTokens += r.usage.completionTokens;
     totalUsage.totalTokens += r.usage.totalTokens;
@@ -1185,7 +1298,8 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     // 不能继续执行已经过时的工具调用或下一步骤。
     const afterCallGuidance = consumeSteeringMessages?.() ?? [];
     if (afterCallGuidance.length) {
-      currentTurns.push({ role: 'user', content: `## 老板在你思考期间追加的指令（立即调整当前执行）\n${afterCallGuidance.join('\n')}` });
+      const steering = await respondToSteering(afterCallGuidance);
+      if (steering.stopped) { stopped = true; break; }
       continue;
     }
 
@@ -1193,51 +1307,119 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       // 模型返回了工具调用：执行，结果加入对话继续
       const { executeTool } = await import('../engine/tools');
       let iterationHadFailure = false;
+      let steeringHandled = false;
       for (const tc of r.toolCalls) {
         await waitIfPaused?.();
         if (shouldStop?.()) { stopped = true; break; }
-        if (toolCallsThisPhase >= maxToolCallsPerPhase) {
-          phaseToolBudgetReached = true;
+        const beforeToolGuidance = consumeSteeringMessages?.() ?? [];
+        if (beforeToolGuidance.length > 0) {
+          const steering = await respondToSteering(beforeToolGuidance);
+          if (steering.stopped) stopped = true;
+          steeringHandled = true;
           break;
         }
-        onToolCall?.(tc.name, tc.arguments);
-        const cacheKey = `${tc.name}:${tc.arguments}`;
+        if (toolCallsThisPhase >= maxToolCallsPerPhase || totalToolAttempts >= maxTotalToolAttempts) {
+          phaseToolBudgetReached = true;
+          executionBudgetReached = totalToolAttempts >= maxTotalToolAttempts;
+          break;
+        }
+        totalToolAttempts += 1;
+        toolCallsThisPhase += 1;
+        const cacheKey = canonicalToolCallKey(tc.name, tc.arguments);
+        const resourceKey = toolResourceKey(tc.name, tc.arguments);
+        const resourceReadCount = resourceKey ? (resourceReadCounts.get(resourceKey) ?? 0) : 0;
+        const toolCallCount = (toolCallCounts.get(tc.name) ?? 0) + 1;
+        toolCallCounts.set(tc.name, toolCallCount);
         const cached = toolResultCache.get(cacheKey);
-        const repeatedFailedSkillRead = tc.name === 'read_skill' && failedSkillReads.has(tc.arguments);
+        const repeatedFailedSkillRead = tc.name === 'read_skill' && failedSkillReads.has(cacheKey);
         const connectorSkillRouteConfirmed = callLog.some((call) => call.name === 'inspect_connectors' && call.success && /接入方式:\s*Skill/u.test(call.result));
         const misroutedConnectorSkill = connectorSetupTask && (tc.name === 'search_skills' || tc.name === 'read_skill') && !connectorSkillRouteConfirmed;
-        const result = misroutedConnectorSkill
-          ? { toolCallId: tc.id, name: tc.name, success: false, output: '请先调用 inspect_connectors 确认这个外部服务究竟使用 HTTP、MCP 还是 Skill。只有检查结果明确显示 Skill 后，才安装或读取对应 Skill。' }
+        const resourceLimit = tc.name === 'read_skill' || tc.name === 'read_web_page'
+          ? 1
+          : tc.name === 'read_file' ? (connectorSetupTask ? 4 : 12) : Number.POSITIVE_INFINITY;
+        const toolLimitReached = toolCallCount > getToolCallLimit(tc.name, connectorSetupTask);
+        const resourceLimitReached = Boolean(resourceKey) && resourceReadCount >= resourceLimit;
+        const blockedReason = misroutedConnectorSkill
+          ? '请先调用 inspect_connectors 确认这个外部服务究竟使用 HTTP、MCP 还是 Skill。只有检查结果明确显示 Skill 后，才安装或读取对应 Skill。'
           : repeatedFailedSkillRead
-          ? { toolCallId: tc.id, name: tc.name, success: false, output: '这个 Skill ID 已经读取失败，已阻止重复尝试。下一步必须改用 search_skills 换关键词检索；没有可用候选时直接使用 web_search 搜索替代方案或官方资料。' }
+          ? '这个 Skill 已经读取失败，已阻止重复尝试。必须改用不同来源、替代工具或明确交接真实缺项。'
           : cached !== undefined
-          ? { toolCallId: tc.id, name: tc.name, success: cached.success, output: `相同工具调用已执行过，复用结果：\n${cached.output}` }
-          : await executeTool({ id: tc.id, name: tc.name, args: (() => { try { return JSON.parse(tc.arguments); } catch { return {}; } })(), scope, workspaceId: opts.workspaceId });
-        const resultSuccess = isUsefulToolOutcome(tc.name, result.success, result.output);
-        if (tc.name === 'read_skill' && !resultSuccess) failedSkillReads.add(tc.arguments);
-        if (resultSuccess) successfulCalls.add(cacheKey);
-        if (resultSuccess) {
+          ? '完全相同的工具调用已经执行过。重复调用不会产生新证据，必须重新判断目标并换路线。'
+          : toolLimitReached
+          ? `“${getToolStage(tc.name)}”已经达到本任务的合理尝试次数。必须停止这条路线，改用其他工具或根据现有证据向用户说明阻塞。`
+          : resourceLimitReached
+          ? `同一资源已经读取 ${resourceReadCount} 次，继续读取不会产生新证据。必须开始实际操作、改用其他来源或说明缺少的外部条件。`
+          : '';
+
+        let executed = false;
+        const result = blockedReason
+          ? { toolCallId: tc.id, name: tc.name, success: false, output: blockedReason }
+          : await (async () => {
+            executed = true;
+            onToolCall?.(tc.name, tc.arguments);
+            return executeTool({ id: tc.id, name: tc.name, args: (() => { try { return JSON.parse(tc.arguments); } catch { return {}; } })(), scope, workspaceId: opts.workspaceId });
+          })();
+        const resultSuccess = executed && isUsefulToolOutcome(tc.name, result.success, result.output);
+        const newEvidence = resultSuccess && cached === undefined;
+        if (resourceKey && executed) resourceReadCounts.set(resourceKey, resourceReadCount + 1);
+        if (tc.name === 'read_skill' && !resultSuccess) failedSkillReads.add(cacheKey);
+        if (newEvidence && !isPreparationOnlyTool(tc.name)) successfulCalls.add(cacheKey);
+        if (newEvidence) {
           consecutiveFailures = 0;
         } else {
           consecutiveFailures += 1;
           iterationHadFailure = true;
         }
-        if (cached === undefined) toolResultCache.set(cacheKey, { output: result.output.slice(0, 6000), success: resultSuccess });
-        onToolResult?.(tc.name, tc.arguments, result.output, resultSuccess);
+        if (executed && cached === undefined) toolResultCache.set(cacheKey, { output: result.output.slice(0, 6000), success: resultSuccess });
+        if (executed) onToolResult?.(tc.name, tc.arguments, result.output, resultSuccess);
         callLog.push({ name: tc.name, args: tc.arguments, result: result.output.slice(0, 1200), success: resultSuccess });
-        toolCallsThisPhase += 1;
-        if (toolCallsThisPhase >= maxToolCallsPerPhase) phaseToolBudgetReached = true;
+
+        if (isPreparationOnlyTool(tc.name) && newEvidence) preparationOnlyStreak += 1;
+        else if (newEvidence) preparationOnlyStreak = 0;
+        if (!executed || cached !== undefined || resourceLimitReached || toolLimitReached) duplicateOrBlockedStreak += 1;
+        else if (newEvidence) duplicateOrBlockedStreak = 0;
+
+        if (resultSuccess && tc.name === 'write_file') {
+          try {
+            const writtenArgs = JSON.parse(tc.arguments || '{}') as { path?: string };
+            const writtenResource = toolResourceKey('read_file', JSON.stringify({ path: writtenArgs.path ?? '' }));
+            if (writtenResource) resourceReadCounts.delete(writtenResource);
+          } catch {}
+        }
+
+        if (preparationOnlyStreak === maxPreparationOnlyStreak) {
+          currentTurns.push({
+            role: 'system',
+            content: `已经连续 ${preparationOnlyStreak} 次只做搜索、检查或读取，没有形成安装、配置、写入、验证等实际结果。现在必须停止继续收集同类资料，重新核对用户最终目标，并在下一步选择：执行一个可验证动作、换一条实现路线，或根据真实证据说明唯一缺少的用户条件。`,
+          });
+        }
+        if (preparationOnlyStreak >= maxPreparationOnlyStreak + 3 || duplicateOrBlockedStreak >= 4) {
+          executionBudgetReached = true;
+          phaseToolBudgetReached = true;
+        }
+        if (toolCallsThisPhase >= maxToolCallsPerPhase || totalToolAttempts >= maxTotalToolAttempts) {
+          phaseToolBudgetReached = true;
+          if (totalToolAttempts >= maxTotalToolAttempts) executionBudgetReached = true;
+        }
         // 对 tool output 长度做上限，防止下游模型调用因上下文超长失败
         const truncated = result.output.slice(0, 1500);
         currentTurns.push({ role: 'assistant', content: null, tool_calls: [{ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments } }] } as any);
         currentTurns.push({ role: 'tool', content: truncated, tool_call_id: tc.id } as any);
         const mayRecoverSkill = !connectorTask || callLog.some((call) => call.name === 'inspect_connectors' && call.success && /接入方式:\s*Skill/u.test(call.result));
-        if (mayRecoverSkill && (tc.name === 'read_skill' || tc.name === 'search_skills') && !resultSuccess) {
+        if (executed && mayRecoverSkill && (tc.name === 'read_skill' || tc.name === 'search_skills') && !resultSuccess) {
           await runSkillRecovery(tc.name === 'read_skill' ? 'stale-read' : 'no-local-match', result.output);
         }
         if (shouldStop?.()) { stopped = true; break; } // 用户停止：工具执行后中止
+        const afterToolGuidance = consumeSteeringMessages?.() ?? [];
+        if (afterToolGuidance.length > 0) {
+          const steering = await respondToSteering(afterToolGuidance);
+          if (steering.stopped) stopped = true;
+          steeringHandled = true;
+          break;
+        }
       }
       if (stopped) break;
+      if (steeringHandled) continue;
       if (phaseToolBudgetReached) continue;
       if (iterationHadFailure) {
         currentTurns.push({ role: 'system', content: buildRecoveryGuide(consecutiveFailures) });

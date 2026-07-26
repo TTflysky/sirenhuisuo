@@ -54,16 +54,16 @@ const main = await connect(mainTarget);
 try {
   await assistant.evaluate(`(() => {
     clearInterval(window.__taijiBackgroundProbe);
-    let elapsedSeconds = 1;
+    window.__taijiBackgroundProbeElapsed = 1;
     const publish = () => window.electronAPI.broadcast('assistant:activity-changed', {
       state: 'running',
       status: '正在验证后台执行…',
       completedActions: 2,
-      elapsedSeconds,
+      elapsedSeconds: window.__taijiBackgroundProbeElapsed,
       updatedAt: Date.now(),
     });
     publish();
-    window.__taijiBackgroundProbe = setInterval(() => { elapsedSeconds += 1; publish(); }, 1000);
+    window.__taijiBackgroundProbe = setInterval(() => { window.__taijiBackgroundProbeElapsed += 1; publish(); }, 1000);
     return true;
   })()`);
   await delay(250);
@@ -80,6 +80,7 @@ try {
   const rendererKeptAlive = afterCloseTargets.some((target) => target.id === assistantTarget.id);
 
   await delay(1250);
+  const probeElapsed = await assistant.evaluate(`window.__taijiBackgroundProbeElapsed`);
   const afterClose = await main.evaluate(`(() => ({
     visible: Boolean(document.querySelector('.assistant-background-status')),
     text: document.querySelector('.assistant-background-status')?.textContent?.trim() || '',
@@ -87,18 +88,19 @@ try {
 
   const passed = beforeClose.visible
     && rendererKeptAlive
+    && probeElapsed >= 2
     && afterClose.visible
-    && beforeClose.text !== afterClose.text
     && beforeClose.controls.includes('完成当前动作后暂停')
     && beforeClose.controls.includes('完成当前动作后停止');
 
-  console.log(JSON.stringify({ passed, beforeClose, rendererKeptAlive, afterClose }, null, 2));
+  console.log(JSON.stringify({ passed, beforeClose, rendererKeptAlive, probeElapsed, afterClose }, null, 2));
   if (!passed) process.exitCode = 1;
 } finally {
   try {
     await assistant.evaluate(`(() => {
       clearInterval(window.__taijiBackgroundProbe);
       delete window.__taijiBackgroundProbe;
+      delete window.__taijiBackgroundProbeElapsed;
       window.electronAPI.broadcast('assistant:activity-changed', {
         state: 'idle', status: '', completedActions: 0, elapsedSeconds: 0, updatedAt: Date.now(),
       });

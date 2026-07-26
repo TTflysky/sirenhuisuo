@@ -33,6 +33,7 @@ import { buildTaskPlan, matchProjectMembers, matchTeamMembers } from './engine/t
 import { buildSkillContext, listSkills, matchSkills } from './data/skills';
 import { attachmentWorkspaceContext } from './utils/attachments';
 import { BEGINNER_RESPONSE_GUIDE } from './data/assistantPresentation';
+import { getDirectExecutionControl, isConversationOnlyMessage, shouldHoldTaskForFeedback } from './engine/agentGuardrails.mjs';
 
 // ===== Action =====
 type Action =
@@ -584,6 +585,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     queued?: DiscussionOpts;
     scheduled?: DiscussionOpts;
     steering?: string[];
+    modelRequestController?: AbortController;
     lastStartedAt?: number;
     keys: Set<string>;
   }>());
@@ -613,6 +615,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const team = stateRef.current.teams.find((t) => t.id === teamId);
     if (!team) return false;
     discussingRef.current.add(teamId);
+    const activeScheduler = schedulerRef.current.get(teamId) ?? { running: true, keys: new Set<string>() };
+    activeScheduler.modelRequestController?.abort();
+    activeScheduler.modelRequestController = new AbortController();
+    schedulerRef.current.set(teamId, activeScheduler);
 
     // Prefer the actual scheduled participants over generic role counts.
     const roleCount = ['pm', 'planner', 'coder', 'checker'].filter(
@@ -707,6 +713,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               run.evidence = [...(run.evidence ?? []), evidence].slice(-40);
             }
             step.events.push({ ts: Date.now(), type: step.status === 'failed' ? 'error' : 'result', detail: content.slice(0, 360) });
+          });
+        },
+        onSteeringReply(emp, content, tokens, contextUsage, stepId) {
+          dispatch({
+            type: 'APPEND_CHAT', teamId,
+            msgs: [{
+              id: `msg-steering-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              authorId: emp.id, roleId: emp.role, content, mentions: [], timestamp: Date.now(), kind: 'text',
+              tokens, contextUsage, discussionId: opts?.discussionId, triggeredBy: 'message',
+            }],
+          });
+          updateRun((run) => {
+            const step = run.steps.find((item) => item.id === stepId);
+            if (step) step.events.push({ ts: Date.now(), type: 'status', detail: `已回应运行中新增要求：${content.slice(0, 220)}` });
           });
         },
         onTaskAdvance(taskId, lane) {
@@ -840,6 +860,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const scheduler = schedulerRef.current.get(teamId);
           return scheduler?.steering?.splice(0) ?? [];
         },
+        getModelRequestSignal: () => {
+          const scheduler = schedulerRef.current.get(teamId);
+          if (!scheduler) return new AbortController().signal;
+          if (!scheduler.modelRequestController || scheduler.modelRequestController.signal.aborted) scheduler.modelRequestController = new AbortController();
+          return scheduler.modelRequestController.signal;
+        },
       }
     )).catch((error) => {
       updateRun((run) => { run.status = 'failed'; run.lastError = error instanceof Error ? error.message : String(error); });
@@ -850,6 +876,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       discussingRef.current.delete(teamId);
       const scheduler = schedulerRef.current.get(teamId);
       if (scheduler) {
+        scheduler.modelRequestController?.abort();
+        scheduler.modelRequestController = undefined;
         const completedKey = opts?.discussionId ?? opts?.triggerMessageId ?? opts?.task?.id;
         if (completedKey) scheduler.keys.delete(completedKey);
         scheduler.running = false;
@@ -875,6 +903,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (scheduler.running || discussingRef.current.has(teamId)) {
       if ((client.loadSettings().followUpMode ?? 'steer') === 'steer' && opts.userText) {
         (scheduler.steering ??= []).push(opts.userText);
+        scheduler.modelRequestController?.abort();
+        scheduler.modelRequestController = new AbortController();
         scheduler.keys.delete(key);
         return;
       }
@@ -1021,6 +1051,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const pauseTaskRun = (runId: string) => {
     pausedRunIdsRef.current.add(runId);
     const run = stateRef.current.taskRuns.find((item) => item.id === runId);
+    if (run) schedulerRef.current.get(run.teamId)?.modelRequestController?.abort();
     if (run) dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
       next.status = 'paused'; next.steps.forEach((step) => { if (step.status === 'queued' || step.status === 'running') step.status = 'paused'; });
     }) });
@@ -1046,6 +1077,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     stoppedRunIdsRef.current.add(runId);
     pausedRunIdsRef.current.delete(runId);
     const run = stateRef.current.taskRuns.find((item) => item.id === runId);
+    if (run) schedulerRef.current.get(run.teamId)?.modelRequestController?.abort();
     if (run) dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
       next.status = 'stopped';
       next.phase = 'blocked';
@@ -1079,6 +1111,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     void (async () => {
       const directMentions = mentions.filter((id) => team.memberIds.includes(id));
       const supervisorMentioned = mentions.includes('assistant');
+      const directControl = getDirectExecutionControl(content);
+      if (directControl) {
+        const activeRuns = current.taskRuns.filter((run) => run.teamId === teamId && (run.status === 'queued' || run.status === 'running'));
+        const latestPaused = [...current.taskRuns].reverse().find((run) => run.teamId === teamId && run.status === 'paused');
+        if (directControl === 'resume') {
+          if (latestPaused) resumeTaskRun(latestPaused.id);
+        } else {
+          activeRuns.forEach((run) => directControl === 'stop' ? stopTaskRun(run.id) : pauseTaskRun(run.id));
+        }
+        dispatch({
+          type: 'APPEND_CHAT', teamId,
+          msgs: [{
+            id: `msg-direct-control-${Date.now()}`, authorId: 'assistant', roleId: 'custom',
+            content: directControl === 'resume'
+              ? latestPaused ? '团队任务已继续，会从暂停时保留的步骤接着执行。' : '当前没有暂停中的团队任务。'
+              : directControl === 'stop'
+                ? '团队任务已停止，已完成内容保留；旧任务不会自行恢复。'
+                : '团队任务已暂停。你仍可以继续对话，只有明确说“继续”才会恢复。',
+            mentions: [], timestamp: Date.now(), kind: 'text',
+          }],
+        });
+        return;
+      }
       if (isTeamControlRequest(content)) {
         const pauseRequested = /(?:暂停|停止|先停|停下|别做|不要继续).{0,12}(?:工作|任务|手上|当前|执行)|(?:工作|任务).{0,8}(?:暂停|停止)/u.test(content);
         const reportRequested = /(?:模型|配置|状态|报数|报个数|数数|在线情况)/u.test(content);
@@ -1110,6 +1165,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }));
         }
         if (messages.length) dispatch({ type: 'APPEND_CHAT', teamId, msgs: messages });
+        return;
+      }
+      if (shouldHoldTaskForFeedback(content)) {
+        current.taskRuns
+          .filter((run) => run.teamId === teamId && (run.status === 'queued' || run.status === 'running'))
+          .forEach((run) => pauseTaskRun(run.id));
+        await enqueueAssistantSupervisor(team, content, false);
+        return;
+      }
+      if (isConversationOnlyMessage(content)) {
+        await enqueueAssistantSupervisor(team, content, false);
         return;
       }
       if (directMentions.length > 0 && !supervisorMentioned) {

@@ -1,7 +1,7 @@
 # 项目交接手册
 
-> 最后整理：2026-07-25
-> 当前源码版本：`v0.8.6`
+> 最后整理：2026-07-27
+> 当前源码版本：`v0.8.11`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 
@@ -49,6 +49,7 @@
 | --- | --- |
 | `src/store.tsx` | 全局状态、团队消息路由、助理调度、任务运行的启动/暂停/继续/关闭。 |
 | `src/data/hermesClient.ts` | OpenAI 兼容请求、模型配置解析、聊天/员工/团队/Token 本地持久化、Agent 循环。 |
+| `src/engine/agentGuardrails.mjs` | 最新消息分类、文字控制、反馈挂起、工具语义去重和资源读取上限。 |
 | `src/engine/teamDiscussion.ts` | 计划步骤执行、员工发言、工具回调、审查与交接。 |
 | `src/engine/tools.ts` | `write_file`、`read_file`、`list_files`、`search_skills`、`read_skill`、`run_command` 和连接器工具。 |
 | `src/components/chat/AssistantChat.tsx` | 驴狗蛋助手聊天与运行中引导。 |
@@ -121,6 +122,9 @@
 npm.cmd install
 npm.cmd run build
 npm.cmd run lint
+npm.cmd run verify:agent-kernel
+npm.cmd run verify:steering-e2e
+npm.cmd run verify:tool-window
 
 $env:ELECTRON_BUILDER_CACHE='E:\私人办公会所项目\.electron-builder-cache'
 $env:CSC_IDENTITY_AUTO_DISCOVERY='false'
