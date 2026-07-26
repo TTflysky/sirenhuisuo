@@ -292,12 +292,15 @@ export default function TeamChatApp({ teamId }: Props) {
       </div>
       {run.sourceMessageId && <button type="button" className="task-run-jump" title="跳到原始需求" onClick={() => document.querySelector(`[data-message-id="${CSS.escape(run.sourceMessageId!)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>↗</button>}
       {expanded && <div className="task-run-details">
+        <div className="task-run-goal"><strong>目标</strong><span>{run.goal ?? run.request}</span></div>
+        {!!run.preflight?.length && <div className="task-run-preflight"><strong>前置检查</strong>{run.preflight.map((item) => <span key={item.label} className={`is-${item.status}`} title={item.detail}>{item.status === 'passed' ? '✓' : item.status === 'blocked' ? '!' : '·'} {item.label}</span>)}</div>}
         {!!run.skillRefs?.length && <div className="task-run-skills"><strong>Skills</strong>{run.skillRefs.map((skill) => <span key={skill.id}>{skill.name}</span>)}</div>}
         {run.steps.map((step) => {
           const emp = state.employees.find((item) => item.id === step.employeeId);
           const model = run.memberSnapshot.find((item) => item.id === step.employeeId)?.model;
           return <div key={step.id} className="task-run-step"><div><span className="task-step-order">{step.order}</span><strong>{emp?.name ?? step.title}</strong><span className={`task-step-kind kind-${step.kind}`}>{step.kind === 'review' ? '审查' : step.kind === 'revision' ? '修订' : '执行'}</span><span className={`task-step-status status-${step.status}`}>{step.status}</span><small>{model || '默认模型'} · 尝试 {step.attempts} 次</small></div><p className="task-step-assignment">{step.assignment}</p>{step.reviewDecision && <p className={`task-review-decision ${step.reviewDecision}`}>{step.reviewDecision === 'pass' ? '审查通过' : `退回：${step.reviewReason ?? '需要修改'}`}</p>}{step.lastError && <p className="task-step-error">{step.lastError}</p>}{step.events.slice(-4).map((event, index) => <p key={`${event.ts}-${index}`} className="task-step-event">{new Date(event.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} {event.detail}</p>)}</div>;
         })}
+        {run.handoff && <div className="task-run-handoff"><strong>当前交接</strong><p>{run.handoff.blocked}</p>{run.handoff.completed.length > 0 && <p>已完成：{run.handoff.completed.join('、')}</p>}<p>下一步：{run.handoff.nextAction}</p></div>}
         <div className="task-run-actions">{active && <button className="btn btn-sm" onClick={() => pauseTaskRun(run.id)}>暂停</button>}{(run.status === 'paused' || run.status === 'failed') && <button className="btn btn-sm btn-primary" onClick={() => resumeTaskRun(run.id)}>继续执行</button>}</div>
       </div>}
     </section>;

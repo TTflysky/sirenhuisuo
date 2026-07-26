@@ -653,7 +653,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       liveRun = updateTaskRun(liveRun, mutate);
       dispatch({ type: 'UPDATE_TASK_RUN', run: liveRun });
     };
-    updateRun((run) => { run.status = 'running'; run.lastError = undefined; });
+    updateRun((run) => {
+      run.status = 'running'; run.phase = 'executing'; run.lastError = undefined;
+      run.preflight = (run.preflight ?? []).map((item) => item.label === '检查参与成员与模型'
+        ? { ...item, status: 'passed', detail: '参与成员与模型配置已通过启动检查' }
+        : item);
+    });
     Promise.resolve().then(() => runTeamDiscussion(
       team,
       stateRef.current.employees,
@@ -684,7 +689,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             if (!step) return;
             step.status = /^⚠️|无法响应|执行失败/u.test(content) ? 'failed' : 'completed';
             step.completedAt = Date.now();
-            if (step.status === 'failed') step.lastError = content;
+            if (step.status === 'failed') {
+              step.lastError = content;
+              run.phase = 'blocked';
+              run.handoff = {
+                ts: Date.now(),
+                completed: run.steps.filter((item) => item.status === 'completed').map((item) => item.title),
+                blocked: `${emp.name}：${content.slice(0, 240)}`,
+                nextAction: '检查提示中的账号、模型或外部条件后点击继续执行。',
+              };
+            } else {
+              const evidence = { ts: Date.now(), source: 'member' as const, summary: `${emp.name} 完成：${content.slice(0, 220)}`, verified: step.kind === 'review' };
+              step.evidence = [...(step.evidence ?? []), evidence].slice(-12);
+              run.evidence = [...(run.evidence ?? []), evidence].slice(-40);
+            }
             step.events.push({ ts: Date.now(), type: step.status === 'failed' ? 'error' : 'result', detail: content.slice(0, 360) });
           });
         },
@@ -705,7 +723,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           });
           updateRun((run) => {
             const step = run.steps.find((item) => item.id === stepId) ?? run.steps.find((item) => item.employeeId === emp.id && item.status === 'running');
-            if (step) step.events.push({ ts: Date.now(), type: 'tool', detail: `${toolName} ${toolArgs}${result && result !== '🔄 执行中…' ? ` → ${result}` : ''}`.slice(0, 360) });
+            if (step) {
+              step.events.push({ ts: Date.now(), type: 'tool', detail: `${toolName} ${toolArgs}${result && result !== '🔄 执行中…' ? ` → ${result}` : ''}`.slice(0, 360) });
+              if (result && result !== '🔄 执行中…') {
+                const evidence = { ts: Date.now(), source: 'tool' as const, summary: `${toolName}：${result}`.slice(0, 260) };
+                step.evidence = [...(step.evidence ?? []), evidence].slice(-12);
+                run.evidence = [...(run.evidence ?? []), evidence].slice(-40);
+              }
+            }
           });
         },
         onStatus(statusText) {
@@ -746,7 +771,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         },
         onRunFailed(error) {
           updateRun((run) => {
-            run.status = 'failed'; run.lastError = error;
+            run.status = 'failed'; run.phase = 'blocked'; run.lastError = error;
+            run.handoff = {
+              ts: Date.now(),
+              completed: run.steps.filter((step) => step.status === 'completed').map((step) => step.title),
+              blocked: error.slice(0, 320),
+              nextAction: '处理阻塞提示后点击“继续执行”，太极会保留已经完成的步骤。',
+            };
             const activeReview = [...run.steps].reverse().find((step) => step.kind === 'review' && step.reviewDecision === 'reject');
             if (activeReview) { activeReview.status = 'failed'; activeReview.lastError = error; }
           });
@@ -763,6 +794,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             const hasFailed = run.steps.some((step) => step.status === 'failed') || !!run.lastError;
             const hasUnfinished = run.steps.some((step) => step.status !== 'completed' && step.status !== 'failed');
             run.status = paused ? 'paused' : hasFailed || hasUnfinished ? 'failed' : 'completed';
+            run.phase = paused ? 'blocked' : hasFailed || hasUnfinished ? 'blocked' : 'verifying';
             if (!paused && hasUnfinished) {
               run.lastError = '部分成员未完成执行，可点击继续执行重试。';
               run.steps.forEach((step) => {
@@ -775,6 +807,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             if (paused) run.steps.forEach((step) => {
               if (step.status === 'running') { step.status = 'paused'; step.events.push({ ts: Date.now(), type: 'status', detail: '已暂停，等待继续' }); }
             });
+            if (!paused && !hasFailed && !hasUnfinished) {
+              run.phase = 'completed';
+              run.preflight = (run.preflight ?? []).map((item) => item.label === '确认最终验收'
+                ? { ...item, status: 'passed', detail: '所有任务步骤已完成并通过最终汇总' }
+                : item);
+            }
           });
         },
       }, {
@@ -934,6 +972,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (employee) snapshot.model = client.getEmployeeModel(employee).model;
     });
     if (!run.steps.length) return;
+    const unavailableMembers = run.steps
+      .map((step) => current.employees.find((employee) => employee.id === step.employeeId))
+      .filter((employee): employee is Employee => !!employee && !client.resolveApiBase(client.getEmployeeModel(employee)));
+    if (unavailableMembers.length > 0) {
+      const names = [...new Set(unavailableMembers.map((employee) => employee.name))];
+      run.status = 'failed';
+      run.phase = 'blocked';
+      run.lastError = `以下成员没有可用模型：${names.join('、')}`;
+      run.preflight = (run.preflight ?? []).map((item) => item.label === '检查参与成员与模型'
+        ? { ...item, status: 'blocked', detail: run.lastError }
+        : item);
+      run.handoff = {
+        ts: Date.now(),
+        completed: [],
+        blocked: run.lastError,
+        nextAction: '打开“设置 → 模型”，为这些成员启用全局模型或配置独立模型，然后点击“继续执行”。',
+      };
+      dispatch({ type: 'CREATE_TASK_RUN', run });
+      return;
+    }
     dispatch({ type: 'CREATE_TASK_RUN', run });
     enqueueDiscussion(teamId, {
       userText: request, attachments, triggerMessageId: sourceMessageId, discussionId: run.id,
@@ -958,7 +1016,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const pendingStepIds = new Set(pendingSteps.map((step) => step.id));
     if (!pendingSteps.length) return;
     dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
-      next.status = 'queued'; next.lastError = undefined;
+      next.status = 'queued'; next.phase = 'preflight'; next.lastError = undefined; next.handoff = undefined;
       next.steps.forEach((step) => { if (pendingStepIds.has(step.id)) step.status = 'queued'; });
     }) });
     void buildSkillContext(run.skillRefs ?? []).then((skillContext) => enqueueDiscussion(run.teamId, { userText: run.request, triggerMessageId: run.sourceMessageId, discussionId: run.id, forcedMemberIds: pending, runSteps: pendingSteps, maxRounds: pendingSteps.length, runId, extraSystemContext: skillContext }, 50));

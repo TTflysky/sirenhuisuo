@@ -74,6 +74,8 @@ export interface Skill {
   scope?: 'built-in' | 'mine';
   version?: string;
   pathHash: string;
+  health?: 'ready' | 'limited';
+  healthMessage?: string;
 }
 export interface SkillReference { id: string; name: string; }
 
@@ -163,6 +165,8 @@ export interface AvatarFrameConfig {
 export type TaskRunStatus = 'queued' | 'running' | 'paused' | 'failed' | 'completed';
 export type TaskStepStatus = 'queued' | 'running' | 'paused' | 'failed' | 'completed';
 export type TaskStepKind = 'work' | 'review' | 'revision';
+export type TaskRunPhase = 'preflight' | 'executing' | 'verifying' | 'blocked' | 'completed';
+export type TaskEvidence = { ts: number; source: 'tool' | 'member' | 'review' | 'system'; summary: string; verified?: boolean };
 
 export interface TaskPlanStep {
   id: string;
@@ -202,6 +206,7 @@ export interface TaskRunStep {
   startedAt?: number;
   completedAt?: number;
   lastError?: string;
+  evidence?: TaskEvidence[];
   events: Array<{ ts: number; type: 'status' | 'tool' | 'result' | 'error'; detail: string }>;
 }
 
@@ -221,6 +226,12 @@ export interface TaskRun {
   lastError?: string;
   revisionCount?: number;
   maxRevisions?: number;
+  phase?: TaskRunPhase;
+  goal?: string;
+  acceptanceCriteria?: string[];
+  preflight?: Array<{ label: string; status: 'pending' | 'passed' | 'blocked'; detail?: string }>;
+  evidence?: TaskEvidence[];
+  handoff?: { ts: number; completed: string[]; blocked: string; nextAction: string };
 }
 
 // ===== 应用状态 =====

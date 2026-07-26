@@ -172,6 +172,7 @@ export default function SkillLibraryView() {
                     <div className="skill-grid-card-name">{skill.name}</div>
                     <div className="skill-grid-card-desc">{skill.description || '暂无说明'}</div>
                     <div className="skill-grid-card-meta">{skill.source}{skill.version ? ` · v${skill.version}` : ''}</div>
+                    {skill.health === 'limited' && <div className="skill-grid-card-warning" title={skill.healthMessage}>需完整目录</div>}
                   </button>
                 </div>
                 {expanded === skill.id && <div className="skill-grid-detail"><pre className="skill-grid-detail-body">{body || '加载中…'}</pre></div>}

@@ -5,6 +5,8 @@ const crypto = require('crypto');
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_SKILLS = 2000;
 const SKILL_DOWNLOAD_TIMEOUT_MS = 15000;
+const MAX_SKILL_BUNDLE_FILES = 160;
+const MAX_SKILL_BUNDLE_BYTES = 8 * 1024 * 1024;
 
 function uniqueRoots(projectRoot) {
   const userProfile = process.env.USERPROFILE || process.env.HOME || '';
@@ -59,6 +61,15 @@ async function scanSkills(projectRoot) {
           const raw = await fs.readFile(full, 'utf8');
           const fm = parseFrontmatter(raw);
           const real = await fs.realpath(full);
+          let health = 'ready';
+          let healthMessage;
+          try {
+            const metadata = JSON.parse(await fs.readFile(path.join(path.dirname(real), '.taiji-skill.json'), 'utf8'));
+            if (metadata.installMode === 'single-file') {
+              health = 'limited';
+              healthMessage = '此技能仅安装了 SKILL.md；如原作者依赖脚本或参考资料，请从完整目录重新安装。';
+            }
+          } catch {}
           const pathHash = crypto.createHash('sha256').update(real).digest('hex').slice(0, 24);
           entries.push({
             id: `${pathHash}:${(fm.name || path.basename(path.dirname(real))).toLowerCase().replace(/[^a-z0-9_-]+/g, '-').slice(0, 64)}`,
@@ -68,6 +79,8 @@ async function scanSkills(projectRoot) {
             scope: root === userSkillsRoot ? 'mine' : 'built-in',
             version: fm.version || undefined,
             pathHash,
+            health,
+            healthMessage,
             _path: real,
           });
         } catch {}
@@ -150,6 +163,51 @@ function githubCandidates(inputUrl) {
   return [inputUrl];
 }
 
+function githubDirectoryCandidate(inputUrl) {
+  const parsed = new URL(inputUrl);
+  if (parsed.hostname !== 'github.com') return null;
+  const parts = parsed.pathname.split('/').filter(Boolean);
+  if (parts[2] !== 'tree' || parts.length < 5) return null;
+  const [owner, repo, , branch, ...skillPath] = parts;
+  return `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo.replace(/\.git$/i, ''))}/contents/${skillPath.map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(branch)}`;
+}
+
+async function downloadSkillDirectory(sourceUrl, targetDir) {
+  const rootUrl = githubDirectoryCandidate(sourceUrl);
+  if (!rootUrl) return { installMode: 'single-file', files: 1 };
+  let totalBytes = 0;
+  let fileCount = 0;
+  const download = async (directoryUrl, relativeDir = '') => {
+    const response = await fetch(directoryUrl, {
+      headers: { 'User-Agent': 'Taiji-Skill-Installer/1.0', Accept: 'application/vnd.github+json' },
+      signal: AbortSignal.timeout(SKILL_DOWNLOAD_TIMEOUT_MS),
+    });
+    if (!response.ok) throw new Error(`无法读取技能目录：HTTP ${response.status}`);
+    const entries = await response.json();
+    if (!Array.isArray(entries)) throw new Error('技能目录格式不正确');
+    for (const entry of entries) {
+      if (fileCount >= MAX_SKILL_BUNDLE_FILES) throw new Error('技能目录文件过多，无法安全安装');
+      if (entry.name.startsWith('.')) continue;
+      const relative = path.posix.join(relativeDir, entry.name);
+      const target = path.resolve(targetDir, relative);
+      if (!target.startsWith(`${targetDir}${path.sep}`)) throw new Error('技能目录包含不安全路径');
+      if (entry.type === 'dir') { await download(entry.url, relative); continue; }
+      if (entry.type !== 'file' || !entry.download_url) continue;
+      const fileResponse = await fetch(entry.download_url, { signal: AbortSignal.timeout(SKILL_DOWNLOAD_TIMEOUT_MS) });
+      if (!fileResponse.ok) throw new Error(`无法下载技能文件：${entry.name}`);
+      const content = Buffer.from(await fileResponse.arrayBuffer());
+      totalBytes += content.length;
+      if (totalBytes > MAX_SKILL_BUNDLE_BYTES) throw new Error('技能目录超过 8MB，无法安全安装');
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.writeFile(target, content);
+      fileCount += 1;
+    }
+  };
+  await download(rootUrl);
+  if (!(await fs.stat(path.join(targetDir, 'SKILL.md'))).isFile()) throw new Error('技能目录中没有 SKILL.md');
+  return { installMode: 'directory', files: fileCount };
+}
+
 async function downloadSkillMarkdown(sourceUrl) {
   let parsed;
   try { parsed = new URL(sourceUrl); } catch { throw new Error('技能地址不是有效 URL'); }
@@ -199,7 +257,15 @@ async function installSkill(projectRoot, input) {
   const rel = path.relative(skillsRoot, targetDir);
   if (rel.startsWith('..') || path.isAbsolute(rel)) throw new Error('技能目录不安全');
   await fs.mkdir(targetDir, { recursive: true });
-  await fs.writeFile(path.join(targetDir, 'SKILL.md'), content, 'utf8');
+  const bundle = await downloadSkillDirectory(sourceUrl, targetDir);
+  if (bundle.installMode === 'single-file') await fs.writeFile(path.join(targetDir, 'SKILL.md'), content, 'utf8');
+  await fs.writeFile(path.join(targetDir, '.taiji-skill.json'), JSON.stringify({
+    schema: 1,
+    installMode: bundle.installMode,
+    sourceUrl: resolvedUrl,
+    files: bundle.files,
+    installedAt: new Date().toISOString(),
+  }, null, 2), 'utf8');
   const installed = (await scanSkills(projectRoot)).find((item) => item._path === path.join(targetDir, 'SKILL.md'));
   return { ok: true, skill: installed ? (({ _path, ...item }) => item)(installed) : { name, source: slug }, resolvedUrl };
 }
