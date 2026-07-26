@@ -161,11 +161,14 @@ function diskScope(scope?: OutputScope): string {
 
 function isRoutineCommand(command: string): boolean {
   const cmd = command.trim().toLowerCase();
-  return /^(?:dir|ls|get-childitem|git\s+(?:status|log|diff|branch)|npm\s+(?:run\s+(?:build|lint|test|check|typecheck)|test|--version)|(?:node|npm|python|py)\s+--version|test-path)\b/.test(cmd);
-}
-
-function isRoutineConnector(name: string): boolean {
-  return /(?:search|read|list|get|query|fetch)/i.test(name);
+  // A delegated command must be one plainly safe command. Shell operators,
+  // interpolation, and redirection can hide a second action, so they always
+  // require an explicit approval even if the first word looks harmless.
+  if (/[;|&`<>]/.test(cmd) || /\$[({]/.test(cmd)) return false;
+  return /^(?:dir|ls|get-childitem|test-path)(?:\s+[-\w.*?\\/.:'"]+)*$/i.test(cmd)
+    || /^git\s+(?:status|log|diff|branch)(?:\s+[-\w.*?\\/.:'"]+)*$/i.test(cmd)
+    || /^npm\s+(?:run\s+(?:build|lint|test|check|typecheck)|test|--version)(?:\s+[-\w.*?\\/.:'"]+)*$/i.test(cmd)
+    || /^(?:node|npm|python|py)\s+--version$/i.test(cmd);
 }
 
 function commandRiskSummary(command: string): string {
@@ -194,7 +197,6 @@ function requestCommandApproval(command: string): { allowed: boolean; policy: Ex
 function requestConnectorApproval(name: string, args: Record<string, string>): boolean {
   const policy = getExecutionPolicy();
   if (policy.approvalMode === 'full') return true;
-  if (policy.approvalMode === 'delegate' && isRoutineConnector(name)) return true;
   const summary = Object.entries(args).slice(0, 3).map(([key, value]) => `${key}: ${String(value).slice(0, 160)}`).join('\n');
   const detail = policy.approvalMode === 'ask'
     ? `助手准备调用连接器：${name}${summary ? `\n${summary}` : ''}`

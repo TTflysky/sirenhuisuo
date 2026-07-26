@@ -1,9 +1,21 @@
 {
   "name": "hermes-office-pro",
   "private": true,
-  "version": "0.8.5",
+  "version": "0.8.6",
   "type": "module",
   "main": "electron/main.cjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "start": "electron .",
+    "status:project": "powershell -ExecutionPolicy Bypass -File scripts/project-status.ps1",
+    "sync:project": "powershell -ExecutionPolicy Bypass -File scripts/sync-project.ps1 -Mode All",
+    "dist:win": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1",
+    "release:win": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1 -Publish",
+    "postinstall": "electron-builder install-app-deps"
+  },
   "dependencies": {
     "@ant-design/icons": "^6.3.2",
     "@ant-design/v5-patch-for-react-19": "^1.0.3",
@@ -13,5 +25,51 @@
     "officeparser": "^7.4.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
+    "oxlint": "^1.71.0",
+    "typescript": "~6.0.2",
+    "vite": "^8.1.1"
+  },
+  "build": {
+    "appId": "com.hermes.office",
+    "productName": "私人办公会所",
+    "electronDist": "node_modules/electron/dist",
+    "artifactName": "${name}-setup-${version}.${ext}",
+    "files": [
+      "dist/**",
+      "electron/**",
+      "public/tray-icon.png",
+      "skills/**"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "私人办公会所"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "TTflysky",
+        "repo": "sirenhuisuo",
+        "releaseType": "release"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": null
+    }
   }
 }
