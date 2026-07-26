@@ -24,6 +24,8 @@ export interface OutputRecord {
   title: string;
   ts: number;
   scope: OutputScope;           // 作用域，过滤用
+  /** 真实磁盘工作区。一个聊天可聚合多个任务工作区的交付物。 */
+  workspaceId?: string;
   teamId?: string;
   taskId?: string;
   content: string;              // 文本内容
@@ -163,7 +165,7 @@ export function loadOutputs(): OutputRecord[] {
         && !output.content?.startsWith('已上传附件 '));
       const latestByPath = new Map<string, OutputRecord>();
       normalized.sort((a, b) => a.ts - b.ts).forEach((output) => {
-        latestByPath.set(`${output.scope}\n${output.filename.replace(/\\/g, '/').toLowerCase()}`, output);
+        latestByPath.set(`${output.scope}\n${output.workspaceId ?? 'legacy'}\n${output.filename.replace(/\\/g, '/').toLowerCase()}`, output);
       });
       const cleaned = [...latestByPath.values()].sort((a, b) => a.ts - b.ts);
       if (cleaned.length !== parsed.length) saveOutputs(cleaned);
@@ -197,8 +199,8 @@ export function addOutput(r: Omit<OutputRecord, 'id' | 'ts'>): OutputRecord {
       : new Blob([rec.content]).size;
   }
   const list = loadOutputs();
-  const key = `${rec.scope}\n${rec.filename.replace(/\\/g, '/').toLowerCase()}`;
-  const existingIndex = list.findIndex((item) => `${item.scope}\n${item.filename.replace(/\\/g, '/').toLowerCase()}` === key);
+  const key = `${rec.scope}\n${rec.workspaceId ?? 'legacy'}\n${rec.filename.replace(/\\/g, '/').toLowerCase()}`;
+  const existingIndex = list.findIndex((item) => `${item.scope}\n${item.workspaceId ?? 'legacy'}\n${item.filename.replace(/\\/g, '/').toLowerCase()}` === key);
   if (existingIndex >= 0) {
     rec.id = list[existingIndex].id;
     list[existingIndex] = rec;

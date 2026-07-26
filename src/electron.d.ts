@@ -67,6 +67,7 @@ declare global {
     fsWriteData: (filePath: string, dataUrl: string) => Promise<FsWriteResult>;
     fsRead: (filePath: string) => Promise<FsReadResult>;
     fsMkdir: (dirPath: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
+    fsInitWorkspace: (workspaceId: string, metadata: { kind: 'assistant' | 'dm' | 'team'; label: string; taskId?: string; workspaceId?: string; createdAt?: string }) => Promise<{ ok: boolean; path?: string; error?: string }>;
     fsList: (dirPath?: string, recursive?: boolean) => Promise<FsListResult>;
     fsExportZip: () => Promise<FsZipResult>;
     openPath: (p: string) => Promise<{ ok: boolean; error?: string }>;

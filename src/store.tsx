@@ -664,7 +664,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       stateRef.current.employees,
       opts ?? {},
       {
-        onMessage(emp, content, mentions, tokens, discussionRound, inReplyToMessageId, stepId) {
+        onMessage(emp, content, mentions, tokens, discussionRound, inReplyToMessageId, stepId, contextUsage) {
           stepCounter += 1;
           const s = client.loadSettings();
           updateProgress(stepCounter, emp.id, emp.name, emp.role, s.model ?? undefined);
@@ -677,6 +677,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             timestamp: Date.now(),
             kind: 'text',
             tokens,
+            contextUsage,
             discussionId: opts?.discussionId,
             discussionRound,
             triggeredBy: opts?.task ? 'task' : 'message',

@@ -34,7 +34,7 @@ export default function AssistantModelSelector() {
       s.assistantModelId = value;
       const entry = s.modelLibrary?.find(m => m.id === value);
       if (entry) {
-        s.assistantModelConfig = { provider: entry.provider, apiHost: entry.apiHost, apiKey: entry.apiKey, model: entry.model };
+        s.assistantModelConfig = { provider: entry.provider, apiHost: entry.apiHost, apiKey: entry.apiKey, model: entry.model, contextWindowTokens: entry.contextWindowTokens };
       }
     }
     saveSettings(s);

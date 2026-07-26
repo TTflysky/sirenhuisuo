@@ -138,6 +138,8 @@ export interface ToolCall {
   name: string;
   args: Record<string, string>;
   scope?: OutputScope;   // 产出物作用域
+  /** 磁盘上的任务工作区；未提供时兼容旧版聊天作用域目录。 */
+  workspaceId?: string;
 }
 
 export interface ToolResult {
@@ -157,6 +159,15 @@ function safePath(p: string): string {
 
 function diskScope(scope?: OutputScope): string {
   return scope ? scope.replace(/[^a-zA-Z0-9_-]/g, '_') : 'global';
+}
+
+function workspacePath(scope?: OutputScope, workspaceId?: string): string {
+  const candidate = workspaceId?.trim();
+  if (!candidate) return diskScope(scope);
+  return candidate.split(/[\\/]+/)
+    .map((part) => part.replace(/[^a-zA-Z0-9_-]/g, '_'))
+    .filter(Boolean)
+    .join('/') || diskScope(scope);
 }
 
 function isRoutineCommand(command: string): boolean {
@@ -219,10 +230,10 @@ const TEXT_PREVIEW_EXTENSIONS = new Set([
 
 type WorkspaceFileVersion = { size: number; modifiedAt: number };
 
-async function workspaceFileVersions(scope: OutputScope, fsApi: any): Promise<Map<string, WorkspaceFileVersion>> {
+async function workspaceFileVersions(scope: OutputScope, fsApi: any, workspaceId?: string): Promise<Map<string, WorkspaceFileVersion>> {
   const versions = new Map<string, WorkspaceFileVersion>();
   if (!fsApi?.fsList) return versions;
-  const listed = await fsApi.fsList(diskScope(scope), true);
+  const listed = await fsApi.fsList(workspacePath(scope, workspaceId), true);
   if (!listed?.ok || !Array.isArray(listed.items)) return versions;
   for (const item of listed.items) {
     if (item.type !== 'file') continue;
@@ -234,9 +245,10 @@ async function workspaceFileVersions(scope: OutputScope, fsApi: any): Promise<Ma
   return versions;
 }
 
-async function syncWorkspaceFiles(scope: OutputScope, fsApi: any, before = new Map<string, WorkspaceFileVersion>()): Promise<number> {
+async function syncWorkspaceFiles(scope: OutputScope, fsApi: any, before = new Map<string, WorkspaceFileVersion>(), workspaceId?: string): Promise<number> {
   if (!fsApi?.fsList) return 0;
-  const listed = await fsApi.fsList(diskScope(scope), true);
+  const physicalWorkspace = workspacePath(scope, workspaceId);
+  const listed = await fsApi.fsList(physicalWorkspace, true);
   if (!listed?.ok || !Array.isArray(listed.items)) return 0;
   let synced = 0;
   for (const item of listed.items) {
@@ -249,7 +261,7 @@ async function syncWorkspaceFiles(scope: OutputScope, fsApi: any, before = new M
     const type = contentTypeFromFilename(filename);
     let content = `文件已保存到工作区。点击“打开”可使用系统默认程序查看。`;
     if (TEXT_PREVIEW_EXTENSIONS.has(ext) && item.size <= 2 * 1024 * 1024 && fsApi.fsRead) {
-      const read = await fsApi.fsRead(`${diskScope(scope)}/${filename}`);
+      const read = await fsApi.fsRead(`${physicalWorkspace}/${filename}`);
       if (read?.ok && typeof read.content === 'string') content = read.content;
     }
     const root = String(listed.path ?? '').replace(/[\\/]+$/, '');
@@ -263,6 +275,7 @@ async function syncWorkspaceFiles(scope: OutputScope, fsApi: any, before = new M
       content,
       bytes: Number(item.size) || undefined,
       diskPath: root ? `${root}/${filename}` : undefined,
+      workspaceId: physicalWorkspace,
     });
     synced += 1;
   }
@@ -271,6 +284,7 @@ async function syncWorkspaceFiles(scope: OutputScope, fsApi: any, before = new M
 
 export async function executeTool(call: ToolCall): Promise<ToolResult> {
   const { name, args, id } = call;
+  const physicalWorkspace = workspacePath(call.scope, call.workspaceId);
   try {
     switch (name) {
       case 'write_file': {
@@ -283,7 +297,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         let diskPath: string | undefined;
         if (fsApi?.fsWrite) {
           try {
-            const r = await fsApi.fsWrite(`${diskScope(call.scope)}/${path}`, content);
+            const r = await fsApi.fsWrite(`${physicalWorkspace}/${path}`, content);
             if (r?.ok) {
               diskPath = r.path;
               diskInfo = `（已写入磁盘工作区：${r.path}，${r.size} 字节）`;
@@ -300,6 +314,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
           kind: 'file',
           title: path.split('/').pop() || path,
           scope: call.scope ?? 'global',
+          workspaceId: physicalWorkspace,
           contentType: ct,
           language: ct === 'code' ? path.split('.').pop() : undefined,
           content,
@@ -320,7 +335,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         const fsApi = getFsApi();
         if (fsApi?.fsRead) {
           try {
-            const r = await fsApi.fsRead(`${diskScope(call.scope)}/${path}`);
+            const r = await fsApi.fsRead(`${physicalWorkspace}/${path}`);
             if (r?.ok) {
               const content = String(r.content ?? '');
               const section = content.slice(offset, offset + limit);
@@ -333,7 +348,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         }
         // 回退到应用内产出物
         const outputs = loadOutputs();
-        const scopedOutputs = call.scope ? outputs.filter((output: OutputRecord) => output.scope === call.scope) : outputs;
+        const scopedOutputs = call.scope ? outputs.filter((output: OutputRecord) => output.scope === call.scope && (!call.workspaceId || output.workspaceId === physicalWorkspace)) : outputs;
         const found = scopedOutputs.find((o: OutputRecord) => o.filename === path);
         if (!found) {
           const fuzzy = scopedOutputs.filter((o: OutputRecord) => o.filename.includes(path));
@@ -356,7 +371,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         let source = '工作区';
         if (fsApi?.fsList) {
           try {
-            const r = await fsApi.fsList(diskScope(call.scope), true);
+            const r = await fsApi.fsList(physicalWorkspace, true);
             if (r?.ok && r.items?.length) {
               lines = r.items
                 .filter((it: any) => !filter || it.name.toLowerCase().includes(filter))
@@ -365,7 +380,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
           } catch {}
         }
         // 应用内产出物补充
-        const outputs = (loadOutputs() as OutputRecord[]).filter((output) => !call.scope || output.scope === call.scope);
+        const outputs = (loadOutputs() as OutputRecord[]).filter((output) => !call.scope || (output.scope === call.scope && (!call.workspaceId || output.workspaceId === physicalWorkspace)));
         const outFiles = outputs
           .filter((o) => !filter || o.filename.toLowerCase().includes(filter))
           .map((o) => `- ${o.filename} (产出物 · ${(o.content.length / 1000).toFixed(1)}KB)`);
@@ -446,10 +461,10 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         }
 
         try {
-          const beforeFiles = await workspaceFileVersions(call.scope ?? 'global', api);
-          const result = await api.execCommand(cmd, diskScope(call.scope), { sandboxEnabled: approval.policy.sandboxEnabled });
+          const beforeFiles = await workspaceFileVersions(call.scope ?? 'global', api, physicalWorkspace);
+          const result = await api.execCommand(cmd, physicalWorkspace, { sandboxEnabled: approval.policy.sandboxEnabled });
           const { success, exitCode, stdout, stderr, signal: sig, cwd } = result as any;
-          const syncedFiles = await syncWorkspaceFiles(call.scope ?? 'global', api, beforeFiles);
+          const syncedFiles = await syncWorkspaceFiles(call.scope ?? 'global', api, beforeFiles, physicalWorkspace);
 
           const out = [
             `状态：${success ? '成功 ✅' : `失败 ❌（退出码 ${exitCode}）`}${sig ? ` (${sig})` : ''}`,

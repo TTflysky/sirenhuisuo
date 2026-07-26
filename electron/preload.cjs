@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fsWriteData: (filePath, dataUrl) => ipcRenderer.invoke('fs:writeData', { filePath, dataUrl }),
   fsRead: (filePath) => ipcRenderer.invoke('fs:read', { filePath }),
   fsMkdir: (dirPath) => ipcRenderer.invoke('fs:mkdir', { dirPath }),
+  fsInitWorkspace: (workspaceId, metadata) => ipcRenderer.invoke('fs:initWorkspace', { workspaceId, metadata }),
   fsList: (dirPath, recursive) => ipcRenderer.invoke('fs:list', { dirPath, recursive }),
   fsExportZip: () => ipcRenderer.invoke('fs:exportZip'),
 

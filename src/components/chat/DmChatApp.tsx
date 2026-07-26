@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { ReloadOutlined, SettingOutlined, CloseOutlined } from '@ant-design/icons';
 import type { ChatMessage, ThoughtChainStep } from '../../types';
 import { useStore } from '../../store';
-import { loadDm, appendDm, runAgentLoop, resolveApiBase, extractUserInsights, getEmployeeModel, loadSettings, type ChatTurn, type Attachment } from '../../data/hermesClient';
+import { loadDm, appendDm, runAgentLoop, resolveApiBase, extractUserInsights, getEmployeeModel, loadSettings, type ChatTurn, type Attachment, type ContextUsage } from '../../data/hermesClient';
 import AgentAvatar from '../office/AgentAvatar';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
 import ChatMessageText from './ChatMessageText';
@@ -201,8 +201,8 @@ export default function DmChatApp({ empId }: Props) {
     setTyping(true);
     dispatch({ type: 'UPDATE_EMPLOYEE', id: empId, partial: { isWorking: true } });
     try {
-      const { text: reply, usage, thoughtChain } = await generateReply(job.userText, job.attachments, job.skillContext, job.history);
-      push({ id: `dm-${Date.now()}-${empId}`, authorId: empId, roleId: emp.role, content: reply, mentions: [], timestamp: Date.now(), kind: 'text', tokens: usage, thoughtChain });
+      const { text: reply, usage, contextUsage, thoughtChain } = await generateReply(job.userText, job.attachments, job.skillContext, job.history);
+      push({ id: `dm-${Date.now()}-${empId}`, authorId: empId, roleId: emp.role, content: reply, mentions: [], timestamp: Date.now(), kind: 'text', tokens: usage, contextUsage, thoughtChain });
       setRetryJob(null);
       saveRetryJob(empId, null);
     } catch (error) {
@@ -238,7 +238,7 @@ export default function DmChatApp({ empId }: Props) {
   };
 
   // 优先真调 OpenAI 兼容模型（带员工提示词），失败/未配置则回落本地剧本
-  const generateReply = async (userText: string, atts: Attachment[] = [], skillContext = '', historyOverride?: ChatTurn[]): Promise<{ text: string; usage?: number; thoughtChain?: ThoughtChainStep[] }> => {
+  const generateReply = async (userText: string, atts: Attachment[] = [], skillContext = '', historyOverride?: ChatTurn[]): Promise<{ text: string; usage?: number; contextUsage?: ContextUsage; thoughtChain?: ThoughtChainStep[] }> => {
     // 文本类附件：直接拼进用户文本作为上下文
     let enriched = userText;
     const textAtts = atts.filter((a) => a.kind === 'text' && a.dataUrl);
@@ -277,7 +277,7 @@ export default function DmChatApp({ empId }: Props) {
         thoughtChain.push({ toolName: name, args: args ?? '', result: result.slice(0, 2000), success: isToolResultSuccessful(result, success), timestamp: Date.now() });
       },
     });
-    return { text: r.content ?? '（无回复）', usage: r.usage.totalTokens, thoughtChain: thoughtChain.length ? thoughtChain : undefined };
+    return { text: r.content ?? '（无回复）', usage: r.usage.totalTokens, contextUsage: r.contextUsage, thoughtChain: thoughtChain.length ? thoughtChain : undefined };
   };
 
   const openOutputFromMessage = (output: OutputRecord) => {
@@ -403,7 +403,7 @@ export default function DmChatApp({ empId }: Props) {
               <ExecutionPolicyControl />
               <button className={`btn btn-sm ${showRetrySettings ? 'btn-primary' : ''}`} onClick={() => setShowRetrySettings((value) => !value)} title="模型重试设置"><SettingOutlined />重试</button>
               <div style={{ flex: 1 }} />
-              <ModelSelector />
+              <ModelSelector scene="dm" employeeId={empId} modelConfig={getEmployeeModel(emp)} messages={msgs} />
             </div>
             {/* 附件预览 */}
             {attachments.length > 0 && (

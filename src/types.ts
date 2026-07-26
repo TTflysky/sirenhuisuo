@@ -8,6 +8,8 @@ export interface ModelConfig {
   apiHost?: string;      // 完整 base_url
   apiKey?: string;       // API Key
   model?: string;        // 模型名
+  /** 模型官方标称的最大上下文长度；未填写时必须明确显示为未知。 */
+  contextWindowTokens?: number;
   refModelId?: string;   // 引用模型库中的模型 ID（优先，不为空时忽略上面字段）
 }
 
@@ -127,6 +129,8 @@ export interface ChatMessage {
   kind?: 'text' | 'task' | 'execution';
   taskRef?: string;
   tokens?: number;     // 本条 AI 回复消耗的 token 数（仅模型回复有）
+  /** 最近一次实际模型请求的输入上下文；用于显示模型容量，不会伪造上限。 */
+  contextUsage?: import('./data/hermesClient').ContextUsage;
   attachments?: import('./data/hermesClient').Attachment[]; // 用户上传/粘贴的附件
   skillRefs?: SkillReference[];
   thoughtChain?: ThoughtChainStep[]; // 思维链步骤（AI 推理过程记录）
@@ -213,6 +217,8 @@ export interface TaskRunStep {
 export interface TaskRun {
   id: string;
   teamId: string;
+  /** 任务专属真实工作区，相同任务的恢复执行会继续使用此目录。 */
+  workspaceId?: string;
   projectId?: string;
   title: string;
   request: string;

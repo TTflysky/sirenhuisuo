@@ -7,7 +7,7 @@ export function loadTaskRuns(): TaskRun[] {
   try {
     const raw = localStorage.getItem(LS_TASK_RUNS);
     const runs = raw ? JSON.parse(raw) as TaskRun[] : [];
-    return runs.map((run) => ({ ...run, phase: run.phase ?? (run.status === 'completed' ? 'completed' : run.status === 'failed' ? 'blocked' : run.status === 'running' ? 'executing' : 'preflight'), goal: run.goal ?? run.request, acceptanceCriteria: run.acceptanceCriteria ?? ['完成用户目标', '产出可观察结果', '完成必要验证'], preflight: run.preflight ?? [{ label: '确认任务目标', status: 'passed' }, { label: '检查成员与模型', status: 'pending' }, { label: '确认验收方式', status: 'pending' }], evidence: run.evidence ?? [], revisionCount: run.revisionCount ?? 0, maxRevisions: run.maxRevisions ?? 2, steps: (run.steps ?? []).map((step, index) => ({ ...step, evidence: step.evidence ?? [], order: step.order ?? index + 1, kind: step.kind ?? 'work', assignment: step.assignment ?? step.title, dependsOnStepIds: step.dependsOnStepIds ?? [] })), memberSnapshot: run.memberSnapshot ?? [] }));
+    return runs.map((run) => ({ ...run, workspaceId: run.workspaceId ?? `legacy/team_${run.teamId}`, phase: run.phase ?? (run.status === 'completed' ? 'completed' : run.status === 'failed' ? 'blocked' : run.status === 'running' ? 'executing' : 'preflight'), goal: run.goal ?? run.request, acceptanceCriteria: run.acceptanceCriteria ?? ['完成用户目标', '产出可观察结果', '完成必要验证'], preflight: run.preflight ?? [{ label: '确认任务目标', status: 'passed' }, { label: '检查成员与模型', status: 'pending' }, { label: '确认验收方式', status: 'pending' }], evidence: run.evidence ?? [], revisionCount: run.revisionCount ?? 0, maxRevisions: run.maxRevisions ?? 2, steps: (run.steps ?? []).map((step, index) => ({ ...step, evidence: step.evidence ?? [], order: step.order ?? index + 1, kind: step.kind ?? 'work', assignment: step.assignment ?? step.title, dependsOnStepIds: step.dependsOnStepIds ?? [] })), memberSnapshot: run.memberSnapshot ?? [] }));
   } catch {
     return [];
   }
@@ -17,8 +17,9 @@ export function saveTaskRuns(runs: TaskRun[]): void {
   try { localStorage.setItem(LS_TASK_RUNS, JSON.stringify(runs.slice(-MAX_RUNS))); } catch {}
 }
 
-export function createTaskRun(team: Team, employees: Employee[], request: string, plan: TaskPlanStep[], sourceMessageId?: string, skillRefs?: SkillReference[]): TaskRun {
+export function createTaskRun(team: Team, employees: Employee[], request: string, plan: TaskPlanStep[], sourceMessageId?: string, skillRefs?: SkillReference[], workspaceId?: string): TaskRun {
   const now = Date.now();
+  const id = `run-${now}-${Math.random().toString(36).slice(2, 7)}`;
   const teamMembers = team.memberIds
     .map((id) => employees.find((employee) => employee.id === id))
     .filter((employee): employee is Employee => !!employee);
@@ -34,8 +35,9 @@ export function createTaskRun(team: Team, employees: Employee[], request: string
     events: [{ ts: now, type: 'status', detail: '等待执行' }],
   }));
   return {
-    id: `run-${now}-${Math.random().toString(36).slice(2, 7)}`,
+    id,
     teamId: team.id,
+    workspaceId: workspaceId ?? `tasks/team/${team.id}/run-${id}`,
     title: request.slice(0, 48) || '团队任务',
     request,
     goal: request,

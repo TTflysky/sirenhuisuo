@@ -61,6 +61,7 @@ export interface AppSettings {
   apiHost?: string;   // 完整 base_url（向后兼容）
   apiKey?: string;    // Bearer token（向后兼容）
   model?: string;     // 模型名（向后兼容）
+  contextWindowTokens?: number; // 旧版全局模型的上下文上限（模型库优先）
   autoDiscuss?: boolean; // 是否在发消息/任务后自动触发团队 AI 讨论（默认 false=手动）
   autoDiscussMode?: 'off' | 'smart' | 'always';
   autoDiscussMinScore?: number;
@@ -163,10 +164,10 @@ export function getActiveModel(): ModelConfig {
   const s = loadSettings();
   if (s.modelLibrary && s.modelLibrary.length > 0) {
     const active = s.modelLibrary.find(m => m.id === s.activeModelId) ?? s.modelLibrary[0];
-    return { provider: active.provider, apiHost: active.apiHost, apiKey: active.apiKey, model: active.model };
+    return { provider: active.provider, apiHost: active.apiHost, apiKey: active.apiKey, model: active.model, contextWindowTokens: active.contextWindowTokens };
   }
   // 向后兼容：旧版直接用 provider/apiHost/apiKey/model 字段
-  return { provider: s.provider, apiHost: s.apiHost, apiKey: s.apiKey, model: s.model };
+  return { provider: s.provider, apiHost: s.apiHost, apiKey: s.apiKey, model: s.model, contextWindowTokens: s.contextWindowTokens };
 }
 
 /** 获取助理机器人模型配置（优先从 modelLibrary 查找，回退到 assistantModelConfig，再回退到全局） */
@@ -174,7 +175,7 @@ export function getAssistantModel(): ModelConfig {
   const s = loadSettings();
   if (s.modelLibrary && s.modelLibrary.length > 0 && s.assistantModelId) {
     const am = s.modelLibrary.find(m => m.id === s.assistantModelId);
-    if (am) return { provider: am.provider, apiHost: am.apiHost, apiKey: am.apiKey, model: am.model };
+    if (am) return { provider: am.provider, apiHost: am.apiHost, apiKey: am.apiKey, model: am.model, contextWindowTokens: am.contextWindowTokens };
   }
   // 助理手动配置优先于全局激活模型
   if (s.assistantModelConfig) return s.assistantModelConfig;
@@ -203,6 +204,7 @@ export function getEmployeeModel(employee: Employee): ModelConfig {
         apiHost: referenced.apiHost ?? active.apiHost,
         apiKey: referenced.apiKey ?? active.apiKey,
         model: referenced.model ?? active.model,
+        contextWindowTokens: referenced.contextWindowTokens ?? active.contextWindowTokens,
         refModelId: custom.refModelId,
       };
     }
@@ -213,6 +215,7 @@ export function getEmployeeModel(employee: Employee): ModelConfig {
     apiHost: custom.apiHost ?? active.apiHost,
     apiKey: custom.apiKey ?? active.apiKey,
     model: custom.model ?? active.model,
+    contextWindowTokens: custom.contextWindowTokens ?? active.contextWindowTokens,
   };
 }
 
@@ -640,6 +643,7 @@ export function resolveChatSettings(empConfig?: ModelConfig): AppSettings {
         apiHost: ref.apiHost ?? global.apiHost,
         apiKey: ref.apiKey ?? global.apiKey,
         model: ref.model ?? global.model,
+        contextWindowTokens: ref.contextWindowTokens,
         autoDiscuss: global.autoDiscuss,
       };
     }
@@ -653,6 +657,7 @@ export function resolveChatSettings(empConfig?: ModelConfig): AppSettings {
         apiHost: assistantMc.apiHost ?? global.apiHost,
         apiKey: assistantMc.apiKey ?? global.apiKey,
         model: assistantMc.model ?? global.model,
+        contextWindowTokens: assistantMc.contextWindowTokens,
         autoDiscuss: global.autoDiscuss,
       };
     }
@@ -664,6 +669,7 @@ export function resolveChatSettings(empConfig?: ModelConfig): AppSettings {
     apiHost: empConfig.apiHost ?? assistantMc.apiHost ?? activeMc.apiHost ?? global.apiHost,
     apiKey: empConfig.apiKey ?? assistantMc.apiKey ?? activeMc.apiKey ?? global.apiKey,
     model: empConfig.model ?? assistantMc.model ?? activeMc.model ?? global.model,
+    contextWindowTokens: empConfig.contextWindowTokens ?? assistantMc.contextWindowTokens ?? activeMc.contextWindowTokens,
     autoDiscuss: global.autoDiscuss,
   };
 }
@@ -783,6 +789,14 @@ export interface TokenUsage {
   completionTokens: number;
   totalTokens: number;
 }
+export interface ContextUsage {
+  /** 本次真正送到模型的输入 token 数。 */
+  promptTokens: number;
+  /** 用户在模型库填写的官方上下文长度；没有可靠来源时不填。 */
+  contextWindowTokens?: number;
+  /** 服务端提供的真实用量，或客户端基于发送内容的估算。 */
+  source: 'api' | 'estimate';
+}
 export interface ToolCallResult {
   id: string;
   name: string;
@@ -791,6 +805,7 @@ export interface ToolCallResult {
 export interface ChatResult {
   content: string | null;        // null = 模型返回了 tool_calls 无文本
   usage: TokenUsage;
+  contextUsage: ContextUsage;
   model: string;
   toolCalls?: ToolCallResult[];  // function-calling 返回的工具调用
 }
@@ -905,12 +920,19 @@ export async function chatCompletion(
   const msg = data?.choices?.[0]?.message ?? {};
   const content: string | null = typeof msg.content === 'string' && msg.content.trim() ? msg.content.trim() : null;
   const u = data?.usage ?? {};
+  const apiPromptTokens = Number.isFinite(Number(u.prompt_tokens)) ? Number(u.prompt_tokens) : undefined;
   const usage: TokenUsage = {
-    promptTokens: u.prompt_tokens ?? estimateTokens(turns.map((t) => t.content).join('')),
+    promptTokens: apiPromptTokens ?? estimateTokens(finalTurns.map((t) => typeof t.content === 'string' ? t.content : t.content.map((part) => part.type === 'text' ? part.text ?? '' : '[图片]').join('\n')).join('')),
     completionTokens: u.completion_tokens ?? (content ? estimateTokens(content) : 50),
     totalTokens: u.total_tokens ?? 0,
   };
   if (!usage.totalTokens) usage.totalTokens = usage.promptTokens + usage.completionTokens;
+  const contextWindowTokens = Number(merged.contextWindowTokens);
+  const contextUsage: ContextUsage = {
+    promptTokens: usage.promptTokens,
+    contextWindowTokens: Number.isFinite(contextWindowTokens) && contextWindowTokens > 0 ? Math.round(contextWindowTokens) : undefined,
+    source: apiPromptTokens === undefined ? 'estimate' : 'api',
+  };
   // 记账（简化：单行 append 以避免匹配问题）
   appendTokenLog({ ts: Date.now(), model, promptTokens: usage.promptTokens, completionTokens: usage.completionTokens, totalTokens: usage.totalTokens, scene, label });
   let toolCalls: ToolCallResult[] | undefined;
@@ -922,7 +944,7 @@ export async function chatCompletion(
     }));
   }
   if (!content && !toolCalls) throw new Error('模型返回为空');
-  return { content, usage, model, toolCalls };
+  return { content, usage, contextUsage, model, toolCalls };
 }
 
 // 粗略估算 token（中文≈1.5字/token，英文≈4字符/token）
@@ -932,6 +954,19 @@ function estimateTokens(text: string): number {
     n += /[一-鿿]/.test(ch) ? 0.67 : 0.25;
   }
   return Math.max(1, Math.round(n));
+}
+
+/** A successful transport response is not always useful progress for the task. */
+function isUsefulToolOutcome(name: string, success: boolean, output: string): boolean {
+  if (!success || !isToolResultSuccessful(output, success)) return false;
+  if (name === 'search_skills') return !/没有找到.{0,80}(?:技能|匹配)|技能库为空/u.test(output);
+  if (name === 'web_search') return !/未找到直接结果|API 暂时不可用|搜索 API/u.test(output);
+  return true;
+}
+
+function skillRecoveryQuery(userText: string): string {
+  const cleaned = userText.replace(/\s+/g, ' ').trim().slice(0, 180);
+  return cleaned || 'AI agent 通用任务执行';
 }
 
 // ===== Agent 循环：调模型 + 执行工具，直到产出最终回复 =====
@@ -945,6 +980,8 @@ export interface AgentLoopOpts {
   modelConfig?: ModelConfig;  // 可选员工独立模型配置
   extraSystemContext?: string; // 额外的系统上下文（如 soul.md）
   scope?: OutputScope;        // 产出物作用域
+  /** 任务专属磁盘工作区；展示仍按 scope 聚合。 */
+  workspaceId?: string;
   attachments?: Attachment[];  // 用户上传/粘贴的图片附件（多模态视觉）
   shouldStop?: () => boolean;  // 自主执行中断信号（如用户点「停止」）
   consumeSteeringMessages?: () => string[]; // 运行中追加的老板指令
@@ -964,12 +1001,12 @@ function getUserActionForFailure(raw: string): string {
     return '先确认电脑能正常访问对应网站或服务，然后回复“继续”，我会重新连接并验证。';
   }
   if (/ENOENT|not found|not recognized|找不到|不存在/iu.test(raw)) {
-    return '需要的程序或文件没有找到。请回复“继续”，我会保留现有成果并改用另一种安装或查找方式。';
+    return '需要的程序、文件或技能来源没有找到。请提供正确的文件位置或官方下载地址；已有成果会保留。';
   }
-  return '请回复“继续”，我会保留已经完成的内容并换一条不同路线；需要核对细节时，可展开下方最后一条失败记录。';
+  return '请展开最后一条“执行过程”查看通俗原因；如果需要你提供账号、授权、文件或选择，助手会明确说明具体缺少哪一项。';
 }
 
-export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: string; usage: TokenUsage; model: string }> {
+export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: string; usage: TokenUsage; contextUsage?: ContextUsage; model: string }> {
   const { turns, tools, scene, label, onToolCall, onToolResult, modelConfig, extraSystemContext, scope, attachments, shouldStop, consumeSteeringMessages } = opts;
   let currentTurns = [...turns];
   const originalUserContent = [...turns].reverse().find((turn) => turn.role === 'user')?.content;
@@ -1001,14 +1038,16 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   let totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   let finalContent: string | null = null;
   let finalModel = '';
-  const iterationsPerPhase = 8;
-  const maxIter = 128;
-  const maxToolCallsPerPhase = 24;
-  const maxAutonomousToolPhases = 5;
+  let latestContextUsage: ContextUsage | undefined;
+  const iterationsPerPhase = 10;
+  const maxIter = 240;
+  const maxToolCallsPerPhase = 20;
+  const maxAutonomousToolPhases = 8;
   const callLog: Array<{ name: string; args: string; result: string; success: boolean }> = [];
   const toolResultCache = new Map<string, { output: string; success: boolean }>();
   const failedSkillReads = new Set<string>();
   const successfulCalls = new Set<string>();
+  const automaticSkillRecoveries = new Set<string>();
   let stopped = false;
   let finalReviewRequested = false;
   let consecutiveFailures = 0;
@@ -1019,6 +1058,49 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   let toolCallsThisPhase = 0;
   let completedToolPhases = 0;
   let phaseToolBudgetReached = false;
+
+  const runSkillRecovery = async (reason: 'stale-read' | 'no-local-match', failedResult: string) => {
+    const recoveryKey = `${reason}:${failedResult.slice(0, 180)}`;
+    if (automaticSkillRecoveries.size >= 2 || automaticSkillRecoveries.has(recoveryKey)) return;
+    automaticSkillRecoveries.add(recoveryKey);
+
+    const { executeTool } = await import('../engine/tools');
+    const evidence: string[] = [];
+    const runRecoveryTool = async (name: 'search_skills' | 'web_search', args: Record<string, string>) => {
+      if (toolCallsThisPhase >= maxToolCallsPerPhase) return undefined;
+      const argumentsText = JSON.stringify(args);
+      onToolCall?.(name, argumentsText);
+      const recovered = await executeTool({
+        id: `skill-recovery-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        name,
+        args,
+        scope,
+        workspaceId: opts.workspaceId,
+      });
+      const useful = isUsefulToolOutcome(name, recovered.success, recovered.output);
+      if (useful) successfulCalls.add(`${name}:${argumentsText}`);
+      else consecutiveFailures += 1;
+      onToolResult?.(name, argumentsText, recovered.output, useful);
+      callLog.push({ name, args: argumentsText, result: recovered.output.slice(0, 1200), success: useful });
+      toolCallsThisPhase += 1;
+      if (toolCallsThisPhase >= maxToolCallsPerPhase) phaseToolBudgetReached = true;
+      evidence.push(`${getToolStage(name)}：${recovered.output.slice(0, 1600)}`);
+      return useful;
+    };
+
+    const query = skillRecoveryQuery(originalUserText);
+    let foundLocal = false;
+    if (reason === 'stale-read') {
+      foundLocal = Boolean(await runRecoveryTool('search_skills', { query }));
+    }
+    if (!foundLocal) {
+      await runRecoveryTool('web_search', { query: `${query} AI Agent Skill 官方文档 替代方案` });
+    }
+    currentTurns.push({
+      role: 'system',
+      content: `## 已自动完成 Skill 恢复\n本次问题：${reason === 'stale-read' ? '原 Skill 已失效或索引过期' : '本机没有匹配的 Skill'}。\n恢复结果：\n${evidence.join('\n\n') || '恢复工具未能在当前阶段运行。'}\n\nSkill 不是完成目标的前提。不要再读取失败的 Skill，也不要要求用户点击“继续”。现在根据以上资料直接用通用工具完成用户原始目标；只有确实需要用户提供账号、授权、文件或业务选择时才提问。`,
+    });
+  };
 
   for (let iter = 0; iter < maxIter; iter++) {
     if (shouldStop?.()) { stopped = true; break; } // 用户停止：本轮前中止
@@ -1031,7 +1113,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         return `${index + 1}. ${getToolStage(call.name)}：${state}`;
       });
       const summary = summaryRows.length > 0 ? summaryRows.join('\n') : '这一阶段没有产生有效操作。';
-      if (stalledPhases >= 2 || completedToolPhases >= maxAutonomousToolPhases - 1) {
+      if (stalledPhases >= 3 || completedToolPhases >= maxAutonomousToolPhases - 1) {
         executionBudgetReached = true;
         break;
       }
@@ -1057,7 +1139,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         return `${index + 1}. ${getToolStage(call.name)}：${state}`;
       });
       const summary = summaryRows.length > 0 ? summaryRows.join('\n') : '这一阶段没有产生有效操作。';
-      if (stalledPhases >= 2) {
+      if (stalledPhases >= 3) {
         executionBudgetReached = true;
         break;
       }
@@ -1078,6 +1160,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     totalUsage.promptTokens += r.usage.promptTokens;
     totalUsage.completionTokens += r.usage.completionTokens;
     totalUsage.totalTokens += r.usage.totalTokens;
+    latestContextUsage = r.contextUsage;
     if (!finalModel) finalModel = r.model;
 
     // HTTP 请求无法在生成中途改写，但返回后必须先吸收最新指令，
@@ -1105,8 +1188,8 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
           ? { toolCallId: tc.id, name: tc.name, success: false, output: '这个 Skill ID 已经读取失败，已阻止重复尝试。下一步必须改用 search_skills 换关键词检索；没有可用候选时直接使用 web_search 搜索替代方案或官方资料。' }
           : cached !== undefined
           ? { toolCallId: tc.id, name: tc.name, success: cached.success, output: `相同工具调用已执行过，复用结果：\n${cached.output}` }
-          : await executeTool({ id: tc.id, name: tc.name, args: (() => { try { return JSON.parse(tc.arguments); } catch { return {}; } })(), scope });
-        const resultSuccess = result.success && isToolResultSuccessful(result.output, result.success);
+          : await executeTool({ id: tc.id, name: tc.name, args: (() => { try { return JSON.parse(tc.arguments); } catch { return {}; } })(), scope, workspaceId: opts.workspaceId });
+        const resultSuccess = isUsefulToolOutcome(tc.name, result.success, result.output);
         if (tc.name === 'read_skill' && !resultSuccess) failedSkillReads.add(tc.arguments);
         if (resultSuccess) successfulCalls.add(cacheKey);
         if (resultSuccess) {
@@ -1124,8 +1207,8 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         const truncated = result.output.slice(0, 1500);
         currentTurns.push({ role: 'assistant', content: null, tool_calls: [{ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments } }] } as any);
         currentTurns.push({ role: 'tool', content: truncated, tool_call_id: tc.id } as any);
-        if (tc.name === 'read_skill' && !resultSuccess) {
-          currentTurns.push({ role: 'system', content: '刚才的 Skill 无法读取。禁止再次调用相同 read_skill；现在先调用 search_skills 使用不同关键词找候选，仍没有候选时必须调用 web_search 搜索替代 Skill、官方文档或通用执行方案。除非 web_search 无法联网，否则不要询问用户是否继续。' });
+        if ((tc.name === 'read_skill' || tc.name === 'search_skills') && !resultSuccess) {
+          await runSkillRecovery(tc.name === 'read_skill' ? 'stale-read' : 'no-local-match', result.output);
         }
         if (shouldStop?.()) { stopped = true; break; } // 用户停止：工具执行后中止
       }
@@ -1164,11 +1247,12 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       const handoff = await chatCompletion([
         { role: 'system', content: `${BEGINNER_RESPONSE_GUIDE}\n\n你现在只负责根据真实执行证据写最终交接，不得调用工具，不得虚构成功。` },
         { role: 'system', content: '内部工具预算、上下文压缩或阶段次数不是用户需要解决的问题。除非确实缺少账号、授权、验证码、文件或业务选择，否则不得要求用户回复“继续”；要明确说明系统已经自动尝试的替代路径。' },
-        { role: 'user', content: `用户最初目标：\n${originalUserText.slice(0, 4000)}\n\n已成功的阶段：\n${successfulStages.length ? successfulStages.join('、') : '暂时没有可确认的完成项'}\n\n最近失败证据：\n${failureEvidence || '没有明确失败，但执行预算已经用完。'}\n\n是否达到执行预算：${executionBudgetReached ? '是' : '否'}\n\n请用通俗中文交接，必须包含：\n1. 第一行明确整个目标成功还是没有成功；\n2. 已经完成并保留了什么；\n3. 最后卡在哪一类事情和通俗原因；\n4. 用户现在唯一最省事的下一步，明确点哪里、提供什么或回复什么。\n如果不需要用户提供账号、授权、文件或选择，就直说用户不需要改设置，并说明回复“继续”后你会换哪类路线。不要只说“重新验收”“请重试”或“查看执行过程”。` },
+        { role: 'user', content: `用户最初目标：\n${originalUserText.slice(0, 4000)}\n\n已成功的阶段：\n${successfulStages.length ? successfulStages.join('、') : '暂时没有可确认的完成项'}\n\n最近失败证据：\n${failureEvidence || '没有明确失败，但执行预算已经用完。'}\n\n是否达到执行预算：${executionBudgetReached ? '是' : '否'}\n\n请用通俗中文交接，必须包含：\n1. 第一行明确整个目标成功还是没有成功；\n2. 已经完成并保留了什么；\n3. 最后卡在哪一类事情和通俗原因；\n4. 用户现在唯一最省事的下一步，明确点哪里、提供什么或回复什么。\n如果不需要用户提供账号、授权、文件或选择，就直说用户不需要改设置；禁止把“回复继续”当成推进任务的条件。不要只说“重新验收”“请重试”或“查看执行过程”。` },
       ], scene, `${label} · 失败交接`, undefined, modelConfig, extraSystemContext);
       totalUsage.promptTokens += handoff.usage.promptTokens;
       totalUsage.completionTokens += handoff.usage.completionTokens;
       totalUsage.totalTokens += handoff.usage.totalTokens;
+      latestContextUsage = handoff.contextUsage;
       if (!finalModel) finalModel = handoff.model;
       if (handoff.content) finalContent = handoff.content;
     } catch {
@@ -1211,7 +1295,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   if (isInstallationTask) {
     finalContent = guardInstallationSummary(finalContent, originalUserText, callLog.map((call) => call.result).join('\n'));
   }
-  return { content: finalContent, usage: totalUsage, model: finalModel };
+  return { content: finalContent, usage: totalUsage, contextUsage: latestContextUsage, model: finalModel };
 }
 
 // ===== 初始加载 =====

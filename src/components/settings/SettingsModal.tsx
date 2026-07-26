@@ -201,6 +201,7 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
   const [editHost, setEditHost] = useState('');
   const [editApiKey, setEditApiKey] = useState('');
   const [editModel, setEditModel] = useState('');
+  const [editContextWindow, setEditContextWindow] = useState('');
 
   const library = settings.modelLibrary ?? [];
   const activeId = settings.activeModelId;
@@ -214,6 +215,7 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
     setEditHost(preset.baseUrl);
     setEditModel(preset.defaultModel);
     setEditApiKey('');
+    setEditContextWindow('');
     setAvailableModels([]);
   };
 
@@ -224,6 +226,7 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
     setEditHost(entry.apiHost ?? '');
     setEditApiKey(entry.apiKey ?? '');
     setEditModel(entry.model ?? '');
+    setEditContextWindow(entry.contextWindowTokens ? String(entry.contextWindowTokens) : '');
     setAvailableModels(entry.model ? [entry.model] : []);
   };
 
@@ -257,11 +260,13 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
       message.warning('请填写 API 地址');
       return;
     }
+    const contextWindowTokens = Math.round(Number(editContextWindow));
     const config: ModelConfig = {
       provider: editProvider,
       apiHost: editHost.trim(),
       apiKey: editApiKey.trim() || undefined,
       model: editModel.trim() || undefined,
+      contextWindowTokens: Number.isFinite(contextWindowTokens) && contextWindowTokens > 0 ? contextWindowTokens : undefined,
     };
 
     const s = loadSettings();
@@ -317,6 +322,7 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
       s.apiHost = entry.apiHost;
       s.apiKey = entry.apiKey;
       s.model = entry.model;
+      s.contextWindowTokens = entry.contextWindowTokens;
     }
     saveSettings(s);
     setSettings({ ...s });
@@ -330,7 +336,7 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
     // 同步旧字段
     const entry = s.modelLibrary?.find(m => m.id === id);
     if (entry) {
-      s.assistantModelConfig = { provider: entry.provider, apiHost: entry.apiHost, apiKey: entry.apiKey, model: entry.model };
+      s.assistantModelConfig = { provider: entry.provider, apiHost: entry.apiHost, apiKey: entry.apiKey, model: entry.model, contextWindowTokens: entry.contextWindowTokens };
     }
     saveSettings(s);
     setSettings({ ...s });
@@ -407,6 +413,9 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
               <div style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {entry.model ?? '未设置模型名'} · {getProvider(entry.provider).label}
               </div>
+              <div style={{ fontSize: 10, marginTop: 3, color: entry.contextWindowTokens ? 'var(--text-secondary)' : 'var(--text-muted)' }}>
+                {entry.contextWindowTokens ? `上下文上限 ${entry.contextWindowTokens.toLocaleString()} tokens` : '上下文上限未设置'}
+              </div>
               {entry.lastTestMessage && (
                 <div style={{ fontSize: 10, marginTop: 3, color: entry.tested === 'ok' ? 'var(--online)' : 'var(--danger)', whiteSpace: 'normal', wordBreak: 'break-word' }}>
                   {entry.lastTestMessage}
@@ -468,6 +477,19 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
               style={{ width: '100%' }}
             />
           </Space.Compact>
+          <Input
+            type="number"
+            min={1}
+            step={1024}
+            value={editContextWindow}
+            onChange={(e) => setEditContextWindow(e.target.value)}
+            placeholder="上下文上限（tokens，例如 32768；接口未提供时请查模型官方说明后填写）"
+            suffix="tokens"
+            style={{ marginBottom: 4 }}
+          />
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 8, lineHeight: 1.45 }}>
+            未填写时，聊天窗口会如实显示“未获知上限”；不会根据模型名称猜测容量。
+          </div>
           <div style={{ marginBottom: 8 }}>
             <Select
               value={editProvider}

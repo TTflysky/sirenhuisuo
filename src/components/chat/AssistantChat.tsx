@@ -252,6 +252,7 @@ export default function AssistantChat() {
         id: `h-${ts}-ai`, authorId: 'assistant', roleId: 'custom',
         content: simplifyLegacyAssistantContent(r.content), mentions: [], timestamp: ts, kind: 'text',
         tokens: r.usage.totalTokens,
+        contextUsage: r.contextUsage,
         thoughtChain: showCoT && cotSteps.length > 0 ? cotSteps : undefined,
       });
 
@@ -455,7 +456,7 @@ export default function AssistantChat() {
             )}
             <SkillMentionInput ref={textareaRef} value={text} onChange={setText} selected={skillRefs} onSelectedChange={setSkillRefs} onKeyDown={onKeyDown} onPaste={handlePaste} rows={2} placeholder={busy ? '助手正在处理，可继续输入以引导当前运行…' : '输入任何问题或需求…（输入 @ 选择技能）'} />
             <div style={{ display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'flex-end', marginTop: 4 }}>
-              <ModelSelector />
+              <ModelSelector messages={msgs} />
               <div style={{ flex: 1 }} />
               <button className="btn btn-sm" onClick={handleCopyAll} disabled={msgs.length === 0} title="复制全部对话">
                 <CopyOutlined /> 复制全部

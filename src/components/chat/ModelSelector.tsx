@@ -1,16 +1,32 @@
 import { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { loadSettings, saveSettings, getProvider, resolveChatSettings } from '../../data/hermesClient';
+import { loadSettings, saveSettings, getProvider, resolveChatSettings, getActiveModel, getAssistantModel } from '../../data/hermesClient';
 import type { ModelEntry } from '../../data/hermesClient';
+import type { ChatMessage, ModelConfig } from '../../types';
 
 interface Props {
   /** 'assistant' | 'dm' (员工私聊) | 'team' (团队) */
   scene?: 'assistant' | 'dm' | 'team';
   /** DM 场景下传入员工 ID，以正确读取员工独立模型 */
   employeeId?: string;
+  /** 当前窗口实际会使用的模型配置。 */
+  modelConfig?: ModelConfig;
+  /** 用于显示最近一次请求的真实上下文用量。 */
+  messages?: ChatMessage[];
 }
 
-export default function ModelSelector({ scene = 'assistant', employeeId: _employeeId }: Props) {
+function formatTokens(value: number): string {
+  return value >= 1_000_000 ? `${(value / 1_000_000).toFixed(1)}M` : value >= 1000 ? `${(value / 1000).toFixed(value >= 10_000 ? 0 : 1)}K` : String(value);
+}
+
+function estimateMessageTokens(messages: ChatMessage[]): number {
+  const text = messages.slice(-20).map((message) => message.content).join('\n');
+  let tokens = 240; // System prompt, role metadata and message framing.
+  for (const char of text) tokens += /[一-鿿]/u.test(char) ? 0.67 : 0.25;
+  return Math.max(1, Math.round(tokens));
+}
+
+export default function ModelSelector({ scene = 'assistant', employeeId: _employeeId, modelConfig, messages = [] }: Props) {
   const [open, setOpen] = useState(false);
   const [customInput, setCustomInput] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
@@ -20,7 +36,7 @@ export default function ModelSelector({ scene = 'assistant', employeeId: _employ
 
   // 读取当前实际使用的模型
   const settings = loadSettings();
-  const resolved = resolveChatSettings();  // 解析助理配置
+  const resolved = resolveChatSettings(modelConfig);  // 解析当前窗口实际配置
 
   // 确定当前模型显示名
   let currentModel: string;
@@ -52,6 +68,22 @@ export default function ModelSelector({ scene = 'assistant', employeeId: _employ
     currentModel = settings.model || resolved.model || getProvider().defaultModel || '未设置';
     currentProviderLabel = getProvider().label;
   }
+
+  if (scene === 'dm' && modelConfig?.model) {
+    currentModel = modelConfig.model;
+    currentProviderLabel = getProvider(modelConfig.provider).label;
+  }
+
+  const effectiveModel = modelConfig ?? (scene === 'assistant' ? getAssistantModel() : getActiveModel());
+  const currentEntry = libraryEntryForContext(settings.modelLibrary ?? [], currentModel, effectiveModel);
+  const configuredLimit = effectiveModel.contextWindowTokens ?? currentEntry?.contextWindowTokens;
+  const latestUsage = [...messages].reverse().find((message) => message.contextUsage)?.contextUsage;
+  const usedTokens = latestUsage?.promptTokens ?? estimateMessageTokens(messages);
+  const usageSource = latestUsage?.source ?? 'estimate';
+  const contextTitle = configuredLimit
+    ? `最近一次模型输入：${usedTokens.toLocaleString()} / ${configuredLimit.toLocaleString()} tokens（${usageSource === 'api' ? '服务端真实值' : '本地估算'}）`
+    : `最近一次模型输入：${usedTokens.toLocaleString()} tokens（${usageSource === 'api' ? '服务端真实值' : '本地估算'}）；模型上限未设置`;
+  const percentage = configuredLimit ? Math.min(100, Math.round((usedTokens / configuredLimit) * 100)) : undefined;
 
   const updateMenuPosition = () => {
     const trigger = triggerRef.current;
@@ -144,11 +176,14 @@ export default function ModelSelector({ scene = 'assistant', employeeId: _employ
         ref={triggerRef}
         className="model-selector-btn"
         onClick={() => setOpen(!open)}
-        title={`当前模型：${currentModel}（${currentProviderLabel}）`}
+        title={`当前模型：${currentModel}（${currentProviderLabel}）\n${contextTitle}`}
       >
         <span className="model-selector-icon">🧠</span>
         <span className="model-selector-name">{currentModel}</span>
         {usingLibrary && <span className="model-selector-badge">库</span>}
+        <span className={`model-context-chip${percentage != null && percentage >= 80 ? ' is-warning' : ''}`} title={contextTitle}>
+          {configuredLimit ? `${formatTokens(usedTokens)}/${formatTokens(configuredLimit)}` : `${formatTokens(usedTokens)}/?`}
+        </span>
         <span className="model-selector-arrow">{open ? '▲' : '▼'}</span>
       </button>
 
@@ -159,6 +194,11 @@ export default function ModelSelector({ scene = 'assistant', employeeId: _employ
             <span style={{ fontSize: 9, fontWeight: 400, marginLeft: 'auto' }}>
               {libraryModels.length > 0 ? `${libraryModels.length} 个已配置` : ''}
             </span>
+          </div>
+          <div className="model-context-summary">
+            <div className="model-context-summary-head"><span>本次上下文</span><strong>{configuredLimit ? `${usedTokens.toLocaleString()} / ${configuredLimit.toLocaleString()} tokens` : `${usedTokens.toLocaleString()} tokens / 未获知上限`}</strong></div>
+            {configuredLimit && <div className="model-context-track" aria-label={`上下文使用 ${percentage ?? 0}%`}><span style={{ width: `${percentage ?? 0}%` }} /></div>}
+            <small>{usageSource === 'api' ? '已用量来自服务端本次请求。' : '已用量按当前聊天内容估算；服务端没有返回 prompt_tokens。'} {configuredLimit ? `已使用 ${percentage}%` : '请在“设置 → 模型”填写该模型的官方上下文上限。'}</small>
           </div>
 
           {/* 模型库中的模型（优先展示） */}
@@ -205,4 +245,10 @@ export default function ModelSelector({ scene = 'assistant', employeeId: _employ
       )}
     </div>
   );
+}
+
+function libraryEntryForContext(library: ModelEntry[], model: string, config: ModelConfig): ModelEntry | undefined {
+  return library.find((entry) => entry.model === model && entry.apiHost === config.apiHost)
+    ?? library.find((entry) => entry.model === model)
+    ?? library.find((entry) => entry.id === config.refModelId);
 }

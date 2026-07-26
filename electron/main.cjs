@@ -774,7 +774,7 @@ function createWindow() {
   ipcMain.handle('exec:command', async (_event, payload) => {
     const cmd = typeof payload === 'string' ? payload : payload?.cmd;
     const scope = typeof payload === 'object' && typeof payload?.scope === 'string'
-      ? payload.scope.replace(/[^a-zA-Z0-9_-]/g, '_')
+      ? payload.scope.split(/[\\/]+/).map((part) => part.replace(/[^a-zA-Z0-9_-]/g, '_')).filter(Boolean).join('/') || 'global'
       : 'global';
     const projectRoot = safeJoin(scope);
     const sandboxEnabled = typeof payload !== 'object' || payload?.sandboxEnabled !== false;
@@ -912,6 +912,28 @@ function createWindow() {
     try {
       const target = safeJoin(dirPath || '');
       await fsp.mkdir(target, { recursive: true });
+      return { ok: true, path: target };
+    } catch (e) {
+      return { ok: false, error: String(e?.message ?? e) };
+    }
+  });
+
+  ipcMain.handle('fs:initWorkspace', async (_event, { workspaceId, metadata } = {}) => {
+    try {
+      if (typeof workspaceId !== 'string' || !workspaceId.trim()) throw new Error('工作区标识不能为空');
+      const target = safeJoin(workspaceId);
+      await fsp.mkdir(target, { recursive: true });
+      const manifestPath = path.join(target, '.taiji-workspace.json');
+      let previous = {};
+      try { previous = JSON.parse(await fsp.readFile(manifestPath, 'utf8')); } catch {}
+      const manifest = {
+        ...previous,
+        ...(metadata && typeof metadata === 'object' ? metadata : {}),
+        workspaceId,
+        createdAt: previous.createdAt ?? new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      await fsp.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
       return { ok: true, path: target };
     } catch (e) {
       return { ok: false, error: String(e?.message ?? e) };

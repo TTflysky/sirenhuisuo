@@ -549,7 +549,7 @@ export default function TeamChatApp({ teamId }: Props) {
               📁{showOutputs ? ' ✕' : ''}
             </button>
             <div style={{ flex: 1 }} />
-            <ModelSelector />
+            <ModelSelector scene="team" messages={team.chatMessages ?? []} />
             <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
               {state.status.backendOnline ? '🟢 默认模型可用' : '🔴 默认模型不可用'}
             </span>

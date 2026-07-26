@@ -54,11 +54,29 @@ export async function fileToAttachment(file: File): Promise<Attachment> {
 }
 
 function workspaceScope(scope: string): string {
-  return scope.replace(/[^a-zA-Z0-9_-]/g, '_');
+  return scope.split(/[\\/]+/).map((part) => part.replace(/[^a-zA-Z0-9_-]/g, '_')).filter(Boolean).join('/');
 }
 
 function safeFilename(name: string): string {
   return name.replace(/[\\/<>:"|?*\u0000-\u001f]/g, '_').replace(/^\.+/, '') || 'attachment.bin';
+}
+
+export type WorkspaceKind = 'assistant' | 'dm' | 'team';
+
+/** Creates a readable, collision-resistant workspace id for one user request. */
+export function createTaskWorkspaceId(kind: WorkspaceKind, ownerId = 'default'): string {
+  const token = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  return `tasks/${kind}/${workspaceScope(ownerId)}/run-${token}`;
+}
+
+export async function initializeTaskWorkspace(workspaceId: string, metadata: { kind: WorkspaceKind; label: string; taskId?: string }): Promise<void> {
+  try {
+    await window.electronAPI?.fsInitWorkspace?.(workspaceScope(workspaceId), {
+      ...metadata,
+      workspaceId,
+      createdAt: new Date().toISOString(),
+    });
+  } catch {}
 }
 
 /** 将附件真实写入当前聊天的工作区，供员工工具读取。 */

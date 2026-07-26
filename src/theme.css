@@ -862,7 +862,7 @@ html, body, #root, .app-root {
   padding: 3px 8px; border: 1px solid var(--border); border-radius: 6px;
   background: var(--surface); cursor: pointer; font-size: 11px;
   color: var(--text-secondary); transition: all 0.12s;
-  max-width: 180px;
+  max-width: 260px;
 }
 .model-selector-btn:hover { border-color: var(--text-muted); background: var(--bg-deep); }
 .model-selector-icon { font-size: 12px; flex-shrink: 0; }
@@ -871,6 +871,11 @@ html, body, #root, .app-root {
   font-weight: 500; min-width: 0;
 }
 .model-selector-arrow { font-size: 8px; flex-shrink: 0; color: var(--text-muted); }
+.model-context-chip {
+  flex-shrink: 0; padding: 1px 4px; border: 1px solid var(--border-light); border-radius: 3px;
+  color: var(--text-muted); font: 9px/1.35 monospace; background: var(--bg-deep);
+}
+.model-context-chip.is-warning { color: var(--danger); border-color: var(--danger); }
 .model-selector-dropdown {
   position: fixed;
   max-width: calc(100vw - 16px);
@@ -884,6 +889,12 @@ html, body, #root, .app-root {
   color: var(--text-muted); background: var(--bg-deep);
   border-bottom: 1px solid var(--border-light);
 }
+.model-context-summary { padding: 8px 12px; border-bottom: 1px solid var(--border-light); background: color-mix(in srgb, var(--bg-deep) 72%, transparent); }
+.model-context-summary-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--text-secondary); }
+.model-context-summary-head strong { color: var(--text); font: 600 10px/1.3 monospace; white-space: nowrap; }
+.model-context-summary small { display: block; margin-top: 5px; color: var(--text-muted); font-size: 10px; line-height: 1.45; }
+.model-context-track { height: 4px; margin-top: 6px; border-radius: 2px; overflow: hidden; background: var(--border-light); }
+.model-context-track span { display: block; height: 100%; min-width: 2px; background: var(--accent, var(--primary)); transition: width .18s ease; }
 .model-selector-list { max-height: 180px; overflow-y: auto; }
 .model-selector-option {
   display: block; width: 100%; padding: 7px 12px; border: none;

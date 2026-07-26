@@ -1,12 +1,12 @@
 import type { Employee, Team, ChatMessage, TeamTask, TaskLane, DiscussionParticipantPlan, TaskRunStep, TaskPlanStep } from '../types';
-import { runAgentLoop, resolveApiBase, extractUserInsights, getEmployeeModel, type ChatTurn } from '../data/hermesClient';
+import { runAgentLoop, resolveApiBase, extractUserInsights, getEmployeeModel, type ChatTurn, type ContextUsage } from '../data/hermesClient';
 import { TOOLS, executeTool } from './tools';
 import { diagnoseModel } from '../diagnostics/modelDiagnostics';
 import { BEGINNER_RESPONSE_GUIDE } from '../data/assistantPresentation';
 
 // ===== 讨论回调 =====
 export interface DiscussionHandlers {
-  onMessage: (emp: Employee, content: string, mentions: string[], tokens?: number, discussionRound?: number, inReplyToMessageId?: string, stepId?: string) => void;
+  onMessage: (emp: Employee, content: string, mentions: string[], tokens?: number, discussionRound?: number, inReplyToMessageId?: string, stepId?: string, contextUsage?: ContextUsage) => void;
   onToolCall: (emp: Employee, toolName: string, toolArgs: string, result: string, stepId?: string) => void;
   onTaskAdvance: (taskId: string, lane: TaskLane) => void;
   onStatus: (text: string) => void;
@@ -74,7 +74,7 @@ async function memberSpeak(
   shouldStop?: () => boolean,
   requireFileOutput = false,
   consumeSteeringMessages?: () => string[]
-): Promise<{ text: string; tokens?: number; failed?: boolean; producedFile?: boolean }> {
+): Promise<{ text: string; tokens?: number; contextUsage?: ContextUsage; failed?: boolean; producedFile?: boolean }> {
   const effectiveModel = getEmployeeModel(emp);
   if (!resolveApiBase(effectiveModel)) {
     return { text: `⚠️ ${emp.name} 未配置可用模型，当前步骤没有执行。请在设置中为该成员或全局激活模型填写 API 地址和密钥后点击继续执行。`, failed: true };
@@ -135,9 +135,9 @@ async function memberSpeak(
       consumeSteeringMessages,
     });
     if (requireFileOutput && !producedFile) {
-      return { text: `⚠️ ${emp.name} 没有生成可交接文件，本步骤未完成。请点击继续执行，系统会保留上下文并要求补交实际产出。`, tokens: r.usage.totalTokens, failed: true };
+      return { text: `⚠️ ${emp.name} 没有生成可交接文件，本步骤未完成。系统会保留上下文并要求补交实际产出。`, tokens: r.usage.totalTokens, contextUsage: r.contextUsage, failed: true };
     }
-    return { text: r.content, tokens: r.usage.totalTokens, producedFile };
+    return { text: r.content, tokens: r.usage.totalTokens, contextUsage: r.contextUsage, producedFile };
   } catch (e: any) {
     const raw = e?.message ?? '模型错误';
     const reason = e?.name === 'AbortError' || /aborted|signal is aborted/iu.test(raw)
@@ -216,6 +216,7 @@ export async function runTeamDiscussion(
     handlers.onStatus(`${emp.name} 正在思考…`);
     let content = '';
     let tokens: number | undefined;
+    let contextUsage: ContextUsage | undefined;
 
     if (useAI) {
       const assignment = `${step.assignment}\n\n执行规则：先判断是否需要专业 Skill；需要时自主搜索、比较并读取最合适的 Skill，不需要时直接推进。使用文件、搜索或命令工具完成实际工作，禁止只口头描述安排。`;
@@ -236,11 +237,12 @@ export async function runTeamDiscussion(
       );
       content = r.text;
       tokens = r.tokens;
+      contextUsage = r.contextUsage;
       if (r.failed) {
         const failureMentions = parseMentionIds(content, team, employees);
         round += 1;
         contextMessages.push({ id: `context-${Date.now()}-${round}`, authorId: emp.id, roleId: emp.role, content, mentions: failureMentions, timestamp: Date.now(), discussionRound: round });
-        handlers.onMessage(emp, content, failureMentions, tokens, round, opts.triggerMessageId, step.id);
+        handlers.onMessage(emp, content, failureMentions, tokens, round, opts.triggerMessageId, step.id, contextUsage);
         handlers.onRunFailed?.(`${emp.name} 当前步骤未返回结果，任务已暂停：${content.slice(0, 600)}`);
         runFailed = true;
         break;
@@ -258,7 +260,7 @@ export async function runTeamDiscussion(
       timestamp: Date.now(),
       discussionRound: round,
     });
-    handlers.onMessage(emp, content, mentions, tokens, round, opts.triggerMessageId, step.id);
+    handlers.onMessage(emp, content, mentions, tokens, round, opts.triggerMessageId, step.id, contextUsage);
 
     if (step.kind !== 'review') completedWorkSteps.push(step);
     if (step.kind === 'review') {
@@ -309,6 +311,7 @@ export async function runTeamDiscussion(
       handlers.onStatus(`${pm.name} 验收中…`);
       let closing = '';
       let pmTokens: number | undefined;
+      let pmContextUsage: ContextUsage | undefined;
       if (useAI) {
         const r = await memberSpeak(pm, team, employees, contextMessages,
           `任务「${task.title}」已完成开发与审查，请做验收总结。如果代码或文档已产出，可直接 read_file 检查。`,
@@ -316,11 +319,12 @@ export async function runTeamDiscussion(
         );
         closing = r.text;
         pmTokens = r.tokens;
+        pmContextUsage = r.contextUsage;
       } else {
         await sleep(600);
         closing = '验收通过，任务交付 🎉 大家辛苦。';
       }
-      handlers.onMessage(pm, closing, parseMentionIds(closing, team, employees), pmTokens, Math.min(maxRounds, round + 1), opts.triggerMessageId);
+      handlers.onMessage(pm, closing, parseMentionIds(closing, team, employees), pmTokens, Math.min(maxRounds, round + 1), opts.triggerMessageId, undefined, pmContextUsage);
       handlers.onTaskAdvance(task.id, 'DONE');
     }
   }

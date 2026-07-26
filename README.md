@@ -1,4 +1,4 @@
-# 太极（私人办公会所）v0.8.6
+# 太极（私人办公会所）v0.8.7
 
 > 面向 Windows 的多模型 AI 虚拟办公室。创建员工、组建团队，让不同模型按照职责协作完成真实任务。
 
@@ -6,7 +6,7 @@
 
 ## 项目状态
 
-- 当前版本：`0.8.6`
+- 当前版本：`0.8.7`
 - 发布分支：`main`
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 33、React 19、TypeScript 6、Ant Design 6、Vite 8
@@ -43,10 +43,11 @@
 ### 可观察的执行过程
 
 - 聊天气泡显示时间和 Token 消耗。
+- 模型选择器显示本次输入上下文、已设置的上下文上限和占比；接口未返回用量或上限时会明确标注为估算或未知。
 - 实时执行区只突出当前动作并跟随窗口宽度；当前项可展开查看输入，完成后自动归入折叠记录。
 - 执行过程默认收起，历史步骤可逐条展开查看通俗结果和技术详情，不再铺满聊天窗口。
 - 助手运行中收到用户插话时立即确认，并按设置调整当前执行或排队接续处理。
-- 单次任务最多保留 24 条工具记录；连续无进展或达到执行预算时，助手会根据真实记录交接已完成项、阻塞原因和用户下一步。
+- 执行过程按受控阶段压缩保存；Skill 失效会自动重检本机、查询替代资料并改走通用工具，只有确实需要账号、授权、文件或业务选择时才向用户交接。
 - 右侧任务列表收纳进行中和已完成任务，默认收起，点击后展开。
 - 聊天快速跳转轨道支持悬停预览。
 - 产出物按最终交付、工作文件和参考资料折叠归类；三种聊天中的文件名均可点击定位和打开。
@@ -106,13 +107,13 @@
 
 最新安装包可从 GitHub Releases 下载：
 
-- [直接下载 v0.8.6 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.8.6/hermes-office-pro-setup-0.8.6.exe)
-- [查看 v0.8.6 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.8.6)
+- [直接下载 v0.8.7 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.8.7/hermes-office-pro-setup-0.8.7.exe)
+- [查看 v0.8.7 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.8.7)
 
 本地构建的安装程序生成在：
 
 ```text
-release/hermes-office-pro-setup-0.8.6.exe
+release/hermes-office-pro-setup-0.8.7.exe
 ```
 
 可以直接覆盖安装旧版本。应用数据保存在用户目录，正常覆盖安装不会删除员工、团队、聊天和模型配置。
