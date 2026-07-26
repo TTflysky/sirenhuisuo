@@ -23,6 +23,7 @@ import {
   FONT_OPTIONS, FONT_SIZE_OPTIONS, loadAppearanceSettings, saveAppearanceSettings,
   type AppearanceSettings,
 } from '../../data/appearance';
+import { APP_VERSION } from '../../appVersion';
 
 type Tab = 'model' | 'profile' | 'appearance' | 'knowledge' | 'workspace' | 'memory' | 'persona' | 'automation' | 'backup';
 
@@ -80,7 +81,7 @@ export default function SettingsModal({ onClose, onSaved, standalone = false }: 
   const content = (
     <div className="settings-center">
       <aside className="settings-center-nav">
-        <div className="settings-center-brand" onPointerDown={standalone ? undefined : startDrag} title={standalone ? '设置中心' : '按住拖动设置窗口'}><SettingOutlined /><div><strong>设置</strong><small>私人办公会所</small></div></div>
+        <div className="settings-center-brand" onPointerDown={standalone ? undefined : startDrag} title={standalone ? '设置中心' : '按住拖动设置窗口'}><SettingOutlined /><div><strong>设置</strong><small>私人办公会所 <span className="window-version-badge">v{APP_VERSION}</span></small></div></div>
         {sections.map((section) => <div className="settings-nav-section" key={section.title}>
           <div className="settings-nav-title">{section.title}</div>
           {section.items.map((item) => <button className={tab === item.key ? 'active' : ''} key={item.key} onClick={() => setTab(item.key)}>{item.icon}<span>{item.label}</span><code>/{item.key}</code></button>)}
@@ -93,7 +94,7 @@ export default function SettingsModal({ onClose, onSaved, standalone = false }: 
   if (standalone) {
     return <div className="settings-standalone">
       <div className="settings-native-titlebar">
-        <span><SettingOutlined /> 设置</span>
+        <span><SettingOutlined /> 设置 <span className="window-version-badge" title={`当前版本 v${APP_VERSION}`}>v{APP_VERSION}</span></span>
         <div className="settings-native-actions">
           <button className="titlebar-btn window-control" title="最小化" aria-label="最小化" onClick={() => window.electronAPI?.minimize()}><MinusOutlined /></button>
           <button className="titlebar-btn window-control" title="最大化" aria-label="最大化" onClick={() => window.electronAPI?.toggleMax()}><BorderOutlined /></button>

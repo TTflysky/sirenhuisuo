@@ -3,6 +3,7 @@ import DmChatApp from './DmChatApp';
 import TeamChatApp from './TeamChatApp';
 import AssistantChat from './AssistantChat';
 import { BorderOutlined, CloseOutlined, MessageOutlined, MinusOutlined, RobotOutlined, TeamOutlined } from '@ant-design/icons';
+import { APP_VERSION } from '../../appVersion';
 
 interface Props {
   hash: string;
@@ -51,7 +52,7 @@ export default function ChatOnlyView({ hash }: Props) {
       <div className="chat-only-titlebar">
         <div className="chat-window-heading">
           <span className="chat-window-icon">{titleIcon}</span>
-          <span className="chat-only-title"><strong>{title}</strong><small>{subtitle}</small></span>
+          <span className="chat-only-title"><strong>{title}<span className="window-version-badge" title={`当前版本 v${APP_VERSION}`}>v{APP_VERSION}</span></strong><small>{subtitle}</small></span>
         </div>
         <div className="chat-only-traffic">
           <button type="button" className="titlebar-btn window-control" title="最小化" aria-label="最小化聊天窗口" onClick={() => window.electronAPI?.minimize()}><MinusOutlined /></button>

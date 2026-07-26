@@ -7,6 +7,8 @@ const officeParser = require('officeparser');
 const { initAutoUpdater } = require('./autoUpdate.cjs');
 const { listSkills, readSkill, deleteSkill, installSkill } = require('./skills.cjs');
 const { testObsidianVault, searchObsidianVault, readObsidianNote, fetchKnowledgeUrl } = require('./knowledge.cjs');
+const { version: APP_VERSION } = require('../package.json');
+const APP_TITLE = `私人办公会所 v${APP_VERSION}`;
 
 // ===== 自主代理工作区（沙箱目录，所有文件读写/命令执行都限制在此）=====
 const WORKSPACE = path.join(app.getPath('userData'), 'workspace');
@@ -168,12 +170,12 @@ function normalizeToolWindowOptions(opts) {
 }
 
 function getToolWindowSpec(type) {
-  if (type === 'edit-employee') return { width: 650, height: 820, minWidth: 560, minHeight: 620, title: '私人办公会所 · 编辑员工' };
-  if (type === 'connector-config') return { width: 620, height: 700, minWidth: 540, minHeight: 520, title: '私人办公会所 · 配置连接器' };
-  if (type === 'assistant-settings') return { width: 660, height: 760, minWidth: 560, minHeight: 560, title: '私人办公会所 · 助手设置' };
-  if (type === 'create-team') return { width: 520, height: 620, minWidth: 440, minHeight: 460, title: '私人办公会所 · 新建团队' };
-  if (type === 'rename-team') return { width: 420, height: 260, minWidth: 360, minHeight: 220, title: '私人办公会所 · 重命名团队' };
-  return { width: 560, height: 760, minWidth: 460, minHeight: 560, title: '私人办公会所 · 添加员工' };
+  if (type === 'edit-employee') return { width: 650, height: 820, minWidth: 560, minHeight: 620, title: `${APP_TITLE} · 编辑员工` };
+  if (type === 'connector-config') return { width: 620, height: 700, minWidth: 540, minHeight: 520, title: `${APP_TITLE} · 配置连接器` };
+  if (type === 'assistant-settings') return { width: 660, height: 760, minWidth: 560, minHeight: 560, title: `${APP_TITLE} · 助手设置` };
+  if (type === 'create-team') return { width: 520, height: 620, minWidth: 440, minHeight: 460, title: `${APP_TITLE} · 新建团队` };
+  if (type === 'rename-team') return { width: 420, height: 260, minWidth: 360, minHeight: 220, title: `${APP_TITLE} · 重命名团队` };
+  return { width: 560, height: 760, minWidth: 460, minHeight: 560, title: `${APP_TITLE} · 添加员工` };
 }
 
 async function createToolWindow(opts, requester = mainWindow) {
@@ -326,7 +328,7 @@ async function createAssistantCompanion(owner = mainWindow, { focus = false } = 
     modal: false,
     minWidth: ASSISTANT_COMPANION_MIN_WIDTH,
     minHeight: CHAT_WINDOW_MIN_HEIGHT,
-    title: '私人办公会所 · 驴狗蛋助手',
+    title: `${APP_TITLE} · 驴狗蛋助手`,
     skipTaskbar: false,
     frame: false,
     show: false,
@@ -382,7 +384,7 @@ async function createSettingsWindow(sourceWindow = mainWindow) {
     height: Math.max(680, workArea.height - 48),
     minWidth: 900,
     minHeight: 620,
-    title: '私人办公会所 · 设置',
+    title: `${APP_TITLE} · 设置`,
     frame: false,
     show: false,
     backgroundColor: '#f5f6fa',
@@ -430,6 +432,7 @@ function createWindow() {
     ...getInitialWindowBounds(),
     minWidth: 860,
     minHeight: 600,
+    title: APP_TITLE,
     frame: false,
     backgroundColor: '#ffffff',
     webPreferences: {
@@ -514,7 +517,7 @@ function createWindow() {
       minHeight: CHAT_WINDOW_MIN_HEIGHT,
       // Keep chat windows independent. On Windows this gives a minimized chat a
       // normal taskbar entry instead of a hard-to-restore grey child-window item.
-      title: type === 'team-chat' ? '私人办公会所 · 团队聊天' : type === 'dm-chat' ? '私人办公会所 · 员工私聊' : '私人办公会所 · 驴狗蛋助手',
+      title: type === 'team-chat' ? `${APP_TITLE} · 团队聊天` : type === 'dm-chat' ? `${APP_TITLE} · 员工私聊` : `${APP_TITLE} · 驴狗蛋助手`,
       skipTaskbar: false,
       frame: false,
       show: false,

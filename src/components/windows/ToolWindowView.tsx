@@ -9,6 +9,7 @@ import RenameTeamModal from '../sidebar/RenameTeamModal';
 import ConnectorConfigModal from '../sidebar/ConnectorConfigModal';
 import AssistantSettingsModal from '../settings/AssistantSettingsModal';
 import { BUS_CHANNELS, sendBus } from '../../ipcBus';
+import { APP_VERSION } from '../../appVersion';
 
 interface Props { hash: string; }
 
@@ -55,7 +56,7 @@ export default function ToolWindowView({ hash }: Props) {
   return (
     <div className="tool-window-view">
       <header className="tool-window-titlebar">
-        <span className="tool-window-title"><AppstoreOutlined /><strong>{TITLES[type] ?? '工具窗口'}</strong></span>
+        <span className="tool-window-title"><AppstoreOutlined /><strong>{TITLES[type] ?? '工具窗口'}</strong><span className="window-version-badge" title={`当前版本 v${APP_VERSION}`}>v{APP_VERSION}</span></span>
         <span className="tool-window-controls">
           <button onClick={() => window.electronAPI?.minimize()} title="最小化"><MinusOutlined /></button>
           <button onClick={() => window.electronAPI?.toggleMax()} title="最大化或还原"><BorderOutlined /></button>

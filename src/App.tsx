@@ -25,6 +25,7 @@ import ChatOnlyView from './components/chat/ChatOnlyView';
 import ToolWindowView from './components/windows/ToolWindowView';
 import SkillLibraryView from './components/skills/SkillLibraryView';
 import { checkBackend } from './data/hermesClient';
+import { APP_VERSION } from './appVersion';
 
 type View = 'office' | 'analytics' | 'autopilot' | 'skill-library';
 type ThemeName = 'light' | 'dark' | 'eye-care' | 'soft-gray' | 'ocean-blue' | 'quiet-blue' | 'glass-light' | 'glass-dark' | 'spruce' | 'graphite';
@@ -141,6 +142,7 @@ export default function App() {
           <div className="titlebar-brand" aria-label="私人办公会所">
             <span className="titlebar-brand-mark"><AppstoreOutlined /></span>
             <span className="titlebar-title">私人办公会所</span>
+            <span className="titlebar-version" title={`当前版本 v${APP_VERSION}`}>v{APP_VERSION}</span>
           </div>
           {/* 视图切换 */}
           <div className="view-tabs" style={{ marginLeft: 14 }}>

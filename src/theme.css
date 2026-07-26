@@ -2460,6 +2460,25 @@ body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
   font-weight: 650;
   color: var(--text);
 }
+.titlebar-version,
+.window-version-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 0 5px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 4px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--surface-raised) 84%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 9px;
+  font-weight: 650;
+  line-height: 1;
+  white-space: nowrap;
+}
+.window-version-badge { margin-left: 7px; vertical-align: middle; }
+.settings-center-brand .window-version-badge { margin-left: 3px; font-size: 8px; }
+.settings-native-titlebar .window-version-badge { margin-left: 1px; }
 
 .view-tabs { margin-left: 6px !important; }
 .view-tabs .ant-segmented {
