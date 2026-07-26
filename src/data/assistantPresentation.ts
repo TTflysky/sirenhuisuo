@@ -31,6 +31,11 @@ export const EXECUTION_SELF_REVIEW_GUIDE = `## 最终交付前自检（把上一
 5. 如果缺少只有用户才能提供的 API Key、密码、验证码或授权，保留已经完成的部分，清楚询问用户，不要继续假装验证，也不要把整个任务说成毫无进展。
 6. 最终只输出面向普通用户的结论、完成情况和下一步。命令、工具名、参数、退出码和原始错误留在折叠的“执行过程”中。`;
 
+export const SKILL_RECOVERY_GUIDE = `## Skill 失效时的强制替代路线
+本地 Skill 读取失败、目录缺失、来源失效或不再适用，不是要求用户回复“继续”的理由。禁止重复读取同一个失败 Skill ID。
+必须按顺序处理：先用不同关键词再次检索本地技能库；没有可用候选时，直接使用 web_search 搜索替代 Skill、官方文档或可行的通用方案；找到替代后继续完成原目标并验证。
+只有 web_search 本身无法连接，且任务确实依赖外部资料时，才向用户说明“需要允许或恢复联网搜索”，并明确要搜索什么。没有合适 Skill 时，优先用现有通用工具继续完成任务，不要卡住等待用户重复发送同一句话。`;
+
 export function buildContinuationGuide(summary: string, stalledPhases: number): string {
   const strategy = stalledPhases > 0
     ? '上一阶段没有产生足够的新进展。重新检查原先假设，并选择本质不同的工具或实现路线，禁止只改写并重复旧操作。'

@@ -9,6 +9,7 @@ import {
   AUTONOMOUS_EXECUTION_GUIDE,
   BEGINNER_RESPONSE_GUIDE,
   EXECUTION_SELF_REVIEW_GUIDE,
+  SKILL_RECOVERY_GUIDE,
   buildContinuationGuide,
   buildRecoveryGuide,
   getToolStage,
@@ -938,7 +939,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     : (originalUserContent ?? []).filter((part): part is ContentPart => part.type === 'text').map((part) => part.text).join('\n');
   const isInstallationTask = /安装|装好|装上|安装包|部署/u.test(originalUserText);
   const isSkillInstallation = isInstallationTask && /skill|技能|插件/iu.test(originalUserText);
-  currentTurns = [{ role: 'system', content: AUTONOMOUS_EXECUTION_GUIDE }, ...currentTurns];
+  currentTurns = [{ role: 'system', content: `${AUTONOMOUS_EXECUTION_GUIDE}\n\n${SKILL_RECOVERY_GUIDE}` }, ...currentTurns];
 
   // 多模态：把最后一条 user 消息转为 [text, image_url] 数组
   if (attachments && attachments.length > 0) {
@@ -967,6 +968,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   const maxAutonomousToolPhases = 5;
   const callLog: Array<{ name: string; args: string; result: string; success: boolean }> = [];
   const toolResultCache = new Map<string, { output: string; success: boolean }>();
+  const failedSkillReads = new Set<string>();
   const successfulCalls = new Set<string>();
   let stopped = false;
   let finalReviewRequested = false;
@@ -1059,10 +1061,14 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         onToolCall?.(tc.name, tc.arguments);
         const cacheKey = `${tc.name}:${tc.arguments}`;
         const cached = toolResultCache.get(cacheKey);
-        const result = cached !== undefined
+        const repeatedFailedSkillRead = tc.name === 'read_skill' && failedSkillReads.has(tc.arguments);
+        const result = repeatedFailedSkillRead
+          ? { toolCallId: tc.id, name: tc.name, success: false, output: '这个 Skill ID 已经读取失败，已阻止重复尝试。下一步必须改用 search_skills 换关键词检索；没有可用候选时直接使用 web_search 搜索替代方案或官方资料。' }
+          : cached !== undefined
           ? { toolCallId: tc.id, name: tc.name, success: cached.success, output: `相同工具调用已执行过，复用结果：\n${cached.output}` }
           : await executeTool({ id: tc.id, name: tc.name, args: (() => { try { return JSON.parse(tc.arguments); } catch { return {}; } })(), scope });
         const resultSuccess = result.success && isToolResultSuccessful(result.output, result.success);
+        if (tc.name === 'read_skill' && !resultSuccess) failedSkillReads.add(tc.arguments);
         if (resultSuccess) successfulCalls.add(cacheKey);
         if (resultSuccess) {
           consecutiveFailures = 0;
@@ -1079,6 +1085,9 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         const truncated = result.output.slice(0, 1500);
         currentTurns.push({ role: 'assistant', content: null, tool_calls: [{ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments } }] } as any);
         currentTurns.push({ role: 'tool', content: truncated, tool_call_id: tc.id } as any);
+        if (tc.name === 'read_skill' && !resultSuccess) {
+          currentTurns.push({ role: 'system', content: '刚才的 Skill 无法读取。禁止再次调用相同 read_skill；现在先调用 search_skills 使用不同关键词找候选，仍没有候选时必须调用 web_search 搜索替代 Skill、官方文档或通用执行方案。除非 web_search 无法联网，否则不要询问用户是否继续。' });
+        }
         if (shouldStop?.()) { stopped = true; break; } // 用户停止：工具执行后中止
       }
       if (stopped) break;
