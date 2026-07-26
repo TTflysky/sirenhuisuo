@@ -1,6 +1,7 @@
 import type { Employee, Team, ChatMessage, TeamTask, TaskLane, DiscussionParticipantPlan, TaskRunStep, TaskPlanStep } from '../types';
 import { runAgentLoop, resolveApiBase, extractUserInsights, getEmployeeModel, type ChatTurn, type ContextUsage } from '../data/hermesClient';
 import { TOOLS, executeTool } from './tools';
+import { getConnectorTools } from './connectorTools';
 import { diagnoseModel } from '../diagnostics/modelDiagnostics';
 import { BEGINNER_RESPONSE_GUIDE } from '../data/assistantPresentation';
 
@@ -118,7 +119,7 @@ async function memberSpeak(
         ...buildContext(contextMessages, employees),
         userTurn,
       ],
-      tools: TOOLS,
+      tools: [...TOOLS, ...getConnectorTools()],
       scene: 'team',
       label: `${team.name}/${emp.name}`,
       modelConfig: effectiveModel,

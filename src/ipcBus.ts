@@ -16,6 +16,9 @@ const handlers = new Map<string, Set<BusHandler>>();
 
 /** 向其他窗口广播一条消息。在普通浏览器环境（无 electronAPI）下为安全空操作。 */
 export function sendBus(channel: string, payload: unknown): void {
+  // The main process forwards broadcasts only to sibling BrowserWindows.
+  // Refresh local listeners too, so the sender's chat updates immediately.
+  if (channel !== 'store:action') deliverBus(channel, payload);
   try {
     window.electronAPI?.broadcast?.(channel, payload);
   } catch (e) {

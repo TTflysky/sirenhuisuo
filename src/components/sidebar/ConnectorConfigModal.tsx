@@ -2,13 +2,13 @@ import { useState } from 'react';
 import { FolderOpenOutlined, LinkOutlined } from '@ant-design/icons';
 import { App, Button, Input, Modal, Select, Switch } from 'antd';
 import type { Connector, ConnectorAuth } from '../../data/connectors';
-import { checkConnector, CONNECTOR_PRESETS, upsertConnector } from '../../data/connectors';
+import { checkConnector, connectorMissingFields, findConnectorPreset, upsertConnector } from '../../data/connectors';
 
 interface Props { connector: Connector; onClose: () => void; onSaved: () => void; }
 
 export default function ConnectorConfigModal({ connector, onClose, onSaved }: Props) {
   const { message } = App.useApp();
-  const preset = CONNECTOR_PRESETS.find((item) => item.mcpServerName === connector.mcpServerName);
+  const preset = findConnectorPreset(connector.mcpServerName || connector.label);
   const [label, setLabel] = useState(connector.label);
   const [baseUrl, setBaseUrl] = useState(connector.baseUrl ?? preset?.baseUrl ?? '');
   const [localPath, setLocalPath] = useState(connector.localPath ?? '');
@@ -40,8 +40,8 @@ export default function ConnectorConfigModal({ connector, onClose, onSaved }: Pr
 
   const handleSave = async () => {
     const draft = buildConnector();
-    if (draft.kind === 'knowledge-url' && !draft.baseUrl) { message.warning('请填写知识库链接'); return; }
-    if (draft.kind === 'obsidian' && !draft.localPath) { message.warning('请选择 Obsidian Vault'); return; }
+    const missing = connectorMissingFields(draft);
+    if (missing.length > 0) { message.warning(`还需要填写：${missing.join('、')}`); return; }
     setSaving(true);
     const result = await checkConnector(draft);
     upsertConnector({ ...draft, status: result.status, error: result.error, lastChecked: Date.now(), enabled: result.status === 'connected' ? true : draft.enabled });

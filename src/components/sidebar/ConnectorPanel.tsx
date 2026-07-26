@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { DeleteOutlined, FolderOpenOutlined, LinkOutlined, PlusOutlined, ReloadOutlined, SettingOutlined } from '@ant-design/icons';
-import { App, Button } from 'antd';
+import { App, Dropdown } from 'antd';
 import {
   checkConnector,
+  CONNECTOR_PRESETS,
+  createConnectorDraft,
   type Connector,
+  findConnectorPreset,
   loadConnectors,
   saveConnectors,
   updateConnector,
-  upsertConnector,
 } from '../../data/connectors';
 import ConnectorConfigModal from './ConnectorConfigModal';
 import { BUS_CHANNELS, onBus } from '../../ipcBus';
@@ -44,36 +46,11 @@ export function KnowledgeConnectorManager({ compact = false, onChange }: { compa
     if (!result.ok) setConfigConnector(connector);
   };
 
-  const addWebKnowledge = () => void configure({
-    id: `knowledge-${Date.now()}`,
-    label: '网页知识库',
-    icon: '🔗',
-    type: 'custom',
-    kind: 'knowledge-url',
-    mcpServerName: 'knowledge-url',
-    status: 'unknown',
-    enabled: true,
-  });
-
-  const addObsidian = async () => {
-    const result = await window.electronAPI?.knowledgePickObsidian?.();
-    if (!result || result.canceled) return;
-    if (!result.ok || !result.path) { message.error(result.error ?? 'Vault 连接失败'); return; }
-    const connector: Connector = {
-      id: `obsidian-${Date.now()}`,
-      label: result.path.split(/[\\/]/).filter(Boolean).pop() || 'Obsidian',
-      icon: '◇',
-      type: 'custom',
-      kind: 'obsidian',
-      mcpServerName: 'obsidian-vault',
-      status: 'connected',
-      enabled: true,
-      localPath: result.path,
-      lastChecked: Date.now(),
-    };
-    upsertConnector(connector);
-    refresh();
-    message.success(`Obsidian 已连接，发现 ${result.noteCount ?? 0} 篇笔记`);
+  const addPreset = (key: string) => {
+    const preset = findConnectorPreset(key);
+    if (!preset) { message.error('没有找到这个连接器预设'); return; }
+    const existing = loadConnectors().find((connector) => connector.mcpServerName === preset.mcpServerName && Boolean(preset.mcpServerName));
+    void configure(createConnectorDraft(preset, existing));
   };
 
   const test = async (connector: Connector) => {
@@ -100,8 +77,19 @@ export function KnowledgeConnectorManager({ compact = false, onChange }: { compa
   return (
     <div className={`knowledge-manager ${compact ? 'knowledge-manager--compact' : ''}`}>
       <div className="knowledge-manager-actions">
-        <Button size="small" icon={<LinkOutlined />} onClick={addWebKnowledge}>网页知识库</Button>
-        <Button size="small" icon={<FolderOpenOutlined />} onClick={() => void addObsidian()}>Obsidian</Button>
+        <Dropdown
+          trigger={['click']}
+          menu={{
+            items: CONNECTOR_PRESETS.map((preset) => ({
+              key: preset.key,
+              label: <span>{preset.icon} {preset.label}</span>,
+              title: preset.desc,
+            })),
+            onClick: ({ key }) => addPreset(key),
+          }}
+        >
+          <button type="button" className="knowledge-add-menu"><PlusOutlined /> 添加连接器</button>
+        </Dropdown>
       </div>
       <div className="knowledge-connector-list">
         {ordered.length === 0 && <div className="knowledge-empty">暂无知识库连接</div>}
@@ -120,7 +108,6 @@ export function KnowledgeConnectorManager({ compact = false, onChange }: { compa
           </div>
         ))}
       </div>
-      {!compact && <Button type="dashed" block icon={<PlusOutlined />} onClick={addWebKnowledge}>添加知识库</Button>}
       {configConnector && <ConnectorConfigModal connector={configConnector} onClose={() => setConfigConnector(null)} onSaved={refresh} />}
     </div>
   );
@@ -132,7 +119,7 @@ export default function ConnectorPanel() {
   return (
     <div className="connector-panel">
       <button className="connector-toggle" onClick={() => setExpanded((value) => !value)}>
-        <span><LinkOutlined /> 知识库{connected > 0 && <b>{connected}</b>}</span>
+        <span><LinkOutlined /> 连接器{connected > 0 && <b>{connected}</b>}</span>
         <span>{expanded ? '−' : '+'}</span>
       </button>
       {expanded && <KnowledgeConnectorManager compact onChange={(items) => setConnected(items.filter((connector) => connector.enabled && connector.status === 'connected').length)} />}

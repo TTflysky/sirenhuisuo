@@ -61,7 +61,7 @@ function saveHistory(msgs: ChatMessage[]): void {
 }
 
 export default function AssistantChat() {
-  const { createProjectDraft } = useStore();
+  const { state, createProjectDraft } = useStore();
   const [msgs, setMsgs] = useState<ChatMessage[]>(() => loadHistory());
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -196,6 +196,16 @@ export default function AssistantChat() {
       // 思维链采集
       const settings = loadSettings();
       showCoT = settings.showThoughtChain !== false; // 默认开启
+      const employeeDirectory = state.employees.length > 0
+        ? state.employees.map((employee) => {
+          const teams = state.teams.filter((team) => team.memberIds.includes(employee.id)).map((team) => team.name);
+          return `- ${employee.name}｜${employee.title}｜${employee.isOnline ? '在线' : '离线'}｜${teams.length ? `团队：${teams.join('、')}` : '暂未加入团队'}｜员工ID：${employee.id}`;
+        }).join('\n')
+        : '- 当前还没有员工';
+      const organizationContext = `## 当前办公室实时员工目录
+${employeeDirectory}
+
+以上名单来自客户端当前状态，每次对话都会重新读取。用户提到某位员工时，先按姓名核对这里的真实名单；名单中存在就不得回答“没有这名员工”。需要调度多人任务时，先明确将由哪些现有员工承担。`;
 
       const r = await runAgentLoop({
         turns: [
@@ -208,7 +218,7 @@ export default function AssistantChat() {
         label: '驴狗蛋助手',
         scope: 'assistant',
         attachments: imageAtts,
-        extraSystemContext: skillContext,
+        extraSystemContext: [organizationContext, skillContext].filter(Boolean).join('\n\n'),
         consumeSteeringMessages: () => steeringMessagesRef.current.splice(0),
         onToolCall(name, args) {
           setActivityStep(2);

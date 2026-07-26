@@ -23,6 +23,17 @@ export const AUTONOMOUS_EXECUTION_GUIDE = `## 自主代理工作方式（适用�
 7. 准备交付前回到最初目标做端到端验收。能实际运行、打开、读取、连接或生成样例时就真实验证；不能验证时明确说明尚未确认，绝不凭操作数量或主观推测宣布成功。
 8. 自主调整是为了完成目标，不是无限尝试。明显受到外部条件阻塞、连续两个阶段没有实质进展或达到执行预算时，停止重复路线并及时交接：说清已完成项、最后阻塞点和用户唯一最省事的下一步。`;
 
+export const CAPABILITY_ROUTING_GUIDE = `## 能力路由（所有助手、员工和团队必须遵守）
+先判断用户要解决的是哪一类能力，再选择工具；一个例子暴露的问题要按同类任务统一处理。
+
+1. 模型任务：模型地址、API Key、上下文或模型不可用，检查模型设置与真实连接，不要搜索 Skill 代替模型。
+2. 连接器任务：凡是连接器、MCP、知识库、Obsidian、邮箱、GitHub 或外部服务的安装、配置、关联、查询，先调用 inspect_connectors。未配置就调用 prepare_connector 打开对应配置，用户保存后调用 test_connector；只有测试通过才能说已连接。
+3. Skill 任务：只有用户明确要找、安装、更新或使用可复用 Skill 时，才使用 search_skills/read_skill。Skill 与连接器不是同一类能力，禁止用 Skill 搜索代替连接器配置。
+4. 文件任务：读取、编辑、生成或验收文件，使用文件工具并实际重新读取或打开验证；聊天里说“已生成”不算交付。
+5. 员工和团队任务：先使用客户端实时提供的员工、团队目录核对对象，再调度；不要凭旧对话断言某人不存在。
+6. 外部服务缺少用户专属地址、密钥、登录、验证码或授权时，先完成能自动完成的配置草稿并打开正确入口，再用通俗话告诉用户只需填写哪一项。不得编造凭据，不得绕回无关工具消耗步骤。
+7. 同时涉及多类能力时按依赖顺序处理，例如先确认模型可用，再配置连接器，再调用外部服务，最后验收产出；任一上游未通过都不能宣布整个目标完成。`;
+
 export const EXECUTION_SELF_REVIEW_GUIDE = `## 最终交付前自检（把上一条回复当作草稿，必须重新核对）
 1. 对照用户最初目标逐项检查，不得用“最后一个操作成功”代替“整个任务成功”。
 2. 安装任务分别核对：文件是否正确下载、版本是否符合要求、是否放到正确位置、必要的 API Key/账号是否已经配置、是否做过一次真实可用性验证。
@@ -79,6 +90,9 @@ const TOOL_ACTIONS: Record<string, { active: string; stage: string }> = {
   list_files: { active: '正在检查文件…', stage: '检查文件' },
   web_search: { active: '正在查询最新资料…', stage: '查询资料' },
   run_command: { active: '正在执行安装或检查…', stage: '安装或检查' },
+  inspect_connectors: { active: '正在检查连接器状态…', stage: '检查连接器' },
+  prepare_connector: { active: '正在准备连接器配置…', stage: '准备连接器配置' },
+  test_connector: { active: '正在测试连接器…', stage: '测试连接器' },
 };
 
 function toolArgs(args: string): Record<string, string> {
@@ -104,6 +118,9 @@ export function getToolActionLabel(name: string, args = ''): string {
   if (name === 'read_file') return parsed.path ? `读取 ${String(parsed.path).split(/[\\/]/).pop()}` : '读取文件';
   if (name === 'list_files') return '检查工作区文件';
   if (name === 'web_search') return '搜索最新资料';
+  if (name === 'inspect_connectors') return '检查连接器和可用预设';
+  if (name === 'prepare_connector') return '打开连接器配置';
+  if (name === 'test_connector') return '验证连接器是否可用';
   if (name.startsWith('connector_')) return '查询外部服务';
   return TOOL_ACTIONS[name]?.stage ?? '处理下一步';
 }
@@ -114,7 +131,7 @@ export function getToolReport(name: string, args = ''): string {
   if (name === 'read_file' || name === 'write_file' || name === 'list_files') return `文件工具 · ${action}`;
   if (name === 'run_command') return `终端工具 · ${action}`;
   if (name === 'web_search') return `网络搜索 · ${action}`;
-  if (name.startsWith('connector_')) return `连接器 · ${action}`;
+  if (name.startsWith('connector_') || name === 'inspect_connectors' || name === 'prepare_connector' || name === 'test_connector') return `连接器 · ${action}`;
   return `执行工具 · ${action}`;
 }
 
@@ -123,7 +140,7 @@ export function getToolActivity(name: string, args = ''): string {
 }
 
 export function getToolStage(name: string): string {
-  if (name.startsWith('connector_')) return '连接外部服务';
+  if (name.startsWith('connector_') || name === 'inspect_connectors' || name === 'prepare_connector' || name === 'test_connector') return TOOL_ACTIONS[name]?.stage ?? '连接外部服务';
   return TOOL_ACTIONS[name]?.stage ?? '处理任务';
 }
 
@@ -151,6 +168,9 @@ export function summarizeToolResult(name: string, result: string, success: boole
   if (name === 'write_file') return '文件已经保存。';
   if (name === 'web_search') return '资料搜索已完成。';
   if (name === 'run_command') return '这一步已经完成。';
+  if (name === 'inspect_connectors') return '连接器状态已经检查。';
+  if (name === 'prepare_connector') return '配置窗口已经打开，正在等待填写并验证。';
+  if (name === 'test_connector') return '连接器已经通过真实测试。';
   if (name.startsWith('connector_')) return '外部服务已经回应。';
   return '这一步已经完成。';
 }

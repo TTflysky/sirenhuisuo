@@ -16,6 +16,7 @@ import {
 } from '../data/hermesClient';
 import type { ModelConfig } from '../types';
 import { TOOLS } from './tools';
+import { getConnectorTools } from './connectorTools';
 
 // ===== 上下文（由 UI 汇总当前办公室状态后传入）=====
 export interface AutopilotContext {
@@ -152,7 +153,7 @@ export async function runAutopilot(
   try {
     const r = await runAgentLoop({
       turns,
-      tools: TOOLS,
+      tools: [...TOOLS, ...getConnectorTools()],
       scene: 'autopilot',
       label: plan.title,
       modelConfig: opts?.modelConfig,

@@ -8,6 +8,7 @@ import { ensureDistinctEmployeeColors } from './employeeColors';
 import {
   AUTONOMOUS_EXECUTION_GUIDE,
   BEGINNER_RESPONSE_GUIDE,
+  CAPABILITY_ROUTING_GUIDE,
   EXECUTION_SELF_REVIEW_GUIDE,
   SKILL_RECOVERY_GUIDE,
   buildContinuationGuide,
@@ -969,6 +970,11 @@ function skillRecoveryQuery(userText: string): string {
   return cleaned || 'AI agent 通用任务执行';
 }
 
+/** Connector intent is a capability class, not a special case for one provider. */
+export function isConnectorTask(userText: string): boolean {
+  return /连接器|知识库|外部服务|(?:^|[^a-z])mcp(?:[^a-z]|$)|obsidian|(?:^|[^a-z])ima(?:[^a-z]|$)|(?:GitHub|邮箱|企业微信|腾讯文档).{0,24}(?:连接|配置|关联|绑定|接入|调用)/iu.test(userText);
+}
+
 // ===== Agent 循环：调模型 + 执行工具，直到产出最终回复 =====
 export interface AgentLoopOpts {
   turns: ChatTurn[];
@@ -988,6 +994,10 @@ export interface AgentLoopOpts {
 }
 
 function getUserActionForFailure(raw: string): string {
+  if (/连接器|知识库|MCP|Obsidian|Vault|服务地址|认证凭据/iu.test(raw)) {
+    if (/缺少|未配置|还需要|不能为空/iu.test(raw)) return '在已经打开的连接器配置窗口中填写提示的地址、目录或认证凭据，然后点击“一键配置”；保存后助手会继续做连接测试。';
+    return '打开主界面左侧“连接器”，找到对应服务并点击设置，核对地址和认证信息后保存；助手会重新测试并告诉你是否真正可用。';
+  }
   if (/401|403|unauthorized|forbidden|api\s*key|鉴权|密钥/iu.test(raw)) {
     return '打开“设置 → 模型”，检查接口地址和 API Key，保存后回复“继续”，我会从连接验证开始。';
   }
@@ -1014,8 +1024,10 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     ? originalUserContent
     : (originalUserContent ?? []).filter((part): part is ContentPart => part.type === 'text').map((part) => part.text).join('\n');
   const isInstallationTask = /安装|装好|装上|安装包|部署/u.test(originalUserText);
-  const isSkillInstallation = isInstallationTask && /skill|技能|插件/iu.test(originalUserText);
-  currentTurns = [{ role: 'system', content: `${AUTONOMOUS_EXECUTION_GUIDE}\n\n${SKILL_RECOVERY_GUIDE}` }, ...currentTurns];
+  const connectorTask = isConnectorTask(originalUserText);
+  const connectorSetupTask = connectorTask && /安装|配置|添加|接入|连接|关联|绑定|启用|设置|装好|装上/iu.test(originalUserText);
+  const isSkillInstallation = isInstallationTask && !connectorTask && /skill|技能|插件/iu.test(originalUserText);
+  currentTurns = [{ role: 'system', content: `${AUTONOMOUS_EXECUTION_GUIDE}\n\n${CAPABILITY_ROUTING_GUIDE}\n\n${SKILL_RECOVERY_GUIDE}` }, ...currentTurns];
 
   // 多模态：把最后一条 user 消息转为 [text, image_url] 数组
   if (attachments && attachments.length > 0) {
@@ -1060,6 +1072,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   let phaseToolBudgetReached = false;
 
   const runSkillRecovery = async (reason: 'stale-read' | 'no-local-match', failedResult: string) => {
+    if (connectorTask) return;
     const recoveryKey = `${reason}:${failedResult.slice(0, 180)}`;
     if (automaticSkillRecoveries.size >= 2 || automaticSkillRecoveries.has(recoveryKey)) return;
     automaticSkillRecoveries.add(recoveryKey);
@@ -1184,7 +1197,10 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         const cacheKey = `${tc.name}:${tc.arguments}`;
         const cached = toolResultCache.get(cacheKey);
         const repeatedFailedSkillRead = tc.name === 'read_skill' && failedSkillReads.has(tc.arguments);
-        const result = repeatedFailedSkillRead
+        const misroutedConnectorSkill = connectorSetupTask && (tc.name === 'search_skills' || tc.name === 'read_skill');
+        const result = misroutedConnectorSkill
+          ? { toolCallId: tc.id, name: tc.name, success: false, output: '能力路由已阻止这次操作：当前目标是配置连接器或知识库，不是安装 Skill。请立即调用 inspect_connectors，再按结果使用 prepare_connector 和 test_connector。' }
+          : repeatedFailedSkillRead
           ? { toolCallId: tc.id, name: tc.name, success: false, output: '这个 Skill ID 已经读取失败，已阻止重复尝试。下一步必须改用 search_skills 换关键词检索；没有可用候选时直接使用 web_search 搜索替代方案或官方资料。' }
           : cached !== undefined
           ? { toolCallId: tc.id, name: tc.name, success: cached.success, output: `相同工具调用已执行过，复用结果：\n${cached.output}` }
@@ -1207,7 +1223,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         const truncated = result.output.slice(0, 1500);
         currentTurns.push({ role: 'assistant', content: null, tool_calls: [{ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments } }] } as any);
         currentTurns.push({ role: 'tool', content: truncated, tool_call_id: tc.id } as any);
-        if ((tc.name === 'read_skill' || tc.name === 'search_skills') && !resultSuccess) {
+        if (!connectorTask && (tc.name === 'read_skill' || tc.name === 'search_skills') && !resultSuccess) {
           await runSkillRecovery(tc.name === 'read_skill' ? 'stale-read' : 'no-local-match', result.output);
         }
         if (shouldStop?.()) { stopped = true; break; } // 用户停止：工具执行后中止
@@ -1270,7 +1286,13 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       const failures = callLog.filter((call) => !call.success);
       const lastCall = callLog.at(-1)!;
       if (failures.length === 0) {
-        finalContent = isSkillInstallation
+        const connectorVerified = callLog.some((call) => call.name === 'test_connector' && call.success);
+        const connectorPrepared = callLog.some((call) => call.name === 'prepare_connector' && call.success);
+        finalContent = connectorSetupTask && !connectorVerified
+          ? connectorPrepared
+            ? '还没有完成连接器配置。\n\n配置窗口已经打开，现有草稿也已保留，但还需要你填写该服务要求的地址、目录或认证凭据并点击“一键配置”。保存后助手会做真实连接测试，测试通过才算完成。'
+            : '还没有完成连接器配置。\n\n目前只完成了连接器状态检查，还没有保存并通过真实连接测试。请按已经打开的配置入口填写必要信息后继续验证。'
+          : isSkillInstallation
           ? '目前还不能确认这个技能已经完全可用。\n\n技能相关的操作已经执行完，但还没有拿到“版本正确、必要配置完成、实际调用通过”三项完整验收结果。请让我继续做最后检查；详细记录可以在下方“执行过程”中查看。'
           : isInstallationTask
             ? '目前还不能确认已经完全安装好。\n\n安装相关的操作已经执行完，但还缺最后的版本、配置和实际打开检查。完成这些检查后才能正式确认；详细记录可以在下方“执行过程”中查看。'
@@ -1294,6 +1316,16 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   }
   if (isInstallationTask) {
     finalContent = guardInstallationSummary(finalContent, originalUserText, callLog.map((call) => call.result).join('\n'));
+  }
+  if (connectorSetupTask) {
+    const connectorVerified = callLog.some((call) => call.name === 'test_connector' && call.success);
+    const connectorPrepared = callLog.some((call) => call.name === 'prepare_connector' && call.success);
+    const falselyClaimsReady = /(?:已经|已)(?:成功)?(?:完成|配置|连接|关联)|处理好了|现在可以(?:使用|调用)/u.test(finalContent);
+    if (!connectorVerified && falselyClaimsReady) {
+      finalContent = connectorPrepared
+        ? '还没有完成连接器配置。\n\n配置入口已经准备并打开，但还缺用户必须填写的服务地址、目录或认证凭据，以及保存后的真实连接测试。请在配置窗口填写并点击“一键配置”；测试通过前不会把它说成完成。'
+        : '还没有完成连接器配置。\n\n目前没有拿到真实连接测试通过的证据。请先打开对应连接器配置，填写必要信息并保存，然后再进行连接测试。';
+    }
   }
   return { content: finalContent, usage: totalUsage, contextUsage: latestContextUsage, model: finalModel };
 }

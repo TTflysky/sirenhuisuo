@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ===== 自主代理工作区文件系统（沙箱到 userData/workspace）=====
   getWorkspace: () => ipcRenderer.invoke('fs:getWorkspace'),
   fsWrite: (filePath, content) => ipcRenderer.invoke('fs:write', { filePath, content }),
+  fsWriteDocument: (filePath, content) => ipcRenderer.invoke('fs:writeDocument', { filePath, content }),
   fsWriteData: (filePath, dataUrl) => ipcRenderer.invoke('fs:writeData', { filePath, dataUrl }),
   fsRead: (filePath) => ipcRenderer.invoke('fs:read', { filePath }),
   fsMkdir: (dirPath) => ipcRenderer.invoke('fs:mkdir', { dirPath }),

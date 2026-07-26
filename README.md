@@ -1,4 +1,4 @@
-# 太极（私人办公会所）v0.8.7
+# 太极（私人办公会所）v0.8.8
 
 > 面向 Windows 的多模型 AI 虚拟办公室。创建员工、组建团队，让不同模型按照职责协作完成真实任务。
 
@@ -6,7 +6,7 @@
 
 ## 项目状态
 
-- 当前版本：`0.8.7`
+- 当前版本：`0.8.8`
 - 发布分支：`main`
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 33、React 19、TypeScript 6、Ant Design 6、Vite 8
@@ -67,10 +67,11 @@
 
 ### 知识库与连接器
 
-- 连接器入口重构为知识库中心，支持网页知识库和 Obsidian Vault。
+- 连接器入口统一管理网页知识库、Obsidian、ima、QQ 邮箱、腾讯文档、企业微信、GitHub、自定义 HTTP 及 MCP 服务。
 - 网页知识库可读取网页、公开文档和在线知识库正文。
 - Obsidian 可原生选择 Vault，并向员工提供搜索笔记和读取笔记工具。
-- 设置中心集中管理知识库连接状态；历史 HTTP/MCP 配置升级后继续保留。
+- 助手、员工、团队和自主任务共享“检查状态 → 准备配置 → 用户填写专属凭据 → 真实测试 → 开放调用”的连接器生命周期，不会把连接器安装误当成 Skill 安装。
+- 历史 HTTP/MCP 配置升级后继续保留；真实连接测试通过前不会显示为完成。
 
 ### 真实附件与交付文件
 
@@ -107,13 +108,13 @@
 
 最新安装包可从 GitHub Releases 下载：
 
-- [直接下载 v0.8.7 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.8.7/hermes-office-pro-setup-0.8.7.exe)
-- [查看 v0.8.7 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.8.7)
+- [直接下载 v0.8.8 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.8.8/hermes-office-pro-setup-0.8.8.exe)
+- [查看 v0.8.8 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.8.8)
 
 本地构建的安装程序生成在：
 
 ```text
-release/hermes-office-pro-setup-0.8.7.exe
+release/hermes-office-pro-setup-0.8.8.exe
 ```
 
 可以直接覆盖安装旧版本。应用数据保存在用户目录，正常覆盖安装不会删除员工、团队、聊天和模型配置。

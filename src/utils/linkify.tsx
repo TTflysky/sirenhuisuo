@@ -1,37 +1,56 @@
-import type { ReactNode } from 'react';
-const URL_RE = /(https?:\/\/[^\s<"'>）)]+)/gi;
+import type { MouseEvent, ReactNode } from 'react';
 
-/**
- * 将文本中的 URL 转换为可点击的 <a> 标签
- * @returns ReactNode 片段数组
- */
-export function linkify(text: string): ReactNode[] {
-  const parts = text.split(URL_RE);
-  return parts.map((part, i) => {
-    if (URL_RE.test(part)) {
-      // 重新 test 后 lastIndex 变了，重置
-      URL_RE.lastIndex = 0;
-      return (
-        <a
-          key={i}
-          href={part}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={(e) => e.stopPropagation()}
-        >
-          {part}
-        </a>
-      );
-    }
-    return <span key={i}>{part}</span>;
-  });
+const BARE_URL_RE = /https?:\/\/[^\s<"'>，。！？）】]+/gi;
+const MARKDOWN_URL_RE = /\[([^\]]+)]\((https?:\/\/[^\s)]+)\)/gi;
+
+function openExternal(event: MouseEvent<HTMLAnchorElement>, url: string) {
+  event.stopPropagation();
+  if (!window.electronAPI?.openExternal) return;
+  event.preventDefault();
+  void window.electronAPI.openExternal(url);
 }
 
-/**
- * 将文本中的 URL 渲染为链接的 HTML 字符串（用于 dangerouslySetInnerHTML）
- */
+function renderBareUrls(text: string, keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  let index = 0;
+  for (const match of text.matchAll(BARE_URL_RE)) {
+    const start = match.index ?? 0;
+    if (start > cursor) nodes.push(<span key={`${keyPrefix}-text-${index++}`}>{text.slice(cursor, start)}</span>);
+    const url = match[0];
+    nodes.push(
+      <a key={`${keyPrefix}-url-${index++}`} href={url} target="_blank" rel="noopener noreferrer" onClick={(event) => openExternal(event, url)}>
+        {url}
+      </a>,
+    );
+    cursor = start + url.length;
+  }
+  if (cursor < text.length) nodes.push(<span key={`${keyPrefix}-text-${index++}`}>{text.slice(cursor)}</span>);
+  return nodes.length ? nodes : [<span key={`${keyPrefix}-text`}>{text}</span>];
+}
+
+/** Render Markdown and bare HTTP links, using the system browser in Electron. */
+export function linkify(text: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  let index = 0;
+  for (const match of text.matchAll(MARKDOWN_URL_RE)) {
+    const start = match.index ?? 0;
+    if (start > cursor) nodes.push(...renderBareUrls(text.slice(cursor, start), `part-${index++}`));
+    const label = match[1];
+    const url = match[2];
+    nodes.push(
+      <a key={`markdown-${index++}`} href={url} target="_blank" rel="noopener noreferrer" onClick={(event) => openExternal(event, url)}>
+        {label}
+      </a>,
+    );
+    cursor = start + match[0].length;
+  }
+  if (cursor < text.length) nodes.push(...renderBareUrls(text.slice(cursor), `part-${index++}`));
+  return nodes.length ? nodes : [<span key="text">{text}</span>];
+}
+
+/** Render bare URLs as HTML for trusted, already-escaped preview content. */
 export function linkifyHtml(text: string): string {
-  return text.replace(URL_RE, (url) => {
-    return `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`;
-  });
+  return text.replace(BARE_URL_RE, (url) => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`);
 }

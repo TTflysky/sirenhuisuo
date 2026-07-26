@@ -1730,8 +1730,9 @@ html, body, #root, .app-root {
 .connector-toggle b { min-width: 16px; padding: 1px 4px; border-radius: 4px; background: rgba(34,197,94,.12); color: #16803b; font-size: 9px; text-align: center; }
 .knowledge-manager { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
 .knowledge-manager--compact { max-height: 310px; padding: 0 8px 9px; overflow-y: auto; }
-.knowledge-manager-actions { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px; }
-.knowledge-manager--compact .knowledge-manager-actions .ant-btn { min-width: 0; padding-inline: 5px; font-size: 10px; }
+.knowledge-manager-actions { display: block; }
+.knowledge-add-menu { width: 100%; min-height: 30px; display: flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--border-light); border-radius: 5px; background: var(--surface); color: var(--text); cursor: pointer; font: inherit; font-size: 11px; }
+.knowledge-add-menu:hover { border-color: var(--primary); color: var(--primary); }
 .knowledge-connector-list { display: flex; flex-direction: column; gap: 5px; }
 .knowledge-empty { padding: 16px; color: var(--text-muted); text-align: center; font-size: 11px; }
 .knowledge-connector-row { min-width: 0; min-height: 48px; display: grid; grid-template-columns: 30px minmax(0,1fr) auto; align-items: center; gap: 7px; padding: 6px 7px; border: 1px solid var(--border-light); border-radius: 6px; background: var(--surface); }

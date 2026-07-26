@@ -64,6 +64,7 @@ declare global {
     // 自主代理工作区文件系统（沙箱到 userData/workspace）
     getWorkspace: () => Promise<string>;
     fsWrite: (filePath: string, content: string) => Promise<FsWriteResult>;
+    fsWriteDocument: (filePath: string, content: string) => Promise<FsWriteResult & { validated?: boolean; extractedChars?: number }>;
     fsWriteData: (filePath: string, dataUrl: string) => Promise<FsWriteResult>;
     fsRead: (filePath: string) => Promise<FsReadResult>;
     fsMkdir: (dirPath: string) => Promise<{ ok: boolean; path?: string; error?: string }>;

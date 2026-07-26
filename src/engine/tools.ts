@@ -6,6 +6,7 @@
  * - read_file    : 读取已产出文件或上传的内容
  * - list_files   : 浏览 outputs/ 目录
  * - web_search   : 搜互联网（DuckDuckGo 免费 API）
+ * - inspect_connectors / prepare_connector / test_connector: 管理外部服务连接
  * - run_command  : 按当前审批策略执行，默认限沙箱工作区
  */
 
@@ -104,6 +105,51 @@ export const TOOLS: ToolDef[] = [
         type: 'object',
         properties: { id: { type: 'string', description: 'search_skills 返回的技能 ID' } },
         required: ['id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'inspect_connectors',
+      description: '检查客户端中所有连接器及可用预设，返回已连接、未配置、缺少地址/目录/凭据等真实状态。处理连接器、MCP、知识库、邮箱、GitHub 或外部服务任务时必须先调用。不会返回密钥内容。',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: '可选，服务名称或类型，如 ima、Obsidian、GitHub、MCP、知识库' },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'prepare_connector',
+      description: '为任意连接器预设创建或复用配置草稿，并打开正确的配置窗口。只负责准备配置，绝不生成密钥，也不代表已经连接；用户保存配置后必须调用 test_connector 验证。',
+      parameters: {
+        type: 'object',
+        properties: {
+          preset: { type: 'string', description: '预设标识或服务名，必须来自 inspect_connectors 的结果' },
+          label: { type: 'string', description: '可选，自定义显示名称' },
+          baseUrl: { type: 'string', description: '可选，用户已经明确提供的服务地址；不得猜测' },
+          localPath: { type: 'string', description: '可选，用户已经明确提供的本地目录；不得猜测' },
+        },
+        required: ['preset'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'test_connector',
+      description: '对已保存的连接器做真实连接测试并更新状态。只有返回连接成功，才可以向用户确认该连接器可用。',
+      parameters: {
+        type: 'object',
+        properties: {
+          connector: { type: 'string', description: '连接器 ID、名称、预设标识或服务名' },
+        },
+        required: ['connector'],
       },
     },
   },
@@ -295,12 +341,22 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         const fsApi = getFsApi();
         let diskInfo = '';
         let diskPath: string | undefined;
+        let diskBytes: number | undefined;
         if (fsApi?.fsWrite) {
           try {
-            const r = await fsApi.fsWrite(`${physicalWorkspace}/${path}`, content);
+            const isWordDocument = path.toLowerCase().endsWith('.docx');
+            if (isWordDocument && !fsApi.fsWriteDocument) {
+              return { toolCallId: id, name, success: false, output: '当前环境不能生成有效的 Word 文件，未写入伪造的 .docx。请改用桌面客户端后重试。' };
+            }
+            const r = isWordDocument
+              ? await fsApi.fsWriteDocument(`${physicalWorkspace}/${path}`, content)
+              : await fsApi.fsWrite(`${physicalWorkspace}/${path}`, content);
             if (r?.ok) {
               diskPath = r.path;
-              diskInfo = `（已写入磁盘工作区：${r.path}，${r.size} 字节）`;
+              diskBytes = Number(r.size) || undefined;
+              diskInfo = isWordDocument
+                ? `（已生成并重新读取校验有效的 Word 文档：${r.path}，${r.size} 字节）`
+                : `（已写入磁盘工作区：${r.path}，${r.size} 字节）`;
             } else {
               return { toolCallId: id, name, success: false, output: `文件写入失败：${r?.error ?? '未知错误'}` };
             }
@@ -319,6 +375,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
           language: ct === 'code' ? path.split('.').pop() : undefined,
           content,
           diskPath,
+          bytes: diskBytes,
           category: args.category as 'final' | 'working' | 'reference' | undefined,
         });
         return {
@@ -435,6 +492,121 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         const { readSkill } = await import('../data/skills');
         const skill = await readSkill(skillId);
         return { toolCallId: id, name, success: true, output: `已读取 Skill「${skill.name}」：\n${skill.content.slice(0, 12000)}` };
+      }
+
+      case 'inspect_connectors': {
+        const { CONNECTOR_PRESETS, connectorMissingFields, loadConnectors } = await import('../data/connectors');
+        const query = (args.query ?? '').trim().toLocaleLowerCase();
+        const includesQuery = (...values: Array<string | undefined>) => !query || values.some((value) => value?.toLocaleLowerCase().includes(query));
+        const configured = loadConnectors().filter((connector) => includesQuery(connector.id, connector.label, connector.mcpServerName, connector.kind));
+        const presets = CONNECTOR_PRESETS.filter((preset) => includesQuery(preset.key, preset.label, preset.mcpServerName, preset.kind));
+        const configuredRows = configured.map((connector) => {
+          const missing = connectorMissingFields(connector);
+          const checked = connector.lastChecked ? new Date(connector.lastChecked).toLocaleString('zh-CN') : '尚未测试';
+          return [
+            `- ${connector.label}（ID: ${connector.id}）`,
+            `  状态: ${connector.status === 'connected' ? '已连接' : connector.status === 'disconnected' ? '连接失败' : '尚未确认'}；${connector.enabled ? '已启用' : '未启用'}`,
+            `  配置: 地址${connector.baseUrl ? '已填写' : '未填写'}；本地目录${connector.localPath ? '已选择' : '未选择'}；凭据${connector.auth?.token ? '已填写' : connector.auth?.type && connector.auth.type !== 'none' ? '未填写' : '不需要'}`,
+            `  检查: ${checked}${connector.error ? `；上次原因: ${connector.error}` : ''}`,
+            missing.length ? `  还缺: ${missing.join('、')}` : '  还缺: 无（仍需真实测试）',
+          ].join('\n');
+        });
+        const presetRows = presets.map((preset) => `- ${preset.label}（预设: ${preset.key}）: ${preset.desc}`);
+        return {
+          toolCallId: id,
+          name,
+          success: true,
+          output: `连接器检查完成。检查成功不代表服务已经连通。\n\n已配置：\n${configuredRows.join('\n') || '- 没有匹配的已配置连接器'}\n\n可用预设：\n${presetRows.join('\n') || '- 没有匹配的预设'}\n\n下一步规则：未配置时调用 prepare_connector 打开配置；保存后调用 test_connector；测试通过前禁止宣布完成。`,
+        };
+      }
+
+      case 'prepare_connector': {
+        const presetQuery = (args.preset ?? '').trim();
+        const {
+          CONNECTOR_PRESETS,
+          createConnectorDraft,
+          findConnectorPreset,
+          loadConnectors,
+          upsertConnector,
+        } = await import('../data/connectors');
+        const preset = findConnectorPreset(presetQuery);
+        if (!preset) {
+          return {
+            toolCallId: id,
+            name,
+            success: false,
+            output: `没有找到连接器预设“${presetQuery}”。可用预设：${CONNECTOR_PRESETS.map((item) => `${item.label}(${item.key})`).join('、')}。请先调用 inspect_connectors 核对名称。`,
+          };
+        }
+        const existing = loadConnectors().find((connector) =>
+          connector.mcpServerName === preset.mcpServerName
+          || connector.id === presetQuery
+          || connector.label.toLocaleLowerCase() === preset.label.toLocaleLowerCase()
+        );
+        const draft = createConnectorDraft(preset, existing);
+        if (args.label?.trim()) draft.label = args.label.trim();
+        if (args.baseUrl?.trim()) draft.baseUrl = args.baseUrl.trim();
+        if (args.localPath?.trim()) draft.localPath = args.localPath.trim();
+        if (args.baseUrl?.trim() || args.localPath?.trim()) {
+          draft.status = 'unknown';
+          draft.error = undefined;
+          draft.lastChecked = undefined;
+        }
+        upsertConnector(draft);
+        const { BUS_CHANNELS, sendBus } = await import('../ipcBus');
+        sendBus(BUS_CHANNELS.CONNECTORS_CHANGED, { connectorId: draft.id, reason: 'prepared' });
+        const api = getFsApi();
+        if (!api?.openTool) {
+          return { toolCallId: id, name, success: false, output: `已创建“${draft.label}”配置草稿，但当前环境无法打开配置窗口。请在桌面客户端的“知识库/连接器”区域点击该连接器的设置按钮。配置尚未完成。` };
+        }
+        const opened = await api.openTool({ type: 'connector-config', refId: draft.id, payload: draft });
+        if (!opened?.ok) {
+          return { toolCallId: id, name, success: false, output: `已保留“${draft.label}”配置草稿，但配置窗口没有打开：${opened?.error ?? '未知原因'}。请在连接器列表中手动点击设置。配置尚未完成。` };
+        }
+        return {
+          toolCallId: id,
+          name,
+          success: true,
+          output: `已为“${draft.label}”打开配置窗口。现在只是准备好了配置入口，并未连接成功。请用户填写服务要求的地址、目录或认证凭据并点击“一键配置”；保存后必须调用 test_connector 做真实测试。不得索要或编造密码、API Key、验证码。`,
+        };
+      }
+
+      case 'test_connector': {
+        const query = (args.connector ?? '').trim();
+        if (!query) return { toolCallId: id, name, success: false, output: '连接器名称或 ID 不能为空。请先调用 inspect_connectors。' };
+        const { checkConnector, connectorMissingFields, findConnectorPreset, loadConnectors, updateConnector } = await import('../data/connectors');
+        const normalized = query.toLocaleLowerCase();
+        const preset = findConnectorPreset(query);
+        const connector = loadConnectors().find((item) =>
+          item.id.toLocaleLowerCase() === normalized
+          || item.label.toLocaleLowerCase() === normalized
+          || item.mcpServerName?.toLocaleLowerCase() === normalized
+          || (preset?.mcpServerName && item.mcpServerName === preset.mcpServerName)
+        );
+        if (!connector) {
+          return { toolCallId: id, name, success: false, output: `没有找到已配置的“${query}”连接器。请先调用 inspect_connectors，再用 prepare_connector 创建并打开配置。` };
+        }
+        const missing = connectorMissingFields(connector);
+        if (missing.length > 0) {
+          return { toolCallId: id, name, success: false, output: `“${connector.label}”还不能测试，因为缺少：${missing.join('、')}。请调用 prepare_connector 打开配置窗口，让用户填写后再测试。` };
+        }
+        if (!requestConnectorApproval(`test_connector:${connector.label}`, {})) {
+          return { toolCallId: id, name, success: false, output: `没有获得连接测试批准，因此尚未访问“${connector.label}”。用户批准后再测试；目前不能确认连接成功。` };
+        }
+        const result = await checkConnector(connector);
+        updateConnector(connector.id, {
+          status: result.status,
+          error: result.error,
+          lastChecked: Date.now(),
+          discoveredActions: result.actions,
+          runtimeStatus: result.runtimeStatus,
+        });
+        const { BUS_CHANNELS, sendBus } = await import('../ipcBus');
+        sendBus(BUS_CHANNELS.CONNECTORS_CHANGED, { connectorId: connector.id, reason: 'tested', status: result.status });
+        if (result.status !== 'connected') {
+          return { toolCallId: id, name, success: false, output: `“${connector.label}”真实连接测试没有通过：${result.error ?? '服务没有正常回应'}。配置已保留，但不能宣布完成。请根据这个原因修正配置后再测试。` };
+        }
+        return { toolCallId: id, name, success: true, output: `“${connector.label}”已通过真实连接测试，现在可以确认连接器可用。${result.actions?.length ? `已发现 ${result.actions.length} 个可调用操作。` : ''}` };
       }
 
       case 'run_command': {

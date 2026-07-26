@@ -72,6 +72,8 @@ export interface ConnectorAction {
 /* ===== 预设连接器 ===== */
 
 export interface ConnectorPreset {
+  /** Stable identifier used by the agent and UI. */
+  key: string;
   label: string;
   icon: string;
   type: 'mcp' | 'custom';
@@ -85,6 +87,7 @@ export interface ConnectorPreset {
 
 export const CONNECTOR_PRESETS: ConnectorPreset[] = [
   {
+    key: 'web-knowledge',
     label: '网页知识库', icon: '🔗', type: 'custom', kind: 'knowledge-url', mcpServerName: 'knowledge-url',
     desc: '读取网页、公开文档和在线知识库正文',
     authType: 'none',
@@ -99,6 +102,7 @@ export const CONNECTOR_PRESETS: ConnectorPreset[] = [
     ],
   },
   {
+    key: 'obsidian',
     label: 'Obsidian', icon: '◇', type: 'custom', kind: 'obsidian', mcpServerName: 'obsidian-vault',
     desc: '搜索并读取本机 Obsidian Vault 中的 Markdown 笔记',
     authType: 'none',
@@ -120,6 +124,7 @@ export const CONNECTOR_PRESETS: ConnectorPreset[] = [
     ],
   },
   {
+    key: 'ima',
     label: 'ima 知识库', icon: '📚', type: 'custom', mcpServerName: 'ima-mcp',
     desc: '腾讯 IMA 知识库搜索与笔记管理',
     baseUrl: 'https://ima.qq.com/openapi',
@@ -182,6 +187,7 @@ export const CONNECTOR_PRESETS: ConnectorPreset[] = [
     ],
   },
   {
+    key: 'qq-mail',
     label: 'QQ 邮箱', icon: '📧', type: 'custom', mcpServerName: 'qq-mail',
     desc: 'QQ 邮箱收发与管理',
     baseUrl: '',
@@ -227,16 +233,19 @@ export const CONNECTOR_PRESETS: ConnectorPreset[] = [
     ],
   },
   {
+    key: 'tencent-docs',
     label: '腾讯文档', icon: '📝', type: 'mcp', mcpServerName: 'tencent-docs',
     desc: '腾讯文档在线协作（需要腾讯文档 MCP 连接器）',
     actions: [],
   },
   {
+    key: 'wecom',
     label: '企业微信', icon: '💬', type: 'mcp', mcpServerName: 'wecom',
     desc: '企业微信消息与联系人管理',
     actions: [],
   },
   {
+    key: 'github',
     label: 'GitHub', icon: '🐙', type: 'custom', mcpServerName: 'github',
     desc: 'GitHub 仓库与代码管理',
     baseUrl: 'https://api.github.com',
@@ -263,6 +272,7 @@ export const CONNECTOR_PRESETS: ConnectorPreset[] = [
     ],
   },
   {
+    key: 'custom-http',
     label: '自定义 HTTP', icon: '🔌', type: 'custom',
     desc: '自定义 HTTP API 连接器，支持任何 REST API',
     baseUrl: '',
@@ -305,6 +315,58 @@ export const CONNECTOR_PRESETS: ConnectorPreset[] = [
     ],
   },
 ];
+
+function normalizeConnectorName(value: string): string {
+  return value.trim().toLocaleLowerCase().replace(/[\s_-]+/g, '');
+}
+
+/** Resolve a preset from a user-facing name without relying on one service. */
+export function findConnectorPreset(query: string): ConnectorPreset | undefined {
+  const needle = normalizeConnectorName(query);
+  if (!needle) return undefined;
+  return CONNECTOR_PRESETS.find((preset) => {
+    const candidates = [preset.key, preset.label, preset.mcpServerName ?? ''].map(normalizeConnectorName);
+    return candidates.includes(needle) || candidates.some((candidate) => candidate && (candidate.includes(needle) || needle.includes(candidate)));
+  });
+}
+
+export function connectorMissingFields(connector: Connector): string[] {
+  const missing: string[] = [];
+  if (connector.kind === 'knowledge-url') {
+    if (!connector.baseUrl) missing.push('知识库链接');
+    return missing;
+  }
+  if (connector.kind === 'obsidian') {
+    if (!connector.localPath) missing.push('Obsidian Vault 目录');
+    return missing;
+  }
+  if (!connector.baseUrl) missing.push(connector.type === 'mcp' ? 'MCP 服务地址' : '服务地址');
+  if (connector.auth?.type !== 'none' && !connector.auth?.token) missing.push('认证凭据');
+  return missing;
+}
+
+/** Build a credential-free configuration draft from any preset. */
+export function createConnectorDraft(preset: ConnectorPreset, existing?: Connector): Connector {
+  return {
+    id: existing?.id ?? `connector-${preset.key}-${Date.now()}`,
+    label: existing?.label || preset.label,
+    icon: preset.icon,
+    type: preset.type,
+    kind: preset.kind ?? 'legacy',
+    runtime: preset.type === 'mcp' ? 'native-mcp' : 'http',
+    mcpServerName: preset.mcpServerName,
+    status: existing?.status ?? 'unknown',
+    runtimeStatus: existing?.runtimeStatus ?? (preset.type === 'mcp' ? 'unknown' : undefined),
+    enabled: existing?.enabled ?? true,
+    baseUrl: existing?.baseUrl ?? preset.baseUrl,
+    localPath: existing?.localPath,
+    auth: existing?.auth ?? (preset.authType && preset.authType !== 'none' ? { type: preset.authType } : undefined),
+    headers: existing?.headers,
+    discoveredActions: existing?.discoveredActions,
+    lastChecked: existing?.lastChecked,
+    error: existing?.error,
+  };
+}
 
 /* ===== 持久化 ===== */
 

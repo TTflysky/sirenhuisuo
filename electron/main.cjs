@@ -4,6 +4,7 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const { exec, execFile } = require('child_process');
 const officeParser = require('officeparser');
+const { AlignmentType, Document, HeadingLevel, Packer, Paragraph, TextRun } = require('docx');
 const { initAutoUpdater } = require('./autoUpdate.cjs');
 const { listSkills, readSkill, deleteSkill, installSkill } = require('./skills.cjs');
 const { testObsidianVault, searchObsidianVault, readObsidianNote, fetchKnowledgeUrl } = require('./knowledge.cjs');
@@ -32,6 +33,51 @@ function decodeTextBuffer(buffer) {
   } catch {
     return null;
   }
+}
+
+function wordRuns(source) {
+  const runs = [];
+  const value = String(source || '');
+  const boldPattern = /\*\*(.+?)\*\*/g;
+  let cursor = 0;
+  let match;
+  while ((match = boldPattern.exec(value))) {
+    if (match.index > cursor) runs.push(new TextRun(value.slice(cursor, match.index)));
+    runs.push(new TextRun({ text: match[1], bold: true }));
+    cursor = match.index + match[0].length;
+  }
+  if (cursor < value.length) runs.push(new TextRun(value.slice(cursor)));
+  return runs.length ? runs : [new TextRun('')];
+}
+
+function wordParagraph(line) {
+  const heading = String(line).match(/^(#{1,6})\s+(.+)$/);
+  if (heading) {
+    const levels = [HeadingLevel.HEADING_1, HeadingLevel.HEADING_2, HeadingLevel.HEADING_3,
+      HeadingLevel.HEADING_4, HeadingLevel.HEADING_5, HeadingLevel.HEADING_6];
+    return new Paragraph({ children: wordRuns(heading[2]), heading: levels[heading[1].length - 1] });
+  }
+  const bullet = String(line).match(/^\s*[-*+]\s+(.+)$/);
+  if (bullet) return new Paragraph({ children: wordRuns(bullet[1]), bullet: { level: 0 } });
+  const quote = String(line).match(/^>\s*(.*)$/);
+  if (quote) return new Paragraph({ children: wordRuns(quote[1]), indent: { left: 360 } });
+  return new Paragraph({ children: wordRuns(String(line)), alignment: AlignmentType.LEFT });
+}
+
+async function createVerifiedWordDocument(target, content) {
+  const document = new Document({
+    sections: [{
+      properties: { page: { margin: { top: 1080, right: 1080, bottom: 1080, left: 1080 } } },
+      children: String(content || '').replace(/\r\n/g, '\n').split('\n').map(wordParagraph),
+    }],
+  });
+  const buffer = await Packer.toBuffer(document);
+  if (buffer.length < 100 || buffer[0] !== 0x50 || buffer[1] !== 0x4b) throw new Error('生成的 Word 文件格式无效');
+  await fsp.writeFile(target, buffer);
+  const parsed = await officeParser.parseOffice(target, { extractAttachments: false, ocr: false });
+  const extracted = parsed.toText().trim();
+  if (String(content || '').trim() && !extracted) throw new Error('Word 文件校验失败：没有读取到正文');
+  return { size: buffer.length, extractedChars: extracted.length };
 }
 function ensureWorkspace() {
   try { fs.mkdirSync(WORKSPACE, { recursive: true }); } catch {}
@@ -173,36 +219,34 @@ let settingsWindow = null;
 let tray = null;
 let isQuitting = false;
 
-function loadAssistantCompanionLockPreference() {
+function loadWindowPreferences() {
   try {
-    return JSON.parse(fs.readFileSync(WINDOW_PREFERENCES_PATH, 'utf8')).assistantCompanionLocked === true;
+    const value = JSON.parse(fs.readFileSync(WINDOW_PREFERENCES_PATH, 'utf8'));
+    return value && typeof value === 'object' ? value : {};
   } catch {
-    return false;
+    return {};
   }
+}
+
+function saveWindowPreferences(partial) {
+  try {
+    fs.writeFileSync(WINDOW_PREFERENCES_PATH, JSON.stringify({ ...loadWindowPreferences(), ...partial }, null, 2), 'utf8');
+  } catch (error) {
+    console.warn('Failed to save window preference:', error);
+  }
+}
+
+function loadAssistantCompanionLockPreference() {
+  return loadWindowPreferences().assistantCompanionLocked === true;
 }
 
 function loadLockedChatWindowKeys() {
-  try {
-    const saved = JSON.parse(fs.readFileSync(WINDOW_PREFERENCES_PATH, 'utf8'));
-    return new Set(Array.isArray(saved.lockedChatWindowKeys) ? saved.lockedChatWindowKeys.filter((key) => typeof key === 'string') : []);
-  } catch {
-    return new Set();
-  }
+  const saved = loadWindowPreferences();
+  return new Set(Array.isArray(saved.lockedChatWindowKeys) ? saved.lockedChatWindowKeys.filter((key) => typeof key === 'string') : []);
 }
 
 function saveAssistantCompanionLockPreference() {
-  try {
-    fs.writeFileSync(
-      WINDOW_PREFERENCES_PATH,
-      JSON.stringify({
-        assistantCompanionLocked,
-        lockedChatWindowKeys: [...lockedChatWindowKeys],
-      }, null, 2),
-      'utf8',
-    );
-  } catch (error) {
-    console.warn('Failed to save assistant window preference:', error);
-  }
+  saveWindowPreferences({ assistantCompanionLocked, lockedChatWindowKeys: [...lockedChatWindowKeys] });
 }
 
 function normalizeToolWindowOptions(opts) {
@@ -466,11 +510,15 @@ async function createSettingsWindow(sourceWindow = mainWindow) {
     ? sourceWindow.getBounds()
     : screen.getPrimaryDisplay().workArea;
   const workArea = screen.getDisplayMatching(sourceBounds).workArea;
+  // Settings always opens at the same comfortable working size. It is still
+  // resizable for this session, but deliberately does not restore old bounds.
+  const width = Math.max(900, Math.min(1100, workArea.width - 80));
+  const height = Math.max(620, Math.min(760, workArea.height - 80));
   const win = new BrowserWindow({
-    x: workArea.x + 24,
-    y: workArea.y + 24,
-    width: Math.max(980, workArea.width - 48),
-    height: Math.max(680, workArea.height - 48),
+    x: workArea.x + Math.round((workArea.width - width) / 2),
+    y: workArea.y + Math.round((workArea.height - height) / 2),
+    width,
+    height,
     minWidth: 900,
     minHeight: 620,
     title: `${APP_TITLE} · 设置`,
@@ -486,7 +534,6 @@ async function createSettingsWindow(sourceWindow = mainWindow) {
   settingsWindow = win;
   trackActiveWindow(win);
   win.once('ready-to-show', () => {
-    win.maximize();
     win.show();
     win.focus();
   });
@@ -839,6 +886,18 @@ function createWindow() {
       await fsp.writeFile(target, content ?? '', 'utf8');
       const stat = await fsp.stat(target);
       return { ok: true, path: target, size: stat.size };
+    } catch (e) {
+      return { ok: false, error: String(e?.message ?? e) };
+    }
+  });
+
+  ipcMain.handle('fs:writeDocument', async (_event, { filePath, content }) => {
+    try {
+      const target = safeJoin(filePath || 'document.docx');
+      if (path.extname(target).toLowerCase() !== '.docx') throw new Error('当前文档生成接口只支持 .docx');
+      await fsp.mkdir(path.dirname(target), { recursive: true });
+      const verified = await createVerifiedWordDocument(target, content);
+      return { ok: true, path: target, size: verified.size, validated: true, extractedChars: verified.extractedChars };
     } catch (e) {
       return { ok: false, error: String(e?.message ?? e) };
     }

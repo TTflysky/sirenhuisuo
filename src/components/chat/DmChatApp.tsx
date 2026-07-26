@@ -18,8 +18,14 @@ import {
   fileToAttachment, attachmentsFromClipboard, attachmentWorkspaceContext, formatFileSize, persistAttachments,
 } from '../../utils/attachments';
 import { TOOLS } from '../../engine/tools';
+import { getConnectorTools } from '../../engine/connectorTools';
 import { useFileDrop } from '../../hooks/useFileDrop';
-import { BEGINNER_RESPONSE_GUIDE, isToolResultSuccessful } from '../../data/assistantPresentation';
+import {
+  BEGINNER_RESPONSE_GUIDE,
+  getToolActivity,
+  getToolReport,
+  isToolResultSuccessful,
+} from '../../data/assistantPresentation';
 
 interface Props {
   empId: string;
@@ -95,6 +101,10 @@ export default function DmChatApp({ empId }: Props) {
   const [msgs, setMsgs] = useState<ChatMessage[]>(() => loadDm(empId));
   const [text, setText] = useState('');
   const [typing, setTyping] = useState(false);
+  const [status, setStatus] = useState('');
+  const [activityStep, setActivityStep] = useState(0);
+  const [liveActivities, setLiveActivities] = useState<Array<{ id: string; matchKey: string; label: string; args: string; state: 'active' | 'error' }>>([]);
+  const [liveExecutionSteps, setLiveExecutionSteps] = useState<ThoughtChainStep[]>([]);
   const [showOutputs, setShowOutputs] = useState(false);
   const [selectedOutputFilename, setSelectedOutputFilename] = useState<string | null>(null);
   const [outputsWidth, setOutputsWidth] = useState(320);
@@ -137,7 +147,7 @@ export default function DmChatApp({ empId }: Props) {
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [msgs.length, typing]);
+  }, [msgs.length, typing, status]);
 
   useEffect(() => {
     if (!retryJob || retryJob.status !== 'waiting' || !retryJob.nextRetryAt) return;
@@ -180,6 +190,14 @@ export default function DmChatApp({ empId }: Props) {
       const mode = loadSettings().followUpMode ?? 'steer';
       const followUp = [content, attachmentWorkspaceContext(atts), skillContext].filter(Boolean).join('\n\n');
       steeringMessagesRef.current.push(mode === 'steer' ? followUp : `【排队跟进】先完成当前工作，再按顺序处理：${followUp}`);
+      push({
+        id: `dm-${Date.now()}-${empId}-ack`, authorId: empId, roleId: emp.role,
+        content: mode === 'steer'
+          ? '收到。我会把这条作为当前工作的最新要求，完成手头这一步后马上调整。'
+          : '收到。这条要求已经排好队，我会先完成当前工作，再接着处理。',
+        mentions: [], timestamp: Date.now(), kind: 'text',
+      });
+      setStatus(mode === 'steer' ? '已收到新要求，正在调整当前操作…' : '已收到新要求，等待接续处理…');
       return;
     }
 
@@ -199,9 +217,15 @@ export default function DmChatApp({ empId }: Props) {
 
   const runDmJob = async (job: DmRetryJob) => {
     setTyping(true);
+    setStatus('思考中…');
+    setActivityStep(1);
+    setLiveActivities([]);
+    setLiveExecutionSteps([]);
     dispatch({ type: 'UPDATE_EMPLOYEE', id: empId, partial: { isWorking: true } });
     try {
       const { text: reply, usage, contextUsage, thoughtChain } = await generateReply(job.userText, job.attachments, job.skillContext, job.history);
+      setActivityStep(3);
+      setStatus('正在整理清晰的结果…');
       push({ id: `dm-${Date.now()}-${empId}`, authorId: empId, roleId: emp.role, content: reply, mentions: [], timestamp: Date.now(), kind: 'text', tokens: usage, contextUsage, thoughtChain });
       setRetryJob(null);
       saveRetryJob(empId, null);
@@ -218,6 +242,10 @@ export default function DmChatApp({ empId }: Props) {
       saveRetryJob(empId, next);
     } finally {
       setTyping(false);
+      setStatus('');
+      setActivityStep(0);
+      setLiveActivities([]);
+      setLiveExecutionSteps([]);
       dispatch({ type: 'UPDATE_EMPLOYEE', id: empId, partial: { isWorking: false, currentTask: undefined } });
     }
   };
@@ -266,15 +294,33 @@ export default function DmChatApp({ empId }: Props) {
     const showThoughtChain = loadSettings().showThoughtChain !== false;
     const r = await runAgentLoop({
       turns: [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content: enriched }],
-      tools: TOOLS, scene: 'dm', label: emp.name, modelConfig: getEmployeeModel(emp),
+      tools: [...TOOLS, ...getConnectorTools()], scene: 'dm', label: emp.name, modelConfig: getEmployeeModel(emp),
       extraSystemContext: [emp.soul, skillContext].filter(Boolean).join('\n\n'), scope: `dm:${empId}`, attachments: imageAtts,
       consumeSteeringMessages: () => steeringMessagesRef.current.splice(0),
-      onToolCall(name) {
-        dispatch({ type: 'UPDATE_EMPLOYEE', id: empId, partial: { isWorking: true, currentTask: `调用 ${name}` } });
+      onToolCall(name, args) {
+        setActivityStep(2);
+        setStatus(getToolActivity(name, args));
+        const matchKey = `${name}:${args}`;
+        const report = getToolReport(name, args);
+        setLiveActivities([{ id: `${Date.now()}`, matchKey, label: report, args: args ?? '', state: 'active' }]);
+        dispatch({ type: 'UPDATE_EMPLOYEE', id: empId, partial: { isWorking: true, currentTask: report } });
       },
       onToolResult(name, args, result, success) {
+        const matchKey = `${name}:${args}`;
+        const resultSuccess = isToolResultSuccessful(result, success);
+        setLiveActivities((current) => {
+          let index = -1;
+          for (let cursor = current.length - 1; cursor >= 0; cursor -= 1) {
+            if (current[cursor].matchKey === matchKey && current[cursor].state === 'active') { index = cursor; break; }
+          }
+          if (index < 0) return current;
+          if (resultSuccess) return current.filter((_, itemIndex) => itemIndex !== index);
+          return current.map((item, itemIndex) => itemIndex === index ? { ...item, state: 'error' } : item);
+        });
         if (!showThoughtChain) return;
-        thoughtChain.push({ toolName: name, args: args ?? '', result: result.slice(0, 2000), success: isToolResultSuccessful(result, success), timestamp: Date.now() });
+        const step: ThoughtChainStep = { toolName: name, args: args ?? '', result: result.slice(0, 2000), success: resultSuccess, timestamp: Date.now() };
+        thoughtChain.push(step);
+        setLiveExecutionSteps((current) => [...current, step].slice(-50));
       },
     });
     return { text: r.content ?? '（无回复）', usage: r.usage.totalTokens, contextUsage: r.contextUsage, thoughtChain: thoughtChain.length ? thoughtChain : undefined };
@@ -332,6 +378,18 @@ export default function DmChatApp({ empId }: Props) {
           </div>
 
           {/* 消息流 */}
+          {typing && (
+            <div className="assistant-activity" role="status" aria-live="polite">
+              <div className="assistant-activity-glow" />
+              <span className="assistant-activity-icon"><AgentAvatar employee={emp} size={22} /></span>
+              <div className="assistant-activity-copy">
+                <strong>{status || '思考中…'}</strong>
+                <span>{emp.name} 正在处理当前对话</span>
+              </div>
+              <span className="assistant-activity-step">{Math.max(1, activityStep)}/3</span>
+            </div>
+          )}
+
           <div className="chat-messages">
             {msgs.length === 0 && (
               <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 12, padding: '30px 0' }}>
@@ -361,13 +419,33 @@ export default function DmChatApp({ empId }: Props) {
                 </div>
               );
             })}
-            {typing && (
-              <div className="msg">
+            {typing && status && (
+              <div className="msg assistant-live-report">
                 <div className="msg-meta">
                   <span className="msg-author" style={{ color: emp.statusColor }}>{emp.name}</span>
                 </div>
-                <div className="msg-bubble typing">
-                  <span className="dot" /><span className="dot" /><span className="dot" />
+                <div className="msg-bubble typing assistant-live-step">
+                  {status === '思考中…' ? (
+                    <><span className="dot" /><span className="dot" /><span className="dot" /></>
+                  ) : (
+                    <div className="assistant-live-content">
+                      <strong>{status}</strong>
+                      {liveActivities.length > 0 && <div className="assistant-live-activities">
+                        {liveActivities.map((item) => <details key={item.id} className={`assistant-live-activity is-${item.state}`}>
+                          <summary>
+                            <i>{item.state === 'error' ? '!' : '…'}</i>
+                            <span>{item.label}</span>
+                            <small>{item.state === 'error' ? '换方法处理中' : '进行中'}</small>
+                          </summary>
+                          <div className="assistant-live-detail">
+                            <span>本步输入</span>
+                            <pre>{item.args || '这一步没有额外参数。'}</pre>
+                          </div>
+                        </details>)}
+                      </div>}
+                      {liveExecutionSteps.length > 0 && <ThoughtChainView steps={liveExecutionSteps} />}
+                    </div>
+                  )}
                 </div>
               </div>
             )}
