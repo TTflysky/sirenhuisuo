@@ -49,6 +49,14 @@ function safeJoin(...parts) {
   return target;
 }
 
+function sandboxPathEscape(command) {
+  const text = String(command || '');
+  return /(?:^|[\s'"])[a-z]:[\\/]/i.test(text)
+    || /(?:^|[\s'"])[\\/]{2}/.test(text)
+    || /(?:^|[\\/])\.\.(?:[\\/]|$)/.test(text)
+    || /\$(?:env:(?:userprofile|home|appdata|localappdata|temp|windir|systemroot)|home|profile)\b|%(?:userprofile|appdata|localappdata|temp|windir|systemroot)%/i.test(text);
+}
+
 const chatWindows = new Map();
 const toolWindows = new Map();
 const toolWindowPayloads = new Map();
@@ -769,9 +777,23 @@ function createWindow() {
       ? payload.scope.replace(/[^a-zA-Z0-9_-]/g, '_')
       : 'global';
     const projectRoot = safeJoin(scope);
+    const sandboxEnabled = typeof payload !== 'object' || payload?.sandboxEnabled !== false;
     await fsp.mkdir(projectRoot, { recursive: true });
     const timeoutMs = 30000;
     const maxOutput = 100 * 1024; // 100KB 截断
+
+    if (typeof cmd !== 'string' || !cmd.trim()) {
+      return { success: false, exitCode: -1, stdout: '', stderr: '命令不能为空', cwd: projectRoot };
+    }
+    if (sandboxEnabled && sandboxPathEscape(cmd)) {
+      return {
+        success: false,
+        exitCode: -1,
+        stdout: '',
+        stderr: '命令沙盒已阻止访问工作区以外的路径。请改用相对路径，或在设置中明确关闭“命令沙盒”后再执行。',
+        cwd: projectRoot,
+      };
+    }
 
     return new Promise((resolve) => {
       const options = {

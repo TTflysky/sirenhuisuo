@@ -11,6 +11,7 @@ import { copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../uti
 import ModelSelector from './ModelSelector';
 import SkillMentionInput, { resolveSkillContext } from '../skills/SkillMentionInput';
 import SkillPickerButton from '../skills/SkillPickerButton';
+import ExecutionPolicyControl from './ExecutionPolicyControl';
 import type { SkillReference } from '../../types';
 import type { OutputRecord } from '../../data/outputs';
 import {
@@ -399,6 +400,7 @@ export default function DmChatApp({ empId }: Props) {
               <button className="btn btn-sm" onClick={handleExport} disabled={msgs.length === 0}>📤 导出</button>
               <button className="btn btn-sm" onClick={() => fileInputRef.current?.click()} title="上传文件/图片">📎</button>
               <SkillPickerButton selected={skillRefs} onSelectedChange={setSkillRefs} disabled={!!retryJob} />
+              <ExecutionPolicyControl />
               <button className={`btn btn-sm ${showRetrySettings ? 'btn-primary' : ''}`} onClick={() => setShowRetrySettings((value) => !value)} title="模型重试设置"><SettingOutlined />重试</button>
               <div style={{ flex: 1 }} />
               <ModelSelector />

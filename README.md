@@ -1,4 +1,4 @@
-# 太极（私人办公会所）v0.8.4
+# 太极（私人办公会所）v0.8.5
 
 > 面向 Windows 的多模型 AI 虚拟办公室。创建员工、组建团队，让不同模型按照职责协作完成真实任务。
 
@@ -6,7 +6,7 @@
 
 ## 项目状态
 
-- 当前版本：`0.8.4`
+- 当前版本：`0.8.5`
 - 发布分支：`main`
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 33、React 19、TypeScript 6、Ant Design 6、Vite 8
@@ -62,6 +62,7 @@
 - Skill 或工具调用失败时展示具体错误，方便重试或改用其他方案。
 - 技能库会继续保留内置技能和用户安装技能；完整目录安装与依赖健康检查列入下一大版本，避免只下载 `SKILL.md` 时遗漏配套脚本和参考资料。
 - 支持文件读取、写入、目录检查、网页搜索和连接器工具。
+- 设置中心提供命令沙盒和三档审批策略；助手、员工私聊、团队聊天共享同一策略并显示当前状态。
 
 ### 知识库与连接器
 
@@ -105,13 +106,13 @@
 
 最新安装包可从 GitHub Releases 下载：
 
-- [直接下载 v0.8.4 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.8.4/hermes-office-pro-setup-0.8.4.exe)
-- [查看 v0.8.4 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.8.4)
+- [直接下载 v0.8.5 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.8.5/hermes-office-pro-setup-0.8.5.exe)
+- [查看 v0.8.5 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.8.5)
 
 本地构建的安装程序生成在：
 
 ```text
-release/hermes-office-pro-setup-0.8.4.exe
+release/hermes-office-pro-setup-0.8.5.exe
 ```
 
 可以直接覆盖安装旧版本。应用数据保存在用户目录，正常覆盖安装不会删除员工、团队、聊天和模型配置。

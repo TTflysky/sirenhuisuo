@@ -74,7 +74,24 @@ export interface AppSettings {
   assistantModelId?: string;    // 助理机器人使用的模型 ID
   showThoughtChain?: boolean;   // 助理是否显示思维链（默认 true）
   followUpMode?: 'queue' | 'steer'; // 运行中收到新消息：排队或引导当前执行
+  /** 命令是否限制在客户端工作区。默认开启。 */
+  sandboxEnabled?: boolean;
+  /** 工具动作的审批强度。 */
+  approvalMode?: ApprovalMode;
 }
+
+export type ApprovalMode = 'ask' | 'delegate' | 'full';
+
+export interface ExecutionPolicy {
+  sandboxEnabled: boolean;
+  approvalMode: ApprovalMode;
+}
+
+export const APPROVAL_MODE_OPTIONS: Array<{ value: ApprovalMode; label: string; description: string }> = [
+  { value: 'ask', label: '请求审核', description: '每次命令或连接器操作都先征求你的同意。' },
+  { value: 'delegate', label: '替我审核', description: '自动处理低风险查询和工作区任务，高风险操作再向你确认。' },
+  { value: 'full', label: '完全访问权限', description: '不再弹出审批；仍保留运行记录和系统安全限制。' },
+];
 
 // ===== 服务商预设（国内主流大模型，OpenAI 兼容）=====
 export interface ProviderPreset {
@@ -116,6 +133,28 @@ export function saveSettings(s: AppSettings): void {
   try {
     localStorage.setItem(LS_SETTINGS, JSON.stringify(s));
   } catch {}
+}
+
+export function getExecutionPolicy(settings: AppSettings = loadSettings()): ExecutionPolicy {
+  return {
+    sandboxEnabled: settings.sandboxEnabled !== false,
+    approvalMode: settings.approvalMode === 'ask' || settings.approvalMode === 'full' ? settings.approvalMode : 'delegate',
+  };
+}
+
+/**
+ * 保存命令沙盒和审批策略，并把变更同步给其他已打开的聊天窗口。
+ * 每个窗口仍从自身 localStorage 读取设置，因此重启后也会保留。
+ */
+export function saveExecutionPolicy(update: Partial<ExecutionPolicy>): AppSettings {
+  const next: AppSettings = { ...loadSettings(), ...update };
+  saveSettings(next);
+  const policy = getExecutionPolicy(next);
+  try {
+    window.dispatchEvent(new CustomEvent('execution-policy:changed', { detail: policy }));
+    window.electronAPI?.broadcast?.('execution-policy:changed', policy);
+  } catch {}
+  return next;
 }
 
 // ===== 多模型库辅助 =====

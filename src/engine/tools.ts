@@ -6,10 +6,11 @@
  * - read_file    : 读取已产出文件或上传的内容
  * - list_files   : 浏览 outputs/ 目录
  * - web_search   : 搜互联网（DuckDuckGo 免费 API）
- * - run_command  : 需要真人确认（弹窗 confirm，限沙箱输出路径）
+ * - run_command  : 按当前审批策略执行，默认限沙箱工作区
  */
 
 import { addOutput, loadOutputs, contentTypeFromFilename, type OutputRecord, type OutputScope } from '../data/outputs';
+import { getExecutionPolicy, type ExecutionPolicy } from '../data/hermesClient';
 
 // ===== Tool Schema（OpenAI function-calling 格式）=====
 export interface ToolDef {
@@ -156,6 +157,49 @@ function safePath(p: string): string {
 
 function diskScope(scope?: OutputScope): string {
   return scope ? scope.replace(/[^a-zA-Z0-9_-]/g, '_') : 'global';
+}
+
+function isRoutineCommand(command: string): boolean {
+  const cmd = command.trim().toLowerCase();
+  return /^(?:dir|ls|get-childitem|git\s+(?:status|log|diff|branch)|npm\s+(?:run\s+(?:build|lint|test|check|typecheck)|test|--version)|(?:node|npm|python|py)\s+--version|test-path)\b/.test(cmd);
+}
+
+function isRoutineConnector(name: string): boolean {
+  return /(?:search|read|list|get|query|fetch)/i.test(name);
+}
+
+function commandRiskSummary(command: string): string {
+  if (/\b(?:npm|pnpm|yarn)\s+(?:install|add|update|remove|uninstall|publish)\b/i.test(command)) return '会下载、安装、更新或发布软件包';
+  if (/\b(?:git\s+(?:push|pull|clone|commit|reset|clean)|gh\s+|curl\b|wget\b|invoke-webrequest\b)/i.test(command)) return '会联网或修改远程仓库';
+  if (/\b(?:remove-item|del\b|erase\b|rmdir\b|format\b|start-process\b|start\b|winget\b|choco\b|scoop\b)/i.test(command)) return '可能删除文件、启动程序或修改本机环境';
+  return '会执行未归类的系统命令';
+}
+
+function approvalPrompt(title: string, detail: string, policy: ExecutionPolicy): boolean {
+  if (typeof window === 'undefined' || typeof window.confirm !== 'function') return false;
+  const sandbox = policy.sandboxEnabled ? '本次命令仅可在客户端工作区内运行。' : '命令沙盒已关闭，可能访问本机其他路径。';
+  return window.confirm(`${title}\n\n${detail}\n\n${sandbox}\n\n选择“确定”允许本次操作；选择“取消”则不会执行。`);
+}
+
+function requestCommandApproval(command: string): { allowed: boolean; policy: ExecutionPolicy } {
+  const policy = getExecutionPolicy();
+  if (policy.approvalMode === 'full') return { allowed: true, policy };
+  if (policy.approvalMode === 'delegate' && isRoutineCommand(command)) return { allowed: true, policy };
+  const detail = policy.approvalMode === 'ask'
+    ? `助手准备执行命令：\n${command}`
+    : `助手已替你检查，这一步${commandRiskSummary(command)}：\n${command}`;
+  return { allowed: approvalPrompt('需要你的审核', detail, policy), policy };
+}
+
+function requestConnectorApproval(name: string, args: Record<string, string>): boolean {
+  const policy = getExecutionPolicy();
+  if (policy.approvalMode === 'full') return true;
+  if (policy.approvalMode === 'delegate' && isRoutineConnector(name)) return true;
+  const summary = Object.entries(args).slice(0, 3).map(([key, value]) => `${key}: ${String(value).slice(0, 160)}`).join('\n');
+  const detail = policy.approvalMode === 'ask'
+    ? `助手准备调用连接器：${name}${summary ? `\n${summary}` : ''}`
+    : `助手已替你检查，但该连接器操作可能影响外部服务：${name}${summary ? `\n${summary}` : ''}`;
+  return approvalPrompt('需要你的审核', detail, policy);
 }
 
 // ===== 工具执行 =====
@@ -380,6 +424,16 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         const cmd = (args.cmd ?? '').trim();
         if (!cmd) return { toolCallId: id, name, success: false, output: '命令不能为空' };
 
+        const approval = requestCommandApproval(cmd);
+        if (!approval.allowed) {
+          return {
+            toolCallId: id,
+            name,
+            success: false,
+            output: '本次命令没有获得批准，因此没有执行任何操作。请在聊天窗口点击“请求审核”确认，或在确认风险后切换审批方式再重试。',
+          };
+        }
+
         // Electron 桌面版：通过 IPC 调用主进程 exec
         const api = (window as any).electronAPI;
         if (!api?.execCommand) {
@@ -391,7 +445,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
 
         try {
           const beforeFiles = await workspaceFileVersions(call.scope ?? 'global', api);
-          const result = await api.execCommand(cmd, diskScope(call.scope));
+          const result = await api.execCommand(cmd, diskScope(call.scope), { sandboxEnabled: approval.policy.sandboxEnabled });
           const { success, exitCode, stdout, stderr, signal: sig, cwd } = result as any;
           const syncedFiles = await syncWorkspaceFiles(call.scope ?? 'global', api, beforeFiles);
 
@@ -409,8 +463,16 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
       }
 
       default:
-        // 连接器工具（以 connector_ 开头）
-        if (name.startsWith('connector_')) {
+      // 连接器工具（以 connector_ 开头）
+      if (name.startsWith('connector_')) {
+          if (!requestConnectorApproval(name, args)) {
+            return {
+              toolCallId: id,
+              name,
+              success: false,
+              output: '本次连接器操作没有获得批准，因此没有访问外部服务。请在聊天窗口确认审核，或在确认风险后调整审批方式。',
+            };
+          }
           try {
             const { executeConnectorTool } = await import('./connectorTools');
             const result = await executeConnectorTool(name, args as Record<string, string>);

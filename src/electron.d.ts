@@ -8,6 +8,7 @@ export interface ExecCommandResult {
   signal?: string;
   cwd: string;
 }
+export interface ExecCommandPolicy { sandboxEnabled?: boolean; }
 
 export interface FsEntry {
   name: string;
@@ -53,7 +54,7 @@ declare global {
     getChatLock: (opts: OpenChatOptions) => Promise<{ locked: boolean }>;
     setChatLock: (opts: ChatLockOptions) => Promise<{ locked: boolean }>;
     setZoomFactor: (factor: number) => void;
-    execCommand: (cmd: string, scope?: string) => Promise<ExecCommandResult>;
+    execCommand: (cmd: string, scope?: string, policy?: ExecCommandPolicy) => Promise<ExecCommandResult>;
     skillsList: () => Promise<SkillListResult>;
     skillsRead: (id: string) => Promise<SkillReadResult>;
     skillsDelete: (id: string) => Promise<SkillDeleteResult>;

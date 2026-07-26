@@ -7,6 +7,7 @@ import {
 } from '@ant-design/icons';
 import {
   loadSettings, saveSettings,
+  APPROVAL_MODE_OPTIONS, getExecutionPolicy, saveExecutionPolicy,
   PROVIDER_PRESETS, getProvider, type AppSettings,
   type ModelEntry,
   testModelConnection, fetchAvailableModels, migrateToModelLibrary,
@@ -163,7 +164,9 @@ function AutomationTab() {
   const [settings, setSettings] = useState(() => loadSettings());
   const change = (key: 'autoDiscuss' | 'autoPilot', value: boolean) => { const next = { ...loadSettings(), [key]: value }; saveSettings(next); setSettings(next); };
   const changeFollowUp = (followUpMode: 'queue' | 'steer') => { const next = { ...loadSettings(), followUpMode }; saveSettings(next); setSettings(next); };
-  return <div className="settings-content-page"><header><h2>执行策略</h2><span>团队讨论、自主办公与运行中跟进</span></header><div className="settings-field"><label>跟进行为</label><Segmented block value={settings.followUpMode ?? 'steer'} options={[{ label: '排队', value: 'queue' }, { label: '引导', value: 'steer' }]} onChange={(value) => changeFollowUp(value as 'queue' | 'steer')} /><small>引导会把新消息加入当前运行并调整后续工具与步骤；排队会在当前回复完成后处理。</small></div><div className="settings-switch-row"><div><strong>自动讨论</strong><small>收到任务后自动组织团队讨论</small></div><Switch checked={settings.autoDiscuss ?? false} onChange={(value) => change('autoDiscuss', value)} /></div><div className="settings-switch-row"><div><strong>自主办公</strong><small>确认项目后自动推进执行流程</small></div><Switch checked={settings.autoPilot ?? false} onChange={(value) => change('autoPilot', value)} /></div></div>;
+  const policy = getExecutionPolicy(settings);
+  const changePolicy = (update: Parameters<typeof saveExecutionPolicy>[0]) => setSettings(saveExecutionPolicy(update));
+  return <div className="settings-content-page"><header><h2>执行策略</h2><span>团队讨论、自主办公、工具审批与运行中跟进</span></header><div className="settings-field"><label>跟进行为</label><Segmented block value={settings.followUpMode ?? 'steer'} options={[{ label: '排队', value: 'queue' }, { label: '引导', value: 'steer' }]} onChange={(value) => changeFollowUp(value as 'queue' | 'steer')} /><small>引导会把新消息加入当前运行并调整后续工具与步骤；排队会在当前回复完成后处理。</small></div><div className="settings-switch-row"><div><strong>命令沙盒</strong><small>{policy.sandboxEnabled ? '已开启：命令只能使用客户端工作区，适合日常使用。' : '已关闭：命令可访问沙盒外的本机路径，请仅在确认任务来源时使用。'}</small></div><Switch checked={policy.sandboxEnabled} onChange={(sandboxEnabled) => changePolicy({ sandboxEnabled })} /></div><div className="settings-field"><label>审批方式</label><Segmented block value={policy.approvalMode} options={APPROVAL_MODE_OPTIONS.map(({ value, label }) => ({ value, label }))} onChange={(approvalMode) => changePolicy({ approvalMode: approvalMode as typeof policy.approvalMode })} /><small>{APPROVAL_MODE_OPTIONS.find((option) => option.value === policy.approvalMode)?.description} 此设置会同步到助手、私聊员工和团队聊天窗口。</small></div><div className="settings-switch-row"><div><strong>自动讨论</strong><small>收到任务后自动组织团队讨论</small></div><Switch checked={settings.autoDiscuss ?? false} onChange={(value) => change('autoDiscuss', value)} /></div><div className="settings-switch-row"><div><strong>自主办公</strong><small>确认项目后自动推进执行流程</small></div><Switch checked={settings.autoPilot ?? false} onChange={(value) => change('autoPilot', value)} /></div></div>;
 }
 
 function BackupTab() {

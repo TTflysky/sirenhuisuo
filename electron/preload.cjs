@@ -11,7 +11,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setZoomFactor: (factor) => webFrame.setZoomFactor(Math.max(0.8, Math.min(1.3, Number(factor) || 1))),
 
   // 命令执行：renderer 调用，main 进程 exec，返回 { success, stdout, stderr, exitCode, cwd }
-  execCommand: (cmd, scope) => ipcRenderer.invoke('exec:command', { cmd, scope }),
+  execCommand: (cmd, scope, policy) => ipcRenderer.invoke('exec:command', { cmd, scope, sandboxEnabled: policy?.sandboxEnabled !== false }),
   skillsList: () => ipcRenderer.invoke('skills:list'),
   skillsRead: (id) => ipcRenderer.invoke('skills:read', id),
   skillsDelete: (id) => ipcRenderer.invoke('skills:delete', id),

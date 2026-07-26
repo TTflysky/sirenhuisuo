@@ -10,6 +10,7 @@ import { copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../uti
 import ModelSelector from './ModelSelector';
 import SkillMentionInput, { resolveSkillContext } from '../skills/SkillMentionInput';
 import SkillPickerButton from '../skills/SkillPickerButton';
+import ExecutionPolicyControl from './ExecutionPolicyControl';
 import type { SkillReference } from '../../types';
 import type { OutputRecord } from '../../data/outputs';
 import { fileToAttachment, attachmentsFromClipboard, attachmentWorkspaceContext, formatFileSize, persistAttachments } from '../../utils/attachments';
@@ -424,6 +425,7 @@ export default function AssistantChat() {
               </button>
               <button className="btn btn-sm composer-icon-btn" onClick={() => fileInputRef.current?.click()} title="上传文件或图片" aria-label="上传文件或图片"><PaperClipOutlined /></button>
               <SkillPickerButton selected={skillRefs} onSelectedChange={setSkillRefs} />
+              <ExecutionPolicyControl />
               <div style={{ flex: 1 }} />
               <button className="btn btn-sm assistant-settings-btn composer-icon-btn" onClick={() => {
                 if (!window.electronAPI?.openTool) { setShowAssistantSettings(true); return; }

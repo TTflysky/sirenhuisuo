@@ -2863,6 +2863,13 @@ body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
 .chat-input:focus { border-color: color-mix(in srgb, var(--apple-accent) 60%, var(--hairline)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--apple-accent) 10%, transparent); }
 .composer-icon-btn { width: 30px; padding: 0; justify-content: center; }
 .chat-composer .btn { box-shadow: none; }
+.execution-policy-control { min-width: 0; height: 28px; display: inline-flex; align-items: center; gap: 5px; padding: 0 7px; border: 1px solid var(--hairline-strong); border-radius: 6px; background: var(--bg-deep); color: var(--text-secondary); cursor: pointer; font-size: 10px; line-height: 1; }
+.execution-policy-control:focus-within { border-color: color-mix(in srgb, var(--apple-accent) 60%, var(--hairline)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--apple-accent) 10%, transparent); }
+.execution-policy-control select { min-width: 0; max-width: 86px; padding: 0; border: 0; outline: 0; appearance: none; background: transparent; color: var(--text); cursor: pointer; font: inherit; font-weight: 600; }
+.execution-policy-control select option { color: #1a1f36; background: #fff; }
+.execution-sandbox-state { padding-left: 5px; border-left: 1px solid var(--hairline-strong); color: var(--online); font-size: 9px; white-space: nowrap; }
+.execution-sandbox-state.is-open { color: #e06c4f; }
+.team-composer-policy { display: flex; align-items: center; min-height: 28px; }
 .chat-outputs-wrap, .team-member-sidebar, .team-task-sidebar { margin: 0; border: 0; border-left: 1px solid var(--hairline); border-radius: 0; box-shadow: none; }
 .assistant-welcome { max-width: 520px; margin: auto; padding: 36px 24px; }
 .assistant-welcome-icon { width: 44px; height: 44px; margin: 0 auto 12px; display: flex; align-items: center; justify-content: center; border-radius: 10px; color: var(--apple-accent); background: color-mix(in srgb, var(--apple-accent) 10%, var(--surface)); font-size: 22px; }

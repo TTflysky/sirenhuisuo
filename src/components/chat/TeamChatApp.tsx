@@ -12,6 +12,7 @@ import { copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../uti
 import ModelSelector from './ModelSelector';
 import SkillMentionInput, { resolveSkillContext } from '../skills/SkillMentionInput';
 import SkillPickerButton from '../skills/SkillPickerButton';
+import ExecutionPolicyControl from './ExecutionPolicyControl';
 import type { SkillReference } from '../../types';
 import { fileToAttachment, attachmentsFromClipboard, formatFileSize, persistAttachments } from '../../utils/attachments';
 import { useFileDrop } from '../../hooks/useFileDrop';
@@ -583,6 +584,7 @@ export default function TeamChatApp({ teamId }: Props) {
           {/* 输入区 */}
           <div className={`chat-composer ${fileDrop.dragActive ? 'is-file-dragging' : ''}`} style={{ position: 'relative' }} {...fileDrop.dropProps}>
             {fileDrop.dragActive && <div className="chat-file-drop-overlay"><strong>松开添加文件</strong><span>文件将真实写入本次聊天工作区</span></div>}
+            <div className="team-composer-policy"><ExecutionPolicyControl /></div>
             {/* 附件预览 */}
             {attachments.length > 0 && (
               <div className="attach-row">
