@@ -23,6 +23,7 @@ export interface FsZipResult { ok: boolean; path?: string; error?: string; }
 export type ChatWindowType = 'dm-chat' | 'team-chat' | 'assistant-chat';
 export interface OpenChatOptions { type: ChatWindowType; refId: string; }
 export interface OpenChatResult { ok: boolean; reused?: boolean; error?: string; }
+export interface ChatLockOptions extends OpenChatOptions { locked?: boolean; }
 export type ToolWindowType = 'add-employee' | 'edit-employee' | 'create-team' | 'rename-team' | 'connector-config' | 'assistant-settings';
 export interface OpenToolOptions { type: ToolWindowType; refId?: string; payload?: unknown; }
 export interface OpenToolResult { ok: boolean; reused?: boolean; error?: string; }
@@ -47,6 +48,10 @@ declare global {
     minimize: () => void;
     toggleMax: () => void;
     close: () => void;
+    getAssistantLock: () => Promise<{ locked: boolean }>;
+    setAssistantLock: (locked: boolean) => Promise<{ locked: boolean }>;
+    getChatLock: (opts: OpenChatOptions) => Promise<{ locked: boolean }>;
+    setChatLock: (opts: ChatLockOptions) => Promise<{ locked: boolean }>;
     setZoomFactor: (factor: number) => void;
     execCommand: (cmd: string, scope?: string) => Promise<ExecCommandResult>;
     skillsList: () => Promise<SkillListResult>;

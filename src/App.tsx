@@ -7,11 +7,13 @@ import {
   BorderOutlined,
   CloseOutlined,
   HomeOutlined,
+  LockOutlined,
   MinusOutlined,
   PlayCircleOutlined,
   RobotOutlined,
   SettingOutlined,
   ThunderboltOutlined,
+  UnlockOutlined,
 } from '@ant-design/icons';
 import type { Employee } from './types';
 import type { UpdateStatus } from './electron.d';
@@ -50,6 +52,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [view, setView] = useState<View>('office');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [assistantLocked, setAssistantLocked] = useState(false);
   const [themeName, setThemeName] = useState<ThemeName>(() => {
     const saved = localStorage.getItem('hermes_office_theme');
     return THEME_OPTIONS.some((option) => option.value === saved) ? saved as ThemeName : 'light';
@@ -78,6 +81,10 @@ export default function App() {
       window.removeEventListener('storage', handleStorage);
       unsubscribe?.();
     };
+  }, []);
+
+  useEffect(() => {
+    window.electronAPI?.getAssistantLock?.().then(({ locked }) => setAssistantLocked(locked)).catch(() => {});
   }, []);
 
   // 子窗口检测：原生聊天子窗口的 URL 附带 #chat 路由。
@@ -130,6 +137,11 @@ export default function App() {
     checkBackend().then((online) => {
       dispatch({ type: 'SET_STATUS', partial: { backendOnline: online } });
     });
+  };
+
+  const toggleAssistantLock = async () => {
+    const result = await window.electronAPI?.setAssistantLock?.(!assistantLocked);
+    if (result) setAssistantLocked(result.locked);
   };
 
   const progress = state.status.progress;
@@ -197,6 +209,14 @@ export default function App() {
             onClick={openAssistantChat}
           >
             <RobotOutlined />
+          </button>
+          <button
+            className={`titlebar-btn assistant-lock-btn ${assistantLocked ? 'is-locked' : ''}`}
+            title={assistantLocked ? '解除助手与主界面的联动' : '锁定助手与主界面的联动'}
+            aria-label={assistantLocked ? '解除助手窗口联动' : '锁定助手窗口联动'}
+            onClick={() => void toggleAssistantLock()}
+          >
+            {assistantLocked ? <LockOutlined /> : <UnlockOutlined />}
           </button>
           <Dropdown
             trigger={['click']}

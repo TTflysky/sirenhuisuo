@@ -1,8 +1,9 @@
+import { useEffect, useState } from 'react';
 import { useStore } from '../../store';
 import DmChatApp from './DmChatApp';
 import TeamChatApp from './TeamChatApp';
 import AssistantChat from './AssistantChat';
-import { BorderOutlined, CloseOutlined, MessageOutlined, MinusOutlined, RobotOutlined, TeamOutlined } from '@ant-design/icons';
+import { BorderOutlined, CloseOutlined, LockOutlined, MessageOutlined, MinusOutlined, RobotOutlined, TeamOutlined, UnlockOutlined } from '@ant-design/icons';
 import { APP_VERSION } from '../../appVersion';
 
 interface Props {
@@ -27,6 +28,24 @@ function parseChatHash(hash: string): { type: string; id: string } {
 export default function ChatOnlyView({ hash }: Props) {
   const { state } = useStore();
   const { type, id } = parseChatHash(hash);
+  const [locked, setLocked] = useState(false);
+  const canLockToMain = type === 'dm-chat' || type === 'dm' || type === 'team-chat' || type === 'team';
+
+  useEffect(() => {
+    if (!canLockToMain) return;
+    window.electronAPI?.getChatLock?.({ type: type === 'dm' ? 'dm-chat' : type === 'team' ? 'team-chat' : type, refId: id })
+      .then(({ locked: value }) => setLocked(value))
+      .catch(() => {});
+  }, [canLockToMain, id, type]);
+
+  const toggleLock = async () => {
+    const result = await window.electronAPI?.setChatLock?.({
+      type: type === 'dm' ? 'dm-chat' : type === 'team' ? 'team-chat' : type as 'dm-chat' | 'team-chat',
+      refId: id,
+      locked: !locked,
+    });
+    if (result) setLocked(result.locked);
+  };
 
   let title = '聊天';
   let subtitle = '私人办公会所';
@@ -55,6 +74,7 @@ export default function ChatOnlyView({ hash }: Props) {
           <span className="chat-only-title"><strong>{title}<span className="window-version-badge" title={`当前版本 v${APP_VERSION}`}>v{APP_VERSION}</span></strong><small>{subtitle}</small></span>
         </div>
         <div className="chat-only-traffic">
+          {canLockToMain && <button type="button" className={`titlebar-btn window-control chat-window-lock ${locked ? 'is-locked' : ''}`} title={locked ? '解除与主界面的左侧联动' : '锁定到主界面的左侧'} aria-label={locked ? '解除聊天窗口联动' : '锁定聊天窗口联动'} onClick={() => void toggleLock()}>{locked ? <LockOutlined /> : <UnlockOutlined />}</button>}
           <button type="button" className="titlebar-btn window-control" title="最小化" aria-label="最小化聊天窗口" onClick={() => window.electronAPI?.minimize()}><MinusOutlined /></button>
           <button type="button" className="titlebar-btn window-control" title="最大化" aria-label="最大化聊天窗口" onClick={() => window.electronAPI?.toggleMax()}><BorderOutlined /></button>
           <button type="button" className="titlebar-btn window-control window-control-close" title="关闭" aria-label="关闭聊天窗口" onClick={() => window.electronAPI?.close()}><CloseOutlined /></button>

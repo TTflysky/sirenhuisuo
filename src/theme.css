@@ -2514,6 +2514,8 @@ body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
 .window-control-close:hover { color: #fff; background: #e5484d; }
 .assistant-launch-btn { color: var(--apple-accent); background: color-mix(in srgb, var(--apple-accent) 9%, transparent); }
 .assistant-launch-btn:hover { color: var(--apple-accent); background: color-mix(in srgb, var(--apple-accent) 15%, transparent); transform: none; }
+.assistant-lock-btn.is-locked { color: var(--apple-accent); background: color-mix(in srgb, var(--apple-accent) 13%, transparent); }
+.chat-window-lock.is-locked { color: var(--apple-accent); background: color-mix(in srgb, var(--apple-accent) 13%, transparent); }
 .titlebar-command { height: 32px !important; padding-inline: 10px !important; color: var(--text-secondary) !important; background: transparent !important; border-color: var(--hairline) !important; box-shadow: none !important; }
 .titlebar-command:hover { color: var(--text) !important; border-color: var(--hairline-strong) !important; background: color-mix(in srgb, var(--text) 5%, transparent) !important; }
 

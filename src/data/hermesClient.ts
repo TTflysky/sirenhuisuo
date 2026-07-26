@@ -962,9 +962,9 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   let finalContent: string | null = null;
   let finalModel = '';
   const iterationsPerPhase = 8;
-  const maxPhases = 3;
-  const maxIter = iterationsPerPhase * maxPhases;
-  const maxToolCalls = 24;
+  const maxIter = 128;
+  const maxToolCallsPerPhase = 24;
+  const maxAutonomousToolPhases = 5;
   const callLog: Array<{ name: string; args: string; result: string; success: boolean }> = [];
   const toolResultCache = new Map<string, { output: string; success: boolean }>();
   const successfulCalls = new Set<string>();
@@ -975,9 +975,38 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   let phaseStartLogIndex = 0;
   let stalledPhases = 0;
   let executionBudgetReached = false;
+  let toolCallsThisPhase = 0;
+  let completedToolPhases = 0;
+  let phaseToolBudgetReached = false;
 
   for (let iter = 0; iter < maxIter; iter++) {
     if (shouldStop?.()) { stopped = true; break; } // 用户停止：本轮前中止
+    if (phaseToolBudgetReached) {
+      const phaseCalls = callLog.slice(phaseStartLogIndex);
+      const madeProgress = successfulCalls.size > phaseStartSuccessCount;
+      stalledPhases = madeProgress ? 0 : stalledPhases + 1;
+      const summaryRows = phaseCalls.slice(-14).map((call, index) => {
+        const state = call.success ? '完成' : `未完成（${humanizeExecutionError(call.result)}）`;
+        return `${index + 1}. ${getToolStage(call.name)}：${state}`;
+      });
+      const summary = summaryRows.length > 0 ? summaryRows.join('\n') : '这一阶段没有产生有效操作。';
+      if (stalledPhases >= 2 || completedToolPhases >= maxAutonomousToolPhases - 1) {
+        executionBudgetReached = true;
+        break;
+      }
+      completedToolPhases += 1;
+      currentTurns = [
+        ...checkpointBaseTurns,
+        { role: 'system', content: `${buildContinuationGuide(summary, stalledPhases)}\n\n已自动完成第 ${completedToolPhases} 个执行阶段的上下文压缩。不要向用户索要“继续”，请直接从未完成目标进入下一阶段，并优先验证能否换工具、换路径或补齐验收。` },
+      ];
+      phaseStartSuccessCount = successfulCalls.size;
+      phaseStartLogIndex = callLog.length;
+      consecutiveFailures = 0;
+      finalReviewRequested = false;
+      toolCallsThisPhase = 0;
+      phaseToolBudgetReached = false;
+      continue;
+    }
     if (iter > 0 && iter % iterationsPerPhase === 0) {
       const phaseCalls = callLog.slice(phaseStartLogIndex);
       const madeProgress = successfulCalls.size > phaseStartSuccessCount;
@@ -1023,8 +1052,8 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       const { executeTool } = await import('../engine/tools');
       let iterationHadFailure = false;
       for (const tc of r.toolCalls) {
-        if (callLog.length >= maxToolCalls) {
-          executionBudgetReached = true;
+        if (toolCallsThisPhase >= maxToolCallsPerPhase) {
+          phaseToolBudgetReached = true;
           break;
         }
         onToolCall?.(tc.name, tc.arguments);
@@ -1044,13 +1073,16 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         if (cached === undefined) toolResultCache.set(cacheKey, { output: result.output.slice(0, 6000), success: resultSuccess });
         onToolResult?.(tc.name, tc.arguments, result.output, resultSuccess);
         callLog.push({ name: tc.name, args: tc.arguments, result: result.output.slice(0, 1200), success: resultSuccess });
+        toolCallsThisPhase += 1;
+        if (toolCallsThisPhase >= maxToolCallsPerPhase) phaseToolBudgetReached = true;
         // 对 tool output 长度做上限，防止下游模型调用因上下文超长失败
         const truncated = result.output.slice(0, 1500);
         currentTurns.push({ role: 'assistant', content: null, tool_calls: [{ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments } }] } as any);
         currentTurns.push({ role: 'tool', content: truncated, tool_call_id: tc.id } as any);
         if (shouldStop?.()) { stopped = true; break; } // 用户停止：工具执行后中止
       }
-      if (stopped || executionBudgetReached) break;
+      if (stopped) break;
+      if (phaseToolBudgetReached) continue;
       if (iterationHadFailure) {
         currentTurns.push({ role: 'system', content: buildRecoveryGuide(consecutiveFailures) });
       }
@@ -1083,6 +1115,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     try {
       const handoff = await chatCompletion([
         { role: 'system', content: `${BEGINNER_RESPONSE_GUIDE}\n\n你现在只负责根据真实执行证据写最终交接，不得调用工具，不得虚构成功。` },
+        { role: 'system', content: '内部工具预算、上下文压缩或阶段次数不是用户需要解决的问题。除非确实缺少账号、授权、验证码、文件或业务选择，否则不得要求用户回复“继续”；要明确说明系统已经自动尝试的替代路径。' },
         { role: 'user', content: `用户最初目标：\n${originalUserText.slice(0, 4000)}\n\n已成功的阶段：\n${successfulStages.length ? successfulStages.join('、') : '暂时没有可确认的完成项'}\n\n最近失败证据：\n${failureEvidence || '没有明确失败，但执行预算已经用完。'}\n\n是否达到执行预算：${executionBudgetReached ? '是' : '否'}\n\n请用通俗中文交接，必须包含：\n1. 第一行明确整个目标成功还是没有成功；\n2. 已经完成并保留了什么；\n3. 最后卡在哪一类事情和通俗原因；\n4. 用户现在唯一最省事的下一步，明确点哪里、提供什么或回复什么。\n如果不需要用户提供账号、授权、文件或选择，就直说用户不需要改设置，并说明回复“继续”后你会换哪类路线。不要只说“重新验收”“请重试”或“查看执行过程”。` },
       ], scene, `${label} · 失败交接`, undefined, modelConfig, extraSystemContext);
       totalUsage.promptTokens += handoff.usage.promptTokens;

@@ -9,6 +9,7 @@ const { listSkills, readSkill, deleteSkill, installSkill } = require('./skills.c
 const { testObsidianVault, searchObsidianVault, readObsidianNote, fetchKnowledgeUrl } = require('./knowledge.cjs');
 const { version: APP_VERSION } = require('../package.json');
 const APP_TITLE = `私人办公会所 v${APP_VERSION}`;
+const WINDOW_PREFERENCES_PATH = path.join(app.getPath('userData'), 'window-preferences.json');
 
 // ===== 自主代理工作区（沙箱目录，所有文件读写/命令执行都限制在此）=====
 const WORKSPACE = path.join(app.getPath('userData'), 'workspace');
@@ -61,6 +62,7 @@ const ASSISTANT_COMPANION_KEY = 'assistant-chat';
 const ASSISTANT_COMPANION_WIDTH = 480;
 const ASSISTANT_COMPANION_MIN_WIDTH = 400;
 const ASSISTANT_COMPANION_GAP = 10;
+const LOCKED_CHAT_WIDTH = 480;
 
 function normalizeChatOptions(opts) {
   const type = opts?.type;
@@ -157,9 +159,43 @@ let lastActiveWindow = null;
 let ipcHandlersRegistered = false;
 let assistantCompanionWindow = null;
 let assistantCompanionManuallyClosed = false;
+let assistantCompanionLocked = loadAssistantCompanionLockPreference();
+const lockedChatWindowKeys = loadLockedChatWindowKeys();
 let settingsWindow = null;
 let tray = null;
 let isQuitting = false;
+
+function loadAssistantCompanionLockPreference() {
+  try {
+    return JSON.parse(fs.readFileSync(WINDOW_PREFERENCES_PATH, 'utf8')).assistantCompanionLocked === true;
+  } catch {
+    return false;
+  }
+}
+
+function loadLockedChatWindowKeys() {
+  try {
+    const saved = JSON.parse(fs.readFileSync(WINDOW_PREFERENCES_PATH, 'utf8'));
+    return new Set(Array.isArray(saved.lockedChatWindowKeys) ? saved.lockedChatWindowKeys.filter((key) => typeof key === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveAssistantCompanionLockPreference() {
+  try {
+    fs.writeFileSync(
+      WINDOW_PREFERENCES_PATH,
+      JSON.stringify({
+        assistantCompanionLocked,
+        lockedChatWindowKeys: [...lockedChatWindowKeys],
+      }, null, 2),
+      'utf8',
+    );
+  } catch (error) {
+    console.warn('Failed to save assistant window preference:', error);
+  }
+}
 
 function normalizeToolWindowOptions(opts) {
   const type = typeof opts?.type === 'string' ? opts.type : '';
@@ -300,6 +336,50 @@ function getAssistantCompanionBounds(owner, companion) {
   return { x: workArea.x + workArea.width - width, y, width, height };
 }
 
+function syncLockedAssistantCompanion() {
+  if (!assistantCompanionLocked || !mainWindow || mainWindow.isDestroyed()) return;
+  if (!assistantCompanionWindow || assistantCompanionWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized() || !mainWindow.isVisible()) return;
+  assistantCompanionWindow.setBounds(getAssistantCompanionBounds(mainWindow, assistantCompanionWindow));
+}
+
+function getLockedChatWindows() {
+  return [...chatWindows.entries()]
+    .filter(([key, win]) => key !== ASSISTANT_COMPANION_KEY && lockedChatWindowKeys.has(key) && win && !win.isDestroyed())
+    .sort(([a], [b]) => a.localeCompare(b));
+}
+
+function getLockedChatBounds(owner, chat, index, total) {
+  const ownerBounds = owner.getBounds();
+  const workArea = screen.getDisplayMatching(ownerBounds).workArea;
+  const currentBounds = chat.getBounds();
+  const width = Math.min(Math.max(Math.min(currentBounds.width, LOCKED_CHAT_WIDTH), CHAT_WINDOW_MIN_WIDTH), workArea.width);
+  const availableHeight = Math.max(CHAT_WINDOW_MIN_HEIGHT, Math.floor(Math.min(ownerBounds.height, workArea.height) / total));
+  const height = Math.min(availableHeight, workArea.height);
+  const x = Math.max(workArea.x, ownerBounds.x - width - ASSISTANT_COMPANION_GAP);
+  const maxY = workArea.y + workArea.height - height;
+  const y = Math.max(workArea.y, Math.min(maxY, ownerBounds.y + index * height));
+  return { x, y, width, height };
+}
+
+function syncLockedChatWindows() {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized() || !mainWindow.isVisible()) return;
+  const lockedChats = getLockedChatWindows();
+  lockedChats.forEach(([, chat], index) => {
+    chat.setBounds(getLockedChatBounds(mainWindow, chat, index, lockedChats.length));
+  });
+}
+
+function syncLockedCompanionWindows() {
+  syncLockedAssistantCompanion();
+  syncLockedChatWindows();
+}
+
+function scheduleLockedAssistantSync() {
+  if (!assistantCompanionLocked && lockedChatWindowKeys.size === 0) return;
+  setTimeout(syncLockedCompanionWindows, 0);
+}
+
 function getInitialWindowBounds() {
   const workArea = screen.getPrimaryDisplay().workArea;
   const companionWidth = Math.min(ASSISTANT_COMPANION_WIDTH, workArea.width);
@@ -343,6 +423,7 @@ async function createAssistantCompanion(owner = mainWindow, { focus = false } = 
   chatWindows.set(ASSISTANT_COMPANION_KEY, companion);
   trackActiveWindow(companion);
   companion.once('ready-to-show', () => {
+    if (assistantCompanionLocked) syncLockedCompanionWindows();
     if (focus) focusChatWindow(companion);
     else companion.showInactive();
   });
@@ -445,6 +526,23 @@ function createWindow() {
   mainWindow = win;
   trackActiveWindow(win);
 
+  for (const eventName of ['move', 'resize', 'maximize', 'unmaximize', 'restore']) {
+    win.on(eventName, scheduleLockedAssistantSync);
+  }
+  win.on('minimize', () => {
+    if (assistantCompanionLocked && assistantCompanionWindow && !assistantCompanionWindow.isDestroyed()) {
+      assistantCompanionWindow.minimize();
+    }
+    for (const [, chat] of getLockedChatWindows()) chat.minimize();
+  });
+  win.on('restore', () => {
+    if (assistantCompanionLocked && assistantCompanionWindow && !assistantCompanionWindow.isDestroyed()) {
+      assistantCompanionWindow.restore();
+    }
+    for (const [, chat] of getLockedChatWindows()) chat.restore();
+    scheduleLockedAssistantSync();
+  });
+
   win.once('ready-to-show', () => {
     createAssistantCompanion(win).catch((error) => {
       console.error('Failed to create assistant companion window:', error);
@@ -453,6 +551,10 @@ function createWindow() {
   win.on('close', (event) => {
     if (isQuitting) return;
     event.preventDefault();
+    if (assistantCompanionLocked && assistantCompanionWindow && !assistantCompanionWindow.isDestroyed()) {
+      assistantCompanionWindow.hide();
+    }
+    for (const [, chat] of getLockedChatWindows()) chat.hide();
     win.hide();
   });
 
@@ -475,6 +577,45 @@ function createWindow() {
     else w.maximize();
   });
   ipcMain.on('win:close', (event) => senderWin(event)?.close());
+  ipcMain.handle('win:getAssistantLock', () => ({ locked: assistantCompanionLocked }));
+  ipcMain.handle('win:setAssistantLock', async (_event, locked) => {
+    assistantCompanionLocked = locked === true;
+    saveAssistantCompanionLockPreference();
+    if (assistantCompanionLocked) {
+      const companion = await createAssistantCompanion(mainWindow, { focus: false });
+      if (companion && !companion.isDestroyed()) {
+        if (companion.isMinimized()) companion.restore();
+        companion.showInactive();
+        syncLockedAssistantCompanion();
+      }
+    }
+    return { locked: assistantCompanionLocked };
+  });
+  ipcMain.handle('win:getChatLock', (_event, opts) => {
+    const normalized = normalizeChatOptions(opts);
+    return { locked: Boolean(normalized && normalized.type !== 'assistant-chat' && lockedChatWindowKeys.has(normalized.key)) };
+  });
+  ipcMain.handle('win:setChatLock', (_event, opts) => {
+    const normalized = normalizeChatOptions(opts);
+    if (!normalized || normalized.type === 'assistant-chat') return { locked: false };
+    if (opts?.locked === true) {
+      // The left-side dock is a single workspace slot. Replacing its occupant
+      // keeps team and private chats from overlapping one another.
+      lockedChatWindowKeys.clear();
+      lockedChatWindowKeys.add(normalized.key);
+    }
+    else lockedChatWindowKeys.delete(normalized.key);
+    saveAssistantCompanionLockPreference();
+    if (lockedChatWindowKeys.has(normalized.key)) {
+      const chat = chatWindows.get(normalized.key);
+      if (chat && !chat.isDestroyed()) {
+        if (chat.isMinimized()) chat.restore();
+        chat.showInactive();
+      }
+      syncLockedChatWindows();
+    }
+    return { locked: lockedChatWindowKeys.has(normalized.key) };
+  });
 
   // ===== 窗口间广播（renderer 任意窗口发出，转发给除发送者外的所有窗口）=====
   // 用于主办公室窗口与原生聊天子窗口之间实时同步状态（聊天消息、任务、产出物等）
