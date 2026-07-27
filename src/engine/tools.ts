@@ -722,7 +722,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
           const verification = connectorPreset?.verification;
           if (!verification || !connector.installedSkillId) {
             updateConnector(connector.id, { status: result.status, error: result.error, lastChecked: Date.now() });
-            return { toolCallId: id, name, success: false, output: `“${connector.label}”的 Skill 和凭据已经准备好，但这个预设还没有客户端维护的安全验收命令。请读取已安装 Skill“${connector.installedSkillId ?? '未知'}”的说明，找到官方规定的健康检查或最小查询命令，然后调用 run_command，并传 connector="${connector.id}"、verification=true。只有该命令真实成功后才算已连接。` };
+            return { toolCallId: id, name, success: false, output: `“${connector.label}”的 Skill 和凭据已经准备好，但当前客户端没有对应的内置验收适配器。这是客户端能力缺失，不应要求用户查找或提供命令。` };
           }
 
           const { readSkill, skillInstructionText } = await import('../data/skills');
@@ -741,34 +741,66 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
             return { toolCallId: id, name, success: false, output: `“${connector.label}”验证已停止：${detail}。请检查 Skill 版本或重新安装官方版本，客户端不会猜测接口。` };
           }
 
-          const injectedEnv: Record<string, string> = {};
-          for (const field of connector.credentialFields ?? []) {
-            const value = connector.credentials?.[field.key];
-            if (field.envName && value) injectedEnv[field.envName] = value;
-          }
-          const api = getFsApi();
-          if (!api?.execCommand) {
-            return { toolCallId: id, name, success: false, output: `“${connector.label}”的 Skill 规则和凭据均已核对，但当前不是 Electron 桌面环境，无法执行真实验收命令。` };
-          }
-          const executed = await api.execCommand(verification.command, physicalWorkspace, {
-            sandboxEnabled: true,
-            env: injectedEnv,
-            skillId: connector.installedSkillId,
-          });
-          let businessSuccess = Boolean(executed.success);
-          let businessError = executed.stderr || '';
-          if (businessSuccess && verification.successJsonField) {
-            try {
-              const body = JSON.parse(executed.stdout || '{}') as Record<string, unknown>;
-              const actual = body[verification.successJsonField];
-              businessSuccess = (verification.successJsonValues ?? []).some((expected) => expected === actual);
-              if (!businessSuccess) businessError = `接口返回 ${verification.successJsonField}=${String(actual ?? '缺失')}`;
-            } catch {
-              businessSuccess = false;
-              businessError = '接口返回的不是可验证 JSON';
+          let businessSuccess = false;
+          let safeDetail = '真实调用失败';
+          let verificationSummary = '';
+          if (verification.adapter) {
+            const verified = await window.electronAPI?.connectorVerifyPreset?.({
+              adapter: verification.adapter,
+              credentials: connector.credentials,
+            });
+            if (!verified) {
+              safeDetail = '当前桌面客户端没有开放连接器适配器 IPC';
+            } else {
+              businessSuccess = verified.ok;
+              const stageLabels: Record<string, string> = {
+                configuration: '配置检查', adapter: '适配器选择', network: '网络请求', timeout: '请求超时',
+                http: 'HTTP 响应', response: '响应解析', business: '业务验收', complete: '验收完成',
+              };
+              const metrics = [
+                `阶段=${stageLabels[verified.stage] ?? verified.stage}`,
+                verified.httpStatus ? `HTTP=${verified.httpStatus}` : '',
+                verified.code !== undefined ? `业务码=${String(verified.code)}` : '',
+                `尝试=${verified.attempts}次`,
+                verified.latencyMs !== undefined ? `耗时=${verified.latencyMs}ms` : '',
+              ].filter(Boolean).join('，');
+              safeDetail = `${verified.error ?? verified.message ?? (verified.ok ? 'success' : '未知错误')}（${metrics}）`.slice(0, 500);
+              verificationSummary = `客户端原生适配器“${verification.adapter}”已执行最小只读请求；${metrics}`;
             }
+          } else if (verification.command) {
+            const injectedEnv: Record<string, string> = {};
+            for (const field of connector.credentialFields ?? []) {
+              const value = connector.credentials?.[field.key];
+              if (field.envName && value) injectedEnv[field.envName] = value;
+            }
+            const api = getFsApi();
+            if (!api?.execCommand) {
+              safeDetail = '当前不是 Electron 桌面环境，无法执行真实验收命令';
+            } else {
+              const executed = await api.execCommand(verification.command, physicalWorkspace, {
+                sandboxEnabled: true,
+                env: injectedEnv,
+                skillId: connector.installedSkillId,
+              });
+              businessSuccess = Boolean(executed.success);
+              let businessError = executed.stderr || '';
+              if (businessSuccess && verification.successJsonField) {
+                try {
+                  const body = JSON.parse(executed.stdout || '{}') as Record<string, unknown>;
+                  const actual = body[verification.successJsonField];
+                  businessSuccess = (verification.successJsonValues ?? []).some((expected) => expected === actual);
+                  if (!businessSuccess) businessError = `接口返回 ${verification.successJsonField}=${String(actual ?? '缺失')}`;
+                } catch {
+                  businessSuccess = false;
+                  businessError = '接口返回的不是可验证 JSON';
+                }
+              }
+              safeDetail = (businessError || executed.stdout || '真实调用失败').slice(0, 500);
+              verificationSummary = '客户端兼容命令适配器已执行最小只读请求';
+            }
+          } else {
+            safeDetail = '连接器预设没有定义可执行的客户端适配器';
           }
-          const safeDetail = (businessError || executed.stdout || '真实调用失败').slice(0, 500);
           updateConnector(connector.id, {
             status: businessSuccess ? 'connected' : 'disconnected',
             error: businessSuccess ? undefined : safeDetail,
@@ -777,8 +809,8 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
           const { BUS_CHANNELS, sendBus } = await import('../ipcBus');
           sendBus(BUS_CHANNELS.CONNECTORS_CHANGED, { connectorId: connector.id, reason: 'preset-verified', status: businessSuccess ? 'connected' : 'disconnected' });
           return businessSuccess
-            ? { toolCallId: id, name, success: true, output: `“${connector.label}”已完成闭环验证：读取了已关联 Skill“${connector.installedSkillId}”的规则，并按规则执行客户端维护的最小只读查询；接口业务状态通过，现在可以确认连接器可用。` }
-            : { toolCallId: id, name, success: false, output: `“${connector.label}”已读取 Skill 规则并执行最小只读查询，但真实调用未通过：${safeDetail}。配置已保留，请按这个具体原因修正后重试。` };
+            ? { toolCallId: id, name, success: true, output: `“${connector.label}”已完成闭环验证：读取了已关联 Skill“${connector.installedSkillId}”的完整规则；${verificationSummary}；接口业务状态通过，现在可以确认连接器可用。` }
+            : { toolCallId: id, name, success: false, output: `“${connector.label}”已由客户端自主完成规则核对和真实只读调用，但验证未通过：${safeDetail}。配置已保留；客户端不会要求用户查找 README、复制命令或重复读取 Skill。` };
         }
         updateConnector(connector.id, {
           status: result.status,
@@ -791,7 +823,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         sendBus(BUS_CHANNELS.CONNECTORS_CHANGED, { connectorId: connector.id, reason: 'tested', status: result.status });
         if (result.status !== 'connected') {
           if (connector.kind === 'skill-bridge' && result.status === 'unknown') {
-            return { toolCallId: id, name, success: false, output: `“${connector.label}”的 Skill 和凭据已经准备好，但还没有做真实外部调用。请读取已安装 Skill 的说明，找到官方规定的健康检查或最小查询命令，然后调用 run_command，并传 connector="${connector.id}"、verification=true。只有该命令真实成功后才算已连接。` };
+            return { toolCallId: id, name, success: false, output: `“${connector.label}”的 Skill 和凭据已经准备好，但客户端没有完成真实外部调用。这属于连接器适配器缺失或异常；不得要求用户查找命令或重复读取 Skill。` };
           }
           return { toolCallId: id, name, success: false, output: `“${connector.label}”真实连接测试没有通过：${result.error ?? '服务没有正常回应'}。配置已保留，但不能宣布完成。请根据这个原因修正配置后再测试。` };
         }

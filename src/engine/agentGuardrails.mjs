@@ -125,7 +125,7 @@ export function requiresFreshWebResearch(message) {
   if (/(?:为什么|为何|怎么|是否|有没有).{0,18}(?:搜索|查询|联网).{0,18}(?:失败|没调用|不能用|不可用|没反应)/u.test(text)) return false;
   const explicitInternetSearch = /(?:^|帮我|给我|请|去|需要|重新|直接|现在|先).{0,12}(?:联网搜索|上网搜索|网络搜索|搜索互联网|网上查|上网查)/u.test(text);
   const explicitResearch = /(?:^|帮我|给我|请|去|需要|重新|直接|现在|先).{0,12}(?:搜索|搜一下|搜集|查找|查询|检索).{0,30}(?:资料|文档|新闻|资讯|消息|行情|价格|来源|官网|政策|数据|进展)/u.test(text);
-  const freshInformation = /(?:今天|今日|本周|本月|最新|实时|当前).{0,24}(?:新闻|资讯|消息|行情|价格|股价|汇率|天气|政策|数据|进展|动态|资料|信息)/u.test(text);
+  const freshInformation = /(?:今天|今日|本周|本月|最新|实时|当前).{0,24}(?:新闻|资讯|消息|热点|行情|价格|股价|汇率|天气|政策|数据|进展|动态|资料|信息)/u.test(text);
   return explicitInternetSearch || explicitResearch || freshInformation;
 }
 
@@ -134,9 +134,11 @@ export function buildFreshWebQuery(message) {
   if (!original) return '';
   const withoutCommand = original
     .replace(/^(?:请|麻烦|现在|先|直接)?(?:你)?(?:帮我|给我|替我)?(?:去)?(?:联网搜索|上网搜索|网络搜索|搜索互联网|网上查|上网查|搜索|搜一下|搜集|查找|查询|检索)(?:一下|一下子)?[：:，,\s]*/u, '')
+    .replace(/^(?:那|那么)?(?:你)?(?:帮我|给我|替我)?(?:提炼|整理|总结|汇总|介绍|说说)(?:一下)?[：:，,\s]*/u, '')
     .replace(/(?:然后|并且|之后|再)[，,\s]*(?:帮我|给我)?(?:做|整理|生成|写|制作|汇总).{0,80}$/u, '')
     .replace(/[，,]\s*\d{1,2}\s*(?:条|个|则|项|篇).{0,80}$/u, '')
     .replace(/[，,]\s*(?:帮我|给我)?(?:总结|汇总|整理|做成|写成).{0,80}$/u, '')
+    .replace(/(?:然后)?(?:跟我说|告诉我|直接给我(?:内容|结果)|直接说).{0,40}$/u, '')
     .replace(/[“”"'。！？!?]/gu, ' ')
     .replace(/\s+/g, ' ')
     .replace(/[，,：:\s]+$/u, '')
@@ -159,6 +161,20 @@ function parsedResearchRows(searchOutput) {
   }));
 }
 
+export function extractResearchSources(searchOutput, limit = 5) {
+  const safeLimit = Math.max(1, Math.min(Number.isFinite(limit) ? Math.floor(limit) : 5, 8));
+  return parsedResearchRows(searchOutput).slice(0, safeLimit);
+}
+
+export function isResearchDeliveryDeflection(content) {
+  const text = String(content ?? '').trim();
+  if (!text) return true;
+  return /(?:只|仅).{0,12}(?:拿到|获得|找到).{0,16}(?:资讯入口|信息入口|搜索入口|链接)/u.test(text)
+    || /(?:没有|未能|无法|不能).{0,20}(?:拿到|获得|提取|读取).{0,16}(?:具体新闻|新闻标题|正文|完整内容)/u.test(text)
+    || /(?:把|将|请).{0,24}(?:链接|截图|新闻原文|正文).{0,16}(?:发给我|发过来|贴给我|提供给我|重新上传)/u.test(text)
+    || /(?:需要你|请你).{0,16}(?:打开|查看|阅读).{0,16}(?:来源|链接|网页)/u.test(text);
+}
+
 function requestedResearchCount(userText, available) {
   const requested = Number(/(?:^|\D)(\d{1,2})\s*(?:条|个|则|项|篇)/u.exec(String(userText ?? ''))?.[1] ?? 5);
   return Math.max(1, Math.min(Number.isFinite(requested) ? requested : 5, available, 10));
@@ -171,7 +187,7 @@ export function buildResearchFallback(userText, searchOutput, modelError = '') {
     return `搜索已经完成，但整理模型暂时没有回应。以下是搜索服务返回的原始资料：\n\n${String(searchOutput ?? '').slice(0, 10000)}`;
   }
   const items = rows.slice(0, count).map((row, index) => {
-    const summary = row.snippet || '搜索结果没有提供摘要，请打开来源查看完整内容。';
+    const summary = row.snippet || '该来源未返回可核验摘要，当前仅确认标题与来源，不补写未经证实的细节。';
     return `**${index + 1}. ${row.title}**\n${summary}\n[查看来源](${row.url})`;
   });
   const note = modelError ? '整理模型连续重试后仍未回应，已直接根据搜索标题、摘要和链接生成结果。' : '已根据真实搜索结果整理。';

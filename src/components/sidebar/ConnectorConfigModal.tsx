@@ -77,14 +77,7 @@ export default function ConnectorConfigModal({ connector, onClose, onSaved, stan
         id: `connector-verification-${draft.id}-${Date.now()}`,
         display: `验证 ${draft.label} 连接器`,
         createdAt: Date.now(),
-        prompt: `请继续完成“${draft.label}”连接器的真实验证，不要重新向我索要已经保存的凭据，也不要在回复或工具参数中显示密钥内容。
-
-必须按下面顺序自主完成：
-1. 调用 inspect_connectors，核对连接器 ID“${draft.id}”的配置状态和真实接入方式。
-2. 调用 read_skill，读取已安装 Skill ID“${draft.installedSkillId}”的完整说明。
-3. 只采用 Skill 说明中明确提供的健康检查或最小查询命令，不得猜测接口、路径或命令。
-4. 调用 run_command 执行该命令，并同时传 connector="${draft.id}"、verification=true，让客户端仅在该 Skill 进程中注入已保存凭据。
-5. 真实调用成功才能说明“已连接”；失败时请用通俗中文说清卡在哪一步、原因和下一步需要我做什么。`,
+        prompt: `请验证“${draft.label}”连接器（ID“${draft.id}”）。客户端强制流程会在回复前执行 test_connector，自行读取完整 Skill 规则、通过内置适配器注入已保存凭据、执行最小只读请求、重试瞬时网络错误并验收业务状态。请直接呈现该真实结果，不要再次调用 inspect_connectors、test_connector 或 read_skill，不要让用户查看 README、复制命令或重复提供已保存凭据。`,
       };
       try { localStorage.setItem(LS_PENDING_REQUEST, JSON.stringify(request)); } catch {}
       const opened = await window.electronAPI?.openChat?.({ type: 'assistant-chat', refId: '' });
@@ -93,7 +86,7 @@ export default function ConnectorConfigModal({ connector, onClose, onSaved, stan
         return;
       }
       sendBus(BUS_CHANNELS.ASSISTANT_RUN_REQUEST, request);
-      message.success('配置已保存，助手正在按 Skill 说明做真实验证');
+      message.success('配置已保存，客户端正在通过内置适配器做真实验证');
       onClose();
     } else message.warning(result.error ?? '配置已保存，连接测试未通过');
   };

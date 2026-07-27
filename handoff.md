@@ -1,12 +1,12 @@
 # 太极项目当前交接
 
 > 更新时间：2026-07-27
-> 当前版本：`v0.9.5`
+> 当前版本：`v0.9.6`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
-> Release：[v0.9.5](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.9.5)
+> Release：[v0.9.6](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.9.6)
 
-`v0.9.5` 完整内置 IMA 官方 Skill 1.1.8，并修复根 `SKILL.md` 只做路由时子模块规则未被客户端读取的问题。IMA 用户只需填写本机 Client ID 与 API Key；手动安装的新版本 Skill 仍优先，失效关联才回退内置版本。后续外部 API 继续采用“适配器和规则内置、用户凭据仅本机保存”的统一架构。
+`v0.9.6` 修复 IMA 验证执行内核：官方 Skill 继续提供公开规则，Electron 主进程原生适配器负责固定端点调用、重试和业务验收，不再通过 PowerShell 拼接 JSON。纯验证请求直接返回客户端证据，不再让模型重复读取 Skill 或要求用户提供命令。连接器是统一能力入口，MCP 只是其中一种协议；IMA 当前不是 MCP Server。用户凭据仍只保存在本机。
 
 ## 办公室端直接开始
 
@@ -16,7 +16,7 @@
 npm.cmd run sync:project
 ```
 
-进入新下载的 `sirenhuisuo-v0.9.5-<commit>` 目录后依次执行：
+进入新下载的 `sirenhuisuo-v0.9.6-<commit>` 目录后依次执行：
 
 ```powershell
 npm.cmd install
@@ -24,6 +24,8 @@ npm.cmd run build
 npm.cmd run lint
 npm.cmd run verify:foundation
 npm.cmd run verify:agent-kernel
+npm.cmd run verify:connector-adapters
+npm.cmd run verify:package
 ```
 
 开始修改前阅读本文件、`docs/PROJECT_HANDOFF.md`、`docs/CROSS_DEVICE_WORKFLOW.md` 和 `CHANGELOG.md` 的最新版本。
@@ -127,9 +129,11 @@ npm.cmd run verify:agent-kernel
 - `npm.cmd run lint`：通过；只有已有非阻断警告。
 - `npm.cmd run verify:foundation`：通过；隔离目录内容为 `first-content / second-content`，附件为 `attachment-content`，敏感参数已隐藏，旧会话任务转为暂停待恢复，诊断领域为 5 项。
 - `npm.cmd run verify:agent-kernel`：通过；118 次重复 Skill 读取只执行 1 次。
+- `npm.cmd run verify:connector-adapters`：通过；覆盖 IMA 原生成功、业务失败、畸形响应、三次网络重试、凭据不泄漏和 Windows 命令退出码传播。
 - `npm.cmd run verify:skill-atomic`：通过；无效包不触碰旧 Skill，成功替换不残留旧文件，哈希损坏被拦截，并真实验证根 Skill 可读取知识库与笔记子规则。
 - `npm.cmd run verify:update-download`：通过；模拟断线后 Range 续传、服务器忽略断点、等长损坏缓存和 SHA-256 拦截。
 - `npm.cmd run verify:web-search`：通过；覆盖 Bing XML 解析、主源超时后备用源成功和双源具体错误聚合。
+- `npm.cmd run verify:package`：通过；包内版本为 `0.9.6`，入口、连接器适配器、命令外壳和三份 IMA 规则均可读取，安装器、blockmap 与 `latest.yml` 完整。
 - `npm.cmd run diagnose:web-search`：通过；Electron 实网使用 DuckDuckGo，首轮空结果自动重试后约 3.1 秒返回 8 条中文 AI 资讯。
 - `npm.cmd run verify:docx`：通过；生成的 Word 可重新解析正文。
 - 安装版 `npm.cmd run verify:foundation-ui`：通过；真实 Electron IPC 和诊断中心五项完整显示。
@@ -140,13 +144,15 @@ npm.cmd run verify:agent-kernel
 
 ## 安装与发布资产
 
-- 安装包：`E:\私人办公会所项目\release\taiji-office-setup-0.9.5.exe`
-- Blockmap：`E:\私人办公会所项目\release\taiji-office-setup-0.9.5.exe.blockmap`
+- 安装包：`E:\私人办公会所项目\release\taiji-office-setup-0.9.6.exe`
+- Blockmap：`E:\私人办公会所项目\release\taiji-office-setup-0.9.6.exe.blockmap`
 - 更新清单：`E:\私人办公会所项目\release\latest.yml`
-- 安装包大小：`173831202` 字节。
-- 安装包 SHA-256：`356025C72FF752A0258189AE8531A3B6D42A9E77F4AAD7E3331DA44B37ADA603`。
-- `app.asar` SHA-256：`0A78ABFE935C9CDCE78ECE350D157ECC0EDA2D3D237EE7125DEAD0E1A64E7641`。
-- 包内版本：`0.9.5`。
+- 安装包大小：`173836552` 字节。
+- Blockmap 大小：`180802` 字节。
+- 安装包 SHA-256：`4D9541DB105894194C1110D32C8A6847FC9ACBAB5403DD387B883F21125DA288`。
+- `app.asar` SHA-256：`4CD21ABE007C1F19DDC47CD9E5EE9100B0523C60BD22BE5A4E5C34779CCCC753`。
+- 包内版本：`0.9.6`。
+- 解包版受控启动 8 秒保持运行，未出现启动即崩溃。
 - 安装目录只保留 `太极 AI 办公会所.exe` 和对应卸载程序，没有旧产品可执行文件残留。
 
 ## 已知边界
@@ -161,7 +167,7 @@ npm.cmd run verify:agent-kernel
 - 源码快照不是 Git 工作树，不能用本目录的 `git status/push` 判断远端；发布继续使用工作区根目录的 `publish-v061.ps1` 和 Git Credential Manager OAuth。
 - 不要修改内部 `name`、`appId` 或 `hermes_office_*` 键，否则品牌改名会造成用户数据看似丢失。
 - 回滚不能先恢复配置再下载旧安装包；下载失败会让当前版本提前加载旧配置。
-- 直接运行 `electron-builder` 会尝试写系统缓存并遇到权限拒绝；必须使用 `npm.cmd run dist:win`，脚本会把缓存定向到 `L:\AI办公室\eb-cache`。
+- 系统 Node 24 与当前 ASAR 版本组合可能生成索引错位的不可启动包；必须使用 `npm.cmd run dist:win`。脚本固定复用项目缓存中的官方便携 Node 20.18.3，把临时目录定向到构建缓存，并在结束时自动验收 ASAR。
 - NSIS 构建中间会短暂出现 0 字节 `.7z`，必须等正式 `.exe`、`.blockmap` 和新 `latest.yml` 全部存在后再判断完成。
 - 不提交 API Key、密码、验证码、聊天数据、本机配置、用户 Skill 或测试用户目录。
 
@@ -170,6 +176,7 @@ npm.cmd run verify:agent-kernel
 1. 在用户真实配置上验收五个场景：新建员工后助手立即找到、团队任务异常退出后恢复、损坏 Skill 修复、连接器真实连接证据、一次自动更新与回滚。
 2. 完成一次隔离目录的真实跨版本自动更新与回滚演练并记录证据。
 3. 给升级日志增加用户可导出的通俗诊断报告。
-4. 按用户新反馈继续优化，但同层问题必须同步检查助手、员工私聊和团队三条路径。
+4. 抽出统一 `ExecutionController`，让助手、员工私聊和团队共享“目标状态、动作结果、失败分类、证据验收、换路线与重规划”循环，避免继续靠各聊天入口的零散提示词补丁。
+5. 按用户新反馈继续优化，但同层问题必须同步检查助手、员工私聊和团队三条路径。
 
 每次完成后仍按：预检、构建、回归、打包、覆盖安装、哈希校验、更新本文件、发布 GitHub `main` 与同版本 Release 的顺序交付。

@@ -10,6 +10,8 @@ const { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill,
 const { testObsidianVault, searchObsidianVault, readObsidianNote, fetchKnowledgeUrl, searchWeb } = require('./knowledge.cjs');
 const { version: APP_VERSION } = require('../package.json');
 const { sanitizeInjectedEnv, redactInjectedValues } = require('./secretSafety.cjs');
+const { verifyConnectorAdapter } = require('./connectorAdapters.cjs');
+const { buildPowerShellCommand } = require('./commandShell.cjs');
 const log = require('electron-log');
 // Isolate automated Electron verification from a user's real local data.
 if (process.env.TAIJI_TEST_USER_DATA) app.setPath('userData', path.resolve(process.env.TAIJI_TEST_USER_DATA));
@@ -851,6 +853,12 @@ function createWindow() {
       return { ok: false, error: String(e?.message ?? e) };
     }
   });
+
+  ipcMain.handle('connector:verifyPreset', async (_event, input) => {
+    const result = await verifyConnectorAdapter(input, { fetchImpl: (url, options) => net.fetch(url, options) });
+    log.info(`[connectorAdapter] adapter=${result.adapter ?? input?.adapter ?? 'unknown'} stage=${result.stage} ok=${result.ok} attempts=${result.attempts ?? 0} latencyMs=${result.latencyMs ?? 0} http=${result.httpStatus ?? 0}`);
+    return result;
+  });
   ipcMain.handle('knowledge:searchWeb', async (_event, query) => {
     const startedAt = Date.now();
     try {
@@ -922,7 +930,7 @@ function createWindow() {
       const child = process.platform === 'win32'
         ? execFile('powershell.exe', [
             '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
-            `[Console]::OutputEncoding = [Text.UTF8Encoding]::new(); $OutputEncoding = [Text.UTF8Encoding]::new(); $ProgressPreference = 'SilentlyContinue'; & { ${cmd} }`,
+            buildPowerShellCommand(cmd),
           ], options, done)
         : exec(cmd, options, done);
 

@@ -98,9 +98,16 @@ async function run() {
     assert.equal(guardrails.buildFreshWebQuery('搜索一下今天的AI热点资讯，5条总结发给我，带上链接。'), '今天的AI热点资讯');
     assert.equal(guardrails.requiresFreshWebResearch('为什么他没有调用查询工具？'), false);
     assert.equal(guardrails.isConversationOnlyMessage('为什么他没有调用查询工具？'), true);
+    assert.equal(guardrails.requiresFreshWebResearch('那你提炼一下最新的热点然后跟我说，直接给我内容就好'), true);
+    assert.equal(guardrails.buildFreshWebQuery('那你提炼一下最新的热点然后跟我说，直接给我内容就好'), '最新的热点');
+    assert.deepEqual(guardrails.extractResearchSources(`搜索结果：\n\n1. 示例资讯\nhttps://example.com/news\n摘要`, 1), [{ title: '示例资讯', url: 'https://example.com/news', snippet: '摘要' }]);
+    assert.equal(guardrails.isResearchDeliveryDeflection('目前不能可靠提供热点，前面只拿到了资讯入口，没有拿到具体新闻标题和正文。请把链接发给我。'), true);
+    assert.equal(guardrails.isResearchDeliveryDeflection('这是三条热点的内容摘要，并附有可点击来源。'), false);
 
     const researchFallback = guardrails.buildResearchFallback('给我 1 条，带链接', `搜索结果（来源：DuckDuckGo HTML，1264ms）：\n\n1. 示例资讯\nhttps://example.com/news\n这是可核验的资讯摘要。`, '模型超时');
     assert.match(researchFallback, /搜索完成.*示例资讯.*这是可核验的资讯摘要.*\[查看来源\]\(https:\/\/example\.com\/news\)/su);
+    const noSnippetFallback = guardrails.buildResearchFallback('给我 1 条', `搜索结果：\n\n1. 只有标题\nhttps://example.com/title\n`);
+    assert.doesNotMatch(noSnippetFallback, /请打开来源/u);
     const linked = guardrails.ensureResearchSourceLinks('这是整理后的摘要。', '给我 1 条', `搜索结果：\n\n1. 示例资讯\nhttps://example.com/news\n摘要`);
     assert.match(linked, /\*\*来源链接\*\*.*https:\/\/example\.com\/news/su);
 

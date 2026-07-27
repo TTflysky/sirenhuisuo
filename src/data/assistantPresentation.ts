@@ -28,8 +28,8 @@ export const CAPABILITY_ROUTING_GUIDE = `## 能力路由（所有助手、员工
 先判断用户要解决的是哪一类能力，再选择工具；一个例子暴露的问题要按同类任务统一处理。
 
 1. 模型任务：模型地址、API Key、上下文或模型不可用，检查模型设置与真实连接，不要搜索 Skill 代替模型。
-2. 连接器任务：凡是连接器、MCP、知识库、Obsidian、邮箱、GitHub 或外部服务的安装、配置、关联、查询，先调用 inspect_connectors 判断真实接入方式。HTTP/本地/MCP 才直接 prepare_connector；如果检查结果或官方说明明确要求 Skill，则先 read_web_page 阅读说明、install_skill 安装、read_skill 核对配置和验证命令，再打开多字段配置。不得把所有外部能力硬塞进同一种表单。
-3. Skill 任务：用户明确要找、安装、更新或使用 Skill，或连接器检查明确显示“接入方式: Skill”时，才使用 search_skills/read_skill/install_skill。Skill 文件安装完成不代表外部服务可用，还要配置说明要求的凭据并执行真实调用。
+2. 连接器任务：凡是连接器、MCP、知识库、Obsidian、邮箱、GitHub 或外部服务的安装、配置、关联、查询，先调用 inspect_connectors 判断真实接入方式。已配置预设必须直接调用 test_connector，由客户端内置适配器完成规则读取、凭据注入、真实调用、重试和验收；禁止要求用户查看 README、提供命令或重复读取 Skill。只有尚未配置时才调用 prepare_connector 打开对应配置入口。
+3. Skill 任务：用户明确要找、安装、更新或使用独立 Skill 时，才使用 search_skills/read_skill/install_skill。连接器关联的 Skill 是适配器规则来源，不由模型手工拼接健康检查命令；Skill 文件安装完成也不代表外部服务可用，最终状态只认 test_connector 的客户端证据。
 4. 文件任务：读取、编辑、生成或验收文件，使用文件工具并实际重新读取或打开验证；聊天里说“已生成”不算交付。
 5. 员工和团队任务：先使用客户端实时提供的员工、团队目录核对对象，再调度；不要凭旧对话断言某人不存在。
 6. 外部服务缺少用户专属地址、密钥、登录、验证码或授权时，先完成能自动完成的配置草稿并打开正确入口，再用通俗话告诉用户只需填写哪一项。不得编造凭据，不得绕回无关工具消耗步骤。
@@ -91,7 +91,7 @@ const TOOL_ACTIONS: Record<string, { active: string; stage: string }> = {
   list_files: { active: '正在检查文件…', stage: '检查文件' },
   web_search: { active: '正在查询最新资料…', stage: '查询资料' },
   model_summary: { active: '正在整理搜索结果…', stage: '整理搜索结果' },
-  read_web_page: { active: '正在阅读官方说明…', stage: '阅读官方说明' },
+  read_web_page: { active: '正在阅读来源正文…', stage: '阅读来源正文' },
   install_skill: { active: '正在安装技能包…', stage: '安装技能包' },
   run_command: { active: '正在执行安装或检查…', stage: '安装或检查' },
   inspect_connectors: { active: '正在检查连接器状态…', stage: '检查连接器' },
@@ -124,7 +124,7 @@ export function getToolActionLabel(name: string, args = ''): string {
   if (name === 'list_files') return '检查工作区文件';
   if (name === 'web_search') return '搜索最新资料';
   if (name === 'model_summary') return '整理搜索结果';
-  if (name === 'read_web_page') return '阅读官方说明';
+  if (name === 'read_web_page') return '阅读来源正文';
   if (name === 'install_skill') return '安装官方技能包';
   if (name === 'inspect_connectors') return '检查连接器和可用预设';
   if (name === 'prepare_connector') return '打开连接器配置';
@@ -182,7 +182,7 @@ export function summarizeToolResult(name: string, result: string, success: boole
     return count > 0 ? `资料搜索已完成，共获得 ${count} 条结果，正在整理。` : '资料搜索已完成，正在整理。';
   }
   if (name === 'model_summary') return success ? '搜索结果已经整理完成。' : humanizeExecutionError(result);
-  if (name === 'read_web_page') return '官方说明已经读取。';
+  if (name === 'read_web_page') return '来源正文已经读取。';
   if (name === 'install_skill') return '技能包已经安装，正在继续配置和验证。';
   if (name === 'run_command') return '这一步已经完成。';
   if (name === 'inspect_connectors') return '连接器状态已经检查。';

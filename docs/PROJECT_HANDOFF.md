@@ -1,7 +1,7 @@
 # 项目交接手册
 
 > 最后整理：2026-07-27
-> 当前源码版本：`v0.9.5`
+> 当前源码版本：`v0.9.6`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 
@@ -32,8 +32,9 @@
 - 本机 Skill 扫描、搜索、读取和手动选择；模型按任务需要自行判断是否检索 Skill。
 - IMA 官方 Skill 1.1.8 完整内置；根规则与明确引用的知识库、笔记子规则统一读取，旧关联失效时自动回退并持久化内置 Skill ID。
 - 明确要求今日、最新、实时或联网资料时，客户端保证先执行真实搜索；普通任务仍由模型按需决定。搜索通过 Electron 代理访问 DuckDuckGo/Bing，支持重试、切换和具体错误诊断。
-- 资料型请求在搜索后使用无工具的专用整理阶段；模型整理失败最多重试 5 次，仍失败则由客户端根据搜索摘要和链接直接交付，不能把成功搜索误报为查询失败。
-- 连接器的验证、测试、诊断请求由客户端先做真实状态检查；IMA 配置保存后自动读取已关联 Skill 规则并运行预设的最小只读查询，进程与 API 业务状态都通过后才开放连接器。
+- 资料型请求在搜索后由客户端并行读取前 5 个可访问来源正文，再使用无工具的专用整理阶段；模型整理失败最多重试 5 次，仍失败则由客户端根据搜索摘要和链接直接交付，不能把成功搜索误报为查询失败，也不能要求用户自行阅读或回传链接。
+- 连接器的验证、测试、诊断请求由客户端先做真实状态检查；纯验证请求直接返回客户端证据，不再调用模型二次改写。
+- 连接器是外部能力的统一入口，MCP 只是其中一种协议。IMA 当前是“官方 Skill 规则 + Electron 原生适配器”，主进程直接调用固定官方端点并核对 HTTP 与业务码，不经过 PowerShell，也不是 MCP Server。
 - mac 风格的浅色/深色界面、内置幼圆、原生 Electron 聊天子窗口和可调整面板宽度。
 - 助理、单聊、团队三类聊天统一支持附件文件选择、粘贴、拖拽。
 - 图片可作为视觉输入，文本/代码可直接读取；Excel、Word、PowerPoint、PDF、OpenDocument、RTF、EPUB 通过 `officeparser` 提取文本；其他二进制也会真实保存，并向模型返回可操作路径和明确说明。
@@ -69,10 +70,13 @@
 | --- | --- |
 | `electron/main.cjs` | 窗口管理、工作区安全边界、文件 IPC、命令执行、Office/PDF 解析及走 Electron 代理的搜索 IPC。 |
 | `electron/knowledge.cjs` | 网页正文读取、DuckDuckGo/Bing 双源搜索、超时重试、结果解析和错误聚合。 |
+| `electron/connectorAdapters.cjs` | 内置外部服务原生适配器；IMA 固定只读验证、阶段诊断、重试和脱敏结果。 |
+| `electron/commandShell.cjs` | Windows PowerShell 命令包装并正确传播原生进程退出码。 |
 | `electron/preload.cjs` | 受限的 `window.electronAPI` 桥接。新增 IPC 必须同步更新此文件和 `src/electron.d.ts`。 |
 | `electron/skills.cjs` | 扫描 `%USERPROFILE%/.workbuddy/skills`、项目 `skills/` 和 `.workbuddy/skills`。 |
 | `electron/autoUpdate.cjs` | 通过 GitHub Releases 检查并下载更新；后台检查失败只写诊断日志，不冒充模型网络故障。 |
 | `electron/releaseDownload.cjs` | 回滚安装包断点续传、无数据超时、大小与 SHA-256 校验、临时文件原子落盘。 |
+| `scripts/build-windows.ps1` | 恢复 Electron 缓存并固定用便携 Node 20 打包；临时目录位于项目缓存，完成后自动验收 ASAR 与发布文件。 |
 
 ## 4. 数据位置与隐私边界
 

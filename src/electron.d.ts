@@ -9,6 +9,19 @@ export interface ExecCommandResult {
   cwd: string;
 }
 export interface ExecCommandPolicy { sandboxEnabled?: boolean; env?: Record<string, string>; skillId?: string; }
+export interface ConnectorPresetVerificationResult {
+  ok: boolean;
+  status: 'connected' | 'disconnected';
+  adapter?: string;
+  stage: 'configuration' | 'adapter' | 'network' | 'timeout' | 'http' | 'response' | 'business' | 'complete';
+  attempts: number;
+  latencyMs?: number;
+  httpStatus?: number;
+  code?: string | number;
+  retryable?: boolean;
+  message?: string;
+  error?: string;
+}
 
 export interface FsEntry {
   name: string;
@@ -107,6 +120,7 @@ declare global {
 
     // 连接器 API 调用（主进程代理 HTTP 请求）
     connectorCall: (opts: ConnectorCallOpts) => Promise<ConnectorCallResult>;
+    connectorVerifyPreset: (input: { adapter: string; credentials?: Record<string, string> }) => Promise<ConnectorPresetVerificationResult>;
     knowledgePickObsidian: () => Promise<KnowledgeVaultResult & { canceled?: boolean }>;
     knowledgeTestObsidian: (root: string) => Promise<KnowledgeVaultResult>;
     knowledgeSearchObsidian: (root: string, query: string) => Promise<{ ok: boolean; results?: Array<{ path: string; title: string; snippet: string }>; scanned?: number; error?: string }>;

@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ===== 连接器 API 调用（主进程代理）=====
   connectorCall: (opts) => ipcRenderer.invoke('connector:call', opts),
+  connectorVerifyPreset: (input) => ipcRenderer.invoke('connector:verifyPreset', input),
   knowledgePickObsidian: () => ipcRenderer.invoke('knowledge:pickObsidian'),
   knowledgeTestObsidian: (root) => ipcRenderer.invoke('knowledge:testObsidian', root),
   knowledgeSearchObsidian: (root, query) => ipcRenderer.invoke('knowledge:searchObsidian', { root, query }),

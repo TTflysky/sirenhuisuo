@@ -5,10 +5,19 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $sharedCache = Join-Path (Split-Path -Parent $projectRoot) 'eb-cache'
 $localCache = Join-Path $projectRoot '.electron-builder-cache'
 $cache = if (Test-Path -LiteralPath $sharedCache) { $sharedCache } else { $localCache }
+$builderNodeVersion = '20.18.3'
+$builderNodeSha256 = '11D483DFBA711BC7C9BCB513E80A2941BE0C2E7CBF62753755785B9A6E80A731'
+$builderNodeArchive = Join-Path $cache "node-v$builderNodeVersion-win-x64.zip"
+$builderNodeRoot = Join-Path $cache "node-v$builderNodeVersion-win-x64"
+$builderNodeExe = Join-Path $builderNodeRoot 'node.exe'
+$builderTemp = Join-Path $cache 'temp'
 
 New-Item -ItemType Directory -Path $cache -Force | Out-Null
+New-Item -ItemType Directory -Path $builderTemp -Force | Out-Null
 $env:ELECTRON_BUILDER_CACHE = $cache
 $env:CSC_IDENTITY_AUTO_DISCOVERY = 'false'
+$env:TEMP = $builderTemp
+$env:TMP = $builderTemp
 
 Set-Location $projectRoot
 
@@ -43,7 +52,26 @@ if (-not (Test-Path -LiteralPath $electronPathFile) -or (Get-Content -LiteralPat
 & npm.cmd run build
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-$builder = Join-Path $projectRoot 'node_modules\.bin\electron-builder.cmd'
+if (-not (Test-Path -LiteralPath $builderNodeExe)) {
+  if (-not (Test-Path -LiteralPath $builderNodeArchive)) {
+    Write-Host "Stable Node $builderNodeVersion builder runtime is missing; downloading the official portable archive..."
+    Invoke-WebRequest -Uri "https://nodejs.org/dist/v$builderNodeVersion/node-v$builderNodeVersion-win-x64.zip" -OutFile $builderNodeArchive -UseBasicParsing
+  }
+  $actualBuilderNodeSha256 = (Get-FileHash -LiteralPath $builderNodeArchive -Algorithm SHA256).Hash
+  if ($actualBuilderNodeSha256 -ne $builderNodeSha256) {
+    Remove-Item -LiteralPath $builderNodeArchive -Force
+    throw "Stable builder runtime checksum mismatch. Expected $builderNodeSha256 but received $actualBuilderNodeSha256"
+  }
+  Expand-Archive -LiteralPath $builderNodeArchive -DestinationPath $cache -Force
+}
+if (-not (Test-Path -LiteralPath $builderNodeExe)) { throw "Unable to prepare stable builder runtime: $builderNodeExe" }
+$actualBuilderNodeVersion = (& $builderNodeExe --version).Trim()
+if ($actualBuilderNodeVersion -ne "v$builderNodeVersion") { throw "Unexpected builder runtime version: $actualBuilderNodeVersion" }
+
+$builder = Join-Path $projectRoot 'node_modules\electron-builder\out\cli\cli.js'
 $publishMode = if ($Publish) { 'always' } else { 'never' }
-& $builder --win "--publish=$publishMode"
+& $builderNodeExe $builder --win "--publish=$publishMode"
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+& $builderNodeExe (Join-Path $projectRoot 'scripts\verify-packaged-app.cjs')
 exit $LASTEXITCODE

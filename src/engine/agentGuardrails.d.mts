@@ -12,4 +12,6 @@ export function buildFreshWebQuery(message: string): string;
 export function isResearchOnlyRequest(message: string): boolean;
 export function buildResearchFallback(userText: string, searchOutput: string, modelError?: string): string;
 export function ensureResearchSourceLinks(content: string, userText: string, searchOutput: string): string;
+export function extractResearchSources(searchOutput: string, limit?: number): Array<{ title: string; url: string; snippet: string }>;
+export function isResearchDeliveryDeflection(content: string): boolean;
 export function isConversationOnlyMessage(message: string): boolean;

@@ -107,7 +107,8 @@ export interface ConnectorPreset {
   bundledSkillSource?: string;
   /** Trusted, read-only probe maintained by the client for a known Skill connector. */
   verification?: {
-    command: string;
+    adapter?: string;
+    command?: string;
     requiredSkillText?: string[];
     successJsonField?: string;
     successJsonValues?: Array<string | number | boolean>;
@@ -162,7 +163,7 @@ export const CONNECTOR_PRESETS: ConnectorPreset[] = [
     documentationUrl: 'https://ima.qq.com/agent-interface',
     skillSourceUrl: 'https://app-dl.ima.qq.com/skills/ima-skills-1.1.8.zip',
     verification: {
-      command: `node .\\ima_api.cjs 'openapi/wiki/v1/search_knowledge_base' '{"query":"","cursor":"","limit":1}'`,
+      adapter: 'ima',
       requiredSkillText: ['ima_api.cjs', 'search_knowledge_base'],
       successJsonField: 'code',
       successJsonValues: [0, '0'],
