@@ -1,5 +1,7 @@
 import type { Employee, Team } from '../types';
 import { APP_VERSION } from '../appVersion';
+import type { UserMemoryItem } from '../data/hermesClient';
+import type { TaskLearning } from '../engine/taskLearningMemory';
 
 export interface SyncProfile {
   schemaVersion?: number;
@@ -8,7 +10,12 @@ export interface SyncProfile {
   teams?: Array<Partial<Team> & Pick<Team, 'id' | 'name' | 'memberIds'>>;
   connectors?: unknown[];
   assistantSystemPrompt?: string;
+  userProfile?: string;
+  userMemory?: UserMemoryItem[];
+  taskLearnings?: TaskLearning[];
 }
+
+const SECRET_KEY = /(?:api.?key|password|passwd|token|secret|credential|authorization|client.?secret)/iu;
 
 function clearSecretPlaceholders(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(clearSecretPlaceholders);
@@ -22,7 +29,43 @@ function clearSecretPlaceholders(value: unknown): unknown {
   return value;
 }
 
-export function applySyncProfile(input: unknown): { employees: number; teams: number; models: number } {
+function redactLocalSecrets(value: unknown, parentKey = ''): unknown {
+  if (Array.isArray(value)) return value.map((child) => redactLocalSecrets(child, parentKey));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, child]) => [
+      key,
+      SECRET_KEY.test(key) && typeof child === 'string' && child ? '__REQUIRED_LOCAL_SECRET__' : redactLocalSecrets(child, key),
+    ]));
+  }
+  return SECRET_KEY.test(parentKey) && typeof value === 'string' && value ? '__REQUIRED_LOCAL_SECRET__' : value;
+}
+
+function parseStorage<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) as T : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function createSyncProfile(): SyncProfile {
+  const settings = parseStorage<Record<string, unknown>>('hermes_office_settings', {});
+  const connectors = parseStorage<unknown[]>('hermes_office_connectors', []);
+  return {
+    schemaVersion: 2,
+    settings: redactLocalSecrets(settings) as Record<string, unknown>,
+    employees: parseStorage<Employee[]>('hermes_office_employees', []),
+    teams: parseStorage<SyncProfile['teams']>('hermes_office_teams', []),
+    connectors: redactLocalSecrets(connectors) as unknown[],
+    assistantSystemPrompt: localStorage.getItem('hermes_office_assistant_system_prompt') ?? undefined,
+    userProfile: localStorage.getItem('hermes_office_user_profile') ?? '',
+    userMemory: parseStorage<UserMemoryItem[]>('hermes_office_user_memory', []),
+    taskLearnings: parseStorage<TaskLearning[]>('hermes_office_task_learning_memory_v1', []),
+  };
+}
+
+export function applySyncProfile(input: unknown): { employees: number; teams: number; models: number; memories: number; taskLearnings: number } {
   if (!input || typeof input !== 'object') throw new Error('同步文件不是有效的 JSON 对象');
   const profile = input as SyncProfile;
   if (!Array.isArray(profile.employees) || !Array.isArray(profile.teams)) {
@@ -39,9 +82,24 @@ export function applySyncProfile(input: unknown): { employees: number; teams: nu
   if (typeof profile.assistantSystemPrompt === 'string') {
     localStorage.setItem('hermes_office_assistant_system_prompt', profile.assistantSystemPrompt);
   }
+  if (typeof profile.userProfile === 'string') {
+    localStorage.setItem('hermes_office_user_profile', profile.userProfile);
+  }
+  if (Array.isArray(profile.userMemory)) {
+    localStorage.setItem('hermes_office_user_memory', JSON.stringify(profile.userMemory));
+  }
+  if (Array.isArray(profile.taskLearnings)) {
+    localStorage.setItem('hermes_office_task_learning_memory_v1', JSON.stringify(profile.taskLearnings));
+  }
 
   const modelLibrary = Array.isArray(settings.modelLibrary) ? settings.modelLibrary : [];
-  return { employees: profile.employees.length, teams: profile.teams.length, models: modelLibrary.length };
+  return {
+    employees: profile.employees.length,
+    teams: profile.teams.length,
+    models: modelLibrary.length,
+    memories: Array.isArray(profile.userMemory) ? profile.userMemory.length : 0,
+    taskLearnings: Array.isArray(profile.taskLearnings) ? profile.taskLearnings.length : 0,
+  };
 }
 
 export function createUpgradeSnapshot(): UpgradeSnapshot {

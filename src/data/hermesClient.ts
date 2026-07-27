@@ -13,13 +13,12 @@ import {
   ensureResearchSourceLinks,
   extractResearchSources,
   getToolCallLimit,
-  isConversationOnlyMessage,
+  isActionableCapabilityCorrection,
   isExplicitStopSteering,
   isPreparationOnlyTool,
   isResearchOnlyRequest,
   isResearchDeliveryDeflection,
   requiresFreshWebResearch,
-  requiresObservableExecutionEvidence,
   toolResourceKey,
 } from '../engine/agentGuardrails.mjs';
 import {
@@ -46,6 +45,17 @@ import {
   restoreExecutionController,
   type ExecutionControllerSnapshot,
 } from '../engine/executionController.mjs';
+import {
+  TASK_DECISION_TOOL,
+  TASK_DECISION_TOOL_NAME,
+  buildTaskContract,
+  buildTaskDecisionMessages,
+  createFallbackTaskDecision,
+  normalizeTaskDecision,
+  parseTaskDecisionToolCall,
+  type TaskDecision,
+} from '../engine/taskDecisionKernel.mjs';
+import { buildTaskLearningContext, recordTaskLearning } from '../engine/taskLearningMemory';
 
 const LS_EMPLOYEES = 'hermes_office_employees';
 const LS_TEAMS = 'hermes_office_teams';
@@ -543,7 +553,7 @@ export function saveUserProfile(text: string): void {
 }
 
 // 构建用户上下文字符串（供注入系统提示用）
-export function buildUserContext(): string {
+export function buildUserContext(query = ''): string {
   const profile = loadUserProfile().trim();
   const memory = loadUserMemory();
   let ctx = '';
@@ -552,11 +562,27 @@ export function buildUserContext(): string {
   }
   if (memory.length > 0) {
     const selected: UserMemoryItem[] = [];
-    const ranked = [...memory].sort((a, b) =>
-      (b.importance ?? 3) - (a.importance ?? 3) || (b.updatedAt ?? b.ts) - (a.updatedAt ?? a.ts));
-    for (const category of Object.keys(MEMORY_CATEGORY_LABELS) as UserMemoryCategory[]) {
-      const candidate = ranked.find((item) => item.category === category && (item.confidence ?? 0.8) >= 0.65);
-      if (candidate) selected.push(candidate);
+    const now = Date.now();
+    const ranked = [...memory].sort((a, b) => {
+      const score = (item: UserMemoryItem) => {
+        const relevance = query.trim() ? memorySimilarity(query, item.content) * 100 : 0;
+        const importance = (item.importance ?? 3) * 8;
+        const confidence = (item.confidence ?? 0.8) * 5;
+        const recency = Math.max(0, 5 - (now - (item.updatedAt ?? item.ts)) / (90 * 24 * 60 * 60 * 1000));
+        return relevance + importance + confidence + recency;
+      };
+      return score(b) - score(a);
+    });
+    if (!query.trim()) {
+      for (const category of Object.keys(MEMORY_CATEGORY_LABELS) as UserMemoryCategory[]) {
+        const candidate = ranked.find((item) => item.category === category && (item.confidence ?? 0.8) >= 0.65);
+        if (candidate) selected.push(candidate);
+      }
+    } else {
+      for (const item of ranked) {
+        if (selected.length >= 8) break;
+        if ((item.confidence ?? 0.8) >= 0.65 && memorySimilarity(query, item.content) >= 0.08) selected.push(item);
+      }
     }
     for (const item of ranked) {
       if (selected.length >= 12) break;
@@ -856,6 +882,15 @@ export interface ChatResult {
   toolCalls?: ToolCallResult[];  // function-calling 返回的工具调用
 }
 
+export interface ChatCompletionRequestOptions {
+  /** 默认 auto；任务编译等内核调用可强制指定一个函数。 */
+  toolChoice?: 'auto' | 'none' | { type: 'function'; function: { name: string } };
+  /** 当前请求独立超时，不影响普通长任务的默认五分钟。 */
+  timeoutMs?: number;
+  /** 内核分类调用可关闭自动用户记忆注入，改用显式筛选后的上下文。 */
+  injectUserContext?: boolean;
+}
+
 // ===== Token 消耗日志 =====
 export interface TokenLogEntry {
   ts: number;           // 时间戳
@@ -902,14 +937,19 @@ export async function chatCompletion(
   extraSystemContext?: string,  // 额外的系统上下文（如 soul.md）
   attachments?: Attachment[],   // 用户上传/粘贴的附件（图片走多模态视觉）
   requestSignal?: AbortSignal,  // 运行中收到新要求时，仅中断当前模型请求并重新规划
+  requestOptions: ChatCompletionRequestOptions = {},
 ): Promise<ChatResult> {
   const merged = resolveChatSettings(modelConfig); // 合并配置
   const base = resolveApiBase(merged);
   if (!base) throw new Error('未配置 API');
   const model = merged.model?.trim() || getProvider(merged.provider).defaultModel || 'gpt-4o-mini';
 
-  // 注入用户长期记忆和画像到系统提示中
-  const userCtx = buildUserContext();
+  // 注入与当前问题相关的长期记忆和画像；内核调用可显式关闭，避免重复污染分类输入。
+  const latestUserQuery = [...turns].reverse().find((turn) => turn.role === 'user');
+  const latestUserQueryText = typeof latestUserQuery?.content === 'string'
+    ? latestUserQuery.content
+    : (latestUserQuery?.content ?? []).filter((part): part is ContentPart => part.type === 'text').map((part) => part.text ?? '').join('\n');
+  const userCtx = requestOptions.injectUserContext === false ? '' : buildUserContext(latestUserQueryText);
   let finalTurns = turns.map(t => ({ ...t }));
   if (userCtx || extraSystemContext) {
     // 找到第一条 system 消息，追加用户上下文和 extraSystemContext
@@ -956,9 +996,9 @@ export async function chatCompletion(
       model,
       messages: finalTurns,
       stream: false,
-      ...(tools && tools.length > 0 ? { tools, tool_choice: 'auto' } : {}),
+      ...(tools && tools.length > 0 ? { tools, tool_choice: requestOptions.toolChoice ?? 'auto' } : {}),
     }),
-  }, 300000, merged.apiKey, base, requestSignal); // Long-running model/tool requests may take minutes on a busy provider.
+  }, requestOptions.timeoutMs ?? 300000, merged.apiKey, base, requestSignal); // Long-running model/tool requests may take minutes on a busy provider.
   if (!res.ok) {
     const txt = await res.text().catch(() => '');
     throw new Error(`模型响应 ${res.status}: ${txt.slice(0, 120)}`);
@@ -1046,6 +1086,69 @@ function connectorQueryFromRequest(userText: string): string {
   return providers.find(([pattern]) => pattern.test(userText))?.[1] ?? '';
 }
 
+async function compileTaskDecision(
+  turns: ChatTurn[],
+  tools: any[],
+  modelConfig?: ModelConfig,
+  requestSignal?: AbortSignal,
+): Promise<{ decision: TaskDecision; usage: TokenUsage; contextUsage?: ContextUsage; model?: string }> {
+  const userTurns = turns.filter((turn) => turn.role === 'user').map((turn) => typeof turn.content === 'string'
+    ? turn.content
+    : (turn.content ?? []).filter((part): part is ContentPart => part.type === 'text').map((part) => part.text ?? '').join('\n'));
+  const latestMessage = userTurns.at(-1) ?? '';
+  const previousUserMessage = userTurns.at(-2) ?? '';
+  const availableTools = tools.map((tool) => String(tool?.function?.name ?? '')).filter(Boolean);
+  const fallback = createFallbackTaskDecision({ latestMessage, previousUserMessage, availableTools });
+  const relevantTaskExperience = buildTaskLearningContext(fallback.goal);
+  const recentHistory = turns.filter((turn) => turn.role === 'user' || turn.role === 'assistant').slice(-8).map((turn) => ({
+    role: turn.role,
+    content: typeof turn.content === 'string'
+      ? turn.content
+      : (turn.content ?? []).filter((part): part is ContentPart => part.type === 'text').map((part) => part.text ?? '').join('\n'),
+  }));
+  const input = {
+    latestMessage,
+    previousUserMessage,
+    availableTools,
+    recentHistory,
+    relevantUserContext: buildUserContext(fallback.goal),
+    relevantTaskExperience,
+  };
+  try {
+    const response = await chatCompletion(
+      buildTaskDecisionMessages(input) as ChatTurn[],
+      'task-decision',
+      '任务决策内核',
+      [TASK_DECISION_TOOL],
+      modelConfig,
+      undefined,
+      undefined,
+      requestSignal,
+      {
+        toolChoice: { type: 'function', function: { name: TASK_DECISION_TOOL_NAME } },
+        timeoutMs: 45000,
+        injectUserContext: false,
+      },
+    );
+    let candidate = parseTaskDecisionToolCall(response.toolCalls);
+    if (!candidate && response.content) {
+      const json = response.content.match(/\{[\s\S]*\}/)?.[0];
+      if (json) candidate = JSON.parse(json) as Record<string, unknown>;
+    }
+    return {
+      decision: normalizeTaskDecision(candidate, input),
+      usage: response.usage,
+      contextUsage: response.contextUsage,
+      model: response.model,
+    };
+  } catch {
+    return {
+      decision: fallback,
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    };
+  }
+}
+
 // ===== Agent 循环：调模型 + 执行工具，直到产出最终回复 =====
 export interface AgentLoopOpts {
   turns: ChatTurn[];
@@ -1097,27 +1200,50 @@ function getUserActionForFailure(raw: string): string {
   return '请展开最后一条“执行过程”查看通俗原因；如果需要你提供账号、授权、文件或选择，助手会明确说明具体缺少哪一项。';
 }
 
-export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: string; usage: TokenUsage; contextUsage?: ContextUsage; model: string; executionState: ExecutionControllerSnapshot }> {
+export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: string; usage: TokenUsage; contextUsage?: ContextUsage; model: string; executionState: ExecutionControllerSnapshot; taskDecision: TaskDecision }> {
   const {
     turns, tools, scene, label, onToolCall, onToolResult, modelConfig, extraSystemContext,
     scope, attachments, shouldStop, waitIfPaused, consumeSteeringMessages,
     getModelRequestSignal, onSteeringReply, onModelRetry, initialExecutionState, onExecutionState,
   } = opts;
   let currentTurns = [...turns];
-  const originalUserContent = [...turns].reverse().find((turn) => turn.role === 'user')?.content;
-  const originalUserText = typeof originalUserContent === 'string'
-    ? originalUserContent
-    : (originalUserContent ?? []).filter((part): part is ContentPart => part.type === 'text').map((part) => part.text).join('\n');
+  let totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+  let latestContextUsage: ContextUsage | undefined;
+  let finalModel = '';
+  const userTexts = turns.filter((turn) => turn.role === 'user').map((turn) => typeof turn.content === 'string'
+    ? turn.content
+    : (turn.content ?? []).filter((part): part is ContentPart => part.type === 'text').map((part) => part.text).join('\n'));
+  const latestUserText = userTexts.at(-1) ?? '';
+  const compiled = await compileTaskDecision(turns, tools, modelConfig, getModelRequestSignal?.());
+  const taskDecision = compiled.decision;
+  totalUsage.promptTokens += compiled.usage.promptTokens;
+  totalUsage.completionTokens += compiled.usage.completionTokens;
+  totalUsage.totalTokens += compiled.usage.totalTokens;
+  latestContextUsage = compiled.contextUsage;
+  finalModel = compiled.model ?? '';
+  const originalUserText = taskDecision.goal;
+  const resumedFromCapabilityCorrection = taskDecision.mode === 'execute'
+    && originalUserText !== latestUserText
+    && isActionableCapabilityCorrection(latestUserText);
   const isInstallationTask = /安装|装好|装上|安装包|部署/u.test(originalUserText);
-  const connectorTask = isConnectorTask(originalUserText);
-  const connectorSetupTask = isConnectorSetupRequest(originalUserText);
+  const connectorTask = isConnectorTask(originalUserText) || taskDecision.primaryRoute === 'inspect_connectors';
+  const connectorSetupTask = isConnectorSetupRequest(originalUserText) || taskDecision.primaryRoute === 'inspect_connectors';
   const isSkillInstallation = isInstallationTask && !connectorTask && /skill|技能|插件/iu.test(originalUserText);
-  const conversationOnly = isConversationOnlyMessage(originalUserText);
-  const researchOnlyTask = isResearchOnlyRequest(originalUserText);
-  const requiresExecutionEvidence = !conversationOnly && requiresObservableExecutionEvidence(originalUserText);
+  const conversationOnly = taskDecision.mode !== 'execute';
+  const researchOnlyTask = isResearchOnlyRequest(originalUserText)
+    || (taskDecision.primaryRoute === 'web_search'
+      && !/(?:安装|部署|开发|修改|修复|创建|生成|保存|下载|上传|提交|打包|配置|接入|连接)/u.test(originalUserText));
+  const requiresExecutionEvidence = !conversationOnly && taskDecision.requiresEvidence;
+  const taskExperience = conversationOnly ? '' : buildTaskLearningContext(originalUserText);
+  const taskContract = buildTaskContract(taskDecision, taskExperience);
   currentTurns = conversationOnly
-    ? [{ role: 'system', content: '当前用户消息是在询问状态、纠正行为、表达反馈或进行普通对话。必须直接结合最近上下文回答这条消息，不得调用工具，不得自动恢复、重放或继续上一项任务。只有用户明确提出新的执行目标或明确要求继续时，才能重新开始执行。' }, ...currentTurns]
-    : [{ role: 'system', content: `${AUTONOMOUS_EXECUTION_GUIDE}\n\n${CAPABILITY_ROUTING_GUIDE}\n\n${SKILL_RECOVERY_GUIDE}` }, ...currentTurns];
+    ? [{ role: 'system', content: `${taskContract}\n\n当前消息不需要工具执行。直接结合最近上下文回应，不得自动恢复、重放或继续上一项任务。只有用户明确提出新的执行目标或明确要求继续时，才能重新开始执行。` }, ...currentTurns]
+    : [{
+      role: 'system',
+      content: `${taskContract}\n\n${AUTONOMOUS_EXECUTION_GUIDE}\n\n${CAPABILITY_ROUTING_GUIDE}\n\n${SKILL_RECOVERY_GUIDE}${resumedFromCapabilityCorrection
+        ? `\n\n用户最新消息是在纠正上一轮没有行动的问题。当前仍未完成的目标是：\n${originalUserText.slice(0, 2000)}\n必须立即按纠正后的能力路线执行，不要再次道歉、解释能力或要求用户重复目标。`
+        : ''}`,
+    }, ...currentTurns];
 
   // 多模态：把最后一条 user 消息转为 [text, image_url] 数组
   if (attachments && attachments.length > 0) {
@@ -1138,10 +1264,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   const checkpointBaseTurns = [...currentTurns];
   const steeringCheckpointTurns: ChatTurn[] = [];
 
-  let totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   let finalContent: string | null = null;
-  let finalModel = '';
-  let latestContextUsage: ContextUsage | undefined;
   const iterationsPerPhase = connectorSetupTask ? 6 : 10;
   const maxIter = connectorSetupTask ? 60 : 180;
   const maxToolCallsPerPhase = connectorSetupTask ? 10 : 16;
@@ -1171,9 +1294,15 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   let requiredResearchOutput = '';
   let researchSummaryFailures = 0;
   const maxResearchSummaryAttempts = 5;
+  const availableToolNames = new Set(tools.map((tool) => String(tool?.function?.name ?? '')).filter(Boolean));
+  let primaryRoutePending = !conversationOnly
+    && taskDecision.source === 'model'
+    && availableToolNames.has(taskDecision.primaryRoute)
+    && taskDecision.primaryRoute !== 'web_search'
+    && taskDecision.primaryRoute !== 'inspect_connectors';
   let executionState = initialExecutionState
-    ? restoreExecutionController(initialExecutionState, { goal: originalUserText, requiresEvidence: requiresExecutionEvidence, maxAttempts: maxTotalToolAttempts })
-    : createExecutionController({ goal: originalUserText, requiresEvidence: requiresExecutionEvidence, maxAttempts: maxTotalToolAttempts });
+    ? restoreExecutionController(initialExecutionState, { goal: originalUserText, acceptanceCriteria: taskDecision.acceptanceCriteria, requiresEvidence: requiresExecutionEvidence, maxAttempts: maxTotalToolAttempts })
+    : createExecutionController({ goal: originalUserText, acceptanceCriteria: taskDecision.acceptanceCriteria, requiresEvidence: requiresExecutionEvidence, maxAttempts: maxTotalToolAttempts });
   const publishExecutionState = (next: ExecutionControllerSnapshot) => {
     executionState = next;
     onExecutionState?.(executionState);
@@ -1230,6 +1359,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         contextUsage: latestContextUsage,
         model: 'client-connector-adapter',
         executionState,
+        taskDecision,
       };
     }
     currentTurns.push({
@@ -1241,8 +1371,8 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
 
   // Requests for current facts must not depend on whether a model elects to call a tool.
   // Run one observable search first, then let the selected model analyze the real results.
-  if (!conversationOnly && requiresFreshWebResearch(originalUserText) && tools.some((tool) => tool?.function?.name === 'web_search')) {
-    const searchQuery = buildFreshWebQuery(originalUserText);
+  if (!conversationOnly && (requiresFreshWebResearch(originalUserText) || taskDecision.primaryRoute === 'web_search') && tools.some((tool) => tool?.function?.name === 'web_search')) {
+    const searchQuery = taskDecision.searchQuery || buildFreshWebQuery(originalUserText);
     const searchArgs = JSON.stringify({ query: searchQuery });
     onToolCall?.('web_search', searchArgs);
     const { executeTool } = await import('../engine/tools');
@@ -1473,7 +1603,21 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     let r: ChatResult;
     try {
       const toolsForCall = researchOnlyTask && requiredResearchSucceeded ? undefined : conversationOnly ? undefined : tools;
-      r = await chatCompletion(currentTurns, scene, label, toolsForCall, modelConfig, extraSystemContext, undefined, getModelRequestSignal?.());
+      const forcedPrimaryRoute = primaryRoutePending ? taskDecision.primaryRoute : undefined;
+      r = await chatCompletion(
+        currentTurns,
+        scene,
+        label,
+        toolsForCall,
+        modelConfig,
+        extraSystemContext,
+        undefined,
+        getModelRequestSignal?.(),
+        forcedPrimaryRoute
+          ? { toolChoice: { type: 'function', function: { name: forcedPrimaryRoute } } }
+          : undefined,
+      );
+      primaryRoutePending = false;
     } catch (error: any) {
       const interruptedMessages = consumeSteeringMessages?.() ?? [];
       if (error?.name === 'ExternalAbortError' && interruptedMessages.length > 0) {
@@ -1773,7 +1917,28 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   if (controllerDidNotComplete && falselyClaimsControllerCompletion) {
     finalContent = `还没有完成。\n\n${executionState.decision.reason}\n\n系统没有取得足够的真实执行与验收证据，因此没有采纳模型刚才的完成声明。已产生的文件和执行记录仍然保留。`;
   }
-  return { content: finalContent, usage: totalUsage, contextUsage: latestContextUsage, model: finalModel, executionState };
+  if (!conversationOnly && callLog.length > 0) {
+    const successfulTools = [...new Set(callLog.filter((call) => call.success).map((call) => call.name))];
+    const failedTools = [...new Set(callLog.filter((call) => !call.success).map((call) => call.name))];
+    const failureLabels = [...new Set(executionState.failures.map((failure) => failure.label))];
+    const outcome = stopped || executionState.status === 'stopped'
+      ? 'stopped'
+      : executionState.status === 'completed' ? 'completed' : 'blocked';
+    const lesson = outcome === 'completed'
+      ? `${taskDecision.primaryRoute} 路线形成了可验收结果${executionState.routeChanges > 0 ? `，期间切换了 ${executionState.routeChanges} 次路线` : ''}。`
+      : failureLabels.length > 0
+        ? `最后阻塞属于“${failureLabels.at(-1)}”；再次遇到相似目标时先检查该条件，并避免原样重复失败路线。`
+        : '本次没有形成完整验收证据；再次执行时应从未满足的完成标准继续。';
+    recordTaskLearning({
+      goal: originalUserText,
+      outcome,
+      successfulTools,
+      failedTools,
+      failureLabels,
+      lesson,
+    });
+  }
+  return { content: finalContent, usage: totalUsage, contextUsage: latestContextUsage, model: finalModel, executionState, taskDecision };
 }
 
 // ===== 初始加载 =====

@@ -7,6 +7,8 @@ export function isExplicitPauseSteering(messages: string[]): boolean;
 export function isExplicitResumeSteering(messages: string[]): boolean;
 export function getDirectExecutionControl(message: string): 'pause' | 'resume' | 'stop' | null;
 export function shouldHoldTaskForFeedback(message: string): boolean;
+export function isActionableCapabilityCorrection(message: string): boolean;
+export function resolveActionableUserGoal(message: string, previousUserMessage: string): string;
 export function requiresFreshWebResearch(message: string): boolean;
 export function requiresObservableExecutionEvidence(message: string): boolean;
 export function buildFreshWebQuery(message: string): string;

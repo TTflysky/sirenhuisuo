@@ -111,12 +111,28 @@ export function shouldHoldTaskForFeedback(message) {
 }
 
 function isExplicitNewWork(text) {
-  const action = '(?:配置|安装|创建|生成|编写|写|修改|改掉|改好|修复|修好|优化|测试|验证|下载|上传|部署|发布|打包|搜索|查找|查询|检查|核对|读取|打开|执行|完成|删除|移除|覆盖|同步|提交|整理|分析|设计|制作|接入|连接|关联|调用|更新|升级|添加|补齐|恢复)';
+  const action = '(?:配置|安装|创建|生成|编写|写|修改|改掉|改好|修复|修好|解决|实现|落地|优化|测试|验证|下载|上传|部署|发布|打包|搜索|搜(?:一下|集)?|查(?:一下|查看)?|查找|查询|检索|找(?:一下)?|看看|浏览|了解|获取|列出|统计|对比|检查|核对|读取|打开|执行|完成|删除|移除|覆盖|同步|提交|整理|分析|设计|制作|接入|连接|关联|调用|更新|升级|添加|补齐|恢复)';
   return new RegExp(`(?:帮我|请你|给我|替我|麻烦|现在|接下来|然后|顺便|一并|直接).{0,16}${action}`, 'u').test(text)
     || new RegExp(`(?:把|将).{1,100}${action}`, 'u').test(text)
     || new RegExp(`^(?:先|再|重新|继续)?${action}`, 'u').test(text)
     || new RegExp(`(?:问题|逻辑|内核|界面|功能|文件|项目|任务|连接器|技能|Skill).{0,18}${action}`, 'iu').test(text)
-    || /(?:今天|明天|最新|实时).{0,20}(?:天气|新闻|价格|股价|汇率|资料|信息)/u.test(text);
+    || /(?:今天|今日|明天|最近|最新|实时|当前).{0,24}(?:天气|新闻|价格|股价|汇率|资料|信息|热点|热度|热搜|榜单|排行|排名|趋势|动态)/u.test(text);
+}
+
+export function isActionableCapabilityCorrection(message) {
+  const text = String(message ?? '').trim();
+  if (!text) return false;
+  const capability = /(?:工具|技能|skill|联网|网络|搜索|查询|检索|连接器|命令|浏览器)/iu.test(text);
+  const correction = /(?:应该|应当|需要|必须|直接|主动|自己|赶紧|重新|继续|难道不会|不会用|别只|不要只|不能只)/u.test(text);
+  const action = /(?:用|使用|调用|搜索|搜|查询|查|检索|执行|行动|完成)/u.test(text);
+  return capability && correction && action;
+}
+
+export function resolveActionableUserGoal(message, previousUserMessage) {
+  const current = String(message ?? '').trim();
+  const previous = String(previousUserMessage ?? '').trim();
+  if (!isActionableCapabilityCorrection(current) || !previous || isConversationOnlyMessage(previous)) return current;
+  return previous;
 }
 
 export function requiresObservableExecutionEvidence(message) {
@@ -134,16 +150,22 @@ export function requiresFreshWebResearch(message) {
   if (!text) return false;
   if (/(?:为什么|为何|怎么|是否|有没有).{0,18}(?:搜索|查询|联网).{0,18}(?:失败|没调用|不能用|不可用|没反应)/u.test(text)) return false;
   const explicitInternetSearch = /(?:^|帮我|给我|请|去|需要|重新|直接|现在|先).{0,12}(?:联网搜索|上网搜索|网络搜索|搜索互联网|网上查|上网查)/u.test(text);
-  const explicitResearch = /(?:^|帮我|给我|请|去|需要|重新|直接|现在|先).{0,12}(?:搜索|搜一下|搜集|查找|查询|检索).{0,30}(?:资料|文档|新闻|资讯|消息|行情|价格|来源|官网|政策|数据|进展)/u.test(text);
-  const freshInformation = /(?:今天|今日|本周|本月|最新|实时|当前).{0,24}(?:新闻|资讯|消息|热点|行情|价格|股价|汇率|天气|政策|数据|进展|动态|资料|信息)/u.test(text);
-  return explicitInternetSearch || explicitResearch || freshInformation;
+  const lookupAction = /(?:搜索|搜(?:一下|集)?|查(?:一下|查看)?|查找|查询|检索|找(?:一下)?|调研|了解|获取)/u.test(text);
+  const directLookupRequest = /^(?:请|麻烦|现在|先|直接)?(?:你)?(?:帮我|给我|替我)?(?:去)?(?:搜索|搜(?:一下|集)?|查(?:一下|查看)?|查找|查询|检索|找(?:一下)?|调研|了解|获取)/u.test(text);
+  const explicitResearch = lookupAction && /(?:资料|文档|新闻|资讯|消息|行情|价格|来源|官网|政策|数据|进展|动态|热点|热度|热搜|榜单|排行|排名|趋势|话题)/u.test(text);
+  const freshInformation = /(?:今天|今日|本周|本月|最近|刚刚|最新|实时|当前|现在).{0,32}(?:新闻|资讯|消息|热点|热度|热搜|榜单|排行|排名|趋势|话题|行情|价格|股价|汇率|天气|政策|数据|进展|动态|资料|信息)/u.test(text);
+  const externalPlatform = /(?:抖音|微博|小红书|快手|哔哩哔哩|B站|知乎|今日头条|微信公众号|百度|淘宝|京东|拼多多|闲鱼|雪球|东方财富|社交平台|短视频平台)/iu.test(text);
+  const localOrConnectorTarget = /(?:本地|工作区|文件|目录|代码|项目|仓库|产出物|聊天记录|员工|团队|设置|配置|连接器|知识库|obsidian|(?:^|[^a-z])ima(?:[^a-z]|$)|github)/iu.test(text);
+  return explicitInternetSearch
+    || freshInformation
+    || ((directLookupRequest || explicitResearch || (lookupAction && externalPlatform)) && !localOrConnectorTarget);
 }
 
 export function buildFreshWebQuery(message) {
   const original = String(message ?? '').trim().slice(0, 300);
   if (!original) return '';
   const withoutCommand = original
-    .replace(/^(?:请|麻烦|现在|先|直接)?(?:你)?(?:帮我|给我|替我)?(?:去)?(?:联网搜索|上网搜索|网络搜索|搜索互联网|网上查|上网查|搜索|搜一下|搜集|查找|查询|检索)(?:一下|一下子)?[：:，,\s]*/u, '')
+    .replace(/^(?:请|麻烦|现在|先|直接)?(?:你)?(?:帮我|给我|替我)?(?:去)?(?:联网搜索|上网搜索|网络搜索|搜索互联网|网上查|上网查|搜索|搜(?:一下|集)?|查(?:一下|查看)?|查找|查询|检索|找(?:一下)?|调研|了解|获取)(?:一下|一下子)?[：:，,\s]*/u, '')
     .replace(/^(?:那|那么)?(?:你)?(?:帮我|给我|替我)?(?:提炼|整理|总结|汇总|介绍|说说)(?:一下)?[：:，,\s]*/u, '')
     .replace(/(?:然后|并且|之后|再)[，,\s]*(?:帮我|给我)?(?:做|整理|生成|写|制作|汇总).{0,80}$/u, '')
     .replace(/[，,]\s*\d{1,2}\s*(?:条|个|则|项|篇).{0,80}$/u, '')
@@ -181,6 +203,8 @@ export function isResearchDeliveryDeflection(content) {
   if (!text) return true;
   return /(?:只|仅).{0,12}(?:拿到|获得|找到).{0,16}(?:资讯入口|信息入口|搜索入口|链接)/u.test(text)
     || /(?:没有|未能|无法|不能).{0,20}(?:拿到|获得|提取|读取).{0,16}(?:具体新闻|新闻标题|正文|完整内容)/u.test(text)
+    || /(?:没有|未能|无法|不能).{0,20}(?:直接)?(?:访问|读取|获取|查询).{0,24}(?:实时|榜单|排行|热度|热搜|平台内容)/u.test(text)
+    || /(?:截图|页面链接|榜单链接).{0,16}(?:发给我|发过来|贴给我|提供给我)/u.test(text)
     || /(?:把|将|请).{0,24}(?:链接|截图|新闻原文|正文).{0,16}(?:发给我|发过来|贴给我|提供给我|重新上传)/u.test(text)
     || /(?:需要你|请你).{0,16}(?:打开|查看|阅读).{0,16}(?:来源|链接|网页)/u.test(text);
 }

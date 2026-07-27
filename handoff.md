@@ -1,12 +1,12 @@
 # 太极项目当前交接
 
-> 更新时间：2026-07-27
-> 当前版本：`v0.10.1`
+> 更新时间：2026-07-28
+> 当前版本：`v0.11.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
-> Release：[v0.10.1](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.10.1)
+> Release：[v0.11.0](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.11.0)
 
-`v0.10.1` 固定跨电脑操作标准：开发电脑只运行 `npm.cmd run publish:release` 发布，接手电脑只运行 `npm.cmd run sync:project` 同步。发布命令自动回归、打包、推送 `main`、上传 Release 三件套并核对远端 SHA-256；两端共用 Git Credential Manager 登录，不保存 Token。`v0.10.0` 建立的统一 `ExecutionController` 保持不变。
+`v0.11.0` 在 `v0.10.0` 的统一 `ExecutionController` 之上新增任务决策内核与任务经验库。每次消息先被编译为真实目标、首选路线、完成标准和证据要求，再进入共享工具循环；人格只决定表达和职责，不再承担“是否行动”的底层判断。开发电脑只运行 `npm.cmd run publish:release` 发布，接手电脑只运行 `npm.cmd run sync:project` 同步。发布命令自动回归、打包、推送 `main`、上传 Release 三件套并核对远端 SHA-256；两端共用 Git Credential Manager 登录，不保存 Token。
 
 ## 办公室端直接开始
 
@@ -16,7 +16,7 @@
 npm.cmd run sync:project
 ```
 
-进入新下载的 `sirenhuisuo-v0.10.1-<commit>` 目录后依次执行：
+进入同步命令输出的最新源码目录后依次执行：
 
 ```powershell
 npm.cmd install
@@ -25,6 +25,7 @@ npm.cmd run lint
 npm.cmd run verify:foundation
 npm.cmd run verify:agent-kernel
 npm.cmd run verify:execution-controller
+npm.cmd run verify:steering-e2e
 npm.cmd run verify:connector-adapters
 npm.cmd run verify:package
 ```
@@ -149,7 +150,7 @@ npm.cmd run verify:package
 - `npm.cmd run verify:skill-atomic`：通过；无效包不触碰旧 Skill，成功替换不残留旧文件，哈希损坏被拦截，并真实验证根 Skill 可读取知识库与笔记子规则。
 - `npm.cmd run verify:update-download`：通过；模拟断线后 Range 续传、服务器忽略断点、等长损坏缓存和 SHA-256 拦截。
 - `npm.cmd run verify:web-search`：通过；覆盖 Bing XML 解析、主源超时后备用源成功和双源具体错误聚合。
-- `npm.cmd run verify:package`：通过；包内版本为 `0.10.1`，入口、连接器适配器、命令外壳和三份 IMA 规则均可读取，安装器、blockmap 与 `latest.yml` 完整。
+- `npm.cmd run verify:package`：通过；包内版本为 `0.11.0`，入口、连接器适配器、命令外壳和三份 IMA 规则均可读取，安装器、blockmap 与 `latest.yml` 完整。
 - `npm.cmd run diagnose:web-search`：通过；Electron 实网使用 DuckDuckGo，首轮空结果自动重试后约 3.1 秒返回 8 条中文 AI 资讯。
 - `npm.cmd run verify:docx`：通过；生成的 Word 可重新解析正文。
 - 安装版 `npm.cmd run verify:foundation-ui`：通过；真实 Electron IPC 和诊断中心五项完整显示。
@@ -160,10 +161,11 @@ npm.cmd run verify:package
 
 ## 安装与发布资产
 
-- 安装包：`E:\私人办公会所项目\release\taiji-office-setup-0.10.1.exe`
-- Blockmap：`E:\私人办公会所项目\release\taiji-office-setup-0.10.1.exe.blockmap`
-- 更新清单：`E:\私人办公会所项目\release\latest.yml`
-- 包内版本：`0.10.1`。
+- 安装包：`release\taiji-office-setup-0.11.0.exe`
+- Blockmap：`release\taiji-office-setup-0.11.0.exe.blockmap`
+- 更新清单：`release\latest.yml`
+- 包内版本：`0.11.0`。
+- 安装包大小：`173843882` 字节；SHA-256：`A6C1EA49F35139DB511656AC38D563B4E48FED237F29E0938527FB69B816E801`。
 - 最终文件大小和 SHA-256 以 `npm.cmd run publish:release` 的成功输出及 GitHub Release digest 为准；发布脚本会逐项比对本地与远端，不再把易过期的单次构建摘要固化在交接文档中。
 - 解包版受控启动 8 秒保持运行，未出现启动即崩溃。
 - 安装目录只保留 `太极 AI 办公会所.exe` 和对应卸载程序，没有旧产品可执行文件残留。

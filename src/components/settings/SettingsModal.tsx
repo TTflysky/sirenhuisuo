@@ -19,7 +19,7 @@ import type { ModelConfig } from '../../types';
 import { useStore } from '../../store';
 import { KnowledgeConnectorManager } from '../sidebar/ConnectorPanel';
 import { DEFAULT_ASSISTANT_PROMPT, getAssistantPrompt, saveAssistantPrompt } from './AssistantSettingsModal';
-import { applySyncProfile, restoreUpgradeSnapshot } from '../../utils/configSync';
+import { applySyncProfile, createSyncProfile, restoreUpgradeSnapshot } from '../../utils/configSync';
 import {
   FONT_OPTIONS, FONT_SIZE_OPTIONS, loadAppearanceSettings, saveAppearanceSettings,
   type AppearanceSettings,
@@ -27,6 +27,7 @@ import {
 import { APP_VERSION } from '../../appVersion';
 import DiagnosticsTab from './DiagnosticsTab';
 import { APP_BRAND_NAME, APP_PRODUCT_NAME } from '../../brand';
+import { loadTaskLearnings, saveTaskLearnings, type TaskLearning } from '../../engine/taskLearningMemory';
 
 type Tab = 'diagnostics' | 'model' | 'profile' | 'appearance' | 'knowledge' | 'workspace' | 'memory' | 'persona' | 'automation' | 'backup';
 
@@ -179,11 +180,22 @@ function BackupTab() {
   const [upgrade, setUpgrade] = useState<UpgradeJournal | null>(null);
   const [rollingBack, setRollingBack] = useState(false);
   useEffect(() => { void window.electronAPI?.getUpgradeStatus?.().then((result) => { if (result.ok) setUpgrade(result.journal ?? null); }); }, []);
+  const exportProfile = () => {
+    const profile = createSyncProfile();
+    const blob = new Blob([JSON.stringify(profile, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `taiji-sync-v${APP_VERSION}-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    message.success('同步配置已导出，API Key 和密码没有写入文件');
+  };
   const importProfile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file) return;
-    try { const result = applySyncProfile(JSON.parse(await file.text())); message.success(`已导入 ${result.employees} 名员工、${result.teams} 个团队、${result.models} 个模型`); location.reload(); }
+    try { const result = applySyncProfile(JSON.parse(await file.text())); message.success(`已导入 ${result.employees} 名员工、${result.teams} 个团队、${result.models} 个模型、${result.memories} 条记忆和 ${result.taskLearnings} 条任务经验`); location.reload(); }
     catch (error) { message.error(error instanceof Error ? error.message : '导入失败'); }
   };
   const rollback = async () => {
@@ -201,7 +213,7 @@ function BackupTab() {
       message.success(`旧安装包已校验，配置已恢复，正在启动 v${backup.fromVersion} 安装包`);
     } catch (error) { message.error(error instanceof Error ? error.message : String(error)); setRollingBack(false); }
   };
-  return <div className="settings-content-page"><header><h2>备份迁移</h2><span>工作区备份、升级验证与本机回滚</span></header><div className="settings-action-list"><div><div><strong>导出工作区</strong><small>任务文件和产出物 ZIP</small></div><Button onClick={() => void window.electronAPI?.fsExportZip?.()}>导出</Button></div><div><div><strong>导入同步配置</strong><small>员工、团队、模型和连接器</small></div><Button onClick={() => fileRef.current?.click()}>导入</Button><input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={(event) => void importProfile(event)} /></div>{upgrade && <div><div><strong>最近一次升级</strong><small>v{upgrade.fromVersion} → v{upgrade.toVersion} · {upgrade.status === 'validated' ? '数据验证通过' : upgrade.status === 'validation-failed' ? '数据验证失败，可回滚' : upgrade.status === 'rollback-prepared' ? '旧安装包已校验' : upgrade.status === 'rolling-back' ? '正在回滚' : '已创建更新前备份'}</small></div><Button danger disabled={rollingBack || upgrade.status === 'rolling-back'} onClick={() => void rollback()}>{rollingBack ? '准备回滚中' : `回滚到 v${upgrade.fromVersion}`}</Button></div>}</div></div>;
+  return <div className="settings-content-page"><header><h2>备份迁移</h2><span>工作区备份、配置同步、升级验证与本机回滚</span></header><div className="settings-action-list"><div><div><strong>导出工作区</strong><small>任务文件和产出物 ZIP</small></div><Button onClick={() => void window.electronAPI?.fsExportZip?.()}>导出</Button></div><div><div><strong>导出同步配置</strong><small>员工、团队、模型、连接器、人格、画像、长期记忆和任务经验；不含本机密钥</small></div><Button onClick={exportProfile}>导出</Button></div><div><div><strong>导入同步配置</strong><small>恢复完整办公室配置与智能体记忆；API Key 仍需在本机填写</small></div><Button onClick={() => fileRef.current?.click()}>导入</Button><input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={(event) => void importProfile(event)} /></div>{upgrade && <div><div><strong>最近一次升级</strong><small>v{upgrade.fromVersion} → v{upgrade.toVersion} · {upgrade.status === 'validated' ? '数据验证通过' : upgrade.status === 'validation-failed' ? '数据验证失败，可回滚' : upgrade.status === 'rollback-prepared' ? '旧安装包已校验' : upgrade.status === 'rolling-back' ? '正在回滚' : '已创建更新前备份'}</small></div><Button danger disabled={rollingBack || upgrade.status === 'rolling-back'} onClick={() => void rollback()}>{rollingBack ? '准备回滚中' : `回滚到 v${upgrade.fromVersion}`}</Button></div>}</div></div>;
 }
 
 // ===== 模型库标签 =====
@@ -640,6 +652,7 @@ function ProfileTab() {
 function MemoryTab() {
   const { modal, message } = App.useApp();
   const [items, setItems] = useState<UserMemoryItem[]>(() => loadUserMemory());
+  const [taskLearnings, setTaskLearnings] = useState<TaskLearning[]>(() => loadTaskLearnings());
   const [newText, setNewText] = useState('');
 
   const handleAdd = () => {
@@ -675,6 +688,20 @@ function MemoryTab() {
       onOk: () => {
         saveUserMemory([]);
         setItems([]);
+      },
+    });
+  };
+
+  const handleClearTaskLearnings = () => {
+    modal.confirm({
+      title: '清空所有任务经验？',
+      content: '这不会删除用户画像和长期偏好，只会清除执行路线的成功与失败经验。',
+      okText: '清空',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: () => {
+        saveTaskLearnings([]);
+        setTaskLearnings([]);
       },
     });
   };
@@ -751,6 +778,60 @@ function MemoryTab() {
           </Button>
         </div>
       )}
+
+      <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
+        <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>
+          任务经验
+          <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 8 }}>
+            共 {taskLearnings.length} 条
+          </span>
+        </h3>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+          每次真实执行后记录可行路线、失败路线和阻塞类型。相似任务会先读取这里的经验，再决定第一步和验收方式。
+        </p>
+        <div style={{ maxHeight: 320, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
+          {taskLearnings.length === 0 && (
+            <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>
+              暂无任务经验。完成一次带工具的实际任务后，这里会出现可复用记录。
+            </div>
+          )}
+          {[...taskLearnings].reverse().map((item, index) => (
+            <div
+              key={item.id}
+              style={{
+                padding: '10px 12px',
+                borderBottom: index < taskLearnings.length - 1 ? '1px solid var(--border-light)' : 'none',
+                fontSize: 12,
+              }}
+            >
+              <div style={{ display: 'flex', gap: 6, marginBottom: 5, flexWrap: 'wrap' }}>
+                <Tag color={item.outcome === 'completed' ? 'green' : item.outcome === 'stopped' ? 'default' : 'orange'}>
+                  {item.outcome === 'completed' ? '已验收' : item.outcome === 'stopped' ? '已停止' : '曾受阻'}
+                </Tag>
+                <Tag>复用记录 {item.uses} 次</Tag>
+                {item.successfulTools.length > 0 && <Tag color="blue">可行路线 {item.successfulTools.join(' → ')}</Tag>}
+              </div>
+              <div style={{ color: 'var(--text)', fontWeight: 500 }}>{item.goal}</div>
+              {item.lesson && <div style={{ color: 'var(--text-secondary)', marginTop: 4 }}>{item.lesson}</div>}
+              {item.failedTools.length > 0 && (
+                <div style={{ color: 'var(--text-muted)', marginTop: 4 }}>
+                  避免原样重复：{item.failedTools.join('、')}{item.failureLabels.length ? ` · ${item.failureLabels.join('、')}` : ''}
+                </div>
+              )}
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                更新于 {new Date(item.updatedAt).toLocaleString('zh-CN')}
+              </div>
+            </div>
+          ))}
+        </div>
+        {taskLearnings.length > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+            <Button size="small" danger icon={<DeleteOutlined />} onClick={handleClearTaskLearnings}>
+              清空任务经验
+            </Button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

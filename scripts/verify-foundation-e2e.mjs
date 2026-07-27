@@ -57,7 +57,12 @@ async function connect(target) {
 }
 
 async function loadStandaloneTypeScript(relativePath) {
-  const source = await fs.readFile(relativePath, 'utf8');
+  let source = await fs.readFile(relativePath, 'utf8');
+  if (source.includes("../engine/executionController.mjs")) {
+    const controllerSource = await fs.readFile('src/engine/executionController.mjs', 'utf8');
+    const controllerUrl = `data:text/javascript;base64,${Buffer.from(controllerSource).toString('base64')}`;
+    source = source.replaceAll('../engine/executionController.mjs', controllerUrl);
+  }
   const transpiled = ts.transpileModule(source, {
     compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext },
     fileName: relativePath,
@@ -150,9 +155,36 @@ try {
   }, '诊断中心没有完成五项检查');
   assert.deepEqual(diagnostics.titles, ['AI 模型', '连接器与知识库', 'Skill 健康', '任务工作区', '安全与审批']);
 
+  const cognitiveMemory = await settings.evaluate(`(() => {
+    const button = [...document.querySelectorAll('.settings-nav-section button')].find((item) => item.textContent.includes('记忆'));
+    button?.click();
+    return Boolean(button);
+  })()`);
+  assert.equal(cognitiveMemory, true, '设置中没有记忆入口');
+  const memoryPage = await waitFor(async () => {
+    const result = await settings.evaluate(`(() => {
+      const page = document.querySelector('.settings-page-memory');
+      return page ? {
+        text: page.innerText,
+        horizontalOverflow: page.scrollWidth > page.clientWidth + 2
+      } : null;
+    })()`);
+    return result?.text.includes('任务经验') ? result : null;
+  }, '记忆页没有显示任务经验');
+  assert.match(memoryPage.text, /长期记忆/u);
+  assert.match(memoryPage.text, /相似任务会先读取这里的经验/u);
+  assert.equal(memoryPage.horizontalOverflow, false, '记忆页出现横向溢出');
+
+  await settings.evaluate(`(() => {
+    const button = [...document.querySelectorAll('.settings-nav-section button')].find((item) => item.textContent.includes('备份迁移'));
+    button?.click();
+  })()`);
+  const backupPage = await waitFor(async () => settings.evaluate(`document.body.innerText.includes('导出同步配置')`), '备份页没有完整配置导出入口');
+  assert.equal(backupPage, true);
+
   const secret = await verifySecretRedaction();
   const recovery = await verifyStaleTaskRecovery();
-  console.log(JSON.stringify({ passed: true, workspace: workspace.reads.map((item) => item.content), diagnostics, secret, recovery }, null, 2));
+  console.log(JSON.stringify({ passed: true, workspace: workspace.reads.map((item) => item.content), diagnostics, memoryPage, secret, recovery }, null, 2));
 } finally {
   try { await settings?.evaluate('window.electronAPI.close()'); } catch {}
   settings?.socket.close();
