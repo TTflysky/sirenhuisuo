@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, shell, dialog, Tray, Menu, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, shell, dialog, Tray, Menu, nativeImage, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fsp = require('fs/promises');
@@ -10,6 +10,7 @@ const { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill,
 const { testObsidianVault, searchObsidianVault, readObsidianNote, fetchKnowledgeUrl, searchWeb } = require('./knowledge.cjs');
 const { version: APP_VERSION } = require('../package.json');
 const { sanitizeInjectedEnv, redactInjectedValues } = require('./secretSafety.cjs');
+const log = require('electron-log');
 // Isolate automated Electron verification from a user's real local data.
 if (process.env.TAIJI_TEST_USER_DATA) app.setPath('userData', path.resolve(process.env.TAIJI_TEST_USER_DATA));
 const APP_TITLE = `太极 AI 办公会所 v${APP_VERSION}`;
@@ -844,12 +845,28 @@ function createWindow() {
     catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
   });
   ipcMain.handle('knowledge:fetchUrl', async (_event, url) => {
-    try { return await fetchKnowledgeUrl(url); }
-    catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+    try { return await fetchKnowledgeUrl(url, { fetchImpl: (target, options) => net.fetch(target, options) }); }
+    catch (e) {
+      log.warn('[knowledge] page fetch failed:', String(e?.message ?? e));
+      return { ok: false, error: String(e?.message ?? e) };
+    }
   });
   ipcMain.handle('knowledge:searchWeb', async (_event, query) => {
-    try { return await searchWeb(query); }
-    catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+    const startedAt = Date.now();
+    try {
+      const result = await searchWeb(query, {
+        fetchImpl: (url, options) => net.fetch(url, options),
+        onAttempt(event) {
+          if (event.state === 'failed') log.warn(`[webSearch] provider=${event.provider} attempt=${event.attempt} failed: ${event.error}`);
+        },
+      });
+      log.info(`[webSearch] provider=${result.provider} attempts=${result.attempts} results=${result.results.length} durationMs=${result.durationMs}`);
+      return result;
+    } catch (e) {
+      const error = String(e?.message ?? e);
+      log.warn(`[webSearch] all providers failed durationMs=${Date.now() - startedAt}: ${error}`);
+      return { ok: false, error, results: [] };
+    }
   });
 
   ipcMain.handle('exec:command', async (_event, payload) => {

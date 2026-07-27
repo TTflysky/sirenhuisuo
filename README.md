@@ -1,4 +1,4 @@
-# 太极 AI 办公会所 v0.9.2
+# 太极 AI 办公会所 v0.9.3
 
 > 面向 Windows 的多模型 AI 虚拟办公室。创建员工、组建团队，让不同模型按照职责协作完成真实任务。
 
@@ -6,7 +6,7 @@
 
 ## 项目状态
 
-- 当前版本：`0.9.2`
+- 当前版本：`0.9.3`
 - 发布分支：`main`
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 33、React 19、TypeScript 6、Ant Design 6、Vite 8
@@ -78,6 +78,8 @@
 - 技能库会继续保留内置技能和用户安装技能；完整目录安装、依赖健康检查、损坏隔离、来源记录和一键修复已经接入。
 - 单文件、GitHub 目录和 ZIP Skill 统一先写入暂存目录，完整性检查通过后再原子替换；修复失败时旧 Skill 保持可用，不会留下半更新目录。
 - 支持文件读取、写入、目录检查、网页搜索和连接器工具。
+- 用户明确要求“今日、最新、实时或联网搜索”时，客户端会先执行一次真实搜索再交给模型整理，不依赖模型是否自行选择工具；普通任务仍由员工按需判断。
+- 联网搜索沿用 Electron/Chromium 代理，DuckDuckGo 与 Bing 双源自动重试和切换；失败时显示具体搜索源、超时或 HTTP 原因，并写入主日志。
 - 设置中心提供命令沙盒和三档审批策略；助手、员工私聊、团队聊天共享同一策略并显示当前状态。
 
 ### 知识库与连接器
@@ -124,13 +126,13 @@
 
 最新安装包可从 GitHub Releases 下载：
 
-- [直接下载 v0.9.2 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.9.2/taiji-office-setup-0.9.2.exe)
-- [查看 v0.9.2 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.9.2)
+- [直接下载 v0.9.3 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.9.3/taiji-office-setup-0.9.3.exe)
+- [查看 v0.9.3 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.9.3)
 
 本地构建的安装程序生成在：
 
 ```text
-release/taiji-office-setup-0.9.2.exe
+release/taiji-office-setup-0.9.3.exe
 ```
 
 可以直接覆盖安装旧版本。应用数据保存在用户目录，正常覆盖安装不会删除员工、团队、聊天和模型配置。

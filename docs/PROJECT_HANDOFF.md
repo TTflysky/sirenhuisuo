@@ -1,7 +1,7 @@
 # 项目交接手册
 
 > 最后整理：2026-07-27
-> 当前源码版本：`v0.9.2`
+> 当前源码版本：`v0.9.3`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 
@@ -30,6 +30,7 @@
 - 助理默认调度、明确 @ 员工直达、顺序任务运行器、暂停/继续/关闭、审查退回和任务列表。
 - 团队与私聊模型失败重试、超时诊断、Token 消耗、聊天时间戳、可折叠执行过程和聊天跳转轨道。
 - 本机 Skill 扫描、搜索、读取和手动选择；模型按任务需要自行判断是否检索 Skill。
+- 明确要求今日、最新、实时或联网资料时，客户端保证先执行真实搜索；普通任务仍由模型按需决定。搜索通过 Electron 代理访问 DuckDuckGo/Bing，支持重试、切换和具体错误诊断。
 - mac 风格的浅色/深色界面、内置幼圆、原生 Electron 聊天子窗口和可调整面板宽度。
 - 助理、单聊、团队三类聊天统一支持附件文件选择、粘贴、拖拽。
 - 图片可作为视觉输入，文本/代码可直接读取；Excel、Word、PowerPoint、PDF、OpenDocument、RTF、EPUB 通过 `officeparser` 提取文本；其他二进制也会真实保存，并向模型返回可操作路径和明确说明。
@@ -49,7 +50,7 @@
 | --- | --- |
 | `src/store.tsx` | 全局状态、团队消息路由、助理调度、任务运行的启动/暂停/继续/关闭。 |
 | `src/data/hermesClient.ts` | OpenAI 兼容请求、模型配置解析、聊天/员工/团队/Token 本地持久化、Agent 循环。 |
-| `src/engine/agentGuardrails.mjs` | 最新消息分类、文字控制、反馈挂起、工具语义去重和资源读取上限。 |
+| `src/engine/agentGuardrails.mjs` | 最新消息分类、实时搜索识别与查询清洗、文字控制、反馈挂起、工具语义去重和资源读取上限。 |
 | `src/engine/teamDiscussion.ts` | 计划步骤执行、员工发言、工具回调、审查与交接。 |
 | `src/engine/tools.ts` | `write_file`、`read_file`、`list_files`、`search_skills`、`read_skill`、`run_command` 和连接器工具。 |
 | `src/components/chat/AssistantChat.tsx` | 驴狗蛋助手聊天与运行中引导。 |
@@ -63,7 +64,8 @@
 
 | 模块 | 责任 |
 | --- | --- |
-| `electron/main.cjs` | 窗口管理、工作区安全边界、文件 IPC、命令执行、Office/PDF 解析。 |
+| `electron/main.cjs` | 窗口管理、工作区安全边界、文件 IPC、命令执行、Office/PDF 解析及走 Electron 代理的搜索 IPC。 |
+| `electron/knowledge.cjs` | 网页正文读取、DuckDuckGo/Bing 双源搜索、超时重试、结果解析和错误聚合。 |
 | `electron/preload.cjs` | 受限的 `window.electronAPI` 桥接。新增 IPC 必须同步更新此文件和 `src/electron.d.ts`。 |
 | `electron/skills.cjs` | 扫描 `%USERPROFILE%/.workbuddy/skills`、项目 `skills/` 和 `.workbuddy/skills`。 |
 | `electron/autoUpdate.cjs` | 通过 GitHub Releases 检查并下载更新；后台检查失败只写诊断日志，不冒充模型网络故障。 |
@@ -127,6 +129,8 @@ npm.cmd run lint
 npm.cmd run verify:agent-kernel
 npm.cmd run verify:foundation
 npm.cmd run verify:update-download
+npm.cmd run verify:web-search
+npm.cmd run diagnose:web-search
 npm.cmd run verify:steering-e2e
 npm.cmd run verify:tool-window
 

@@ -16,6 +16,7 @@ $package = Get-Content -LiteralPath (Join-Path $projectRoot 'package.json') -Raw
 $electronVersion = ([string]$package.devDependencies.electron) -replace '^[^0-9]*', ''
 $electronDist = Join-Path $projectRoot 'node_modules\electron\dist'
 $electronExe = Join-Path $electronDist 'electron.exe'
+$electronPathFile = Join-Path $projectRoot 'node_modules\electron\path.txt'
 if (-not (Test-Path -LiteralPath $electronExe)) {
   $electronCache = if ($env:ELECTRON_CACHE) { $env:ELECTRON_CACHE } else { Join-Path $env:LOCALAPPDATA 'electron\Cache' }
   $electronArchive = Join-Path $electronCache "electron-v$electronVersion-win32-x64.zip"
@@ -33,6 +34,10 @@ if (-not (Test-Path -LiteralPath $electronExe)) {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
   }
   if (-not (Test-Path -LiteralPath $electronExe)) { throw "Electron runtime restore did not produce: $electronExe" }
+}
+if (-not (Test-Path -LiteralPath $electronPathFile) -or (Get-Content -LiteralPath $electronPathFile -Raw).Trim() -ne 'electron.exe') {
+  Set-Content -LiteralPath $electronPathFile -Value 'electron.exe' -Encoding ascii -NoNewline
+  Write-Host "Restored Electron runtime locator: $electronPathFile"
 }
 
 & npm.cmd run build

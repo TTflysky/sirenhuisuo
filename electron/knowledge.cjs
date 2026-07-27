@@ -4,6 +4,12 @@ const fs = require('fs/promises');
 const MAX_WEB_BYTES = 2 * 1024 * 1024;
 const MAX_NOTE_BYTES = 1024 * 1024;
 const MAX_VAULT_FILES = 3000;
+const DEFAULT_WEB_TIMEOUT_MS = 30000;
+const DEFAULT_SEARCH_ATTEMPTS = 2;
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function assertAbsoluteDirectory(input) {
   if (typeof input !== 'string' || !path.isAbsolute(input)) throw new Error('知识库目录无效');
@@ -104,15 +110,29 @@ function htmlToText(html) {
     .trim();
 }
 
-async function fetchKnowledgeUrl(rawUrl) {
+async function fetchWithTimeout(fetchImpl, url, init, timeoutMs, timeoutMessage) {
+  if (typeof fetchImpl !== 'function') throw new Error('当前运行环境不支持联网请求');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error(timeoutMessage)), timeoutMs);
+  try {
+    return await fetchImpl(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error(timeoutMessage);
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(detail || '网络连接失败');
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchKnowledgeUrl(rawUrl, options = {}) {
   let url;
   try { url = new URL(rawUrl); } catch { throw new Error('知识库链接无效'); }
   if (!['https:', 'http:'].includes(url.protocol)) throw new Error('知识库链接仅支持 HTTP/HTTPS');
-  const response = await fetch(url, {
+  const response = await fetchWithTimeout(options.fetchImpl ?? globalThis.fetch, url.toString(), {
     redirect: 'follow',
     headers: { 'User-Agent': 'Hermes-Office-Knowledge/1.0', Accept: 'text/html,text/markdown,text/plain,application/json' },
-    signal: AbortSignal.timeout(15000),
-  });
+  }, options.timeoutMs ?? DEFAULT_WEB_TIMEOUT_MS, '读取知识库页面超时');
   if (!response.ok) throw new Error(`知识库返回 HTTP ${response.status}`);
   const length = Number(response.headers.get('content-length') || 0);
   if (length > MAX_WEB_BYTES) throw new Error('知识库页面超过 2MB');
@@ -123,28 +143,112 @@ async function fetchKnowledgeUrl(rawUrl) {
   return { ok: true, url: response.url, title: content.split('\n').find(Boolean)?.slice(0, 160) || url.hostname, content: content.slice(0, 50000) };
 }
 
-async function searchWeb(rawQuery) {
-  const query = typeof rawQuery === 'string' ? rawQuery.trim().slice(0, 300) : '';
-  if (!query) throw new Error('搜索关键词不能为空');
-  const url = `https://www.bing.com/search?format=rss&q=${encodeURIComponent(query)}`;
-  const response = await fetch(url, {
-    headers: { 'User-Agent': 'Taiji-Web-Research/1.0', Accept: 'application/rss+xml,application/xml,text/xml' },
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!response.ok) throw new Error(`搜索服务返回 HTTP ${response.status}`);
-  const xml = await response.text();
-  if (Buffer.byteLength(xml, 'utf8') > MAX_WEB_BYTES) throw new Error('搜索结果超过大小限制');
+function parseBingRss(xml) {
   const field = (item, tag) => {
     const match = item.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i'));
     if (!match) return '';
     return decodeHtml(match[1].replace(/^<!\[CDATA\[|\]\]>$/g, '').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
   };
-  const results = [...xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)].slice(0, 8).map((match) => ({
+  return [...xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)].slice(0, 8).map((match) => ({
     title: field(match[1], 'title').slice(0, 240),
     url: field(match[1], 'link').slice(0, 2048),
     snippet: field(match[1], 'description').slice(0, 600),
   })).filter((item) => item.title && /^https?:\/\//i.test(item.url));
-  return { ok: true, results };
 }
 
-module.exports = { testObsidianVault, searchObsidianVault, readObsidianNote, fetchKnowledgeUrl, searchWeb };
+function normalizeDuckDuckGoUrl(rawHref) {
+  try {
+    const decoded = decodeHtml(rawHref);
+    const url = new URL(decoded.startsWith('//') ? `https:${decoded}` : decoded, 'https://html.duckduckgo.com');
+    const redirected = url.searchParams.get('uddg');
+    const target = redirected ? new URL(redirected) : url;
+    if (!['http:', 'https:'].includes(target.protocol) || /(^|\.)duckduckgo\.com$/iu.test(target.hostname)) return '';
+    return target.toString();
+  } catch {
+    return '';
+  }
+}
+
+function parseDuckDuckGoHtml(html) {
+  const anchors = [...html.matchAll(/<a\b([^>]*\bclass=["'][^"']*\bresult__a\b[^"']*["'][^>]*)>([\s\S]*?)<\/a>/giu)];
+  return anchors.slice(0, 8).map((match, index) => {
+    const attributes = match[1];
+    const href = /\bhref=["']([^"']+)["']/iu.exec(attributes)?.[1] ?? '';
+    const segmentEnd = anchors[index + 1]?.index ?? html.length;
+    const segment = html.slice((match.index ?? 0) + match[0].length, segmentEnd);
+    const snippetHtml = /<(?:a|div)\b[^>]*\bclass=["'][^"']*\bresult__snippet\b[^"']*["'][^>]*>([\s\S]*?)<\/(?:a|div)>/iu.exec(segment)?.[1] ?? '';
+    return {
+      title: htmlToText(match[2]).slice(0, 240),
+      url: normalizeDuckDuckGoUrl(href).slice(0, 2048),
+      snippet: htmlToText(snippetHtml).slice(0, 600),
+    };
+  }).filter((item) => item.title && item.url);
+}
+
+function defaultSearchProviders(query) {
+  const encoded = encodeURIComponent(query);
+  return [
+    {
+      name: 'DuckDuckGo HTML',
+      url: `https://html.duckduckgo.com/html/?q=${encoded}`,
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Taiji-Web-Research/2.0', Accept: 'text/html,application/xhtml+xml' },
+      parse: parseDuckDuckGoHtml,
+    },
+    {
+      name: 'Bing RSS',
+      url: `https://www.bing.com/search?format=rss&mkt=zh-CN&setlang=zh-Hans&q=${encoded}`,
+      headers: { 'User-Agent': 'Taiji-Web-Research/2.0', Accept: 'application/rss+xml,application/xml,text/xml' },
+      parse: parseBingRss,
+    },
+  ];
+}
+
+async function searchWeb(rawQuery, options = {}) {
+  const query = typeof rawQuery === 'string' ? rawQuery.trim().slice(0, 300) : '';
+  if (!query) throw new Error('搜索关键词不能为空');
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_WEB_TIMEOUT_MS;
+  const attemptsPerProvider = Math.max(1, options.attemptsPerProvider ?? DEFAULT_SEARCH_ATTEMPTS);
+  const providers = options.providers ?? defaultSearchProviders(query);
+  const failures = [];
+  const startedAt = Date.now();
+  let attemptCount = 0;
+
+  for (const provider of providers) {
+    for (let attempt = 1; attempt <= attemptsPerProvider; attempt += 1) {
+      attemptCount += 1;
+      options.onAttempt?.({ provider: provider.name, attempt, state: 'started' });
+      try {
+        const response = await fetchWithTimeout(fetchImpl, provider.url, {
+          redirect: 'follow',
+          headers: provider.headers,
+        }, timeoutMs, `${provider.name} 连接超时`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const raw = await response.text();
+        if (Buffer.byteLength(raw, 'utf8') > MAX_WEB_BYTES) throw new Error('返回内容超过 2MB');
+        const results = provider.parse(raw);
+        if (!Array.isArray(results) || results.length === 0) throw new Error('没有解析到有效搜索结果');
+        const durationMs = Date.now() - startedAt;
+        options.onAttempt?.({ provider: provider.name, attempt, state: 'succeeded', resultCount: results.length, durationMs });
+        return { ok: true, results, provider: provider.name, attempts: attemptCount, durationMs, warnings: failures };
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        failures.push(`${provider.name} 第 ${attempt}/${attemptsPerProvider} 次：${reason}`);
+        options.onAttempt?.({ provider: provider.name, attempt, state: 'failed', error: reason });
+        if (attempt < attemptsPerProvider) await wait(Math.min(1500 * attempt, 3000));
+      }
+    }
+  }
+
+  throw new Error(`所有联网搜索源均失败。${failures.join('；')}`);
+}
+
+module.exports = {
+  testObsidianVault,
+  searchObsidianVault,
+  readObsidianNote,
+  fetchKnowledgeUrl,
+  searchWeb,
+  parseBingRss,
+  parseDuckDuckGoHtml,
+};

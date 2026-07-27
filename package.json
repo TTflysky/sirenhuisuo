@@ -1,7 +1,7 @@
 {
   "name": "hermes-office-pro",
   "private": true,
-  "version": "0.9.2",
+  "version": "0.9.3",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -12,11 +12,13 @@
     "start": "electron .",
     "status:project": "powershell -ExecutionPolicy Bypass -File scripts/project-status.ps1",
     "sync:project": "powershell -ExecutionPolicy Bypass -File scripts/sync-project.ps1 -Mode All",
+    "diagnose:web-search": "electron scripts/diagnose-web-search-live.cjs",
     "verify:docx": "node scripts/verify-docx-output.cjs",
     "verify:assistant-background": "node scripts/verify-assistant-background.mjs",
     "verify:agent-kernel": "node scripts/verify-agent-kernel.mjs",
     "verify:skill-atomic": "node scripts/verify-skill-atomic.cjs",
     "verify:update-download": "node scripts/verify-update-download.cjs",
+    "verify:web-search": "node scripts/verify-web-search.cjs",
     "verify:steering-e2e": "node scripts/verify-steering-e2e.mjs",
     "verify:tool-window": "node scripts/verify-tool-window.mjs",
     "verify:foundation": "node scripts/verify-foundation.mjs",

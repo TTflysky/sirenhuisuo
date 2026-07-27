@@ -8,10 +8,12 @@ import { redactToolArguments } from '../engine/securityBoundary';
 import { ensureDistinctEmployeeColors } from './employeeColors';
 import {
   canonicalToolCallKey,
+  buildFreshWebQuery,
   getToolCallLimit,
   isConversationOnlyMessage,
   isExplicitStopSteering,
   isPreparationOnlyTool,
+  requiresFreshWebResearch,
   toolResourceKey,
 } from '../engine/agentGuardrails.mjs';
 import {
@@ -1115,6 +1117,34 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   let duplicateOrBlockedStreak = 0;
   let completedToolPhases = 0;
   let phaseToolBudgetReached = false;
+
+  // Requests for current facts must not depend on whether a model elects to call a tool.
+  // Run one observable search first, then let the selected model analyze the real results.
+  if (!conversationOnly && requiresFreshWebResearch(originalUserText) && tools.some((tool) => tool?.function?.name === 'web_search')) {
+    const searchQuery = buildFreshWebQuery(originalUserText);
+    const searchArgs = JSON.stringify({ query: searchQuery });
+    onToolCall?.('web_search', searchArgs);
+    const { executeTool } = await import('../engine/tools');
+    const searched = await executeTool({
+      id: `required-web-search-${Date.now()}`,
+      name: 'web_search',
+      args: { query: searchQuery },
+      scope,
+      workspaceId: opts.workspaceId,
+    });
+    const useful = isUsefulToolOutcome('web_search', searched.success, searched.output);
+    onToolResult?.('web_search', searchArgs, searched.output, useful);
+    callLog.push({ name: 'web_search', args: searchArgs, result: searched.output.slice(0, 1200), success: useful });
+    toolResultCache.set(canonicalToolCallKey('web_search', searchArgs), { output: searched.output.slice(0, 6000), success: useful });
+    toolCallsThisPhase += 1;
+    totalToolAttempts += 1;
+    currentTurns.push({
+      role: 'system',
+      content: useful
+        ? `## 客户端已执行用户明确要求的联网搜索\n以下是刚刚取得的真实搜索结果。请基于这些来源完成回答，保留有用链接并说明信息日期；不得声称没有调用搜索工具。\n\n${searched.output.slice(0, 12000)}`
+        : `## 客户端已执行用户明确要求的联网搜索，但搜索失败\n必须如实告诉用户已经调用过搜索工具，并说明下面的具体技术原因。不得把失败说成“模型没有联网能力”，也不得编造实时资讯。\n\n${searched.output.slice(0, 6000)}`,
+    });
+  }
 
   const runSkillRecovery = async (reason: 'stale-read' | 'no-local-match', failedResult: string) => {
     const connectorSkillRouteConfirmed = callLog.some((call) => call.name === 'inspect_connectors' && call.success && /接入方式:\s*Skill/u.test(call.result));

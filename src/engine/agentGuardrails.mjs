@@ -119,10 +119,33 @@ function isExplicitNewWork(text) {
     || /(?:今天|明天|最新|实时).{0,20}(?:天气|新闻|价格|股价|汇率|资料|信息)/u.test(text);
 }
 
+export function requiresFreshWebResearch(message) {
+  const text = String(message ?? '').trim();
+  if (!text) return false;
+  if (/(?:为什么|为何|怎么|是否|有没有).{0,18}(?:搜索|查询|联网).{0,18}(?:失败|没调用|不能用|不可用|没反应)/u.test(text)) return false;
+  const explicitInternetSearch = /(?:^|帮我|给我|请|去|需要|重新|直接|现在|先).{0,12}(?:联网搜索|上网搜索|网络搜索|搜索互联网|网上查|上网查)/u.test(text);
+  const explicitResearch = /(?:^|帮我|给我|请|去|需要|重新|直接|现在|先).{0,12}(?:搜索|搜一下|搜集|查找|查询|检索).{0,30}(?:资料|文档|新闻|资讯|消息|行情|价格|来源|官网|政策|数据|进展)/u.test(text);
+  const freshInformation = /(?:今天|今日|本周|本月|最新|实时|当前).{0,24}(?:新闻|资讯|消息|行情|价格|股价|汇率|天气|政策|数据|进展|动态|资料|信息)/u.test(text);
+  return explicitInternetSearch || explicitResearch || freshInformation;
+}
+
+export function buildFreshWebQuery(message) {
+  const original = String(message ?? '').trim().slice(0, 300);
+  if (!original) return '';
+  const withoutCommand = original
+    .replace(/^(?:请|麻烦|现在|先|直接)?(?:你)?(?:帮我|给我|替我)?(?:去)?(?:联网搜索|上网搜索|网络搜索|搜索互联网|网上查|上网查|搜索|搜一下|搜集|查找|查询|检索)(?:一下|一下子)?[：:，,\s]*/u, '')
+    .replace(/(?:然后|并且|之后|再)[，,\s]*(?:帮我|给我)?(?:做|整理|生成|写|制作|汇总).{0,80}$/u, '')
+    .replace(/[“”"'。！？!?]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/[，,：:\s]+$/u, '')
+    .trim();
+  return (withoutCommand || original).slice(0, 300);
+}
+
 export function isConversationOnlyMessage(message) {
   const text = String(message ?? '').trim();
   if (!text) return false;
-  if (isExplicitResumeSteering([text]) || isExplicitNewWork(text)) return false;
+  if (isExplicitResumeSteering([text]) || isExplicitNewWork(text) || requiresFreshWebResearch(text)) return false;
   const executionControl = isExplicitPauseSteering([text]) || isExplicitStopSteering([text]);
   const statusQuestion = /(?:做到哪|进行到哪|什么状态|现在怎样|卡在哪里|需要帮助吗|为什么还在|怎么还在|到底在做什么)/u.test(text);
   const feedbackSubject = /(?:你|助手|员工|团队|刚才|这次|当前任务|这个任务|执行过程|操作|回答|内核|逻辑)/u.test(text);

@@ -495,11 +495,18 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
       case 'web_search': {
         const q = encodeURIComponent(args.query ?? '');
         const api = getFsApi();
+        const failures: string[] = [];
         if (api?.knowledgeSearchWeb) {
-          const searched = await api.knowledgeSearchWeb(args.query ?? '');
-          if (searched?.ok) {
-            const rows = (searched.results ?? []).map((item: any, index: number) => `${index + 1}. ${item.title}\n${item.url}\n${item.snippet ?? ''}`);
-            return { toolCallId: id, name, success: rows.length > 0, output: rows.length ? `搜索结果：\n\n${rows.join('\n\n')}` : '没有找到可用搜索结果，请核对关键词或使用用户提供的官方地址。' };
+          try {
+            const searched = await api.knowledgeSearchWeb(args.query ?? '');
+            if (searched?.ok) {
+              const rows = (searched.results ?? []).map((item: any, index: number) => `${index + 1}. ${item.title}\n${item.url}\n${item.snippet ?? ''}`);
+              const source = searched.provider ? `（来源：${searched.provider}，${searched.durationMs ?? 0}ms）` : '';
+              return { toolCallId: id, name, success: rows.length > 0, output: rows.length ? `搜索结果${source}：\n\n${rows.join('\n\n')}` : '搜索服务已响应，但没有解析到可用结果。请调整关键词后重试。' };
+            }
+            failures.push(`桌面搜索：${searched?.error ?? '搜索服务没有返回具体原因'}`);
+          } catch (error: any) {
+            failures.push(`桌面搜索：${error?.message ?? String(error)}`);
           }
         }
         // 用 DuckDuckGo 免费 Instant Answer API
@@ -517,11 +524,11 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
           if (topics.length) text += `\n相关内容：\n${topics.map((t: string) => `- ${t}`).join('\n')}`;
           if (!text.trim()) text = `搜索「${args.query}」未找到直接结果。建议换关键词。`;
           return { toolCallId: id, name, success: true, output: text.trim() };
-        } catch {
-          // DuckDuckGo 挂了，返回可用提示
+        } catch (error: any) {
+          failures.push(`浏览器备用搜索：${error?.message ?? String(error)}`);
           return {
             toolCallId: id, name, success: false,
-            output: `搜索 API 暂时不可用。建议基于自身知识回答，关键词：「${args.query}」`,
+            output: `联网搜索已真实调用但未成功。${failures.join('；')}。关键词：「${args.query}」。请检查代理是否允许客户端访问 Bing 或 DuckDuckGo，详细记录可在主日志中查看。`,
           };
         }
       }

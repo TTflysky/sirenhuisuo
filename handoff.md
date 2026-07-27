@@ -1,12 +1,12 @@
 # 太极项目当前交接
 
 > 更新时间：2026-07-27
-> 当前版本：`v0.9.2`
+> 当前版本：`v0.9.3`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
-> Release：[v0.9.2](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.9.2)
+> Release：[v0.9.3](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.9.3)
 
-`v0.9.2` 在八项稳定闭环和 Skill 原子修复基础上补齐回滚安装包的断点续传、慢速网络容错与原子校验，不改变既有任务、模型和用户数据结构。
+`v0.9.3` 修复实时资料请求可能不调用工具、搜索网络不继承客户端代理、失败原因被吞掉和中文长指令结果不相关的问题，不改变既有任务、模型和用户数据结构。
 
 ## 办公室端直接开始
 
@@ -16,7 +16,7 @@
 npm.cmd run sync:project
 ```
 
-进入新下载的 `sirenhuisuo-v0.9.2-<commit>` 目录后依次执行：
+进入新下载的 `sirenhuisuo-v0.9.3-<commit>` 目录后依次执行：
 
 ```powershell
 npm.cmd install
@@ -110,11 +110,14 @@ npm.cmd run verify:agent-kernel
 - `electron/skills.cjs`
 - `electron/autoUpdate.cjs`
 - `electron/releaseDownload.cjs`
+- `electron/knowledge.cjs`
 - `src/brand.ts`
 - `scripts/verify-foundation.mjs`
 - `scripts/verify-foundation-e2e.mjs`
 - `scripts/verify-skill-atomic.cjs`
 - `scripts/verify-update-download.cjs`
+- `scripts/verify-web-search.cjs`
+- `scripts/diagnose-web-search-live.cjs`
 - `scripts/sync-project.ps1`
 
 ## 验证证据
@@ -125,6 +128,8 @@ npm.cmd run verify:agent-kernel
 - `npm.cmd run verify:agent-kernel`：通过；118 次重复 Skill 读取只执行 1 次。
 - `npm.cmd run verify:skill-atomic`：通过；无效包不触碰旧 Skill，成功替换不残留旧文件，哈希损坏被拦截。
 - `npm.cmd run verify:update-download`：通过；模拟断线后 Range 续传、服务器忽略断点、等长损坏缓存和 SHA-256 拦截。
+- `npm.cmd run verify:web-search`：通过；覆盖 Bing XML 解析、主源超时后备用源成功和双源具体错误聚合。
+- `npm.cmd run diagnose:web-search`：通过；Electron 实网使用 DuckDuckGo，首轮空结果自动重试后约 3.1 秒返回 8 条中文 AI 资讯。
 - `npm.cmd run verify:docx`：通过；生成的 Word 可重新解析正文。
 - 安装版 `npm.cmd run verify:foundation-ui`：通过；真实 Electron IPC 和诊断中心五项完整显示。
 - 安装版 `npm.cmd run verify:assistant-background`：通过；助理隐藏后执行计时继续。
@@ -134,19 +139,19 @@ npm.cmd run verify:agent-kernel
 
 ## 安装与发布资产
 
-- 安装包：`E:\私人办公会所项目\release\taiji-office-setup-0.9.2.exe`
-- Blockmap：`E:\私人办公会所项目\release\taiji-office-setup-0.9.2.exe.blockmap`
+- 安装包：`E:\私人办公会所项目\release\taiji-office-setup-0.9.3.exe`
+- Blockmap：`E:\私人办公会所项目\release\taiji-office-setup-0.9.3.exe.blockmap`
 - 更新清单：`E:\私人办公会所项目\release\latest.yml`
-- 安装包大小：`173801148` 字节。
-- 安装包 SHA-256：`C46B41941082533A86A5858BF08180B595ADEAC29DC453C204C061CE2A4E4A0D`。
-- `app.asar` SHA-256：`4CE036A05C1336742B0B93AC365961F188BB6FB199B9F4F468CA526246180C1D`。
-- 包内版本：`0.9.2`。
+- 安装包大小：`173802785` 字节。
+- 安装包 SHA-256：`247DDE90EFA928AF7EAB5945103ECAE8B23B778A6922B7629AF82EBFCC075DD4`。
+- `app.asar` SHA-256：`C5FF730DEB3BFB90CABB60BBFA405109AA4A84B7988BCF3061D50342EFDA2FB9`。
+- 包内版本：`0.9.3`。
 - 安装目录只保留 `太极 AI 办公会所.exe` 和对应卸载程序，没有旧产品可执行文件残留。
 
 ## 已知边界
 
 1. 自动更新备份与回滚代码、顺序和类型已经验证，真实跨版本自动更新链正在用隔离安装目录演练。
-2. 源码开发版 Electron 在本机 Codex 终端会因图形子进程环境崩溃；正式安装版在同机真实 Electron 回归全部通过。这不是客户端进程占用，也不是太极业务代码错误。
+2. 源码开发版 Electron 运行时已从本机缓存恢复，并补齐 `path.txt` 定位文件；无窗口的 Electron 实网诊断可正常运行。带界面的端到端测试仍应先启动对应测试服务。
 3. 安装包没有代码签名证书，Windows SmartScreen 仍可能提示风险。
 4. 主前端 bundle 仍超过 500 KB，后续可做按模块懒加载，但不要与任务内核改动混在同一版本。
 

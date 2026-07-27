@@ -1,5 +1,21 @@
 # 更新日志
 
+## v0.9.3 (2026-07-27)
+
+### 真实联网搜索
+- “今日、最新、实时、联网搜索”等明确依赖外部事实的请求由客户端先执行 `web_search`，再把真实结果交给当前员工模型整理；不再依赖模型在 `tool_choice: auto` 下是否主动选择工具。
+- 搜索和公开网页读取统一使用 Electron `net.fetch`，继承 Chromium 与系统代理，不再走容易与客户端代理脱节的 Node `fetch`。
+- DuckDuckGo HTML 作为中文资料主搜索源，Bing RSS 作为备用；每个源可自动重试，主源超时、空结果或 HTTP 失败后自动切换。
+- 搜索指令会清洗为真实主题词，例如去掉“联网搜索一下”和“然后给我做简报”，减少搜索引擎误解长指令。
+- 工具结果展示搜索源和耗时；双源失败时保留每次尝试的具体原因，主日志记录来源、次数、结果数与耗时，但不记录用户搜索词。
+
+### Electron 本机运行时
+- Windows 构建脚本除恢复 `electron.exe` 外，也会校验并补齐无换行的 `node_modules/electron/path.txt`，避免运行时已在本机却被误报为 Electron 安装不完整。
+- 新增 `verify:web-search` 本地回归和 `diagnose:web-search` Electron 实网诊断。实测 DuckDuckGo 首轮空结果后自动重试成功，约 3.1 秒返回 8 条中文 AI 资讯。
+
+### 工程验证
+- `npm.cmd run build`、`npm.cmd run lint`、`npm.cmd run verify:web-search`、`npm.cmd run verify:foundation`、`npm.cmd run verify:agent-kernel` 和 Electron 实网诊断通过。
+
 ## v0.9.2 (2026-07-27)
 
 ### 回滚下载可靠性

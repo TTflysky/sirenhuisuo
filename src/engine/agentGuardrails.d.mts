@@ -7,4 +7,6 @@ export function isExplicitPauseSteering(messages: string[]): boolean;
 export function isExplicitResumeSteering(messages: string[]): boolean;
 export function getDirectExecutionControl(message: string): 'pause' | 'resume' | 'stop' | null;
 export function shouldHoldTaskForFeedback(message: string): boolean;
+export function requiresFreshWebResearch(message: string): boolean;
+export function buildFreshWebQuery(message: string): string;
 export function isConversationOnlyMessage(message: string): boolean;
