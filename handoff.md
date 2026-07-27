@@ -1,12 +1,12 @@
 # 太极项目当前交接
 
 > 更新时间：2026-07-27
-> 当前版本：`v0.9.3`
+> 当前版本：`v0.9.4`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
-> Release：[v0.9.3](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.9.3)
+> Release：[v0.9.4](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.9.4)
 
-`v0.9.3` 修复实时资料请求可能不调用工具、搜索网络不继承客户端代理、失败原因被吞掉和中文长指令结果不相关的问题，不改变既有任务、模型和用户数据结构。
+`v0.9.4` 补齐“搜索成功后必须在聊天气泡中总结交付”的闭环，并把连接器验证从模型自由判断升级为客户端强制闭环：配置保存后自动读取 Skill 规则、执行最小只读调用并核对业务状态，不改变既有任务、模型和用户数据结构。
 
 ## 办公室端直接开始
 
@@ -16,7 +16,7 @@
 npm.cmd run sync:project
 ```
 
-进入新下载的 `sirenhuisuo-v0.9.3-<commit>` 目录后依次执行：
+进入新下载的 `sirenhuisuo-v0.9.4-<commit>` 目录后依次执行：
 
 ```powershell
 npm.cmd install
@@ -139,13 +139,13 @@ npm.cmd run verify:agent-kernel
 
 ## 安装与发布资产
 
-- 安装包：`E:\私人办公会所项目\release\taiji-office-setup-0.9.3.exe`
-- Blockmap：`E:\私人办公会所项目\release\taiji-office-setup-0.9.3.exe.blockmap`
+- 安装包：`E:\私人办公会所项目\release\taiji-office-setup-0.9.4.exe`
+- Blockmap：`E:\私人办公会所项目\release\taiji-office-setup-0.9.4.exe.blockmap`
 - 更新清单：`E:\私人办公会所项目\release\latest.yml`
-- 安装包大小：`173802785` 字节。
-- 安装包 SHA-256：`247DDE90EFA928AF7EAB5945103ECAE8B23B778A6922B7629AF82EBFCC075DD4`。
-- `app.asar` SHA-256：`C5FF730DEB3BFB90CABB60BBFA405109AA4A84B7988BCF3061D50342EFDA2FB9`。
-- 包内版本：`0.9.3`。
+- 安装包大小：`173804946` 字节。
+- 安装包 SHA-256：`82C0FBE1EDC6CDD1AC3C4A1A848F5D0BACE5B1C57C1855A398922403A3DBFEA9`。
+- `app.asar` SHA-256：`382F524FA383839CE22B89AD7BBD47DE31DD3624B6DA722F3B36B64A2FF74BE3`。
+- 包内版本：`0.9.4`。
 - 安装目录只保留 `太极 AI 办公会所.exe` 和对应卸载程序，没有旧产品可执行文件残留。
 
 ## 已知边界

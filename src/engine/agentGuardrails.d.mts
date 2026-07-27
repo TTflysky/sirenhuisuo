@@ -9,4 +9,7 @@ export function getDirectExecutionControl(message: string): 'pause' | 'resume' |
 export function shouldHoldTaskForFeedback(message: string): boolean;
 export function requiresFreshWebResearch(message: string): boolean;
 export function buildFreshWebQuery(message: string): string;
+export function isResearchOnlyRequest(message: string): boolean;
+export function buildResearchFallback(userText: string, searchOutput: string, modelError?: string): string;
+export function ensureResearchSourceLinks(content: string, userText: string, searchOutput: string): string;
 export function isConversationOnlyMessage(message: string): boolean;

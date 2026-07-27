@@ -9,10 +9,13 @@ import { ensureDistinctEmployeeColors } from './employeeColors';
 import {
   canonicalToolCallKey,
   buildFreshWebQuery,
+  buildResearchFallback,
+  ensureResearchSourceLinks,
   getToolCallLimit,
   isConversationOnlyMessage,
   isExplicitStopSteering,
   isPreparationOnlyTool,
+  isResearchOnlyRequest,
   requiresFreshWebResearch,
   toolResourceKey,
 } from '../engine/agentGuardrails.mjs';
@@ -1004,6 +1007,25 @@ export function isConnectorTask(userText: string): boolean {
   return /连接器|知识库|外部服务|(?:^|[^a-z])mcp(?:[^a-z]|$)|obsidian|(?:^|[^a-z])ima(?:[^a-z]|$)|(?:GitHub|邮箱|企业微信|腾讯文档).{0,24}(?:连接|配置|关联|绑定|接入|调用)/iu.test(userText);
 }
 
+export function isConnectorSetupRequest(userText: string): boolean {
+  return isConnectorTask(userText) && /安装|配置|添加|接入|连接|关联|绑定|启用|设置|装好|装上|验证|测试|检查|诊断|连通|可用|能不能用/iu.test(userText);
+}
+
+function connectorQueryFromRequest(userText: string): string {
+  const explicitId = userText.match(/连接器\s*ID[：:]?[“"']?([^”"'\s，。]+)[”"']?/iu)?.[1];
+  if (explicitId) return explicitId;
+  const providers: Array<[RegExp, string]> = [
+    [/(?:^|[^a-z])ima(?:[^a-z]|$)|腾讯\s*ima/iu, 'ima'],
+    [/obsidian/iu, 'obsidian'],
+    [/github/iu, 'github'],
+    [/QQ\s*邮箱|qq[-\s]*mail/iu, 'qq-mail'],
+    [/企业微信/iu, 'wecom'],
+    [/腾讯文档/iu, 'tencent-doc'],
+    [/网页知识库/iu, 'web-knowledge'],
+  ];
+  return providers.find(([pattern]) => pattern.test(userText))?.[1] ?? '';
+}
+
 // ===== Agent 循环：调模型 + 执行工具，直到产出最终回复 =====
 export interface AgentLoopOpts {
   turns: ChatTurn[];
@@ -1023,6 +1045,7 @@ export interface AgentLoopOpts {
   consumeSteeringMessages?: () => string[]; // 运行中追加的老板指令
   getModelRequestSignal?: () => AbortSignal; // 新指令可以中断正在等待的模型响应
   onSteeringReply?: (content: string, usage: TokenUsage, contextUsage?: ContextUsage) => void;
+  onModelRetry?: (attempt: number, maxAttempts: number, error: string, nextDelayMs: number) => void;
 }
 
 function getUserActionForFailure(raw: string): string {
@@ -1052,7 +1075,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   const {
     turns, tools, scene, label, onToolCall, onToolResult, modelConfig, extraSystemContext,
     scope, attachments, shouldStop, waitIfPaused, consumeSteeringMessages,
-    getModelRequestSignal, onSteeringReply,
+    getModelRequestSignal, onSteeringReply, onModelRetry,
   } = opts;
   let currentTurns = [...turns];
   const originalUserContent = [...turns].reverse().find((turn) => turn.role === 'user')?.content;
@@ -1061,9 +1084,10 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     : (originalUserContent ?? []).filter((part): part is ContentPart => part.type === 'text').map((part) => part.text).join('\n');
   const isInstallationTask = /安装|装好|装上|安装包|部署/u.test(originalUserText);
   const connectorTask = isConnectorTask(originalUserText);
-  const connectorSetupTask = connectorTask && /安装|配置|添加|接入|连接|关联|绑定|启用|设置|装好|装上/iu.test(originalUserText);
+  const connectorSetupTask = isConnectorSetupRequest(originalUserText);
   const isSkillInstallation = isInstallationTask && !connectorTask && /skill|技能|插件/iu.test(originalUserText);
   const conversationOnly = isConversationOnlyMessage(originalUserText);
+  const researchOnlyTask = isResearchOnlyRequest(originalUserText);
   currentTurns = conversationOnly
     ? [{ role: 'system', content: '当前用户消息是在询问状态、纠正行为、表达反馈或进行普通对话。必须直接结合最近上下文回答这条消息，不得调用工具，不得自动恢复、重放或继续上一项任务。只有用户明确提出新的执行目标或明确要求继续时，才能重新开始执行。' }, ...currentTurns]
     : [{ role: 'system', content: `${AUTONOMOUS_EXECUTION_GUIDE}\n\n${CAPABILITY_ROUTING_GUIDE}\n\n${SKILL_RECOVERY_GUIDE}` }, ...currentTurns];
@@ -1117,6 +1141,45 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   let duplicateOrBlockedStreak = 0;
   let completedToolPhases = 0;
   let phaseToolBudgetReached = false;
+  let requiredResearchSucceeded = false;
+  let requiredResearchOutput = '';
+  let researchSummaryFailures = 0;
+  const maxResearchSummaryAttempts = 5;
+
+  // Connector setup and verification have client-enforced gates. The model receives
+  // the evidence after the checks; it cannot replace them with a narrated checklist.
+  if (!conversationOnly && connectorSetupTask && tools.some((tool) => tool?.function?.name === 'inspect_connectors')) {
+    const { executeTool } = await import('../engine/tools');
+    const connectorQuery = connectorQueryFromRequest(originalUserText);
+    const runRequiredConnectorTool = async (name: 'inspect_connectors' | 'test_connector', args: Record<string, string>) => {
+      const argumentsText = JSON.stringify(args);
+      onToolCall?.(name, argumentsText);
+      const result = await executeTool({
+        id: `required-connector-${name}-${Date.now()}`,
+        name,
+        args,
+        scope,
+        workspaceId: opts.workspaceId,
+      });
+      const useful = isUsefulToolOutcome(name, result.success, result.output);
+      onToolResult?.(name, argumentsText, result.output, useful);
+      callLog.push({ name, args: argumentsText, result: result.output.slice(0, 1200), success: useful });
+      toolResultCache.set(canonicalToolCallKey(name, argumentsText), { output: result.output.slice(0, 6000), success: useful });
+      toolCallsThisPhase += 1;
+      totalToolAttempts += 1;
+      currentTurns.push({ role: 'system', content: `## 客户端强制连接器检查：${name}\n${result.output.slice(0, 12000)}` });
+      return { result, useful };
+    };
+
+    await runRequiredConnectorTool('inspect_connectors', { query: connectorQuery });
+    if (/验证|测试|检查|诊断|连通|可用|能不能用|继续完成/iu.test(originalUserText) && connectorQuery) {
+      await runRequiredConnectorTool('test_connector', { connector: connectorQuery });
+    }
+    currentTurns.push({
+      role: 'system',
+      content: '连接器任务的状态检查已经由客户端执行。必须依据上面的真实结果继续：已通过则直接报告证据；缺配置则打开对应配置；真实测试失败则解释具体错误。禁止只复述操作步骤，禁止要求用户再次说“继续”。',
+    });
+  }
 
   // Requests for current facts must not depend on whether a model elects to call a tool.
   // Run one observable search first, then let the selected model analyze the real results.
@@ -1133,6 +1196,8 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       workspaceId: opts.workspaceId,
     });
     const useful = isUsefulToolOutcome('web_search', searched.success, searched.output);
+    requiredResearchSucceeded = useful;
+    requiredResearchOutput = searched.output;
     onToolResult?.('web_search', searchArgs, searched.output, useful);
     callLog.push({ name: 'web_search', args: searchArgs, result: searched.output.slice(0, 1200), success: useful });
     toolResultCache.set(canonicalToolCallKey('web_search', searchArgs), { output: searched.output.slice(0, 6000), success: useful });
@@ -1141,7 +1206,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     currentTurns.push({
       role: 'system',
       content: useful
-        ? `## 客户端已执行用户明确要求的联网搜索\n以下是刚刚取得的真实搜索结果。请基于这些来源完成回答，保留有用链接并说明信息日期；不得声称没有调用搜索工具。\n\n${searched.output.slice(0, 12000)}`
+        ? `## 客户端已执行用户明确要求的联网搜索\n以下是刚刚取得的真实搜索结果。请完整阅读全部结果，再按用户要求的数量筛选、总结并保留可点击来源链接。${researchOnlyTask ? '这是一项资料交付任务：在聊天中给出摘要和链接就算完成，不需要继续写文件、运行命令或把搜索称为“只完成准备”。' : ''}不得声称没有调用搜索工具。\n\n${searched.output.slice(0, 12000)}`
         : `## 客户端已执行用户明确要求的联网搜索，但搜索失败\n必须如实告诉用户已经调用过搜索工具，并说明下面的具体技术原因。不得把失败说成“模型没有联网能力”，也不得编造实时资讯。\n\n${searched.output.slice(0, 6000)}`,
     });
   }
@@ -1312,7 +1377,8 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     }
     let r: ChatResult;
     try {
-      r = await chatCompletion(currentTurns, scene, label, conversationOnly ? undefined : tools, modelConfig, extraSystemContext, undefined, getModelRequestSignal?.());
+      const toolsForCall = researchOnlyTask && requiredResearchSucceeded ? undefined : conversationOnly ? undefined : tools;
+      r = await chatCompletion(currentTurns, scene, label, toolsForCall, modelConfig, extraSystemContext, undefined, getModelRequestSignal?.());
     } catch (error: any) {
       const interruptedMessages = consumeSteeringMessages?.() ?? [];
       if (error?.name === 'ExternalAbortError' && interruptedMessages.length > 0) {
@@ -1321,6 +1387,21 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         continue;
       }
       if (shouldStop?.()) { stopped = true; break; }
+      if (researchOnlyTask && requiredResearchSucceeded) {
+        researchSummaryFailures += 1;
+        const errorText = error?.message ?? String(error);
+        if (researchSummaryFailures < maxResearchSummaryAttempts) {
+          const retryDelayMs = 10000;
+          onModelRetry?.(researchSummaryFailures, maxResearchSummaryAttempts, errorText, retryDelayMs);
+          await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+          await waitIfPaused?.();
+          if (shouldStop?.()) { stopped = true; break; }
+          continue;
+        }
+        onModelRetry?.(researchSummaryFailures, maxResearchSummaryAttempts, errorText, 0);
+        finalContent = buildResearchFallback(originalUserText, requiredResearchOutput, errorText);
+        break;
+      }
       throw error;
     }
     totalUsage.promptTokens += r.usage.promptTokens;
@@ -1460,7 +1541,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         currentTurns.push({ role: 'system', content: buildRecoveryGuide(consecutiveFailures) });
       }
     } else if (r.content) {
-      if (callLog.length > 0 && !finalReviewRequested) {
+      if (callLog.length > 0 && !finalReviewRequested && !(researchOnlyTask && requiredResearchSucceeded)) {
         currentTurns.push({ role: 'assistant', content: r.content });
         currentTurns.push({ role: 'system', content: EXECUTION_SELF_REVIEW_GUIDE });
         finalReviewRequested = true;
@@ -1472,6 +1553,13 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     } else {
       break;
     }
+  }
+
+  if (researchOnlyTask && requiredResearchSucceeded) {
+    const unusableSummary = !finalContent || /(?:没有|未能|无法|不能).{0,18}(?:搜索|检索|查询|实时结果)|卡在.{0,12}(?:查询|搜索)|搜索.{0,12}失败/u.test(finalContent);
+    finalContent = unusableSummary
+      ? buildResearchFallback(originalUserText, requiredResearchOutput)
+      : ensureResearchSourceLinks(finalContent ?? '', originalUserText, requiredResearchOutput);
   }
 
   const failuresBeforeSummary = callLog.filter((call) => !call.success);

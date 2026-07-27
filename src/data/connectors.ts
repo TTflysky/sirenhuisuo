@@ -103,6 +103,13 @@ export interface ConnectorPreset {
   documentationUrl?: string;
   skillSourceUrl?: string;
   skillName?: string;
+  /** Trusted, read-only probe maintained by the client for a known Skill connector. */
+  verification?: {
+    command: string;
+    requiredSkillText?: string[];
+    successJsonField?: string;
+    successJsonValues?: Array<string | number | boolean>;
+  };
   actions: ConnectorAction[];
 }
 
@@ -149,6 +156,12 @@ export const CONNECTOR_PRESETS: ConnectorPreset[] = [
     label: 'ima 知识库', icon: '📚', type: 'custom', kind: 'skill-bridge', mcpServerName: 'ima-skill',
     desc: '按照 IMA 官方 Skill 说明安装，并配置 API Key 与 Client ID',
     skillName: 'ima',
+    verification: {
+      command: `node .\\ima_api.cjs 'openapi/wiki/v1/search_knowledge_base' '{"query":"","cursor":"","limit":1}'`,
+      requiredSkillText: ['ima_api.cjs', 'search_knowledge_base'],
+      successJsonField: 'code',
+      successJsonValues: [0, '0'],
+    },
     credentialFields: [
       { key: 'apiKey', label: 'API Key', required: true, secret: true, envName: 'IMA_API_KEY', placeholder: '从 IMA 官方页面获取' },
       { key: 'clientId', label: 'Client ID', required: true, secret: false, envName: 'IMA_CLIENT_ID', placeholder: '从同一凭据窗口获取' },

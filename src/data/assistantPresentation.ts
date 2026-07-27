@@ -90,6 +90,7 @@ const TOOL_ACTIONS: Record<string, { active: string; stage: string }> = {
   read_file: { active: '正在读取文件…', stage: '读取文件' },
   list_files: { active: '正在检查文件…', stage: '检查文件' },
   web_search: { active: '正在查询最新资料…', stage: '查询资料' },
+  model_summary: { active: '正在整理搜索结果…', stage: '整理搜索结果' },
   read_web_page: { active: '正在阅读官方说明…', stage: '阅读官方说明' },
   install_skill: { active: '正在安装技能包…', stage: '安装技能包' },
   run_command: { active: '正在执行安装或检查…', stage: '安装或检查' },
@@ -122,6 +123,7 @@ export function getToolActionLabel(name: string, args = ''): string {
   if (name === 'read_file') return parsed.path ? `读取 ${String(parsed.path).split(/[\\/]/).pop()}` : '读取文件';
   if (name === 'list_files') return '检查工作区文件';
   if (name === 'web_search') return '搜索最新资料';
+  if (name === 'model_summary') return '整理搜索结果';
   if (name === 'read_web_page') return '阅读官方说明';
   if (name === 'install_skill') return '安装官方技能包';
   if (name === 'inspect_connectors') return '检查连接器和可用预设';
@@ -137,6 +139,7 @@ export function getToolReport(name: string, args = ''): string {
   if (name === 'read_file' || name === 'write_file' || name === 'list_files') return `文件工具 · ${action}`;
   if (name === 'run_command') return `终端工具 · ${action}`;
   if (name === 'web_search') return `网络搜索 · ${action}`;
+  if (name === 'model_summary') return `AI 模型 · ${action}`;
   if (name === 'read_web_page') return `网页工具 · ${action}`;
   if (name === 'install_skill') return `技能库 · ${action}`;
   if (name.startsWith('connector_') || name === 'inspect_connectors' || name === 'prepare_connector' || name === 'test_connector') return `连接器 · ${action}`;
@@ -174,7 +177,11 @@ export function summarizeToolResult(name: string, result: string, success: boole
   if (name === 'read_file') return '文件内容已读取。';
   if (name === 'list_files') return '工作区内容已检查。';
   if (name === 'write_file') return '文件已经保存。';
-  if (name === 'web_search') return '资料搜索已完成。';
+  if (name === 'web_search') {
+    const count = [...result.matchAll(/(?:^|\n\n)\d+\.\s/gu)].length;
+    return count > 0 ? `资料搜索已完成，共获得 ${count} 条结果，正在整理。` : '资料搜索已完成，正在整理。';
+  }
+  if (name === 'model_summary') return success ? '搜索结果已经整理完成。' : humanizeExecutionError(result);
   if (name === 'read_web_page') return '官方说明已经读取。';
   if (name === 'install_skill') return '技能包已经安装，正在继续配置和验证。';
   if (name === 'run_command') return '这一步已经完成。';

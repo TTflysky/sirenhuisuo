@@ -139,6 +139,9 @@ async function memberSpeak(
         if (name === 'write_file' && isToolResultSuccessful(result, success)) producedFile = true;
         onToolCall(name, args, result, success);
       },
+      onModelRetry(_attempt, _maxAttempts, error) {
+        onToolCall('model_summary', '', error, false);
+      },
       shouldStop,
       consumeSteeringMessages,
       getModelRequestSignal,

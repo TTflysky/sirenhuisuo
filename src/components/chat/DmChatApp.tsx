@@ -417,7 +417,16 @@ export default function DmChatApp({ empId }: Props) {
           return current.map((item, itemIndex) => itemIndex === index ? { ...item, state: 'error' } : item);
         });
         if (!showThoughtChain) return;
-        const step: ThoughtChainStep = { toolName: name, args: args ?? '', result: result.slice(0, 2000), success: resultSuccess, timestamp: Date.now() };
+        const step: ThoughtChainStep = { toolName: name, args: args ?? '', result: result.slice(0, name === 'web_search' ? 12000 : 2000), success: resultSuccess, timestamp: Date.now() };
+        thoughtChain.push(step);
+        setLiveExecutionSteps((current) => [...current, step].slice(-50));
+      },
+      onModelRetry(attempt, maxAttempts, error, nextDelayMs) {
+        setStatus(nextDelayMs > 0
+          ? `整理结果暂时失败，${Math.round(nextDelayMs / 1000)} 秒后进行第 ${attempt + 1}/${maxAttempts} 次尝试…`
+          : '整理模型暂时不可用，正在直接生成可读结果…');
+        if (!showThoughtChain) return;
+        const step: ThoughtChainStep = { toolName: 'model_summary', args: '', result: error.slice(0, 2000), success: false, timestamp: Date.now() };
         thoughtChain.push(step);
         setLiveExecutionSteps((current) => [...current, step].slice(-50));
       },

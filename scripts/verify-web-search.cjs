@@ -92,9 +92,17 @@ async function run() {
     const guardrails = await import('../src/engine/agentGuardrails.mjs');
     assert.equal(guardrails.requiresFreshWebResearch('联网搜索一下今天的 AI 资讯'), true);
     assert.equal(guardrails.isConversationOnlyMessage('联网搜索一下今天的 AI 资讯'), false);
+    assert.equal(guardrails.isResearchOnlyRequest('搜索一下今天的 AI 热点资讯，5 条总结发给我，带上链接'), true);
+    assert.equal(guardrails.isResearchOnlyRequest('搜索最新 Electron 文档，然后修改项目代码'), false);
     assert.equal(guardrails.buildFreshWebQuery('联网搜索一下今天的 AI 资讯，然后给我做今日简报'), '今天的 AI 资讯');
+    assert.equal(guardrails.buildFreshWebQuery('搜索一下今天的AI热点资讯，5条总结发给我，带上链接。'), '今天的AI热点资讯');
     assert.equal(guardrails.requiresFreshWebResearch('为什么他没有调用查询工具？'), false);
     assert.equal(guardrails.isConversationOnlyMessage('为什么他没有调用查询工具？'), true);
+
+    const researchFallback = guardrails.buildResearchFallback('给我 1 条，带链接', `搜索结果（来源：DuckDuckGo HTML，1264ms）：\n\n1. 示例资讯\nhttps://example.com/news\n这是可核验的资讯摘要。`, '模型超时');
+    assert.match(researchFallback, /搜索完成.*示例资讯.*这是可核验的资讯摘要.*\[查看来源\]\(https:\/\/example\.com\/news\)/su);
+    const linked = guardrails.ensureResearchSourceLinks('这是整理后的摘要。', '给我 1 条', `搜索结果：\n\n1. 示例资讯\nhttps://example.com/news\n摘要`);
+    assert.match(linked, /\*\*来源链接\*\*.*https:\/\/example\.com\/news/su);
 
     console.log(JSON.stringify({
       passed: true,

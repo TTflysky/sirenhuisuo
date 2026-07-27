@@ -135,11 +135,58 @@ export function buildFreshWebQuery(message) {
   const withoutCommand = original
     .replace(/^(?:请|麻烦|现在|先|直接)?(?:你)?(?:帮我|给我|替我)?(?:去)?(?:联网搜索|上网搜索|网络搜索|搜索互联网|网上查|上网查|搜索|搜一下|搜集|查找|查询|检索)(?:一下|一下子)?[：:，,\s]*/u, '')
     .replace(/(?:然后|并且|之后|再)[，,\s]*(?:帮我|给我)?(?:做|整理|生成|写|制作|汇总).{0,80}$/u, '')
+    .replace(/[，,]\s*\d{1,2}\s*(?:条|个|则|项|篇).{0,80}$/u, '')
+    .replace(/[，,]\s*(?:帮我|给我)?(?:总结|汇总|整理|做成|写成).{0,80}$/u, '')
     .replace(/[“”"'。！？!?]/gu, ' ')
     .replace(/\s+/g, ' ')
     .replace(/[，,：:\s]+$/u, '')
     .trim();
   return (withoutCommand || original).slice(0, 300);
+}
+
+export function isResearchOnlyRequest(message) {
+  const text = String(message ?? '').trim();
+  if (!requiresFreshWebResearch(text)) return false;
+  const needsAnotherDeliverable = /(?:安装|部署|开发|编程|写代码|修改|修复|更新项目|升级程序|创建文件|生成文件|保存文件|下载|上传|提交|打包|运行|执行命令|接入|连接|配置)|(?:Excel|Word|PPT|PDF|表格|脚本|代码|程序|项目文件).{0,16}(?:制作|生成|修改|写|保存)/iu.test(text);
+  return !needsAnotherDeliverable;
+}
+
+function parsedResearchRows(searchOutput) {
+  return [...String(searchOutput ?? '').matchAll(/(?:^|\n\n)(\d+)\.\s+([^\n]+)\n(https?:\/\/[^\s]+)\n([\s\S]*?)(?=\n\n\d+\.\s|$)/gu)].map((match) => ({
+    title: match[2].trim(),
+    url: match[3].trim(),
+    snippet: match[4].replace(/\s+/g, ' ').trim(),
+  }));
+}
+
+function requestedResearchCount(userText, available) {
+  const requested = Number(/(?:^|\D)(\d{1,2})\s*(?:条|个|则|项|篇)/u.exec(String(userText ?? ''))?.[1] ?? 5);
+  return Math.max(1, Math.min(Number.isFinite(requested) ? requested : 5, available, 10));
+}
+
+export function buildResearchFallback(userText, searchOutput, modelError = '') {
+  const rows = parsedResearchRows(searchOutput);
+  const count = requestedResearchCount(userText, rows.length);
+  if (rows.length === 0) {
+    return `搜索已经完成，但整理模型暂时没有回应。以下是搜索服务返回的原始资料：\n\n${String(searchOutput ?? '').slice(0, 10000)}`;
+  }
+  const items = rows.slice(0, count).map((row, index) => {
+    const summary = row.snippet || '搜索结果没有提供摘要，请打开来源查看完整内容。';
+    return `**${index + 1}. ${row.title}**\n${summary}\n[查看来源](${row.url})`;
+  });
+  const note = modelError ? '整理模型连续重试后仍未回应，已直接根据搜索标题、摘要和链接生成结果。' : '已根据真实搜索结果整理。';
+  return `搜索完成。${note}\n\n${items.join('\n\n')}`;
+}
+
+export function ensureResearchSourceLinks(content, userText, searchOutput) {
+  const rows = parsedResearchRows(searchOutput);
+  if (rows.length === 0) return content;
+  const count = requestedResearchCount(userText, rows.length);
+  const selected = rows.slice(0, count);
+  const missing = selected.filter((row) => !String(content ?? '').includes(row.url));
+  if (missing.length === 0) return content;
+  const links = selected.map((row, index) => `${index + 1}. [${row.title}](${row.url})`).join('\n');
+  return `${String(content ?? '').trim()}\n\n**来源链接**\n${links}`.trim();
 }
 
 export function isConversationOnlyMessage(message) {

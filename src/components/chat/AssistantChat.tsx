@@ -325,6 +325,10 @@ ${employeeDirectory}
         onToolResult(name, args, result, success) {
           const matchKey = `${name}:${args}`;
           const resultSuccess = isToolResultSuccessful(result, success);
+          if (name === 'web_search' && resultSuccess) {
+            lastStage = '整理搜索结果';
+            setStatus('正在阅读并整理搜索结果…');
+          }
           setCompletedActionCount((count) => count + 1);
           setLiveActivities((current) => {
             let index = -1;
@@ -341,13 +345,25 @@ ${employeeDirectory}
             const step: ThoughtChainStep = {
               toolName: name,
               args: args ?? '',
-              result: result.slice(0, 2000),  // 限制单步结果
+              result: result.slice(0, name === 'web_search' ? 12000 : 2000),
               success: resultSuccess,
               timestamp: Date.now(),
             };
             cotSteps.push(step);
             setLiveExecutionSteps((current) => [...current, step].slice(-50));
           }
+        },
+        onModelRetry(attempt, maxAttempts, error, nextDelayMs) {
+          lastStage = '整理搜索结果';
+          setStatus(nextDelayMs > 0
+            ? `整理结果暂时失败，${Math.round(nextDelayMs / 1000)} 秒后进行第 ${attempt + 1}/${maxAttempts} 次尝试…`
+            : '整理模型暂时不可用，正在直接生成可读结果…');
+          if (!showCoT) return;
+          const step: ThoughtChainStep = {
+            toolName: 'model_summary', args: '', result: error.slice(0, 2000), success: false, timestamp: Date.now(),
+          };
+          cotSteps.push(step);
+          setLiveExecutionSteps((current) => [...current, step].slice(-50));
         },
       });
 
@@ -488,6 +504,13 @@ ${employeeDirectory}
       '驴狗蛋助手对话记录'
     );
     downloadTextFile(`驴狗蛋助手-对话-${new Date().toISOString().slice(0, 10)}.md`, md);
+  };
+
+  const handleClearHistory = () => {
+    if (!confirm('清空所有对话？')) return;
+    setMsgs([]);
+    localStorage.removeItem(LS_KEY);
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -646,10 +669,7 @@ ${employeeDirectory}
               <button className="btn btn-sm" onClick={handleExport} disabled={msgs.length === 0} title="下载 Markdown 对话记录">
                 <ExportOutlined /> 导出
               </button>
-              <button
-                className="btn btn-sm"
-                onClick={() => { if (confirm('清空所有对话？')) { setMsgs([]); localStorage.removeItem(LS_KEY); } }}
-              >
+              <button className="btn btn-sm" onClick={handleClearHistory}>
                 <DeleteOutlined /> 清空
               </button>
               <button className="btn btn-primary btn-sm" onClick={() => void handleSend()} disabled={!text.trim() && attachments.length === 0}>

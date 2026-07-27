@@ -64,6 +64,15 @@ const clientSource = await fs.readFile(new URL('../src/data/hermesClient.ts', im
 assert.match(mainSource, /connector-config'\) return \{ width: 620, height: 820,/u);
 assert.match(mainSource, /const height = Math\.min\(spec\.height,/u);
 assert.match(clientSource, /maxTotalToolAttempts = connectorSetupTask \? 24 : 96/u);
+assert.match(clientSource, /export function isConnectorSetupRequest/u);
+assert.match(clientSource, /验证\|测试\|检查\|诊断\|连通\|可用\|能不能用/u);
+assert.match(clientSource, /required-connector-/u);
+assert.ok(clientSource.indexOf("runRequiredConnectorTool('inspect_connectors'") < clientSource.indexOf("runRequiredConnectorTool('test_connector'"));
+const toolsSource = await fs.readFile(new URL('../src/engine/tools.ts', import.meta.url), 'utf8');
+const connectorsSource = await fs.readFile(new URL('../src/data/connectors.ts', import.meta.url), 'utf8');
+assert.match(connectorsSource, /search_knowledge_base/u);
+assert.match(toolsSource, /读取了已关联 Skill/u);
+assert.match(toolsSource, /preset-verified/u);
 assert.match(clientSource, /respondToSteering/u);
 assert.match(clientSource, /steeringCheckpointTurns/u);
 assert.ok(

@@ -617,9 +617,10 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
             `- ${connector.label}（ID: ${connector.id}）`,
             `  状态: ${connector.status === 'connected' ? '已连接' : connector.status === 'disconnected' ? '连接失败' : '尚未确认'}；${connector.enabled ? '已启用' : '未启用'}`,
             `  配置: 地址${connector.baseUrl ? '已填写' : '未填写'}；本地目录${connector.localPath ? '已选择' : '未选择'}；凭据${credentialState}`,
+            connector.kind === 'skill-bridge' ? `  Skill: ${connector.installedSkillId || '未关联'}` : '',
             `  检查: ${checked}${connector.error ? `；上次原因: ${connector.error}` : ''}`,
             missing.length ? `  还缺: ${missing.join('、')}` : '  还缺: 无（仍需真实测试）',
-          ].join('\n');
+          ].filter(Boolean).join('\n');
         });
         const presetRows = presets.map((preset) => `- ${preset.label}（预设: ${preset.key}；接入方式: ${preset.kind === 'skill-bridge' ? 'Skill' : preset.type === 'mcp' ? 'MCP' : 'HTTP/本地'}）: ${preset.desc}`);
         return {
@@ -710,6 +711,69 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
           return { toolCallId: id, name, success: false, output: `没有获得连接测试批准，因此尚未访问“${connector.label}”。用户批准后再测试；目前不能确认连接成功。` };
         }
         const result = await checkConnector(connector);
+        if (connector.kind === 'skill-bridge' && result.status === 'unknown') {
+          const connectorPreset = findConnectorPreset(connector.mcpServerName || connector.label);
+          const verification = connectorPreset?.verification;
+          if (!verification || !connector.installedSkillId) {
+            updateConnector(connector.id, { status: result.status, error: result.error, lastChecked: Date.now() });
+            return { toolCallId: id, name, success: false, output: `“${connector.label}”的 Skill 和凭据已经准备好，但这个预设还没有客户端维护的安全验收命令。请读取已安装 Skill“${connector.installedSkillId ?? '未知'}”的说明，找到官方规定的健康检查或最小查询命令，然后调用 run_command，并传 connector="${connector.id}"、verification=true。只有该命令真实成功后才算已连接。` };
+          }
+
+          const { readSkill } = await import('../data/skills');
+          let skillContent = '';
+          try {
+            skillContent = (await readSkill(connector.installedSkillId)).content;
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            updateConnector(connector.id, { status: 'disconnected', error: `无法读取 Skill 规则：${detail}`, lastChecked: Date.now() });
+            return { toolCallId: id, name, success: false, output: `“${connector.label}”验证失败：无法读取已关联 Skill“${connector.installedSkillId}”的规则：${detail}` };
+          }
+          const missingRule = verification.requiredSkillText?.find((text) => !skillContent.includes(text));
+          if (missingRule) {
+            const detail = `Skill 说明缺少客户端验收所需规则“${missingRule}”`;
+            updateConnector(connector.id, { status: 'disconnected', error: detail, lastChecked: Date.now() });
+            return { toolCallId: id, name, success: false, output: `“${connector.label}”验证已停止：${detail}。请检查 Skill 版本或重新安装官方版本，客户端不会猜测接口。` };
+          }
+
+          const injectedEnv: Record<string, string> = {};
+          for (const field of connector.credentialFields ?? []) {
+            const value = connector.credentials?.[field.key];
+            if (field.envName && value) injectedEnv[field.envName] = value;
+          }
+          const api = getFsApi();
+          if (!api?.execCommand) {
+            return { toolCallId: id, name, success: false, output: `“${connector.label}”的 Skill 规则和凭据均已核对，但当前不是 Electron 桌面环境，无法执行真实验收命令。` };
+          }
+          const executed = await api.execCommand(verification.command, physicalWorkspace, {
+            sandboxEnabled: true,
+            env: injectedEnv,
+            skillId: connector.installedSkillId,
+          });
+          let businessSuccess = Boolean(executed.success);
+          let businessError = executed.stderr || '';
+          if (businessSuccess && verification.successJsonField) {
+            try {
+              const body = JSON.parse(executed.stdout || '{}') as Record<string, unknown>;
+              const actual = body[verification.successJsonField];
+              businessSuccess = (verification.successJsonValues ?? []).some((expected) => expected === actual);
+              if (!businessSuccess) businessError = `接口返回 ${verification.successJsonField}=${String(actual ?? '缺失')}`;
+            } catch {
+              businessSuccess = false;
+              businessError = '接口返回的不是可验证 JSON';
+            }
+          }
+          const safeDetail = (businessError || executed.stdout || '真实调用失败').slice(0, 500);
+          updateConnector(connector.id, {
+            status: businessSuccess ? 'connected' : 'disconnected',
+            error: businessSuccess ? undefined : safeDetail,
+            lastChecked: Date.now(),
+          });
+          const { BUS_CHANNELS, sendBus } = await import('../ipcBus');
+          sendBus(BUS_CHANNELS.CONNECTORS_CHANGED, { connectorId: connector.id, reason: 'preset-verified', status: businessSuccess ? 'connected' : 'disconnected' });
+          return businessSuccess
+            ? { toolCallId: id, name, success: true, output: `“${connector.label}”已完成闭环验证：读取了已关联 Skill“${connector.installedSkillId}”的规则，并按规则执行客户端维护的最小只读查询；接口业务状态通过，现在可以确认连接器可用。` }
+            : { toolCallId: id, name, success: false, output: `“${connector.label}”已读取 Skill 规则并执行最小只读查询，但真实调用未通过：${safeDetail}。配置已保留，请按这个具体原因修正后重试。` };
+        }
         updateConnector(connector.id, {
           status: result.status,
           error: result.error,

@@ -20,7 +20,7 @@ export default function ThoughtChainView({ steps }: { steps: ThoughtChainStep[] 
       <details className="cot-step-details">
         <summary>查看技术详情</summary>
         {step.args && <div className="cot-step-args"><span>输入参数</span><pre>{step.args.length > 1200 ? `${step.args.slice(0, 1200)}…` : step.args}</pre></div>}
-        <div className="cot-step-result"><span>原始结果</span><pre>{step.result.length > 3000 ? `${step.result.slice(0, 3000)}…` : step.result}</pre></div>
+        <div className="cot-step-result"><span>原始结果</span><pre>{step.result.length > (step.toolName === 'web_search' ? 12000 : 3000) ? `${step.result.slice(0, step.toolName === 'web_search' ? 12000 : 3000)}…` : step.result}</pre></div>
       </details>
     </details>)}</div>}
   </div>;
