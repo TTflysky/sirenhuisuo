@@ -1,5 +1,15 @@
 # 更新日志
 
+## v0.9.1 (2026-07-27)
+
+### Skill 原子安装与修复
+- 单文件、GitHub 目录和 ZIP Skill 统一使用“暂存、完整校验、备份、替换、失败恢复”事务，目标目录在新版本完全就绪前保持不变。
+- 暂存内容会检查 `SKILL.md`、安装元数据、正文 SHA-256、文件数量、总体积、符号链接和引用文件；无效包不会触碰已安装版本。
+- 替换失败会自动恢复旧目录，成功后清理备份；新增 `verify:skill-atomic` 回归，覆盖失败保护、成功替换、旧文件清理和哈希损坏拦截。
+
+### 工程验证
+- `npm.cmd run build`、`npm.cmd run lint`、`npm.cmd run verify:foundation`、`npm.cmd run verify:agent-kernel` 和 `npm.cmd run verify:skill-atomic` 通过。
+
 ## v0.9.0 (2026-07-27)
 
 ### 八项稳定闭环

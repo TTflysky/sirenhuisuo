@@ -1,7 +1,7 @@
 # 项目交接手册
 
 > 最后整理：2026-07-27
-> 当前源码版本：`v0.9.0`
+> 当前源码版本：`v0.9.1`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 
@@ -76,6 +76,7 @@
 - 真实工作区：Electron `app.getPath('userData')/workspace`；每个聊天 scope 下有独立目录。
 - 上传附件：`<scope>/uploads/<批次>/<原文件名>`。输入附件不会显示为最终产出物。
 - Skill：用户目录 `.workbuddy/skills` 或项目本地 Skill 目录。
+- Skill 安装：单文件、GitHub 目录和 ZIP 都先写入同根暂存目录，校验通过后原子替换；失败时恢复旧目录。
 - 交付文件：由 `write_file` 或命令生成，写入对应 scope 工作区；`ChatOutputsPanel` 只登记真实文件。
 
 同步配置文件 `config/local-test-profile.sanitized.json` 只包含员工、团队、模型结构和连接器非敏感信息，不包含聊天、记忆、任务运行记录或明文 API Key。启动应用后，在左侧点击“同步”即可导入；导入后到设置中为模型逐个回填本机 API Key。

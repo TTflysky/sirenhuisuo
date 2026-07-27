@@ -363,6 +363,90 @@ async function findSkillManifests(root) {
   return found.sort((a, b) => a.split(path.sep).length - b.split(path.sep).length || a.localeCompare(b));
 }
 
+function skillDirectoryName(name) {
+  return name.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff_-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+}
+
+async function validateStagedSkill(stageDir) {
+  const root = path.resolve(stageDir);
+  const manifestPath = path.join(root, 'SKILL.md');
+  const manifestStat = await fs.stat(manifestPath).catch(() => null);
+  if (!manifestStat?.isFile()) throw new Error('待安装技能中没有 SKILL.md');
+  if (manifestStat.size > MAX_BODY_BYTES) throw new Error('SKILL.md 超过 256KB');
+
+  let files = 0;
+  let totalBytes = 0;
+  const walk = async (directory) => {
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(directory, entry.name);
+      const relative = path.relative(root, fullPath);
+      if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('技能目录包含不安全路径');
+      if (entry.isSymbolicLink()) throw new Error('技能目录包含不允许的符号链接');
+      if (entry.isDirectory()) { await walk(fullPath); continue; }
+      if (!entry.isFile()) throw new Error('技能目录包含不支持的文件类型');
+      const stat = await fs.stat(fullPath);
+      files += 1;
+      totalBytes += stat.size;
+      if (files > MAX_SKILL_BUNDLE_FILES) throw new Error(`技能目录文件超过 ${MAX_SKILL_BUNDLE_FILES} 个`);
+      if (totalBytes > MAX_SKILL_EXPANDED_BYTES) throw new Error('技能目录超过 16MB');
+    }
+  };
+  await walk(root);
+
+  const content = await fs.readFile(manifestPath, 'utf8');
+  if (!content.trim()) throw new Error('SKILL.md 不能为空');
+  const metadataPath = path.join(root, '.taiji-skill.json');
+  let metadata;
+  try { metadata = JSON.parse(await fs.readFile(metadataPath, 'utf8')); } catch { throw new Error('技能安装记录无效'); }
+  if (!['single-file', 'directory', 'zip'].includes(metadata.installMode)) throw new Error('技能安装方式无效');
+  if (!metadata.requestedSourceUrl || !metadata.contentHash) throw new Error('技能安装记录不完整');
+  const actualHash = crypto.createHash('sha256').update(content).digest('hex');
+  if (metadata.contentHash !== actualHash) throw new Error('SKILL.md 完整性校验失败');
+  const requirements = await inspectSkillRequirements(content, root);
+  if (metadata.installMode !== 'single-file' && requirements.missingFiles.length > 0) {
+    throw new Error(`技能包缺少引用文件：${requirements.missingFiles.slice(0, 5).join('、')}`);
+  }
+  return { content, files, totalBytes };
+}
+
+async function replaceSkillDirectoryAtomically(targetDir, stageDir) {
+  const target = path.resolve(targetDir);
+  const stage = path.resolve(stageDir);
+  const skillsRoot = path.dirname(target);
+  if (path.dirname(stage) !== skillsRoot || target === stage) throw new Error('技能暂存目录不安全');
+  try {
+    await validateStagedSkill(stage);
+  } catch (error) {
+    try { await fs.rm(stage, { recursive: true, force: true }); } catch {}
+    throw error;
+  }
+
+  const slug = path.basename(target);
+  const backup = path.join(skillsRoot, `.backup-${slug}-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`);
+  let backedUp = false;
+  try {
+    try { await fs.rename(target, backup); backedUp = true; } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+    await fs.rename(stage, target);
+  } catch (error) {
+    try { await fs.rm(stage, { recursive: true, force: true }); } catch {}
+    if (backedUp) {
+      try { await fs.rename(backup, target); } catch (restoreError) {
+        throw new Error(`技能替换失败，旧版本恢复失败：${restoreError?.message ?? restoreError}`);
+      }
+    }
+    throw error;
+  }
+  if (backedUp) {
+    try { await fs.rm(backup, { recursive: true, force: true }); } catch {}
+  }
+}
+
+async function createSkillStage(skillsRoot, slug) {
+  await fs.mkdir(skillsRoot, { recursive: true });
+  return fs.mkdtemp(path.join(skillsRoot, `.install-${slug}-`));
+}
+
 async function installZipSkill(projectRoot, sourceUrl, requestedName) {
   const response = await fetch(sourceUrl, {
     headers: { 'User-Agent': 'Taiji-Skill-Installer/1.0', Accept: 'application/zip,application/octet-stream,*/*' },
@@ -392,34 +476,28 @@ async function installZipSkill(projectRoot, sourceUrl, requestedName) {
     const frontmatter = parseFrontmatter(content);
     const fallbackName = path.basename(skillRoot) || 'installed-skill';
     const name = requestedName || frontmatter.name || fallbackName;
-    const slug = name.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff_-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+    const slug = skillDirectoryName(name);
     if (!slug) throw new Error('无法生成安全的技能目录名');
     const userProfile = process.env.USERPROFILE || process.env.HOME || '';
     if (!userProfile) throw new Error('无法定位当前用户目录');
     const skillsRoot = path.resolve(userProfile, '.workbuddy', 'skills');
     const targetDir = path.resolve(skillsRoot, slug);
     if (path.relative(skillsRoot, targetDir).startsWith('..')) throw new Error('技能目录不安全');
-    await fs.mkdir(skillsRoot, { recursive: true });
-    const stageDir = path.join(skillsRoot, `.install-${slug}-${crypto.randomBytes(5).toString('hex')}`);
-    const backupDir = path.join(skillsRoot, `.backup-${slug}-${Date.now()}`);
-    await fs.cp(skillRoot, stageDir, { recursive: true, errorOnExist: true, force: false });
-    await fs.writeFile(path.join(stageDir, '.taiji-skill.json'), JSON.stringify({
-      schema: 1,
-      installMode: 'zip',
-      sourceUrl: response.url || sourceUrl,
-      requestedSourceUrl: sourceUrl,
-      contentHash: crypto.createHash('sha256').update(content).digest('hex'),
-      files: archiveInfo.files,
-      installedAt: new Date().toISOString(),
-    }, null, 2), 'utf8');
-    let backedUp = false;
+    const stageDir = await createSkillStage(skillsRoot, slug);
     try {
-      try { await fs.rename(targetDir, backupDir); backedUp = true; } catch (error) { if (error?.code !== 'ENOENT') throw error; }
-      await fs.rename(stageDir, targetDir);
-      if (backedUp) await fs.rm(backupDir, { recursive: true, force: true });
+      await fs.cp(skillRoot, stageDir, { recursive: true, errorOnExist: false, force: false });
+      await fs.writeFile(path.join(stageDir, '.taiji-skill.json'), JSON.stringify({
+        schema: 1,
+        installMode: 'zip',
+        sourceUrl: response.url || sourceUrl,
+        requestedSourceUrl: sourceUrl,
+        contentHash: crypto.createHash('sha256').update(content).digest('hex'),
+        files: archiveInfo.files,
+        installedAt: new Date().toISOString(),
+      }, null, 2), 'utf8');
+      await replaceSkillDirectoryAtomically(targetDir, stageDir);
     } catch (error) {
       try { await fs.rm(stageDir, { recursive: true, force: true }); } catch {}
-      if (backedUp) { try { await fs.rename(backupDir, targetDir); } catch {} }
       throw error;
     }
     const installed = (await scanSkills(projectRoot)).find((item) => item._path === path.join(targetDir, 'SKILL.md'));
@@ -441,7 +519,7 @@ async function installSkill(projectRoot, input) {
   const frontmatter = parseFrontmatter(content);
   const fallbackName = path.basename(new URL(resolvedUrl).pathname, '.md') || 'installed-skill';
   const name = requestedName || frontmatter.name || fallbackName;
-  const slug = name.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff_-]+/gu, '-').replace(/^-+|-+$/g, '').slice(0, 64);
+  const slug = skillDirectoryName(name);
   if (!slug) throw new Error('无法生成安全的技能目录名');
   const userProfile = process.env.USERPROFILE || process.env.HOME || '';
   if (!userProfile) throw new Error('无法定位当前用户目录');
@@ -449,18 +527,25 @@ async function installSkill(projectRoot, input) {
   const targetDir = path.resolve(skillsRoot, slug);
   const rel = path.relative(skillsRoot, targetDir);
   if (rel.startsWith('..') || path.isAbsolute(rel)) throw new Error('技能目录不安全');
-  await fs.mkdir(targetDir, { recursive: true });
-  const bundle = await downloadSkillDirectory(sourceUrl, targetDir);
-  if (bundle.installMode === 'single-file') await fs.writeFile(path.join(targetDir, 'SKILL.md'), content, 'utf8');
-  await fs.writeFile(path.join(targetDir, '.taiji-skill.json'), JSON.stringify({
-    schema: 1,
-    installMode: bundle.installMode,
-    sourceUrl: resolvedUrl,
-    requestedSourceUrl: sourceUrl,
-    contentHash: crypto.createHash('sha256').update(content).digest('hex'),
-    files: bundle.files,
-    installedAt: new Date().toISOString(),
-  }, null, 2), 'utf8');
+  await fs.mkdir(skillsRoot, { recursive: true });
+  const stageDir = await createSkillStage(skillsRoot, slug);
+  try {
+    const bundle = await downloadSkillDirectory(sourceUrl, stageDir);
+    if (bundle.installMode === 'single-file') await fs.writeFile(path.join(stageDir, 'SKILL.md'), content, 'utf8');
+    await fs.writeFile(path.join(stageDir, '.taiji-skill.json'), JSON.stringify({
+      schema: 1,
+      installMode: bundle.installMode,
+      sourceUrl: resolvedUrl,
+      requestedSourceUrl: sourceUrl,
+      contentHash: crypto.createHash('sha256').update(content).digest('hex'),
+      files: bundle.files,
+      installedAt: new Date().toISOString(),
+    }, null, 2), 'utf8');
+    await replaceSkillDirectoryAtomically(targetDir, stageDir);
+  } catch (error) {
+    try { await fs.rm(stageDir, { recursive: true, force: true }); } catch {}
+    throw error;
+  }
   const installed = (await scanSkills(projectRoot)).find((item) => item._path === path.join(targetDir, 'SKILL.md'));
   return { ok: true, skill: installed ? (({ _path, ...item }) => item)(installed) : { name, source: slug }, resolvedUrl };
 }
@@ -491,4 +576,4 @@ async function repairSkill(projectRoot, id) {
   return installSkill(projectRoot, { sourceUrl: found.sourceUrl, name: found.name });
 }
 
-module.exports = { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill, inspectSkillSource, repairSkill, validateZipArchive, MAX_BODY_BYTES };
+module.exports = { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill, inspectSkillSource, repairSkill, validateZipArchive, validateStagedSkill, replaceSkillDirectoryAtomically, MAX_BODY_BYTES };

@@ -1,12 +1,12 @@
 # 太极项目当前交接
 
-> 更新时间：2026-07-27  
-> 当前版本：`v0.9.0`  
-> 主分支：`main`  
-> 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)  
-> Release：[v0.9.0](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.9.0)
+> 更新时间：2026-07-27
+> 当前版本：`v0.9.1`
+> 主分支：`main`
+> 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+> Release：[v0.9.1](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.9.1)
 
-本轮在现有 `v0.8.11` 架构上完成八项稳定闭环，没有推翻重做。源码目录为 `L:\AI办公室\sirenhuisuo-v0.7.12`，本机安装目录为 `E:\AI办公会所\hermes-office-pro`。
+`v0.9.1` 在 `v0.9.0` 八项稳定闭环上补齐 Skill 原子安装与修复，不改变既有任务、模型和用户数据结构。
 
 ## 办公室端直接开始
 
@@ -16,7 +16,7 @@
 npm.cmd run sync:project
 ```
 
-进入新下载的 `sirenhuisuo-v0.9.0-<commit>` 目录后依次执行：
+进入新下载的 `sirenhuisuo-v0.9.1-<commit>` 目录后依次执行：
 
 ```powershell
 npm.cmd install
@@ -26,7 +26,7 @@ npm.cmd run verify:foundation
 npm.cmd run verify:agent-kernel
 ```
 
-开始修改前阅读本文件、`docs/PROJECT_HANDOFF.md`、`docs/CROSS_DEVICE_WORKFLOW.md` 和 `CHANGELOG.md` 的 `v0.9.0`。
+开始修改前阅读本文件、`docs/PROJECT_HANDOFF.md`、`docs/CROSS_DEVICE_WORKFLOW.md` 和 `CHANGELOG.md` 的最新版本。
 
 ## 八项实现状态
 
@@ -51,13 +51,14 @@ npm.cmd run verify:agent-kernel
 - 客户端退出或重启后，旧 `running/queued` 团队任务会转为暂停的“待恢复”任务。
 - 原工作区、已完成步骤、证据和未决问题保留，恢复时从未完成步骤继续。
 
-### 4. Skill 健康与恢复：已完成首个闭环
+### 4. Skill 健康与恢复：已完成原子修复闭环
 
 - 健康状态为 `ready / setup / limited / broken`。
 - 扫描环境变量、外部软件、账号授权和 `SKILL.md` 引用文件。
 - 损坏 Skill 自动隔离，不参与自动匹配。
 - 安装前展示要求；来源明确的用户 Skill 支持重新安装修复。
 - 安装记录保存来源和正文 SHA-256。
+- 单文件、GitHub 目录和 ZIP 均在同根暂存目录完成验证后原子替换；失败会保留或恢复旧版本。
 - 本机最近扫描 95 个 Skill：65 个可直接使用、30 个使用前需配置、没有误判为损坏的 Skill。
 
 ### 5. 任务验收与审查：已完成
@@ -107,6 +108,7 @@ npm.cmd run verify:agent-kernel
 - `src/brand.ts`
 - `scripts/verify-foundation.mjs`
 - `scripts/verify-foundation-e2e.mjs`
+- `scripts/verify-skill-atomic.cjs`
 - `scripts/sync-project.ps1`
 
 ## 验证证据
@@ -115,6 +117,7 @@ npm.cmd run verify:agent-kernel
 - `npm.cmd run lint`：通过；只有已有非阻断警告。
 - `npm.cmd run verify:foundation`：通过；隔离目录内容为 `first-content / second-content`，附件为 `attachment-content`，敏感参数已隐藏，旧会话任务转为暂停待恢复，诊断领域为 5 项。
 - `npm.cmd run verify:agent-kernel`：通过；118 次重复 Skill 读取只执行 1 次。
+- `npm.cmd run verify:skill-atomic`：通过；无效包不触碰旧 Skill，成功替换不残留旧文件，哈希损坏被拦截。
 - `npm.cmd run verify:docx`：通过；生成的 Word 可重新解析正文。
 - 安装版 `npm.cmd run verify:foundation-ui`：通过；真实 Electron IPC 和诊断中心五项完整显示。
 - 安装版 `npm.cmd run verify:assistant-background`：通过；助理隐藏后执行计时继续。
@@ -124,21 +127,21 @@ npm.cmd run verify:agent-kernel
 
 ## 安装与发布资产
 
-- 安装包：`L:\AI办公室\sirenhuisuo-v0.7.12\release\taiji-office-setup-0.9.0.exe`
-- Blockmap：`L:\AI办公室\sirenhuisuo-v0.7.12\release\taiji-office-setup-0.9.0.exe.blockmap`
-- 更新清单：`L:\AI办公室\sirenhuisuo-v0.7.12\release\latest.yml`
-- 安装包 SHA-256：`CA76B5E7375F48D3DC8B3A5BE644DDE0216EB90B116BD72760BFE16539CEFA39`
-- `app.asar` SHA-256：`887367C9E081FC9FF2D2D7186EDFA0E4666A65A0AA91C6655D0ED987D5B5375D`
-- 安装目录与构建目录的 `app.asar` 哈希一致，包内版本均为 `0.9.0`。
+- 安装包：`E:\私人办公会所项目\release\taiji-office-setup-0.9.1.exe`
+- Blockmap：`E:\私人办公会所项目\release\taiji-office-setup-0.9.1.exe.blockmap`
+- 更新清单：`E:\私人办公会所项目\release\latest.yml`
+- 安装包大小：`173170540` 字节。
+- 安装包 SHA-256：`484F342A36F5E618A18CA0FA528EC6C1E86605CBC1A0FEA4986ED1B49923F602`。
+- `app.asar` SHA-256：`12EA0B7FA33C81289CF48860ECCA45C983432990DF51B50528FC72C53C7EA5D7`。
+- 包内版本：`0.9.1`。
 - 安装目录只保留 `太极 AI 办公会所.exe` 和对应卸载程序，没有旧产品可执行文件残留。
 
 ## 已知边界
 
-1. 非 ZIP Skill 修复目前不是完全原子替换；后续应先安装到临时目录，全部验证成功后再替换旧目录。
-2. 自动更新备份与回滚代码、顺序和类型已经验证，但仍需用真实 `v0.8.11 -> v0.9.0 -> v0.8.11` 自动更新链做一次人工跨版本演练。
-3. 源码开发版 Electron 在本机 Codex 终端会因图形子进程环境崩溃；正式安装版在同机真实 Electron 回归全部通过。这不是客户端进程占用，也不是太极业务代码错误。
-4. 安装包没有代码签名证书，Windows SmartScreen 仍可能提示风险。
-5. 主前端 bundle 仍超过 500 KB，后续可做按模块懒加载，但不要与任务内核改动混在同一版本。
+1. 自动更新备份与回滚代码、顺序和类型已经验证，真实跨版本自动更新链正在用隔离安装目录演练。
+2. 源码开发版 Electron 在本机 Codex 终端会因图形子进程环境崩溃；正式安装版在同机真实 Electron 回归全部通过。这不是客户端进程占用，也不是太极业务代码错误。
+3. 安装包没有代码签名证书，Windows SmartScreen 仍可能提示风险。
+4. 主前端 bundle 仍超过 500 KB，后续可做按模块懒加载，但不要与任务内核改动混在同一版本。
 
 ## 踩过的坑
 
@@ -152,7 +155,7 @@ npm.cmd run verify:agent-kernel
 ## 下一步
 
 1. 在用户真实配置上验收五个场景：新建员工后助手立即找到、团队任务异常退出后恢复、损坏 Skill 修复、连接器真实连接证据、一次自动更新与回滚。
-2. 将非 ZIP Skill 修复改为临时目录原子替换。
+2. 完成一次隔离目录的真实跨版本自动更新与回滚演练并记录证据。
 3. 给升级日志增加用户可导出的通俗诊断报告。
 4. 按用户新反馈继续优化，但同层问题必须同步检查助手、员工私聊和团队三条路径。
 
