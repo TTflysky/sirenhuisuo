@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   minimize: () => ipcRenderer.send('win:minimize'),
   toggleMax: () => ipcRenderer.send('win:toggle-max'),
   close: () => ipcRenderer.send('win:close'),
+  getAppSessionId: () => ipcRenderer.sendSync('app:getSessionId'),
   getAssistantLock: () => ipcRenderer.invoke('win:getAssistantLock'),
   setAssistantLock: (locked) => ipcRenderer.invoke('win:setAssistantLock', locked),
   getChatLock: (opts) => ipcRenderer.invoke('win:getChatLock', opts),
@@ -16,6 +17,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   skillsRead: (id) => ipcRenderer.invoke('skills:read', id),
   skillsDelete: (id) => ipcRenderer.invoke('skills:delete', id),
   skillsInstall: (input) => ipcRenderer.invoke('skills:install', input),
+  skillsInspectSource: (sourceUrl) => ipcRenderer.invoke('skills:inspectSource', sourceUrl),
+  skillsRepair: (id) => ipcRenderer.invoke('skills:repair', id),
   openExternal: (url) => ipcRenderer.invoke('sys:openExternal', url),
 
   // 打开原生聊天窗口（真实桌面窗口，可自由拖动）
@@ -32,6 +35,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fsRead: (filePath) => ipcRenderer.invoke('fs:read', { filePath }),
   fsMkdir: (dirPath) => ipcRenderer.invoke('fs:mkdir', { dirPath }),
   fsInitWorkspace: (workspaceId, metadata) => ipcRenderer.invoke('fs:initWorkspace', { workspaceId, metadata }),
+  fsCopyIntoWorkspace: (sourceScope, targetWorkspaceId, entries) => ipcRenderer.invoke('fs:copyIntoWorkspace', { sourceScope, targetWorkspaceId, entries }),
   fsList: (dirPath, recursive) => ipcRenderer.invoke('fs:list', { dirPath, recursive }),
   fsExportZip: () => ipcRenderer.invoke('fs:exportZip'),
 
@@ -60,7 +64,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 手动触发检查更新
   checkUpdate: () => ipcRenderer.invoke('update:check'),
   // 重启安装已下载的更新
-  installUpdate: () => ipcRenderer.invoke('update:install'),
+  installUpdate: (snapshot) => ipcRenderer.invoke('update:install', snapshot),
+  getUpgradeStatus: () => ipcRenderer.invoke('upgrade:status'),
+  recordUpgradeValidation: (validation) => ipcRenderer.invoke('upgrade:recordValidation', validation),
+  readUpgradeBackup: () => ipcRenderer.invoke('upgrade:readBackup'),
+  prepareRollback: () => ipcRenderer.invoke('upgrade:prepareRollback'),
+  rollbackUpgrade: () => ipcRenderer.invoke('upgrade:rollback'),
   // 监听更新状态事件（checking/available/not-available/downloading/downloaded/error）
   onUpdateStatus: (callback) => {
     const handler = (_event, data) => callback(data);

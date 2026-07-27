@@ -76,8 +76,17 @@ export interface Skill {
   scope?: 'built-in' | 'mine';
   version?: string;
   pathHash: string;
-  health?: 'ready' | 'limited';
+  health?: 'ready' | 'setup' | 'limited' | 'broken';
   healthMessage?: string;
+  quarantined?: boolean;
+  requirements?: {
+    environmentVariables: string[];
+    externalSoftware: string[];
+    accountRequired: boolean;
+    referencedFiles: string[];
+    missingFiles: string[];
+  };
+  sourceUrl?: string;
 }
 export interface SkillReference { id: string; name: string; }
 
@@ -170,7 +179,23 @@ export type TaskRunStatus = 'queued' | 'running' | 'paused' | 'stopped' | 'faile
 export type TaskStepStatus = 'queued' | 'running' | 'paused' | 'stopped' | 'failed' | 'completed';
 export type TaskStepKind = 'work' | 'review' | 'revision';
 export type TaskRunPhase = 'preflight' | 'executing' | 'verifying' | 'blocked' | 'completed';
-export type TaskEvidence = { ts: number; source: 'tool' | 'member' | 'review' | 'system'; summary: string; verified?: boolean };
+export type TaskEvidenceKind = 'file' | 'run' | 'connection' | 'review' | 'human' | 'progress';
+export type TaskEvidence = { ts: number; source: 'tool' | 'member' | 'review' | 'system'; kind?: TaskEvidenceKind; summary: string; verified?: boolean };
+
+export interface TaskRecoveryContext {
+  summary: string;
+  completedEvidence: string[];
+  unresolvedIssues: string[];
+  steeringMessages: string[];
+  budget: {
+    toolAttempts: number;
+    promptTokens?: number;
+    contextWindowTokens?: number;
+    updatedAt: number;
+  };
+  interruptedAt?: number;
+  interruptionReason?: string;
+}
 
 export interface TaskPlanStep {
   id: string;
@@ -219,6 +244,8 @@ export interface TaskRun {
   teamId: string;
   /** 任务专属真实工作区，相同任务的恢复执行会继续使用此目录。 */
   workspaceId?: string;
+  /** 标识真正执行此任务的客户端进程，供重启恢复判断。 */
+  executionSessionId?: string;
   projectId?: string;
   title: string;
   request: string;
@@ -238,6 +265,8 @@ export interface TaskRun {
   preflight?: Array<{ label: string; status: 'pending' | 'passed' | 'blocked'; detail?: string }>;
   evidence?: TaskEvidence[];
   handoff?: { ts: number; completed: string[]; blocked: string; nextAction: string };
+  recoveryContext?: TaskRecoveryContext;
+  verification?: Array<{ kind: TaskEvidenceKind; label: string; status: 'passed' | 'blocked' | 'pending'; detail: string }>;
 }
 
 // ===== 应用状态 =====

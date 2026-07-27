@@ -27,6 +27,20 @@ export async function installSkill(sourceUrl: string, name?: string): Promise<Sk
   return result.skill;
 }
 
+export async function inspectSkillSource(sourceUrl: string): Promise<import('../electron').SkillSourceInspection> {
+  if (!window.electronAPI?.skillsInspectSource) throw new Error('当前环境不支持技能来源检查');
+  const result = await window.electronAPI.skillsInspectSource(sourceUrl);
+  if (!result.ok || !result.inspection) throw new Error(result.error ?? '技能来源检查失败');
+  return result.inspection;
+}
+
+export async function repairSkill(id: string): Promise<Skill> {
+  if (!window.electronAPI?.skillsRepair) throw new Error('当前环境不支持技能修复');
+  const result = await window.electronAPI.skillsRepair(id);
+  if (!result.ok || !result.skill) throw new Error(result.error ?? '技能修复失败');
+  return result.skill;
+}
+
 export function skillReference(skill: Skill): SkillReference {
   return { id: skill.id, name: skill.name };
 }
@@ -58,7 +72,8 @@ function skillScore(skill: Skill, request: string): number {
 export async function matchSkills(request: string, limit = 3): Promise<SkillReference[]> {
   try {
     const skills = await listSkills();
-    return skills.map((skill) => ({ skill, score: skillScore(skill, request) }))
+    return skills.filter((skill) => skill.health !== 'broken' && !skill.quarantined)
+      .map((skill) => ({ skill, score: skillScore(skill, request) }))
       .filter((item) => item.score >= 2).sort((a, b) => b.score - a.score).slice(0, limit)
       .map((item) => skillReference(item.skill));
   } catch { return []; }

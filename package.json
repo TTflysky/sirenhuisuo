@@ -1,7 +1,7 @@
 {
   "name": "hermes-office-pro",
   "private": true,
-  "version": "0.8.11",
+  "version": "0.9.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -17,6 +17,8 @@
     "verify:agent-kernel": "node scripts/verify-agent-kernel.mjs",
     "verify:steering-e2e": "node scripts/verify-steering-e2e.mjs",
     "verify:tool-window": "node scripts/verify-tool-window.mjs",
+    "verify:foundation": "node scripts/verify-foundation.mjs",
+    "verify:foundation-ui": "node scripts/verify-foundation-e2e.mjs",
     "dist:win": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1",
     "release:win": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1 -Publish",
     "postinstall": "electron-builder install-app-deps"
@@ -47,9 +49,9 @@
   },
   "build": {
     "appId": "com.hermes.office",
-    "productName": "私人办公会所",
+    "productName": "太极 AI 办公会所",
     "electronDist": "node_modules/electron/dist",
-    "artifactName": "${name}-setup-${version}.${ext}",
+    "artifactName": "taiji-office-setup-${version}.${ext}",
     "files": [
       "dist/**",
       "electron/**",
@@ -65,7 +67,7 @@
       "deleteAppDataOnUninstall": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "私人办公会所"
+      "shortcutName": "太极 AI 办公会所"
     },
     "publish": [
       {

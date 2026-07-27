@@ -3,7 +3,7 @@ import { Modal, Switch, Input, Select, Button, Space, App, Tag, Tooltip, Segment
 import {
   ApiOutlined, BgColorsOutlined, CloudSyncOutlined, DatabaseOutlined, FolderOpenOutlined, RobotOutlined,
   BorderOutlined, CloseOutlined, DeleteOutlined, MergeCellsOutlined, MinusOutlined,
-  ScheduleOutlined, SettingOutlined, UserOutlined,
+  ScheduleOutlined, SafetyCertificateOutlined, SettingOutlined, UserOutlined,
 } from '@ant-design/icons';
 import {
   loadSettings, saveSettings,
@@ -19,14 +19,16 @@ import type { ModelConfig } from '../../types';
 import { useStore } from '../../store';
 import { KnowledgeConnectorManager } from '../sidebar/ConnectorPanel';
 import { DEFAULT_ASSISTANT_PROMPT, getAssistantPrompt, saveAssistantPrompt } from './AssistantSettingsModal';
-import { applySyncProfile } from '../../utils/configSync';
+import { applySyncProfile, restoreUpgradeSnapshot } from '../../utils/configSync';
 import {
   FONT_OPTIONS, FONT_SIZE_OPTIONS, loadAppearanceSettings, saveAppearanceSettings,
   type AppearanceSettings,
 } from '../../data/appearance';
 import { APP_VERSION } from '../../appVersion';
+import DiagnosticsTab from './DiagnosticsTab';
+import { APP_BRAND_NAME, APP_PRODUCT_NAME } from '../../brand';
 
-type Tab = 'model' | 'profile' | 'appearance' | 'knowledge' | 'workspace' | 'memory' | 'persona' | 'automation' | 'backup';
+type Tab = 'diagnostics' | 'model' | 'profile' | 'appearance' | 'knowledge' | 'workspace' | 'memory' | 'persona' | 'automation' | 'backup';
 
 interface Props {
   onClose: () => void;
@@ -35,10 +37,11 @@ interface Props {
 }
 
 export default function SettingsModal({ onClose, onSaved, standalone = false }: Props) {
-  const [tab, setTab] = useState<Tab>('model');
+  const [tab, setTab] = useState<Tab>('diagnostics');
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const sections: Array<{ title: string; items: Array<{ key: Tab; label: string; icon: React.ReactNode }> }> = [
     { title: '配置', items: [
+      { key: 'diagnostics', label: '诊断中心', icon: <SafetyCertificateOutlined /> },
       { key: 'model', label: '模型', icon: <ApiOutlined /> },
       { key: 'profile', label: '用户画像', icon: <UserOutlined /> },
       { key: 'appearance', label: '外观', icon: <BgColorsOutlined /> },
@@ -51,7 +54,8 @@ export default function SettingsModal({ onClose, onSaved, standalone = false }: 
     { title: '备份与恢复', items: [{ key: 'backup', label: '备份迁移', icon: <SettingOutlined /> }] },
   ];
 
-  const page = tab === 'model' ? <ModelSettingsTab onSaved={onSaved} onClose={onClose} />
+  const page = tab === 'diagnostics' ? <DiagnosticsTab onNavigate={(target) => setTab(target)} />
+    : tab === 'model' ? <ModelSettingsTab onSaved={onSaved} onClose={onClose} />
     : tab === 'profile' ? <ProfileTab />
     : tab === 'appearance' ? <AppearanceTab />
     : tab === 'knowledge' ? <KnowledgeSettingsPage />
@@ -82,7 +86,7 @@ export default function SettingsModal({ onClose, onSaved, standalone = false }: 
   const content = (
     <div className="settings-center">
       <aside className="settings-center-nav">
-        <div className="settings-center-brand" onPointerDown={standalone ? undefined : startDrag} title={standalone ? '设置中心' : '按住拖动设置窗口'}><SettingOutlined /><div><strong>设置</strong><small>私人办公会所 <span className="window-version-badge">v{APP_VERSION}</span></small></div></div>
+        <div className="settings-center-brand" onPointerDown={standalone ? undefined : startDrag} title={standalone ? '设置中心' : '按住拖动设置窗口'}><SettingOutlined /><div><strong>设置</strong><small>{APP_PRODUCT_NAME} <span className="window-version-badge">v{APP_VERSION}</span></small></div></div>
         {sections.map((section) => <div className="settings-nav-section" key={section.title}>
           <div className="settings-nav-title">{section.title}</div>
           {section.items.map((item) => <button className={tab === item.key ? 'active' : ''} key={item.key} onClick={() => setTab(item.key)}>{item.icon}<span>{item.label}</span><code>/{item.key}</code></button>)}
@@ -136,9 +140,9 @@ function AppearanceTab() {
     <div className="settings-field"><label>字体</label><Select value={settings.font} options={FONT_OPTIONS.map(({ value, label }) => ({ value, label }))} onChange={(font) => update({ font })} /></div>
     <div className="settings-field"><label>字体大小</label><Segmented block value={settings.fontSize} options={FONT_SIZE_OPTIONS.map(({ value, label }) => ({ value, label }))} onChange={(fontSize: string | number) => update({ fontSize: fontSize as AppearanceSettings['fontSize'] })} /></div>
     <div className="appearance-font-preview" style={{ fontFamily: selectedFont.family }}>
-      <strong>私人办公会所</strong>
+      <strong>{APP_PRODUCT_NAME}</strong>
       <span>清晰阅读 Skill 说明、任务消息和设置内容。</span>
-      <code>Hermes Office · Aa 123</code>
+      <code>{APP_BRAND_NAME} Office · Aa 123</code>
     </div>
   </div>;
 }
@@ -166,12 +170,15 @@ function AutomationTab() {
   const changeFollowUp = (followUpMode: 'queue' | 'steer') => { const next = { ...loadSettings(), followUpMode }; saveSettings(next); setSettings(next); };
   const policy = getExecutionPolicy(settings);
   const changePolicy = (update: Parameters<typeof saveExecutionPolicy>[0]) => setSettings(saveExecutionPolicy(update));
-  return <div className="settings-content-page"><header><h2>执行策略</h2><span>团队讨论、自主办公、工具审批与运行中跟进</span></header><div className="settings-field"><label>跟进行为</label><Segmented block value={settings.followUpMode ?? 'steer'} options={[{ label: '排队', value: 'queue' }, { label: '引导', value: 'steer' }]} onChange={(value) => changeFollowUp(value as 'queue' | 'steer')} /><small>引导会在当前模型或工具的安全边界先回答新消息，再结合上下文调整计划；暂停中的任务回答后仍保持暂停。排队则在当前任务结束后单独处理。</small></div><div className="settings-switch-row"><div><strong>命令沙盒</strong><small>{policy.sandboxEnabled ? '已开启：命令只能使用客户端工作区，适合日常使用。' : '已关闭：命令可访问沙盒外的本机路径，请仅在确认任务来源时使用。'}</small></div><Switch checked={policy.sandboxEnabled} onChange={(sandboxEnabled) => changePolicy({ sandboxEnabled })} /></div><div className="settings-field"><label>审批方式</label><Segmented block value={policy.approvalMode} options={APPROVAL_MODE_OPTIONS.map(({ value, label }) => ({ value, label }))} onChange={(approvalMode) => changePolicy({ approvalMode: approvalMode as typeof policy.approvalMode })} /><small>{APPROVAL_MODE_OPTIONS.find((option) => option.value === policy.approvalMode)?.description} 此设置会同步到助手、私聊员工和团队聊天窗口。</small></div><div className="settings-switch-row"><div><strong>自动讨论</strong><small>收到任务后自动组织团队讨论</small></div><Switch checked={settings.autoDiscuss ?? false} onChange={(value) => change('autoDiscuss', value)} /></div><div className="settings-switch-row"><div><strong>自主办公</strong><small>确认项目后自动推进执行流程</small></div><Switch checked={settings.autoPilot ?? false} onChange={(value) => change('autoPilot', value)} /></div></div>;
+  return <div className="settings-content-page"><header><h2>执行策略</h2><span>团队讨论、自主办公、工具审批与运行中跟进</span></header><div className="settings-field"><label>跟进行为</label><Segmented block value={settings.followUpMode ?? 'steer'} options={[{ label: '排队', value: 'queue' }, { label: '引导', value: 'steer' }]} onChange={(value) => changeFollowUp(value as 'queue' | 'steer')} /><small>引导会在当前模型或工具的安全边界先回答新消息，再结合上下文调整计划；暂停中的任务回答后仍保持暂停。排队则在当前任务结束后单独处理。</small></div><div className="settings-switch-row"><div><strong>文件与命令沙盒</strong><small>{policy.sandboxEnabled ? '已开启：文件和命令只能使用客户端工作区。' : '已关闭：命令可访问沙盒外的本机路径，请仅在确认任务来源时使用。'}</small></div><Switch checked={policy.sandboxEnabled} onChange={(sandboxEnabled) => changePolicy({ sandboxEnabled })} /></div><div className="settings-field"><label>命令执行审批</label><Segmented block value={policy.approvalMode} options={APPROVAL_MODE_OPTIONS.map(({ value, label }) => ({ value, label }))} onChange={(approvalMode) => changePolicy({ approvalMode: approvalMode as typeof policy.approvalMode })} /><small>{APPROVAL_MODE_OPTIONS.find((option) => option.value === policy.approvalMode)?.description}</small></div><div className="settings-field"><label>连接器与外部授权审批</label><Segmented block value={policy.connectorApprovalMode} options={APPROVAL_MODE_OPTIONS.map(({ value, label }) => ({ value, label }))} onChange={(connectorApprovalMode) => changePolicy({ connectorApprovalMode: connectorApprovalMode as typeof policy.connectorApprovalMode })} /><small>连接测试、知识库和外部服务使用独立审批档位。密码、验证码、付费、删除和对外发送始终需要你单独确认。</small></div><div className="settings-switch-row"><div><strong>敏感信息保护</strong><small>API Key、Token、密码和验证码会从工具报告中隐藏；禁止把明文凭据写进命令。</small></div><Tag color="green">始终开启</Tag></div><div className="settings-switch-row"><div><strong>自动讨论</strong><small>收到任务后自动组织团队讨论</small></div><Switch checked={settings.autoDiscuss ?? false} onChange={(value) => change('autoDiscuss', value)} /></div><div className="settings-switch-row"><div><strong>自主办公</strong><small>确认项目后自动推进执行流程</small></div><Switch checked={settings.autoPilot ?? false} onChange={(value) => change('autoPilot', value)} /></div></div>;
 }
 
 function BackupTab() {
   const { message } = App.useApp();
   const fileRef = useRef<HTMLInputElement>(null);
+  const [upgrade, setUpgrade] = useState<UpgradeJournal | null>(null);
+  const [rollingBack, setRollingBack] = useState(false);
+  useEffect(() => { void window.electronAPI?.getUpgradeStatus?.().then((result) => { if (result.ok) setUpgrade(result.journal ?? null); }); }, []);
   const importProfile = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -179,7 +186,22 @@ function BackupTab() {
     try { const result = applySyncProfile(JSON.parse(await file.text())); message.success(`已导入 ${result.employees} 名员工、${result.teams} 个团队、${result.models} 个模型`); location.reload(); }
     catch (error) { message.error(error instanceof Error ? error.message : '导入失败'); }
   };
-  return <div className="settings-content-page"><header><h2>备份迁移</h2><span>工作区备份与脱敏配置导入</span></header><div className="settings-action-list"><div><div><strong>导出工作区</strong><small>任务文件和产出物 ZIP</small></div><Button onClick={() => void window.electronAPI?.fsExportZip?.()}>导出</Button></div><div><div><strong>导入同步配置</strong><small>员工、团队、模型和连接器</small></div><Button onClick={() => fileRef.current?.click()}>导入</Button><input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={(event) => void importProfile(event)} /></div></div></div>;
+  const rollback = async () => {
+    const api = window.electronAPI;
+    if (!api?.prepareRollback || !api.readUpgradeBackup || !api.rollbackUpgrade) return;
+    setRollingBack(true);
+    try {
+      const prepared = await api.prepareRollback();
+      if (!prepared.ok) throw new Error(prepared.error || '旧安装包下载或校验失败，当前配置没有改动');
+      const backup = await api.readUpgradeBackup();
+      if (!backup.ok || !backup.snapshot) throw new Error(backup.error || '没有可恢复的配置备份');
+      restoreUpgradeSnapshot(backup.snapshot);
+      const result = await api.rollbackUpgrade();
+      if (!result.ok) throw new Error(result.error || '回滚安装包没有启动');
+      message.success(`旧安装包已校验，配置已恢复，正在启动 v${backup.fromVersion} 安装包`);
+    } catch (error) { message.error(error instanceof Error ? error.message : String(error)); setRollingBack(false); }
+  };
+  return <div className="settings-content-page"><header><h2>备份迁移</h2><span>工作区备份、升级验证与本机回滚</span></header><div className="settings-action-list"><div><div><strong>导出工作区</strong><small>任务文件和产出物 ZIP</small></div><Button onClick={() => void window.electronAPI?.fsExportZip?.()}>导出</Button></div><div><div><strong>导入同步配置</strong><small>员工、团队、模型和连接器</small></div><Button onClick={() => fileRef.current?.click()}>导入</Button><input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={(event) => void importProfile(event)} /></div>{upgrade && <div><div><strong>最近一次升级</strong><small>v{upgrade.fromVersion} → v{upgrade.toVersion} · {upgrade.status === 'validated' ? '数据验证通过' : upgrade.status === 'validation-failed' ? '数据验证失败，可回滚' : upgrade.status === 'rollback-prepared' ? '旧安装包已校验' : upgrade.status === 'rolling-back' ? '正在回滚' : '已创建更新前备份'}</small></div><Button danger disabled={rollingBack || upgrade.status === 'rolling-back'} onClick={() => void rollback()}>{rollingBack ? '准备回滚中' : `回滚到 v${upgrade.fromVersion}`}</Button></div>}</div></div>;
 }
 
 // ===== 模型库标签 =====

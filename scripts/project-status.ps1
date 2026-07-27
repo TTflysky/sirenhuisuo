@@ -16,7 +16,7 @@ function Write-Section([string]$Title) {
   Write-Host "`n== $Title ==" -ForegroundColor Cyan
 }
 
-Write-Host "Private Office Club project status" -ForegroundColor Green
+Write-Host "Taiji project status" -ForegroundColor Green
 Write-Host "Root: $projectRoot"
 
 if ($Fetch) {
@@ -56,7 +56,7 @@ if ($changes.Count -eq 0) {
 
 Write-Section 'Build artifacts'
 $releaseDir = Join-Path $projectRoot 'release'
-$installer = Join-Path $releaseDir "hermes-office-pro-setup-$($package.version).exe"
+$installer = Join-Path $releaseDir "taiji-office-setup-$($package.version).exe"
 $blockmap = "$installer.blockmap"
 $latestYml = Join-Path $releaseDir 'latest.yml'
 foreach ($item in @($installer, $blockmap, $latestYml)) {

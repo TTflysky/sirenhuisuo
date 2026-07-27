@@ -43,6 +43,40 @@ function parseFrontmatter(raw) {
   return result;
 }
 
+function unique(values) {
+  return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
+async function inspectSkillRequirements(raw, skillDir) {
+  const frontmatter = parseFrontmatter(raw);
+  const frontmatterEnv = String(frontmatter.env_vars || frontmatter.env || '')
+    .replace(/^\[|\]$/g, '').split(',').map((value) => value.trim().replace(/^['"]|['"]$/g, ''));
+  const environmentVariables = unique([
+    ...frontmatterEnv,
+    ...[...raw.matchAll(/\b([A-Z][A-Z0-9_]{2,}(?:API_KEY|ACCESS_TOKEN|AUTH_TOKEN|CLIENT_ID|CLIENT_SECRET|PASSWORD))\b/g)].map((match) => match[1]),
+  ]).slice(0, 30);
+  const externalSoftware = unique([
+    ...[...raw.matchAll(/requires(?:\s+the)?(?:\s+external)?\s+[`'"]([a-z0-9_.-]{2,40})[`'"]/gi)].map((match) => match[1]),
+    ...(/macOS only|requires Apple|Notes\.app|iMessage/iu.test(raw) ? ['macOS'] : []),
+  ]).slice(0, 20);
+  const accountRequired = /\b(?:log[ -]?in|oauth|auth configured|requires subscription|account required)\b|账号|登录|授权|订阅/u.test(raw);
+  const referencedFiles = unique([...raw.matchAll(/\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g)]
+    .map((match) => match[1].split('#')[0])
+    .filter((value) => /^(?:\.\.?\/|scripts?\/|references?\/|assets?\/)/iu.test(value))
+    .map((value) => value.replace(/^\.\//, ''))).slice(0, 80);
+  const missingFiles = [];
+  if (skillDir) {
+    const root = path.resolve(skillDir);
+    for (const reference of referencedFiles) {
+      const target = path.resolve(root, reference);
+      const leadingParents = reference.replace(/\\/g, '/').split('/').filter((part) => part === '..').length;
+      if (leadingParents > 1) { missingFiles.push(reference); continue; }
+      try { if (!(await fs.stat(target)).isFile()) missingFiles.push(reference); } catch { missingFiles.push(reference); }
+    }
+  }
+  return { environmentVariables, externalSoftware, accountRequired, referencedFiles, missingFiles: unique(missingFiles) };
+}
+
 async function scanSkills(projectRoot) {
   const entries = [];
   const userSkillsRoot = path.resolve(process.env.USERPROFILE || process.env.HOME || '', '.workbuddy', 'skills');
@@ -66,15 +100,30 @@ async function scanSkills(projectRoot) {
           const raw = await fs.readFile(full, 'utf8');
           const fm = parseFrontmatter(raw);
           const real = await fs.realpath(full);
+          const requirements = await inspectSkillRequirements(raw, path.dirname(real));
           let health = 'ready';
           let healthMessage;
+          let sourceUrl;
           try {
             const metadata = JSON.parse(await fs.readFile(path.join(path.dirname(real), '.taiji-skill.json'), 'utf8'));
+            sourceUrl = metadata.requestedSourceUrl || metadata.sourceUrl;
             if (metadata.installMode === 'single-file') {
               health = 'limited';
               healthMessage = '此技能仅安装了 SKILL.md；如原作者依赖脚本或参考资料，请从完整目录重新安装。';
             }
           } catch {}
+          if (requirements.missingFiles.length > 0) {
+            health = 'broken';
+            healthMessage = `缺少引用文件：${requirements.missingFiles.slice(0, 5).join('、')}`;
+          } else if (health === 'ready' && (requirements.environmentVariables.length > 0 || requirements.externalSoftware.length > 0 || requirements.accountRequired)) {
+            health = 'setup';
+            const needs = [
+              requirements.environmentVariables.length ? `环境变量 ${requirements.environmentVariables.slice(0, 4).join('、')}` : '',
+              requirements.externalSoftware.length ? `外部软件 ${requirements.externalSoftware.join('、')}` : '',
+              requirements.accountRequired ? '账号或授权' : '',
+            ].filter(Boolean);
+            healthMessage = `使用前需要：${needs.join('；')}`;
+          }
           const pathHash = crypto.createHash('sha256').update(real).digest('hex').slice(0, 24);
           entries.push({
             id: `${pathHash}:${(fm.name || path.basename(path.dirname(real))).toLowerCase().replace(/[^a-z0-9_-]+/g, '-').slice(0, 64)}`,
@@ -86,6 +135,9 @@ async function scanSkills(projectRoot) {
             pathHash,
             health,
             healthMessage,
+            quarantined: health === 'broken',
+            requirements,
+            sourceUrl,
             _path: real,
           });
         } catch {}
@@ -355,6 +407,8 @@ async function installZipSkill(projectRoot, sourceUrl, requestedName) {
       schema: 1,
       installMode: 'zip',
       sourceUrl: response.url || sourceUrl,
+      requestedSourceUrl: sourceUrl,
+      contentHash: crypto.createHash('sha256').update(content).digest('hex'),
       files: archiveInfo.files,
       installedAt: new Date().toISOString(),
     }, null, 2), 'utf8');
@@ -402,6 +456,8 @@ async function installSkill(projectRoot, input) {
     schema: 1,
     installMode: bundle.installMode,
     sourceUrl: resolvedUrl,
+    requestedSourceUrl: sourceUrl,
+    contentHash: crypto.createHash('sha256').update(content).digest('hex'),
     files: bundle.files,
     installedAt: new Date().toISOString(),
   }, null, 2), 'utf8');
@@ -409,4 +465,30 @@ async function installSkill(projectRoot, input) {
   return { ok: true, skill: installed ? (({ _path, ...item }) => item)(installed) : { name, source: slug }, resolvedUrl };
 }
 
-module.exports = { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill, validateZipArchive, MAX_BODY_BYTES };
+async function inspectSkillSource(sourceUrl) {
+  if (typeof sourceUrl !== 'string' || !sourceUrl.trim() || sourceUrl.length > 2048) throw new Error('请填写有效的技能地址');
+  const parsed = new URL(sourceUrl.trim());
+  if (parsed.protocol !== 'https:') throw new Error('技能地址必须使用 HTTPS');
+  if (/\.zip$/i.test(parsed.pathname)) {
+    return { name: path.basename(parsed.pathname, '.zip') || 'ZIP Skill', description: 'ZIP 技能包会在安装前检查路径、文件数和解压大小。', installMode: 'zip', requirements: { environmentVariables: [], externalSoftware: [], accountRequired: false, referencedFiles: [], missingFiles: [] } };
+  }
+  const { content, resolvedUrl } = await downloadSkillMarkdown(parsed.toString());
+  const frontmatter = parseFrontmatter(content);
+  return {
+    name: frontmatter.name || path.basename(new URL(resolvedUrl).pathname, '.md') || 'Skill',
+    description: frontmatter.description_zh || frontmatter.description || '',
+    installMode: githubDirectoryCandidate(parsed.toString()) ? 'directory' : 'single-file',
+    requirements: await inspectSkillRequirements(content),
+    resolvedUrl,
+  };
+}
+
+async function repairSkill(projectRoot, id) {
+  const found = (await scanSkills(projectRoot)).find((item) => item.id === id);
+  if (!found) throw new Error('技能不存在或已移除');
+  if (found.scope !== 'mine') throw new Error('内置技能随客户端更新修复，不能单独覆盖');
+  if (!found.sourceUrl) throw new Error('这个旧技能没有记录来源地址，请从原地址重新安装');
+  return installSkill(projectRoot, { sourceUrl: found.sourceUrl, name: found.name });
+}
+
+module.exports = { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill, inspectSkillSource, repairSkill, validateZipArchive, MAX_BODY_BYTES };

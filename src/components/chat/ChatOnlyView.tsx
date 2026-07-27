@@ -5,6 +5,7 @@ import TeamChatApp from './TeamChatApp';
 import AssistantChat from './AssistantChat';
 import { BorderOutlined, CloseOutlined, LockOutlined, MessageOutlined, MinusOutlined, RobotOutlined, TeamOutlined, UnlockOutlined } from '@ant-design/icons';
 import { APP_VERSION } from '../../appVersion';
+import { APP_BRAND_NAME } from '../../brand';
 
 interface Props {
   hash: string;
@@ -48,7 +49,7 @@ export default function ChatOnlyView({ hash }: Props) {
   };
 
   let title = '聊天';
-  let subtitle = '私人办公会所';
+  let subtitle = APP_BRAND_NAME;
   let titleIcon = <MessageOutlined />;
   if (type === 'dm-chat' || type === 'dm') {
     const emp = state.employees.find((e) => e.id === id);

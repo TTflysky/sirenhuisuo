@@ -28,12 +28,14 @@ import { runTeamDiscussion } from './engine/teamDiscussion';
 import { evaluateDiscussionTrigger } from './engine/discussionTrigger';
 import { findFreeStation } from './data/hermesClient';
 import { sendBus, onBus, BUS_CHANNELS } from './ipcBus';
-import { createTaskRun, saveTaskRuns, updateTaskRun } from './data/taskRuns';
+import { createTaskRun, getExecutionSessionId, saveTaskRuns, updateTaskRun } from './data/taskRuns';
 import { buildTaskPlan, matchProjectMembers, matchTeamMembers } from './engine/taskMatcher';
 import { buildSkillContext, listSkills, matchSkills } from './data/skills';
-import { attachmentWorkspaceContext } from './utils/attachments';
+import { attachmentWorkspaceContext, copyAttachmentsToWorkspace, initializeTaskWorkspace } from './utils/attachments';
 import { BEGINNER_RESPONSE_GUIDE } from './data/assistantPresentation';
+import { isToolResultSuccessful } from './data/assistantPresentation';
 import { getDirectExecutionControl, isConversationOnlyMessage, shouldHoldTaskForFeedback } from './engine/agentGuardrails.mjs';
+import { APP_PRODUCT_NAME } from './brand';
 
 // ===== Action =====
 type Action =
@@ -662,7 +664,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({ type: 'UPDATE_TASK_RUN', run: liveRun });
     };
     updateRun((run) => {
-      run.status = 'running'; run.phase = 'executing'; run.lastError = undefined;
+      run.status = 'running'; run.phase = 'executing'; run.lastError = undefined; run.executionSessionId = getExecutionSessionId();
+      if (run.recoveryContext) {
+        run.recoveryContext.summary = '任务正在执行，已完成内容会持续写入恢复记录。';
+        run.recoveryContext.interruptedAt = undefined;
+        run.recoveryContext.interruptionReason = undefined;
+        run.recoveryContext.budget.updatedAt = Date.now();
+      }
       run.preflight = (run.preflight ?? []).map((item) => item.label === '检查参与成员与模型'
         ? { ...item, status: 'passed', detail: '参与成员与模型配置已通过启动检查' }
         : item);
@@ -712,6 +720,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               step.evidence = [...(step.evidence ?? []), evidence].slice(-12);
               run.evidence = [...(run.evidence ?? []), evidence].slice(-40);
             }
+            if (run.recoveryContext) {
+              run.recoveryContext.summary = step.status === 'failed'
+                ? `${emp.name} 的步骤被阻塞，等待处理后恢复。`
+                : `${emp.name} 已完成“${step.title}”，继续执行后续步骤。`;
+              if (step.status === 'failed') {
+                run.recoveryContext.unresolvedIssues = [...run.recoveryContext.unresolvedIssues, content.slice(0, 320)].slice(-12);
+              } else {
+                run.recoveryContext.completedEvidence = [...run.recoveryContext.completedEvidence, `${emp.name}：${content.slice(0, 220)}`].slice(-20);
+              }
+              if (contextUsage) {
+                run.recoveryContext.budget.promptTokens = contextUsage.promptTokens;
+                run.recoveryContext.budget.contextWindowTokens = contextUsage.contextWindowTokens;
+              }
+              run.recoveryContext.budget.updatedAt = Date.now();
+            }
             step.events.push({ ts: Date.now(), type: step.status === 'failed' ? 'error' : 'result', detail: content.slice(0, 360) });
           });
         },
@@ -732,7 +755,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         onTaskAdvance(taskId, lane) {
           dispatch({ type: 'ADVANCE_TASK', teamId, taskId, lane });
         },
-        onToolCall(emp, toolName, toolArgs, result, stepId) {
+        onToolCall(emp, toolName, toolArgs, result, stepId, success) {
           // ⚠️ onToolCall 在工具执行前回调 arg=调用参数，执行后回调 arg=执行中。工具执行由 agentLoop 异步完成，结果在后续 onMessage 中体现。
           const toolMsg = `🔧 **${emp.name}** 调用工具 **\`${toolName}\`**(${toolArgs || ''})\n⟳ ${result}`;
           dispatch({
@@ -749,9 +772,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             if (step) {
               step.events.push({ ts: Date.now(), type: 'tool', detail: `${toolName} ${toolArgs}${result && result !== '🔄 执行中…' ? ` → ${result}` : ''}`.slice(0, 360) });
               if (result && result !== '🔄 执行中…') {
-                const evidence = { ts: Date.now(), source: 'tool' as const, summary: `${toolName}：${result}`.slice(0, 260) };
+                const verified = isToolResultSuccessful(result, success);
+                const kind = toolName === 'write_file' ? 'file' as const
+                  : toolName === 'run_command' ? 'run' as const
+                    : /connector|obsidian|knowledge/iu.test(toolName) ? 'connection' as const : 'progress' as const;
+                const evidence = { ts: Date.now(), source: 'tool' as const, kind, summary: `${toolName}：${result}`.slice(0, 260), verified };
                 step.evidence = [...(step.evidence ?? []), evidence].slice(-12);
                 run.evidence = [...(run.evidence ?? []), evidence].slice(-40);
+                if (run.recoveryContext) {
+                  run.recoveryContext.budget.toolAttempts += 1;
+                  run.recoveryContext.budget.updatedAt = Date.now();
+                  if (verified) {
+                    run.recoveryContext.completedEvidence = [...run.recoveryContext.completedEvidence, `${toolName}：${result.slice(0, 220)}`].slice(-20);
+                  }
+                }
               }
             }
           });
@@ -772,6 +806,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               step.status = 'running'; step.startedAt = Date.now(); step.attempts += 1;
               step.events.push({ ts: Date.now(), type: 'status', detail: `开始第 ${step.order} 步：${step.assignment}` });
             }
+            if (run.recoveryContext) {
+              run.recoveryContext.summary = `${emp.name} 正在执行“${step?.title ?? '当前步骤'}”。`;
+              run.recoveryContext.budget.updatedAt = Date.now();
+            }
           });
         },
         onStepAdded(step) {
@@ -790,6 +828,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             step.reviewReason = reason;
             step.responsibleEmployeeId = responsibleEmployeeId;
             step.events.push({ ts: Date.now(), type: approved ? 'result' : 'error', detail: approved ? '审查通过' : `审查退回：${reason ?? '未说明原因'}` });
+            const evidence = { ts: Date.now(), source: 'review' as const, kind: 'review' as const, summary: approved ? `审查通过：${reason ?? '符合验收要求'}` : `审查退回：${reason ?? '需要修改'}`, verified: approved };
+            step.evidence = [...(step.evidence ?? []), evidence].slice(-12);
+            run.evidence = [...(run.evidence ?? []), evidence].slice(-40);
           });
         },
         onRunFailed(error) {
@@ -801,6 +842,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               blocked: error.slice(0, 320),
               nextAction: '处理阻塞提示后点击“继续执行”，太极会保留已经完成的步骤。',
             };
+            if (run.recoveryContext) {
+              run.recoveryContext.summary = '任务遇到阻塞，已保存当前上下文。';
+              run.recoveryContext.unresolvedIssues = [...run.recoveryContext.unresolvedIssues, error.slice(0, 320)].slice(-12);
+              run.recoveryContext.budget.updatedAt = Date.now();
+            }
             const activeReview = [...run.steps].reverse().find((step) => step.kind === 'review' && step.reviewDecision === 'reject');
             if (activeReview) { activeReview.status = 'failed'; activeReview.lastError = error; }
           });
@@ -817,8 +863,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             const stopped = stoppedRunIdsRef.current.has(run.id);
             const hasFailed = run.steps.some((step) => step.status === 'failed') || !!run.lastError;
             const hasUnfinished = run.steps.some((step) => step.status !== 'completed' && step.status !== 'failed' && step.status !== 'stopped');
-            run.status = stopped ? 'stopped' : paused ? 'paused' : hasFailed || hasUnfinished ? 'failed' : 'completed';
-            run.phase = stopped || paused ? 'blocked' : hasFailed || hasUnfinished ? 'blocked' : 'verifying';
+            const evidence = run.evidence ?? [];
+            const needsRunEvidence = /代码|程序|安装|部署|构建|编译|运行|测试/iu.test(run.request);
+            const needsConnectionEvidence = /连接器|知识库|(?:^|[^a-z])mcp(?:[^a-z]|$)|obsidian|(?:^|[^a-z])ima(?:[^a-z]|$)|(?:GitHub|邮箱|企业微信|腾讯文档).{0,20}(?:连接|配置|关联|接入)/iu.test(run.request);
+            const hasFileEvidence = evidence.some((item) => item.kind === 'file' && item.verified);
+            const hasRunEvidence = evidence.some((item) => item.kind === 'run' && item.verified);
+            const hasConnectionEvidence = evidence.some((item) => item.kind === 'connection' && item.verified);
+            const reviewSteps = run.steps.filter((step) => step.kind === 'review');
+            const hasReviewEvidence = reviewSteps.length === 0 || evidence.some((item) => item.kind === 'review' && item.verified);
+            run.verification = [
+              { kind: 'file', label: '真实产出', status: hasFileEvidence ? 'passed' : 'blocked', detail: hasFileEvidence ? '至少一个文件已成功写入任务工作区' : '没有成功写入可交接文件' },
+              ...(needsRunEvidence ? [{ kind: 'run' as const, label: '运行结果', status: hasRunEvidence ? 'passed' as const : 'blocked' as const, detail: hasRunEvidence ? '命令或测试已成功运行' : '任务涉及运行或安装，但没有成功运行证据' }] : []),
+              ...(needsConnectionEvidence ? [{ kind: 'connection' as const, label: '连接测试', status: hasConnectionEvidence ? 'passed' as const : 'blocked' as const, detail: hasConnectionEvidence ? '连接器完成最小真实调用' : '任务涉及外部连接，但没有成功连接证据' }] : []),
+              ...(reviewSteps.length ? [{ kind: 'review' as const, label: '责任审查', status: hasReviewEvidence ? 'passed' as const : 'blocked' as const, detail: hasReviewEvidence ? '审查步骤明确通过' : '审查步骤没有给出通过证据' }] : []),
+            ];
+            const verificationBlocked = run.verification.some((item) => item.status === 'blocked');
+            run.status = stopped ? 'stopped' : paused ? 'paused' : hasFailed || hasUnfinished || verificationBlocked ? 'failed' : 'completed';
+            run.phase = stopped || paused ? 'blocked' : hasFailed || hasUnfinished || verificationBlocked ? 'blocked' : 'verifying';
+            if (!stopped && !paused && !hasFailed && !hasUnfinished && verificationBlocked) {
+              run.lastError = `验收未通过：${run.verification.filter((item) => item.status === 'blocked').map((item) => item.detail).join('；')}`;
+              run.handoff = {
+                ts: Date.now(), completed: run.steps.filter((step) => step.status === 'completed').map((step) => step.title),
+                blocked: run.lastError, nextAction: '点击继续执行，只补齐缺少的产出、运行、连接或审查证据。',
+              };
+            }
             if (!stopped && !paused && hasUnfinished) {
               run.lastError = '部分成员未完成执行，可点击继续执行重试。';
               run.steps.forEach((step) => {
@@ -846,11 +914,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 nextAction: '已完成内容会保留；需要继续时请重新发起任务。',
               };
             }
-            if (!stopped && !paused && !hasFailed && !hasUnfinished) {
+            if (!stopped && !paused && !hasFailed && !hasUnfinished && !verificationBlocked) {
               run.phase = 'completed';
               run.preflight = (run.preflight ?? []).map((item) => item.label === '确认最终验收'
                 ? { ...item, status: 'passed', detail: '所有任务步骤已完成并通过最终汇总' }
                 : item);
+            }
+            if (run.recoveryContext) {
+              run.recoveryContext.summary = run.status === 'completed' ? '任务已完成并保留验收证据。'
+                : run.status === 'paused' ? '任务已暂停，等待用户继续。'
+                  : run.status === 'stopped' ? '任务已停止，已完成内容仍然保留。'
+                    : '任务尚有未决问题，等待处理后恢复。';
+              run.recoveryContext.budget.updatedAt = Date.now();
             }
           });
         },
@@ -858,7 +933,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         shouldStop: () => !!opts?.runId && (pausedRunIdsRef.current.has(opts.runId) || stoppedRunIdsRef.current.has(opts.runId)),
         consumeSteeringMessages: () => {
           const scheduler = schedulerRef.current.get(teamId);
-          return scheduler?.steering?.splice(0) ?? [];
+          const messages = scheduler?.steering?.splice(0) ?? [];
+          if (messages.length) updateRun((run) => {
+            if (!run.recoveryContext) return;
+            run.recoveryContext.steeringMessages = [...run.recoveryContext.steeringMessages, ...messages.map((message) => message.slice(0, 500))].slice(-12);
+            run.recoveryContext.summary = '已收到运行中新增要求，正在结合当前进度调整。';
+            run.recoveryContext.budget.updatedAt = Date.now();
+          });
+          return messages;
         },
         getModelRequestSignal: () => {
           const scheduler = schedulerRef.current.get(teamId);
@@ -976,7 +1058,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const turns: client.ChatTurn[] = [
         {
           role: 'system',
-          content: `${configuredPrompt ? `## 助理配置\n${configuredPrompt}\n\n` : ''}${userContext ? `${userContext}\n` : ''}你是私人办公会所的驴狗蛋助手，负责监督进度、调度成员和理解老板的工作习惯。\n\n## 系统能力声明\n团队调度器、任务运行器、成员资料和 Skill 库均已连接并可用。程序会在你回复后真正创建任务并调用成员。禁止声称“没有权限”“未开放接口”“需要切换会话”或要求老板再次确认已明确提出的工作。\n\n## 当前团队（唯一可调度范围）\n团队名称：${team.name}\n${teamRoster || '暂无成员'}\n\n## 可用 Skill\n${skillRoster || '暂无可用 Skill'}\n\n监工禁止输出脚本、代码、长文正文、分镜或最终产物，绝不能替成员完成工作。${mayDelegate ? '老板的工作请求已经授权执行。简短说明你将如何分派和验收，程序会自动选择真实成员并启动任务；不要虚构成员结果。回复最多 180 个汉字。' : '当前消息不需要启动团队，只做简短直接回应。'} 你自己不是团队成员，不能@自己。`,
+          content: `${configuredPrompt ? `## 助理配置\n${configuredPrompt}\n\n` : ''}${userContext ? `${userContext}\n` : ''}你是${APP_PRODUCT_NAME}的驴狗蛋助手，负责监督进度、调度成员和理解老板的工作习惯。\n\n## 系统能力声明\n团队调度器、任务运行器、成员资料和 Skill 库均已连接并可用。程序会在你回复后真正创建任务并调用成员。禁止声称“没有权限”“未开放接口”“需要切换会话”或要求老板再次确认已明确提出的工作。\n\n## 当前团队（唯一可调度范围）\n团队名称：${team.name}\n${teamRoster || '暂无成员'}\n\n## 可用 Skill\n${skillRoster || '暂无可用 Skill'}\n\n监工禁止输出脚本、代码、长文正文、分镜或最终产物，绝不能替成员完成工作。${mayDelegate ? '老板的工作请求已经授权执行。简短说明你将如何分派和验收，程序会自动选择真实成员并启动任务；不要虚构成员结果。回复最多 180 个汉字。' : '当前消息不需要启动团队，只做简短直接回应。'} 你自己不是团队成员，不能@自己。`,
         },
         { role: 'system', content: BEGINNER_RESPONSE_GUIDE },
         ...team.chatMessages.slice(-12).map((message) => ({
@@ -1041,10 +1123,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({ type: 'CREATE_TASK_RUN', run });
       return;
     }
+    try {
+      await initializeTaskWorkspace(run.workspaceId!, { kind: 'team', label: `${team.name} / ${run.title}`, taskId: run.id });
+      await copyAttachmentsToWorkspace(`team:${team.id}`, run.workspaceId!, attachments ?? []);
+      run.preflight = (run.preflight ?? []).map((item) => item.label === '初始化独立工作区'
+        ? { ...item, status: 'passed', detail: `已建立任务目录：${run.workspaceId}` }
+        : item);
+    } catch (error) {
+      run.status = 'failed';
+      run.phase = 'blocked';
+      run.lastError = error instanceof Error ? error.message : String(error);
+      run.preflight = (run.preflight ?? []).map((item) => item.label === '初始化独立工作区'
+        ? { ...item, status: 'blocked', detail: run.lastError }
+        : item);
+      run.handoff = {
+        ts: Date.now(), completed: [], blocked: run.lastError,
+        nextAction: '打开“设置 → 诊断中心”检查工作区权限，修复后点击“继续执行”。',
+      };
+      dispatch({ type: 'CREATE_TASK_RUN', run });
+      return;
+    }
     dispatch({ type: 'CREATE_TASK_RUN', run });
     enqueueDiscussion(teamId, {
       userText: request, attachments, triggerMessageId: sourceMessageId, discussionId: run.id,
-      forcedMemberIds: run.steps.map((step) => step.employeeId), runSteps: run.steps, maxRounds: run.steps.length, runId: run.id, extraSystemContext: skillContext,
+      forcedMemberIds: run.steps.map((step) => step.employeeId), runSteps: run.steps, maxRounds: run.steps.length, runId: run.id, workspaceId: run.workspaceId, extraSystemContext: skillContext,
     }, 120);
   };
 
@@ -1054,6 +1156,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (run) schedulerRef.current.get(run.teamId)?.modelRequestController?.abort();
     if (run) dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
       next.status = 'paused'; next.steps.forEach((step) => { if (step.status === 'queued' || step.status === 'running') step.status = 'paused'; });
+      if (next.recoveryContext) next.recoveryContext.summary = '任务已暂停，工作区和上下文均已保留。';
     }) });
   };
 
@@ -1066,11 +1169,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const pending = pendingSteps.map((step) => step.employeeId);
     const pendingStepIds = new Set(pendingSteps.map((step) => step.id));
     if (!pendingSteps.length) return;
-    dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
-      next.status = 'queued'; next.phase = 'preflight'; next.lastError = undefined; next.handoff = undefined;
-      next.steps.forEach((step) => { if (pendingStepIds.has(step.id)) step.status = 'queued'; });
-    }) });
-    void buildSkillContext(run.skillRefs ?? []).then((skillContext) => enqueueDiscussion(run.teamId, { userText: run.request, triggerMessageId: run.sourceMessageId, discussionId: run.id, forcedMemberIds: pending, runSteps: pendingSteps, maxRounds: pendingSteps.length, runId, extraSystemContext: skillContext }, 50));
+    void (async () => {
+      try {
+        await initializeTaskWorkspace(run.workspaceId!, { kind: 'team', label: `恢复任务 / ${run.title}`, taskId: run.id });
+      } catch (error) {
+        dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
+          next.status = 'failed'; next.phase = 'blocked'; next.lastError = error instanceof Error ? error.message : String(error);
+          next.handoff = { ts: Date.now(), completed: next.steps.filter((step) => step.status === 'completed').map((step) => step.title), blocked: next.lastError, nextAction: '到“设置 → 诊断中心”修复工作区后再次继续。' };
+          if (next.recoveryContext) next.recoveryContext.unresolvedIssues = [...next.recoveryContext.unresolvedIssues, next.lastError!].slice(-12);
+        }) });
+        return;
+      }
+      dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
+        next.status = 'queued'; next.phase = 'preflight'; next.lastError = undefined; next.handoff = undefined; next.executionSessionId = getExecutionSessionId();
+        next.steps.forEach((step) => { if (pendingStepIds.has(step.id)) step.status = 'queued'; });
+        if (next.recoveryContext) {
+          next.recoveryContext.summary = '恢复检查已通过，准备从未完成步骤继续。';
+          next.recoveryContext.interruptedAt = undefined;
+          next.recoveryContext.interruptionReason = undefined;
+        }
+      }) });
+      const skillContext = await buildSkillContext(run.skillRefs ?? []);
+      enqueueDiscussion(run.teamId, { userText: run.request, triggerMessageId: run.sourceMessageId, discussionId: run.id, forcedMemberIds: pending, runSteps: pendingSteps, maxRounds: pendingSteps.length, runId, workspaceId: run.workspaceId, extraSystemContext: skillContext }, 50);
+    })();
   };
 
   const stopTaskRun = (runId: string) => {

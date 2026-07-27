@@ -6,12 +6,18 @@ const { exec, execFile } = require('child_process');
 const officeParser = require('officeparser');
 const { AlignmentType, Document, HeadingLevel, Packer, Paragraph, TextRun } = require('docx');
 const { initAutoUpdater } = require('./autoUpdate.cjs');
-const { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill } = require('./skills.cjs');
+const { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill, inspectSkillSource, repairSkill } = require('./skills.cjs');
 const { testObsidianVault, searchObsidianVault, readObsidianNote, fetchKnowledgeUrl, searchWeb } = require('./knowledge.cjs');
 const { version: APP_VERSION } = require('../package.json');
 const { sanitizeInjectedEnv, redactInjectedValues } = require('./secretSafety.cjs');
-const APP_TITLE = `私人办公会所 v${APP_VERSION}`;
+// Isolate automated Electron verification from a user's real local data.
+if (process.env.TAIJI_TEST_USER_DATA) app.setPath('userData', path.resolve(process.env.TAIJI_TEST_USER_DATA));
+const APP_TITLE = `太极 AI 办公会所 v${APP_VERSION}`;
+const APP_SESSION_ID = `session-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 const WINDOW_PREFERENCES_PATH = path.join(app.getPath('userData'), 'window-preferences.json');
+const DEV_SERVER_URL = process.env.TAIJI_DEV_SERVER_URL || 'http://localhost:5173';
+
+ipcMain.on('app:getSessionId', (event) => { event.returnValue = APP_SESSION_ID; });
 
 // ===== 自主代理工作区（沙箱目录，所有文件读写/命令执行都限制在此）=====
 const WORKSPACE = path.join(app.getPath('userData'), 'workspace');
@@ -317,7 +323,7 @@ async function createToolWindow(opts, requester = mainWindow) {
   });
   const hash = `tool?type=${encodeURIComponent(normalized.type)}&id=${encodeURIComponent(normalized.refId)}&session=${encodeURIComponent(session)}`;
   try {
-    if (!app.isPackaged) await win.loadURL(`http://localhost:5173/#${hash}`);
+    if (!app.isPackaged) await win.loadURL(`${DEV_SERVER_URL}/#${hash}`);
     else await win.loadFile(path.join(__dirname, '../dist/index.html'), { hash });
     return { win, reused: false };
   } catch (error) {
@@ -354,9 +360,9 @@ function createTray() {
   const iconPath = path.join(__dirname, '../public/tray-icon.png');
   const icon = nativeImage.createFromPath(iconPath);
   tray = new Tray(icon.isEmpty() ? nativeImage.createEmpty() : icon.resize({ width: 20, height: 20 }));
-  tray.setToolTip('私人办公会所');
+  tray.setToolTip('太极 AI 办公会所');
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '打开私人办公会所', click: showMainWindow },
+    { label: '打开太极', click: showMainWindow },
     { label: '打开驴狗蛋助手', click: showAssistantCompanion },
     { type: 'separator' },
     {
@@ -507,7 +513,7 @@ async function createAssistantCompanion(owner = mainWindow, { focus = false } = 
 
   const hash = 'chat?type=assistant-chat&id=';
   try {
-    if (!app.isPackaged) await companion.loadURL(`http://localhost:5173/#${hash}`);
+    if (!app.isPackaged) await companion.loadURL(`${DEV_SERVER_URL}/#${hash}`);
     else await companion.loadFile(path.join(__dirname, '../dist/index.html'), { hash });
     return companion;
   } catch (error) {
@@ -557,7 +563,7 @@ async function createSettingsWindow(sourceWindow = mainWindow) {
     if (settingsWindow === win) settingsWindow = null;
   });
   try {
-    if (!app.isPackaged) await win.loadURL('http://localhost:5173/#settings');
+    if (!app.isPackaged) await win.loadURL(`${DEV_SERVER_URL}/#settings`);
     else await win.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'settings' });
     return win;
   } catch (error) {
@@ -630,7 +636,7 @@ function createWindow() {
   });
 
   if (!app.isPackaged) {
-    win.loadURL('http://localhost:5173');
+    win.loadURL(DEV_SERVER_URL);
   } else {
     win.loadFile(path.join(__dirname, '../dist/index.html'));
   }
@@ -751,7 +757,7 @@ function createWindow() {
     const hash = `chat?type=${encodeURIComponent(type)}&id=${encodeURIComponent(refId)}`;
     try {
       if (!app.isPackaged) {
-        await child.loadURL(`http://localhost:5173/#${hash}`);
+        await child.loadURL(`${DEV_SERVER_URL}/#${hash}`);
       } else {
         await child.loadFile(path.join(__dirname, '../dist/index.html'), { hash });
       }
@@ -780,6 +786,14 @@ function createWindow() {
   });
   ipcMain.handle('skills:install', async (_event, input) => {
     try { return await installSkill(path.resolve(__dirname, '..'), input); }
+    catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+  ipcMain.handle('skills:inspectSource', async (_event, sourceUrl) => {
+    try { return { ok: true, inspection: await inspectSkillSource(sourceUrl) }; }
+    catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+  ipcMain.handle('skills:repair', async (_event, id) => {
+    try { return await repairSkill(path.resolve(__dirname, '..'), id); }
     catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
   });
   ipcMain.handle('sys:openExternal', async (_event, rawUrl) => {
@@ -1024,6 +1038,44 @@ function createWindow() {
       return { ok: true, path: target };
     } catch (e) {
       return { ok: false, error: String(e?.message ?? e) };
+    }
+  });
+
+  ipcMain.handle('fs:copyIntoWorkspace', async (_event, { sourceScope, targetWorkspaceId, entries } = {}) => {
+    try {
+      if (typeof sourceScope !== 'string' || !sourceScope.trim()) throw new Error('附件来源工作区不能为空');
+      if (typeof targetWorkspaceId !== 'string' || !targetWorkspaceId.trim()) throw new Error('目标任务工作区不能为空');
+      if (!Array.isArray(entries) || entries.length > 40) throw new Error('附件清单无效或数量超过 40 个');
+      const sourceRoot = safeJoin(sourceScope);
+      const targetRoot = safeJoin(targetWorkspaceId);
+      await fsp.mkdir(targetRoot, { recursive: true });
+      let copied = 0;
+      const errors = [];
+      for (const entry of entries) {
+        try {
+          const sourcePath = typeof entry?.sourcePath === 'string' ? entry.sourcePath : '';
+          const targetPath = typeof entry?.targetPath === 'string' && entry.targetPath.trim() ? entry.targetPath : sourcePath;
+          if (!sourcePath || sourcePath.includes('\0') || targetPath.includes('\0')) throw new Error('附件路径无效');
+          const source = path.resolve(sourceRoot, sourcePath);
+          const target = path.resolve(targetRoot, targetPath);
+          const sourceRel = path.relative(sourceRoot, source);
+          const targetRel = path.relative(targetRoot, target);
+          if (sourceRel.startsWith('..') || path.isAbsolute(sourceRel) || targetRel.startsWith('..') || path.isAbsolute(targetRel)) {
+            throw new Error('附件路径越界');
+          }
+          const stat = await fsp.stat(source);
+          if (!stat.isFile()) throw new Error('来源不是文件');
+          if (stat.size > MAX_READABLE_FILE_BYTES) throw new Error('附件超过 50MB');
+          await fsp.mkdir(path.dirname(target), { recursive: true });
+          await fsp.copyFile(source, target);
+          copied += 1;
+        } catch (error) {
+          errors.push(String(error?.message ?? error));
+        }
+      }
+      return { ok: errors.length === 0, copied, errors };
+    } catch (e) {
+      return { ok: false, copied: 0, error: String(e?.message ?? e) };
     }
   });
 

@@ -33,6 +33,14 @@ export interface SkillListResult { ok: boolean; skills?: import('./types').Skill
 export interface SkillReadResult { ok: boolean; skill?: { id: string; name: string; content: string }; error?: string; }
 export interface SkillDeleteResult { ok: boolean; error?: string; }
 export interface SkillInstallResult { ok: boolean; skill?: import('./types').Skill; resolvedUrl?: string; error?: string; }
+export interface SkillSourceInspection {
+  name: string;
+  description: string;
+  installMode: 'single-file' | 'directory' | 'zip';
+  resolvedUrl?: string;
+  requirements: NonNullable<import('./types').Skill['requirements']>;
+}
+export interface SkillInspectResult { ok: boolean; inspection?: SkillSourceInspection; error?: string; }
 
 export interface UpdateStatus {
   status: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
@@ -49,6 +57,7 @@ declare global {
     minimize: () => void;
     toggleMax: () => void;
     close: () => void;
+    getAppSessionId: () => string;
     getAssistantLock: () => Promise<{ locked: boolean }>;
     setAssistantLock: (locked: boolean) => Promise<{ locked: boolean }>;
     getChatLock: (opts: OpenChatOptions) => Promise<{ locked: boolean }>;
@@ -59,6 +68,8 @@ declare global {
     skillsRead: (id: string) => Promise<SkillReadResult>;
     skillsDelete: (id: string) => Promise<SkillDeleteResult>;
     skillsInstall: (input: { sourceUrl: string; name?: string }) => Promise<SkillInstallResult>;
+    skillsInspectSource: (sourceUrl: string) => Promise<SkillInspectResult>;
+    skillsRepair: (id: string) => Promise<SkillInstallResult>;
     openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>;
 
     // 自主代理工作区文件系统（沙箱到 userData/workspace）
@@ -69,6 +80,7 @@ declare global {
     fsRead: (filePath: string) => Promise<FsReadResult>;
     fsMkdir: (dirPath: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
     fsInitWorkspace: (workspaceId: string, metadata: { kind: 'assistant' | 'dm' | 'team'; label: string; taskId?: string; workspaceId?: string; createdAt?: string }) => Promise<{ ok: boolean; path?: string; error?: string }>;
+    fsCopyIntoWorkspace: (sourceScope: string, targetWorkspaceId: string, entries: Array<{ sourcePath: string; targetPath?: string }>) => Promise<{ ok: boolean; copied?: number; errors?: string[]; error?: string }>;
     fsList: (dirPath?: string, recursive?: boolean) => Promise<FsListResult>;
     fsExportZip: () => Promise<FsZipResult>;
     openPath: (p: string) => Promise<{ ok: boolean; error?: string }>;
@@ -85,7 +97,12 @@ declare global {
 
     // 自动更新
     checkUpdate: () => Promise<{ ok: boolean; error?: string }>;
-    installUpdate: () => Promise<{ ok: boolean }>;
+    installUpdate: (snapshot?: unknown) => Promise<{ ok: boolean; error?: string }>;
+    getUpgradeStatus: () => Promise<{ ok: boolean; currentVersion?: string; journal?: UpgradeJournal | null; error?: string }>;
+    recordUpgradeValidation: (validation: { ok: boolean; employees: number; teams: number; models: number; taskRuns: number; workspaceReady: boolean }) => Promise<{ ok: boolean; recorded?: boolean; error?: string }>;
+    readUpgradeBackup: () => Promise<{ ok: boolean; snapshot?: UpgradeSnapshot; fromVersion?: string; error?: string }>;
+    prepareRollback: () => Promise<{ ok: boolean; installerPath?: string; fromVersion?: string; error?: string }>;
+    rollbackUpgrade: () => Promise<{ ok: boolean; installerPath?: string; error?: string }>;
     onUpdateStatus: (callback: (status: UpdateStatus) => void) => () => void;
 
     // 连接器 API 调用（主进程代理 HTTP 请求）
@@ -120,6 +137,13 @@ declare global {
     noteCount?: number;
     isObsidian?: boolean;
     error?: string;
+  }
+
+  interface UpgradeSnapshot { schema: number; appVersion: string; createdAt: string; localStorage: Record<string, string>; }
+  interface UpgradeJournal {
+    fromVersion: string; toVersion: string; backupCreatedAt: string; status: 'ready-to-install' | 'validated' | 'validation-failed' | 'rollback-prepared' | 'rolling-back';
+    validation?: { ok: boolean; checkedAt?: string } | null;
+    backupSummary?: { employees: number; teams: number; models: number; taskRuns: number };
   }
   interface Window {
     electronAPI?: ElectronAPI;

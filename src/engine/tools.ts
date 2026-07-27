@@ -14,6 +14,7 @@
 
 import { addOutput, loadOutputs, contentTypeFromFilename, type OutputRecord, type OutputScope } from '../data/outputs';
 import { getExecutionPolicy, type ExecutionPolicy } from '../data/hermesClient';
+import { classifySensitiveAction, containsInlineSecret, redactToolArgsObject } from './securityBoundary';
 
 // ===== Tool Schema（OpenAI function-calling 格式）=====
 export interface ToolDef {
@@ -278,6 +279,10 @@ function approvalPrompt(title: string, detail: string, policy: ExecutionPolicy):
 
 function requestCommandApproval(command: string): { allowed: boolean; policy: ExecutionPolicy } {
   const policy = getExecutionPolicy();
+  const risks = classifySensitiveAction('run_command', { cmd: command });
+  if (risks.length > 0) {
+    return { allowed: approvalPrompt('必须由你确认', `这条命令涉及：${risks.join('、')}。\n\n${redactToolArgsObject({ cmd: command })}`, policy), policy };
+  }
   if (policy.approvalMode === 'full') return { allowed: true, policy };
   if (policy.approvalMode === 'delegate' && isRoutineCommand(command)) return { allowed: true, policy };
   const detail = policy.approvalMode === 'ask'
@@ -288,9 +293,13 @@ function requestCommandApproval(command: string): { allowed: boolean; policy: Ex
 
 function requestConnectorApproval(name: string, args: Record<string, string>): boolean {
   const policy = getExecutionPolicy();
-  if (policy.approvalMode === 'full') return true;
-  const summary = Object.entries(args).slice(0, 3).map(([key, value]) => `${key}: ${String(value).slice(0, 160)}`).join('\n');
-  const detail = policy.approvalMode === 'ask'
+  const risks = classifySensitiveAction(name, args);
+  if (risks.length > 0) {
+    return approvalPrompt('必须由你确认', `这个外部操作涉及：${risks.join('、')}。\n\n${redactToolArgsObject(args)}`, policy);
+  }
+  if (policy.connectorApprovalMode === 'full') return true;
+  const summary = redactToolArgsObject(Object.fromEntries(Object.entries(args).slice(0, 3)));
+  const detail = policy.connectorApprovalMode === 'ask'
     ? `助手准备调用连接器：${name}${summary ? `\n${summary}` : ''}`
     : `助手已替你检查，但该连接器操作可能影响外部服务：${name}${summary ? `\n${summary}` : ''}`;
   return approvalPrompt('需要你的审核', detail, policy);
@@ -715,6 +724,9 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
       case 'run_command': {
         const cmd = (args.cmd ?? '').trim();
         if (!cmd) return { toolCallId: id, name, success: false, output: '命令不能为空' };
+        if (containsInlineSecret(cmd)) {
+          return { toolCallId: id, name, success: false, output: '命令中包含疑似明文密钥、Token 或密码，已阻止执行。请把凭据保存到连接器配置，再通过 connector 参数以临时环境变量注入；密钥不会进入聊天和日志。' };
+        }
 
         let connectorForCommand: import('../data/connectors').Connector | undefined;
         const injectedEnv: Record<string, string> = {};

@@ -3,12 +3,12 @@ import { runAgentLoop, resolveApiBase, extractUserInsights, getEmployeeModel, ty
 import { TOOLS, executeTool } from './tools';
 import { getConnectorTools } from './connectorTools';
 import { diagnoseModel } from '../diagnostics/modelDiagnostics';
-import { BEGINNER_RESPONSE_GUIDE } from '../data/assistantPresentation';
+import { BEGINNER_RESPONSE_GUIDE, isToolResultSuccessful } from '../data/assistantPresentation';
 
 // ===== 讨论回调 =====
 export interface DiscussionHandlers {
   onMessage: (emp: Employee, content: string, mentions: string[], tokens?: number, discussionRound?: number, inReplyToMessageId?: string, stepId?: string, contextUsage?: ContextUsage) => void;
-  onToolCall: (emp: Employee, toolName: string, toolArgs: string, result: string, stepId?: string) => void;
+  onToolCall: (emp: Employee, toolName: string, toolArgs: string, result: string, stepId?: string, success?: boolean) => void;
   onTaskAdvance: (taskId: string, lane: TaskLane) => void;
   onStatus: (text: string) => void;
   onDone: () => void;
@@ -30,6 +30,8 @@ export interface TeamDiscussionOptions {
   maxRounds?: number;
   forcedMemberIds?: string[];
   runId?: string;
+  /** 本次任务专属磁盘目录；暂停、恢复和审查必须继续使用同一个目录。 */
+  workspaceId?: string;
   runSteps?: TaskRunStep[];
 }
 
@@ -70,9 +72,10 @@ async function memberSpeak(
   employees: Employee[],
   contextMessages: ChatMessage[],
   extraInstruction: string,
-  onToolCall: (toolName: string, toolArgs: string, result: string) => void,
+  onToolCall: (toolName: string, toolArgs: string, result: string, success?: boolean) => void,
   attachments?: import('../data/hermesClient').Attachment[],
   skillContext = '',
+  workspaceId?: string,
   shouldStop?: () => boolean,
   requireFileOutput = false,
   consumeSteeringMessages?: () => string[],
@@ -102,15 +105,15 @@ async function memberSpeak(
     if (/读取并继承|审查|修订/u.test(extraInstruction)) {
       const listArgs = JSON.stringify({ filter: '' });
       onToolCall('list_files', listArgs, '');
-      const listed = await executeTool({ id: `handoff-list-${Date.now()}-${emp.id}`, name: 'list_files', args: { filter: '' }, scope: `team:${team.id}` });
-      onToolCall('list_files', listArgs, listed.output);
+      const listed = await executeTool({ id: `handoff-list-${Date.now()}-${emp.id}`, name: 'list_files', args: { filter: '' }, scope: `team:${team.id}`, workspaceId });
+      onToolCall('list_files', listArgs, listed.output, listed.success);
       const filenames = [...listed.output.matchAll(/^- ([^/\n]+?) \(/gmu)].map((match) => match[1]).slice(-3);
       const fileContents: string[] = [];
       for (const filename of filenames) {
         const readArgs = JSON.stringify({ path: filename });
         onToolCall('read_file', readArgs, '');
-        const read = await executeTool({ id: `handoff-read-${Date.now()}-${emp.id}-${filename}`, name: 'read_file', args: { path: filename }, scope: `team:${team.id}` });
-        onToolCall('read_file', readArgs, read.output);
+        const read = await executeTool({ id: `handoff-read-${Date.now()}-${emp.id}-${filename}`, name: 'read_file', args: { path: filename }, scope: `team:${team.id}`, workspaceId });
+        onToolCall('read_file', readArgs, read.output, read.success);
         if (read.success) fileContents.push(read.output);
       }
       handoffContext = `前序成员的团队工作区清单：\n${listed.output}\n\n已读取的最新产出：\n${fileContents.join('\n\n') || '暂无可读文件，必须要求前序步骤形成真实产出。'}`;
@@ -128,12 +131,13 @@ async function memberSpeak(
       modelConfig: effectiveModel,
       extraSystemContext: effectiveContext,
       scope: `team:${team.id}` as any,
+      workspaceId,
       onToolCall(name, args) {
         onToolCall(name, args, '');
       },
-      onToolResult(name, args, result) {
-        if (name === 'write_file' && !/^⚠️/u.test(result)) producedFile = true;
-        onToolCall(name, args, result);
+      onToolResult(name, args, result, success) {
+        if (name === 'write_file' && isToolResultSuccessful(result, success)) producedFile = true;
+        onToolCall(name, args, result, success);
       },
       shouldStop,
       consumeSteeringMessages,
@@ -232,13 +236,14 @@ export async function runTeamDiscussion(
         task
           ? `团队接到新任务「${task.title}」${task.description ? `：${task.description}` : ''}。如有必要，可调工具产出文件或用 web_search 查资料。`
           : `${assignment}\n老板的原始要求：\n「${opts.userText ?? ''}」${latestGuidance ? `\n\n老板运行中追加的最新指令（优先执行）：\n「${latestGuidance}」` : ''}`,
-        (toolName, toolArgs, result) => {
+        (toolName, toolArgs, result, success) => {
           const argsStr = toolArgs ? (toolArgs.length > 80 ? toolArgs.slice(0, 80) + '…' : toolArgs) : '';
-          handlers.onToolCall(emp, toolName, argsStr, result || '🔄 执行中…', step.id);
+          handlers.onToolCall(emp, toolName, argsStr, result || '🔄 执行中…', step.id, success);
         },
         // 所有被调度成员都能读取同一批用户图片，避免交接后丢失视觉上下文。
         opts.attachments,
         opts.extraSystemContext,
+        opts.workspaceId,
         control?.shouldStop,
         step.kind !== 'review',
         control?.consumeSteeringMessages,
@@ -325,7 +330,10 @@ export async function runTeamDiscussion(
       if (useAI) {
         const r = await memberSpeak(pm, team, employees, contextMessages,
           `任务「${task.title}」已完成开发与审查，请做验收总结。如果代码或文档已产出，可直接 read_file 检查。`,
-          (toolName, toolArgs) => handlers.onToolCall(pm, toolName, toolArgs, '🔄 执行中…')
+          (toolName, toolArgs) => handlers.onToolCall(pm, toolName, toolArgs, '🔄 执行中…'),
+          undefined,
+          '',
+          opts.workspaceId,
         );
         closing = r.text;
         pmTokens = r.tokens;

@@ -1,5 +1,6 @@
 import type { Team, TeamTask, Employee } from '../types';
 import { sendBus, BUS_CHANNELS } from '../ipcBus';
+import { APP_PRODUCT_NAME } from '../brand';
 
 const LS_OUTPUTS = 'hermes_office_outputs';
 const MAX_OUTPUTS = 200;
@@ -410,7 +411,7 @@ export function buildDiscussionOutput(
     lines.push('');
   }
   lines.push('---');
-  lines.push(`_由 私人办公会所 自动生成 · ${now.toISOString()}_`);
+  lines.push(`_由 ${APP_PRODUCT_NAME} 自动生成 · ${now.toISOString()}_`);
 
   const ts = now.getTime();
   const filename = `${team.name}-${formatDate(now)}-纪要.md`;

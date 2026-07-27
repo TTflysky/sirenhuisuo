@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { DeleteOutlined, DownloadOutlined, ExportOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import type { Skill } from '../../types';
-import { deleteSkill, installSkill, listSkills, readSkill } from '../../data/skills';
+import { deleteSkill, inspectSkillSource, installSkill, listSkills, readSkill, repairSkill } from '../../data/skills';
+import type { SkillSourceInspection } from '../../electron';
 
 type SkillTab = 'built-in' | 'mine' | 'market';
 
@@ -55,6 +56,8 @@ export default function SkillLibraryView() {
   const [deleting, setDeleting] = useState<string | null>(null);
   const [installUrl, setInstallUrl] = useState('');
   const [installing, setInstalling] = useState(false);
+  const [inspection, setInspection] = useState<SkillSourceInspection | null>(null);
+  const [repairing, setRepairing] = useState<string | null>(null);
 
   const refresh = async () => {
     setLoading(true);
@@ -99,14 +102,32 @@ export default function SkillLibraryView() {
     setError('');
     setNotice('');
     try {
+      if (!inspection) {
+        const checked = await inspectSkillSource(installUrl.trim());
+        setInspection(checked);
+        setNotice('来源检查完成，请确认要求后安装。');
+        return;
+      }
       const installed = await installSkill(installUrl.trim());
       setInstallUrl('');
+      setInspection(null);
       await refresh();
       setTab('mine');
       setNotice(`已安装 ${installed.name}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : '技能安装失败');
     } finally { setInstalling(false); }
+  };
+
+  const handleRepair = async (skill: Skill) => {
+    setRepairing(skill.id);
+    setError('');
+    try {
+      await repairSkill(skill.id);
+      await refresh();
+      setNotice(`${skill.name} 已从记录的来源重新安装并检查`);
+    } catch (e) { setError(e instanceof Error ? e.message : '技能修复失败'); }
+    finally { setRepairing(null); }
   };
 
   const openMarket = async (url: string) => {
@@ -136,10 +157,20 @@ export default function SkillLibraryView() {
       {(tab === 'mine' || tab === 'market') && (
         <div className="skill-install-bar">
           <DownloadOutlined />
-          <input value={installUrl} onChange={(event) => setInstallUrl(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void handleInstall()} placeholder="SKILL.md 或 GitHub 仓库地址" />
-          <button className="btn btn-sm btn-primary" onClick={() => void handleInstall()} disabled={installing}>{installing ? '安装中' : '一键安装'}</button>
+          <input value={installUrl} onChange={(event) => { setInstallUrl(event.target.value); setInspection(null); }} onKeyDown={(event) => event.key === 'Enter' && void handleInstall()} placeholder="SKILL.md 或 GitHub 仓库地址" />
+          <button className="btn btn-sm btn-primary" onClick={() => void handleInstall()} disabled={installing}>{installing ? '处理中' : inspection ? '确认安装' : '检查要求'}</button>
         </div>
       )}
+
+      {inspection && <div className="skill-install-inspection">
+        <div><strong>{inspection.name}</strong><span>{inspection.installMode === 'directory' ? '完整目录' : inspection.installMode === 'zip' ? 'ZIP 技能包' : '单文件安装'}</span></div>
+        {inspection.description && <p>{inspection.description}</p>}
+        <dl>
+          <div><dt>环境变量</dt><dd>{inspection.requirements.environmentVariables.join('、') || '无明确要求'}</dd></div>
+          <div><dt>外部软件</dt><dd>{inspection.requirements.externalSoftware.join('、') || '无明确要求'}</dd></div>
+          <div><dt>账号授权</dt><dd>{inspection.requirements.accountRequired ? '需要' : '未声明'}</dd></div>
+        </dl>
+      </div>}
 
       {error && <div className="error-banner">{error}<button onClick={() => setError('')}>×</button></div>}
       {notice && <div className="skill-success-banner">{notice}<button onClick={() => setNotice('')}>×</button></div>}
@@ -166,13 +197,16 @@ export default function SkillLibraryView() {
             {visibleSkills.map((skill) => (
               <React.Fragment key={skill.id}>
                 <div className={`skill-grid-card ${expanded === skill.id ? 'skill-grid-card--open' : ''}`}>
-                  {skill.scope === 'mine' && <button className="skill-grid-card-actions" onClick={() => void confirmDelete(skill)} title={deleting === skill.id ? '再次点击确认删除' : '删除技能'}><DeleteOutlined />{deleting === skill.id && <span>确认</span>}</button>}
+                  {skill.scope === 'mine' && <div className="skill-grid-card-actions">
+                    {(skill.health === 'broken' || skill.health === 'limited') && <button onClick={() => void handleRepair(skill)} title="从原来源重新安装" disabled={repairing === skill.id}><ReloadOutlined />{repairing === skill.id && <span>修复中</span>}</button>}
+                    <button onClick={() => void confirmDelete(skill)} title={deleting === skill.id ? '再次点击确认删除' : '删除技能'}><DeleteOutlined />{deleting === skill.id && <span>确认</span>}</button>
+                  </div>}
                   <button className="skill-grid-card-main" onClick={() => void toggle(skill)}>
                     <div className="skill-grid-card-icon">S</div>
                     <div className="skill-grid-card-name">{skill.name}</div>
                     <div className="skill-grid-card-desc">{skill.description || '暂无说明'}</div>
                     <div className="skill-grid-card-meta">{skill.source}{skill.version ? ` · v${skill.version}` : ''}</div>
-                    {skill.health === 'limited' && <div className="skill-grid-card-warning" title={skill.healthMessage}>需完整目录</div>}
+                    {skill.health && skill.health !== 'ready' && <div className={`skill-grid-card-warning health-${skill.health}`} title={skill.healthMessage}>{skill.health === 'broken' ? '已隔离' : skill.health === 'limited' ? '不完整' : '需配置'}</div>}
                   </button>
                 </div>
                 {expanded === skill.id && <div className="skill-grid-detail"><pre className="skill-grid-detail-body">{body || '加载中…'}</pre></div>}

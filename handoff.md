@@ -1,195 +1,159 @@
 # 太极项目当前交接
 
 > 更新时间：2026-07-27  
-> 当前版本：`v0.8.11`  
+> 当前版本：`v0.9.0`  
 > 主分支：`main`  
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)  
-> Release：[v0.8.11](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.8.11)
+> Release：[v0.9.0](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.9.0)
 
-这份文件记录当前任务的真实状态，供办公室电脑上的 Codex 直接接手。更完整的产品约束和模块说明见 `docs/PROJECT_HANDOFF.md`，跨设备同步方法见 `docs/CROSS_DEVICE_WORKFLOW.md`，逐版本改动见 `CHANGELOG.md`。
+本轮在现有 `v0.8.11` 架构上完成八项稳定闭环，没有推翻重做。源码目录为 `L:\AI办公室\sirenhuisuo-v0.7.12`，本机安装目录为 `E:\AI办公会所\hermes-office-pro`。
 
-## 1. 办公室端从这里开始
+## 办公室端直接开始
 
-已有项目目录时先运行：
+在任意已有源码中运行：
 
 ```powershell
 npm.cmd run sync:project
 ```
 
-也可以直接克隆远端 `main`：
+进入新下载的 `sirenhuisuo-v0.9.0-<commit>` 目录后依次执行：
 
 ```powershell
-git clone https://github.com/TTflysky/sirenhuisuo.git
-cd sirenhuisuo
 npm.cmd install
 npm.cmd run build
 npm.cmd run lint
-npm.cmd run verify:docx
-npm.cmd run verify:assistant-background
+npm.cmd run verify:foundation
 npm.cmd run verify:agent-kernel
 ```
 
-开始修改前依次阅读：
+开始修改前阅读本文件、`docs/PROJECT_HANDOFF.md`、`docs/CROSS_DEVICE_WORKFLOW.md` 和 `CHANGELOG.md` 的 `v0.9.0`。
 
-1. `handoff.md`
-2. `docs/PROJECT_HANDOFF.md`
-3. `docs/CROSS_DEVICE_WORKFLOW.md`
-4. `CHANGELOG.md` 的 `v0.8.11` 至 `v0.8.0`
+## 八项实现状态
 
-不要从旧目录、旧安装包或 `开发资料全记录.md` 判断当前实现。GitHub `main` 和同版本 Release 是两台电脑之间的唯一共同事实来源。
+### 1. 工作区隔离：已完成
 
-## 2. 本轮任务
+- 助手、员工私聊和团队任务每次请求创建独立工作区。
+- 员工自动重试、团队暂停与恢复继续使用原任务目录。
+- 团队链路已贯通 `startTaskRun -> initializeTaskWorkspace -> runAgentLoop -> executeTool`。
+- 新增受限 `fs:copyIntoWorkspace` IPC，把聊天暂存附件复制进本次任务工作区。
+- 两个任务中的同名文件不会互相覆盖。
 
-用户本轮反馈的核心问题有三个：
+### 2. 统一诊断中心：已完成
 
-1. 配置 IMA 时执行达到 118 步，反复读取 Skill 和状态，没有切换路线或明确交接。
-2. 运行中插话只机械回复“收到”，旧计划仍继续；暂停后继续对话时，旧任务甚至会被错误恢复。
-3. 连接器配置窗口默认高度不足，每次打开都要手动拉高才能看到完整操作区。
+- 设置首页改为诊断中心，一次真实检查 AI 模型、连接器与知识库、Skill、工作区和安全审批。
+- 每项显示“可用 / 需确认 / 缺配置”、通俗原因、下一步和设置入口。
+- 安装版 Electron 已实测五项全部渲染，工作区创建、写入和读回通过。
 
-## 3. 已完成并进入 v0.8.11 的内容
+### 3. 上下文与预算管理：已完成首个可恢复版本
 
-### 最新消息与任务状态
+- `TaskRecoveryContext` 持久化摘要、已完成证据、未决问题、运行中插话、工具次数和上下文用量。
+- 每次客户端进程有独立会话编号；新开窗口不会误判中断。
+- 客户端退出或重启后，旧 `running/queued` 团队任务会转为暂停的“待恢复”任务。
+- 原工作区、已完成步骤、证据和未决问题保留，恢复时从未完成步骤继续。
 
-- 助手、员工私聊和团队成员模型请求支持被最新消息中断；模型调用前后及工具调用前后都会检查插话。
-- 暂停中的插话只临时唤醒一次用于回答，回答后仍保持暂停；不会先执行一次旧模型或旧工具。
-- 文字“暂停 / 继续 / 停止”与按钮同权。停止后旧任务封存；普通对话、反馈和状态询问不调用工具、不自动恢复旧任务。
-- “这种操作没有意义、一直重复读取”等反馈会自动挂起当前任务，先结合真实进度回答；明确的新修复、配置和执行目标仍可开始新任务。
+### 4. Skill 健康与恢复：已完成首个闭环
 
-### Agent 防循环与连接器边界
+- 健康状态为 `ready / setup / limited / broken`。
+- 扫描环境变量、外部软件、账号授权和 `SKILL.md` 引用文件。
+- 损坏 Skill 自动隔离，不参与自动匹配。
+- 安装前展示要求；来源明确的用户 Skill 支持重新安装修复。
+- 安装记录保存来源和正文 SHA-256。
+- 本机最近扫描 95 个 Skill：65 个可直接使用、30 个使用前需配置、没有误判为损坏的 Skill。
 
-- 新增 `src/engine/agentGuardrails.mjs`，统一工具参数规范化、语义去重、Skill/文件/网页资源级读取统计和消息分类。
-- 同一个 Skill 单次任务只真实读取一次；连接器任务总工具尝试不超过 24 次、最多 2 阶段，连续只准备不行动和连续重复被拦截会熔断。
-- 连接器先检查实际接入方式，未确认 Skill 路线前禁止搜索或读取 Skill；重复调用不显示为完成动作，也不计入真实进展。
+### 5. 任务验收与审查：已完成
 
-### 连接器窗口
+- 证据区分文件、运行、连接、审查、人工和进度。
+- 模型口头说“完成”不能完成任务。
+- 写文件必须真实成功；代码、安装和部署必须有运行证据；连接器必须有最小真实连接证据；审查步骤必须明确通过。
+- 缺证据时进入待恢复，并显示缺少哪项；审查不通过只退回责任员工和对应步骤。
 
-- `connector-config` 默认尺寸改为 `620 × 820`，最小高度为 620，并按当前显示器工作区动态限制。
-- 不恢复上次尺寸；默认打开即可看到完整凭据区和底部保存测试按钮。
+### 6. 安全边界：已完成
 
-### v0.8.10 后台任务生命周期（继续保留）
+- 工具参数进入聊天前隐藏 API Key、Token、密码和验证码。
+- 拒绝在命令中直接写入疑似明文密钥。
+- 命令和连接器使用独立审批档位。
+- 删除、付费、密码、验证码和对外发送即使在“完全访问权限”下也要单独确认。
+- 设置页明确展示沙盒、命令审批、连接器审批和敏感信息保护。
 
-- 关闭助理窗口现在只隐藏窗口，不销毁正在运行的渲染进程和任务。
-- 助理隐藏后关闭 Electron 后台节流，模型调用、工具调用和计时继续执行。
-- 主界面标题栏显示助理当前动作、已完成动作数和运行时间。
-- 不重新打开助理窗口也能在主界面暂停、继续或停止后台任务；点击状态可重新打开完整执行过程。
-- 助手和员工私聊移除固定 `2/3` 假进度，统一显示真实动作计数和实际运行时间。
-- 团队任务补齐真实停止状态与停止按钮；暂停、继续、停止不再与关闭记录混用。
-- 新增 `npm.cmd run verify:assistant-background`，自动验证助理窗口隐藏后进程仍存在且计时继续变化。
+### 7. 升级与回滚：已完成首个版本
 
-### 连接器闭环
+- 禁止退出时未经备份自动安装更新。
+- 更新前用 Electron `safeStorage` 加密备份本地配置，记录员工、团队、模型和任务数量。
+- 新版本启动后自动验证数据数量和工作区，并写入升级日志。
+- 回滚严格按“下载并校验旧安装包 -> 读取旧配置备份 -> 恢复配置 -> 启动旧安装包”执行；下载失败不会先改当前配置。
+- GitHub Release 提供 digest 时校验 SHA-256。
 
-- IMA/Skill 连接器主操作改为“保存并交给助手验证”。
-- 助手会检查配置、读取已安装 Skill 的真实说明，并执行说明中的最小验证动作。
-- 只有真实调用成功才显示已连接；缺少凭据、外部软件或授权时必须明确说明缺什么，不能口头宣称完成。
-- Skill 命令在实际安装目录运行；凭据只通过本机进程环境变量注入，不写入提示词、聊天、日志或 Git。
-- 连接器弹窗重新整理为安装、凭据、验证三步；修复深色主题白边和底部按钮遮挡。
+### 8. 太极品牌迁移：已完成
 
-### 界面
+- 版本升级为 `0.9.0`，产品、窗口、托盘、快捷方式、安装包和默认提示词统一为“太极”。
+- 安装包名改为 `taiji-office-setup-<version>.exe`。
+- 内部包名仍为 `hermes-office-pro`，`appId` 仍为 `com.hermes.office`。
+- 所有 `hermes_office_*` 本地存储键保持不变，并新增品牌迁移标记。
+- 旧员工、团队、聊天、模型、任务和数据目录不迁移、不清空。
+- “Hermes Agent Skills”等第三方来源名称保留，不冒充太极自有品牌。
 
-- 新增“霓虹赛博”预设主题，主界面、聊天、设置和连接器使用同一套主题语义色。
-- 设置窗口固定以统一标准尺寸打开，不沿用上次最大化尺寸。
+## 本轮关键文件
 
-## 4. 本轮验证证据
+- `src/utils/attachments.ts`
+- `src/diagnostics/systemDiagnostics.ts`
+- `src/components/settings/DiagnosticsTab.tsx`
+- `src/data/taskRuns.ts`
+- `src/engine/securityBoundary.ts`
+- `src/data/skills.ts`
+- `electron/main.cjs`
+- `electron/preload.cjs`
+- `electron/skills.cjs`
+- `electron/autoUpdate.cjs`
+- `src/brand.ts`
+- `scripts/verify-foundation.mjs`
+- `scripts/verify-foundation-e2e.mjs`
+- `scripts/sync-project.ps1`
+
+## 验证证据
 
 - `npm.cmd run build`：通过。
-- `npm.cmd run lint`：通过，仅保留已有非阻断警告，本轮未引入阻断错误。
-- Electron 主进程脚本语法检查：通过。
-- `npm.cmd run verify:docx`：通过。
-- `npm.cmd run verify:assistant-background`：通过；助理隐藏后渲染进程仍在，计时从 1 秒继续到 2 秒。
-- `npm.cmd run verify:agent-kernel`：通过；118 次重复 Skill 读取只执行 1 次，反馈不续跑旧任务。
-- `npm.cmd run verify:steering-e2e`：通过；真实 Electron 中反馈优先回答，任务保持暂停，旧任务请求数不再增长。
-- `npm.cmd run verify:tool-window`：通过；连接器窗口实测为 `620 × 820`，底部按钮完整可见。
-- 安装包已覆盖到 `E:\AI办公会所\hermes-office-pro`，安装程序版本为 `0.8.11`；安装目录与打包目录的 `app.asar` SHA-256 一致。
+- `npm.cmd run lint`：通过；只有已有非阻断警告。
+- `npm.cmd run verify:foundation`：通过；隔离目录内容为 `first-content / second-content`，附件为 `attachment-content`，敏感参数已隐藏，旧会话任务转为暂停待恢复，诊断领域为 5 项。
+- `npm.cmd run verify:agent-kernel`：通过；118 次重复 Skill 读取只执行 1 次。
+- `npm.cmd run verify:docx`：通过；生成的 Word 可重新解析正文。
+- 安装版 `npm.cmd run verify:foundation-ui`：通过；真实 Electron IPC 和诊断中心五项完整显示。
+- 安装版 `npm.cmd run verify:assistant-background`：通过；助理隐藏后执行计时继续。
+- 安装版 `npm.cmd run verify:tool-window`：通过；连接器窗口 `620 × 820`，底部操作区完整可见。
+- 安装版 `npm.cmd run verify:steering-e2e`：通过；插话优先回答、暂停状态保留、旧请求数量不再增长。
+- `node --check electron/main.cjs electron/preload.cjs electron/autoUpdate.cjs`：通过。
 
-本机发布文件：
+## 安装与发布资产
 
-- `L:\AI办公室\sirenhuisuo-v0.7.12\release\hermes-office-pro-setup-0.8.11.exe`
-- `L:\AI办公室\sirenhuisuo-v0.7.12\release\hermes-office-pro-setup-0.8.11.exe.blockmap`
-- `L:\AI办公室\sirenhuisuo-v0.7.12\release\latest.yml`
-- 安装包 SHA-256：`0AAAC0BD9CEF7FC3E83F808EDF2FC157600FAC436BFE22CC28433DE7059F5AF0`
+- 安装包：`L:\AI办公室\sirenhuisuo-v0.7.12\release\taiji-office-setup-0.9.0.exe`
+- Blockmap：`L:\AI办公室\sirenhuisuo-v0.7.12\release\taiji-office-setup-0.9.0.exe.blockmap`
+- 更新清单：`L:\AI办公室\sirenhuisuo-v0.7.12\release\latest.yml`
+- 安装包 SHA-256：`CA76B5E7375F48D3DC8B3A5BE644DDE0216EB90B116BD72760BFE16539CEFA39`
+- `app.asar` SHA-256：`887367C9E081FC9FF2D2D7186EDFA0E4666A65A0AA91C6655D0ED987D5B5375D`
+- 安装目录与构建目录的 `app.asar` 哈希一致，包内版本均为 `0.9.0`。
+- 安装目录只保留 `太极 AI 办公会所.exe` 和对应卸载程序，没有旧产品可执行文件残留。
 
-Release 必须同时存在上述安装器、`.blockmap` 和 `latest.yml`，缺少任何一个都不算发布完成。
+## 已知边界
 
-## 5. 当前仍需验证或继续解决的问题
+1. 非 ZIP Skill 修复目前不是完全原子替换；后续应先安装到临时目录，全部验证成功后再替换旧目录。
+2. 自动更新备份与回滚代码、顺序和类型已经验证，但仍需用真实 `v0.8.11 -> v0.9.0 -> v0.8.11` 自动更新链做一次人工跨版本演练。
+3. 源码开发版 Electron 在本机 Codex 终端会因图形子进程环境崩溃；正式安装版在同机真实 Electron 回归全部通过。这不是客户端进程占用，也不是太极业务代码错误。
+4. 安装包没有代码签名证书，Windows SmartScreen 仍可能提示风险。
+5. 主前端 bundle 仍超过 500 KB，后续可做按模块懒加载，但不要与任务内核改动混在同一版本。
 
-这些项目不能写成“已彻底完成”：
+## 踩过的坑
 
-1. **后台恢复仍是运行期能力。** 隐藏助理窗口不会中断任务，但整个应用退出、系统重启或进程崩溃后的任务持久化恢复仍属于后续“上下文与预算管理”。
-2. **IMA 需要真实账号环境验收。** 当前已完成正确的配置和验证链路，但仍需用户在本机提供有效、已重新生成的凭据，按官方 Skill 说明做一次真实连接和查询测试。
-3. **员工、团队、助理三条链路要继续做同层回归。** 以后涉及工具报告、附件、链接、产出物、审批、暂停和插话时，不能只修一个窗口。
-4. **跨设备员工数据不会自动进入 GitHub。** 员工、团队、聊天、模型密钥属于本机用户数据；同一台电脑内新建员工会实时同步给助理，但另一台电脑需要脱敏配置导入或后续的正式用户数据迁移功能。
-5. **安装包没有代码签名。** Windows SmartScreen 可能继续提示未知发布者。
-6. **仍需在第二台干净电脑验收。** 重点检查链接可点击、Word 文件可打开、产出物即时刷新、新建员工即时可调度、助理关闭后后台状态可见。
+- 源码快照不是 Git 工作树，不能用本目录的 `git status/push` 判断远端；发布继续使用工作区根目录的 `publish-v061.ps1` 和 Git Credential Manager OAuth。
+- 不要修改内部 `name`、`appId` 或 `hermes_office_*` 键，否则品牌改名会造成用户数据看似丢失。
+- 回滚不能先恢复配置再下载旧安装包；下载失败会让当前版本提前加载旧配置。
+- 直接运行 `electron-builder` 会尝试写系统缓存并遇到权限拒绝；必须使用 `npm.cmd run dist:win`，脚本会把缓存定向到 `L:\AI办公室\eb-cache`。
+- NSIS 构建中间会短暂出现 0 字节 `.7z`，必须等正式 `.exe`、`.blockmap` 和新 `latest.yml` 全部存在后再判断完成。
+- 不提交 API Key、密码、验证码、聊天数据、本机配置、用户 Skill 或测试用户目录。
 
-## 6. 八项大升级的真实进度
+## 下一步
 
-这 8 项不是全部未开始，也没有全部完成。`v0.8.0` 到 `v0.8.10` 已打下部分基础，下一位开发者必须沿现有架构继续补成稳定闭环，不能推翻重做。
+1. 在用户真实配置上验收五个场景：新建员工后助手立即找到、团队任务异常退出后恢复、损坏 Skill 修复、连接器真实连接证据、一次自动更新与回滚。
+2. 将非 ZIP Skill 修复改为临时目录原子替换。
+3. 给升级日志增加用户可导出的通俗诊断报告。
+4. 按用户新反馈继续优化，但同层问题必须同步检查助手、员工私聊和团队三条路径。
 
-| 编号 | 方向 | 当前状态 | 下一验收点 |
-| --- | --- | --- | --- |
-| 1 | 工作区隔离 | **部分完成**：聊天 scope 和附件已有隔离目录 | 每个任务独立工作区；代码任务可选 Git worktree；失败只回退责任任务 |
-| 2 | 统一诊断中心 | **部分完成**：模型、连接器、Skill 各自有检查 | 汇总成一次预检，显示可用、缺项、设置入口和恢复动作 |
-| 3 | 上下文与预算管理 | **部分完成**：阶段压缩、工具预算、运行时插话已存在 | 持久保存任务摘要、完成证据、未决问题、插话队列；重启可恢复 |
-| 4 | Skill 健康与恢复 | **部分完成**：完整 GitHub 目录安装、失效后检索替代方案已存在 | 技能清单、依赖检测、来源更新、缺文件修复、损坏隔离、安装前要求说明 |
-| 5 | 任务验收与审查 | **部分完成**：已有真实文件、运行证据和责任步骤退回 | 统一文件、运行、连接、人工确认四类验收；无证据不得完成 |
-| 6 | 安全边界 | **部分完成**：三档审批、命令沙盒、连接器确认已存在 | API Key/授权/命令/路径分权；密码、验证码、付费、删除、对外发送统一强确认 |
-| 7 | 升级与回滚 | **部分完成**：统一同步脚本、Release 三资产和覆盖安装验证已存在 | 更新前自动备份；更新后验证用户数据；失败一键回滚上一安装包 |
-| 8 | 太极品牌迁移 | **尚未正式开始**：产品理念已确定，兼容 ID 暂不动 | 最后统一名称、标题、说明和默认提示词，并无损迁移旧数据 |
-
-## 7. 下一步计划
-
-### P0：办公室端接手后立即做
-
-1. 同步远端 `main`，确认 `package.json` 是 `0.8.11`，确认 Release 有三个资产。
-2. 在干净电脑安装 `v0.8.11`，复测本文件第 5 节的六项，记录实际成功和失败证据。
-3. 使用真实但已轮换的 IMA 凭据完成“保存 -> 助手读取说明 -> 最小调用 -> 查询知识库”闭环；任何一步失败都保留明确原因和下一步。
-4. 同时检查助理、员工私聊、团队聊天的执行过程、暂停/继续/停止、链接、产出物和中途插话，不接受只验证助理窗口。
-
-### P1：八项升级的下一批实现
-
-1. 先做第 2 项统一诊断中心，让后面的功能都有共同预检入口。
-2. 接着做第 3 项持久任务上下文，补齐退出应用或崩溃后的可恢复执行。
-3. 再做第 4 项 Skill 健康清单和一键修复；真实外部依赖不能伪装成已安装。
-4. 将第 5、6 项接入同一验收和审批事件模型。
-5. 第 7 项在每次后续覆盖安装中持续实测；第 8 项品牌迁移最后执行。
-
-## 8. 必须遵守的开发规则
-
-1. 用户反馈某一入口有问题时，要检查所有同层入口。聊天能力默认同步覆盖助理、员工私聊和团队，弹出窗口行为也必须整体检查。
-2. “完成”必须有真实证据。写文件后重新读取，运行后看退出状态，连接后做最小真实调用，安装后检查安装目录和版本。
-3. 面向小白的正文先说成功、失败或进行中，再给下一步；命令、工具参数和原始错误放进可展开详情。
-4. 不把 API Key、Token、密码、验证码、聊天记录或真实用户配置提交到 GitHub。用户此前展示过的 IMA Key 必须撤销并重新生成。
-5. 不使用用户在聊天里提供过的 GitHub 密码。GitHub 发布只使用系统 Git Credential Manager 的 OAuth。
-6. 每次发布都要升级版本、构建、验证、覆盖安装、提交 `main`、创建同版本 Release、上传三个资产，并记录可回退版本。
-7. 保留现有应用 ID 和本地存储兼容键，直到第 8 项品牌迁移提供无损数据迁移。
-
-## 9. 本次踩过的坑
-
-1. **网页登录不等于 Git 命令已授权。** 本机使用 Git Credential Manager 设备授权；授权后只检查凭据是否可用，绝不能把 `git credential fill` 返回的 Token 打印到终端或日志。
-2. **本机 Git 配置了失效代理。** 全局代理是 `http://127.0.0.1:7890`，代理未运行时普通 Git 网络命令会失败。可对单次命令使用 `git -c http.proxy= -c https.proxy= ...`；不要永久删除用户代理配置。
-3. **当前家中源码目录不是 Git 工作树。** 不要把它复制进陈旧仓库后强推。发布脚本必须先读取远端最新 `main`，比较完整源码树，再以非强制方式更新分支。
-4. **Release 大文件不进入源码树。** `release/`、`dist/`、`node_modules/` 不提交；安装器、blockmap 和 `latest.yml` 作为 Release assets 单独上传。
-5. **运行中的客户端可能锁住 `app.asar`。** 覆盖安装和一致性校验前先彻底关闭桌面客户端；安装完成后再启动验收。
-6. **PowerShell 读取中文必须显式 UTF-8。** 使用 `Get-Content -Encoding utf8`，否则终端显示乱码不代表文件本身损坏。
-7. **关闭窗口与停止任务必须分开。** 以后不能再通过窗口销毁、最小化或隐藏事件隐式终止任务；只有明确的暂停或停止动作才能改变执行状态。
-8. **暂停唤醒后要先消费插话。** `waitIfPaused()` 被新消息唤醒后，必须先读取消息队列，再允许模型或工具执行；顺序反过来就会偷跑一次旧计划。
-9. **Vite 版本角标在启动时注入。** 修改 `package.json` 后必须重启开发服务，否则热更新页面可能仍显示旧角标；打包构建不受旧开发服务影响。
-
-## 10. 关键模块
-
-- `electron/main.cjs`：窗口生命周期、后台节流、主窗口任务控制、IPC 和本机能力。
-- `electron/preload.cjs`、`src/electron.d.ts`：渲染进程可调用的受限 IPC；新增 IPC 必须三处同步。
-- `src/store.tsx`：全局状态、员工目录、团队任务和跨窗口广播。
-- `src/data/hermesClient.ts`：模型调用、Agent 循环、工具预算、上下文和用量。
-- `src/engine/agentGuardrails.mjs`：消息边界、文字控制、反馈挂起、工具去重和读取上限。
-- `src/components/chat/AssistantChat.tsx`：助理执行过程与后台状态。
-- `src/components/chat/DmChatApp.tsx`：员工私聊，行为必须与助理保持同层一致。
-- `src/components/chat/TeamChatApp.tsx`：团队任务、暂停、继续、停止和审查。
-- `src/components/sidebar/ConnectorConfigModal.tsx`：连接器安装、凭据和验证三步界面。
-- `src/engine/connectorTools.ts`、`src/engine/tools.ts`：连接器与本机工具真实执行。
-- `scripts/verify-assistant-background.mjs`：关闭助理窗口后任务继续的 Electron 回归测试。
-- `scripts/verify-agent-kernel.mjs`：消息分类、重复读取和连接器预算回归。
-- `scripts/verify-steering-e2e.mjs`：暂停中插话的真实 Electron 假模型回归。
-- `scripts/verify-tool-window.mjs`：连接器窗口默认尺寸和首屏完整性回归。
-
-接手后先复现和验收，再修改。不要因为计划很大就重写现有架构；太极的目标是吸收有效理念并持续进化，而不是变成 Hermes Agent 的复制品。
+每次完成后仍按：预检、构建、回归、打包、覆盖安装、哈希校验、更新本文件、发布 GitHub `main` 与同版本 Release 的顺序交付。

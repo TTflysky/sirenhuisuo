@@ -7,10 +7,12 @@ import { StoreProvider } from './store';
 import { deliverBus } from './ipcBus';
 import { migrateToModelLibrary } from './data/hermesClient';
 import { applyAppearanceSettings, loadAppearanceSettings } from './data/appearance';
+import { ensureBrandMigrationMarker } from './brand';
 
 // 迁移旧设置到多模型库格式（如果还没有）
 try { migrateToModelLibrary(); } catch {}
 try { applyAppearanceSettings(loadAppearanceSettings()); } catch {}
+ensureBrandMigrationMarker();
 
 // 注册窗口间广播监听：任意窗口经 main 进程转发来的消息，统一交给本地总线分发
 if (typeof window !== 'undefined' && window.electronAPI?.onBroadcast) {

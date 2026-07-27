@@ -70,13 +70,28 @@ export function createTaskWorkspaceId(kind: WorkspaceKind, ownerId = 'default'):
 }
 
 export async function initializeTaskWorkspace(workspaceId: string, metadata: { kind: WorkspaceKind; label: string; taskId?: string }): Promise<void> {
-  try {
-    await window.electronAPI?.fsInitWorkspace?.(workspaceScope(workspaceId), {
-      ...metadata,
-      workspaceId,
-      createdAt: new Date().toISOString(),
-    });
-  } catch {}
+  const api = window.electronAPI;
+  if (!api?.fsInitWorkspace) return;
+  const result = await api.fsInitWorkspace(workspaceScope(workspaceId), {
+    ...metadata,
+    workspaceId,
+    createdAt: new Date().toISOString(),
+  });
+  if (!result.ok) throw new Error(result.error ?? '任务工作区初始化失败');
+}
+
+/** 把聊天暂存区中的附件复制到本次任务目录，任务之间不再共享可写文件。 */
+export async function copyAttachmentsToWorkspace(sourceScope: string, workspaceId: string, attachments: Attachment[]): Promise<void> {
+  const api = window.electronAPI;
+  const entries = attachments
+    .filter((attachment) => !!attachment.workspacePath)
+    .map((attachment) => ({ sourcePath: attachment.workspacePath!, targetPath: attachment.workspacePath! }));
+  if (!api?.fsCopyIntoWorkspace || entries.length === 0) return;
+  const result = await api.fsCopyIntoWorkspace(workspaceScope(sourceScope), workspaceScope(workspaceId), entries);
+  if (!result.ok) {
+    const detail = result.errors?.filter(Boolean).slice(0, 3).join('；') || result.error;
+    throw new Error(`附件复制到任务工作区失败${detail ? `：${detail}` : ''}`);
+  }
 }
 
 /** 将附件真实写入当前聊天的工作区，供员工工具读取。 */

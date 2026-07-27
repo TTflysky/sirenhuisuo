@@ -296,6 +296,13 @@ export default function TeamChatApp({ teamId }: Props) {
         <div className="task-run-goal"><strong>目标</strong><span>{run.goal ?? run.request}</span></div>
         {!!run.preflight?.length && <div className="task-run-preflight"><strong>前置检查</strong>{run.preflight.map((item) => <span key={item.label} className={`is-${item.status}`} title={item.detail}>{item.status === 'passed' ? '✓' : item.status === 'blocked' ? '!' : '·'} {item.label}</span>)}</div>}
         {!!run.skillRefs?.length && <div className="task-run-skills"><strong>Skills</strong>{run.skillRefs.map((skill) => <span key={skill.id}>{skill.name}</span>)}</div>}
+        {run.recoveryContext && <div className="task-run-recovery">
+          <div><strong>恢复摘要</strong><span>{run.recoveryContext.summary}</span></div>
+          <div><strong>预算快照</strong><span>工具 {run.recoveryContext.budget.toolAttempts} 次{run.recoveryContext.budget.promptTokens !== undefined ? ` · 上下文 ${run.recoveryContext.budget.promptTokens.toLocaleString()}${run.recoveryContext.budget.contextWindowTokens ? ` / ${run.recoveryContext.budget.contextWindowTokens.toLocaleString()} tokens` : ' tokens'}` : ''}</span></div>
+          {run.recoveryContext.unresolvedIssues.length > 0 && <details><summary>未决问题 {run.recoveryContext.unresolvedIssues.length}</summary>{run.recoveryContext.unresolvedIssues.slice(-4).map((issue, index) => <p key={`${index}-${issue.slice(0, 20)}`}>{issue}</p>)}</details>}
+          {run.recoveryContext.steeringMessages.length > 0 && <details><summary>运行中插话 {run.recoveryContext.steeringMessages.length}</summary>{run.recoveryContext.steeringMessages.slice(-4).map((message, index) => <p key={`${index}-${message.slice(0, 20)}`}>{message}</p>)}</details>}
+        </div>}
+        {!!run.verification?.length && <div className="task-run-verification"><strong>验收证据</strong>{run.verification.map((item) => <span key={item.kind} className={`is-${item.status}`} title={item.detail}>{item.status === 'passed' ? '✓' : '!'} {item.label}</span>)}</div>}
         {run.steps.map((step) => {
           const emp = state.employees.find((item) => item.id === step.employeeId);
           const model = run.memberSnapshot.find((item) => item.id === step.employeeId)?.model;

@@ -16,6 +16,7 @@ import type { SkillReference } from '../../types';
 import type { OutputRecord } from '../../data/outputs';
 import {
   fileToAttachment, attachmentsFromClipboard, attachmentWorkspaceContext, formatFileSize, persistAttachments,
+  copyAttachmentsToWorkspace, createTaskWorkspaceId, initializeTaskWorkspace,
 } from '../../utils/attachments';
 import { TOOLS } from '../../engine/tools';
 import { getConnectorTools } from '../../engine/connectorTools';
@@ -36,6 +37,7 @@ interface Props {
 interface DmRetrySettings { autoRetry: boolean; intervalSeconds: number; maxAttempts: number }
 interface DmRetryJob {
   id: string;
+  workspaceId: string;
   userText: string;
   attachments: Attachment[];
   skillContext: string;
@@ -56,7 +58,8 @@ function loadRetryJob(empId: string): DmRetryJob | null {
   try {
     const raw = localStorage.getItem(retryJobKey(empId));
     if (!raw) return null;
-    const job = JSON.parse(raw) as DmRetryJob;
+    const parsed = JSON.parse(raw) as Partial<DmRetryJob>;
+    const job = { ...parsed, workspaceId: parsed.workspaceId ?? createTaskWorkspaceId('dm', empId) } as DmRetryJob;
     return job.status === 'waiting' && !job.nextRetryAt ? { ...job, status: 'failed' } : job;
   } catch { return null; }
 }
@@ -118,6 +121,7 @@ export default function DmChatApp({ empId }: Props) {
   const [retryNow, setRetryNow] = useState(Date.now());
   const runJobRef = useRef<(job: DmRetryJob) => Promise<void>>(async () => {});
   const steeringMessagesRef = useRef<string[]>([]);
+  const activeWorkspaceIdRef = useRef<string | undefined>(undefined);
   const queuedFollowUpsRef = useRef<Array<{ userText: string; attachments: Attachment[]; skillContext: string }>>([]);
   const msgsRef = useRef(msgs);
   const previousExecutionStateRef = useRef<'running' | 'paused' | 'stopping'>('running');
@@ -234,6 +238,18 @@ export default function DmChatApp({ empId }: Props) {
         return;
       }
       if (mode === 'steer') {
+        if (activeWorkspaceIdRef.current && atts.length) {
+          try {
+            await copyAttachmentsToWorkspace(`dm:${empId}`, activeWorkspaceIdRef.current, atts);
+          } catch (error) {
+            push({
+              id: `dm-${Date.now()}-${empId}-attachment-error`, authorId: empId, roleId: emp.role,
+              content: `这次附件还没有交给当前任务：${error instanceof Error ? error.message : String(error)}。原任务保持当前状态。`,
+              mentions: [], timestamp: Date.now(), kind: 'text',
+            });
+            return;
+          }
+        }
         const holdForFeedback = shouldHoldTaskForFeedback(followUp);
         if (isExplicitPauseSteering([followUp]) || holdForFeedback) executionControl.pause();
         if (isExplicitResumeSteering([followUp])) executionControl.resume();
@@ -241,7 +257,7 @@ export default function DmChatApp({ empId }: Props) {
         executionControl.interruptForSteering();
         setStatus(holdForFeedback ? '已挂起原任务，正在回答你的反馈…' : '正在优先处理你刚刚说的话…');
       } else {
-        queuedFollowUpsRef.current.push({ userText: followUp, attachments: [], skillContext: '' });
+        queuedFollowUpsRef.current.push({ userText: content, attachments: atts, skillContext });
         push({
           id: `dm-${Date.now()}-${empId}-ack`, authorId: empId, roleId: emp.role,
           content: '收到。这条要求已经排到当前任务之后，不会混进正在执行的步骤。',
@@ -253,7 +269,7 @@ export default function DmChatApp({ empId }: Props) {
     }
 
     const history: ChatTurn[] = msgs.slice(-8).map((m) => ({ role: m.roleId === 'human' ? 'user' : 'assistant', content: m.content }));
-    void runDmJob({ id: `dm-retry-${Date.now()}`, userText: content, attachments: atts, skillContext, history, attempt: 0, status: 'waiting', lastError: '' });
+    void runDmJob({ id: `dm-retry-${Date.now()}`, workspaceId: createTaskWorkspaceId('dm', empId), userText: content, attachments: atts, skillContext, history, attempt: 0, status: 'waiting', lastError: '' });
 
     // 自动提炼用户洞察（每 3 条用户消息触发一次）
     const userMsgCount = msgs.filter(m => m.roleId === 'human').length;
@@ -274,8 +290,11 @@ export default function DmChatApp({ empId }: Props) {
     setLiveExecutionSteps([]);
     executionControl.reset();
     dispatch({ type: 'UPDATE_EMPLOYEE', id: empId, partial: { isWorking: true } });
+    activeWorkspaceIdRef.current = job.workspaceId;
     try {
-      const { text: reply, usage, contextUsage, thoughtChain } = await generateReply(job.userText, job.attachments, job.skillContext, job.history);
+      await initializeTaskWorkspace(job.workspaceId, { kind: 'dm', label: `${emp.name} / ${job.userText.slice(0, 50) || '私聊任务'}`, taskId: job.id });
+      await copyAttachmentsToWorkspace(`dm:${empId}`, job.workspaceId, job.attachments);
+      const { text: reply, usage, contextUsage, thoughtChain } = await generateReply(job.userText, job.attachments, job.skillContext, job.history, job.workspaceId);
       setStatus('正在整理清晰的结果…');
       push({ id: `dm-${Date.now()}-${empId}`, authorId: empId, roleId: emp.role, content: reply, mentions: [], timestamp: Date.now(), kind: 'text', tokens: usage, contextUsage, thoughtChain });
       setRetryJob(null);
@@ -292,6 +311,7 @@ export default function DmChatApp({ empId }: Props) {
       setRetryJob(next);
       saveRetryJob(empId, next);
     } finally {
+      if (activeWorkspaceIdRef.current === job.workspaceId) activeWorkspaceIdRef.current = undefined;
       setTyping(false);
       setStatus('');
       setLiveActivities([]);
@@ -302,6 +322,7 @@ export default function DmChatApp({ empId }: Props) {
         const history = msgsRef.current.slice(-8).map((m): ChatTurn => ({ role: m.roleId === 'human' ? 'user' : 'assistant', content: m.content }));
         window.setTimeout(() => void runDmJob({
           id: `dm-queued-${Date.now()}`,
+          workspaceId: createTaskWorkspaceId('dm', empId),
           userText: queued.userText,
           attachments: queued.attachments,
           skillContext: queued.skillContext,
@@ -330,7 +351,7 @@ export default function DmChatApp({ empId }: Props) {
   };
 
   // 优先真调 OpenAI 兼容模型（带员工提示词），失败/未配置则回落本地剧本
-  const generateReply = async (userText: string, atts: Attachment[] = [], skillContext = '', historyOverride?: ChatTurn[]): Promise<{ text: string; usage?: number; contextUsage?: ContextUsage; thoughtChain?: ThoughtChainStep[] }> => {
+  const generateReply = async (userText: string, atts: Attachment[] = [], skillContext = '', historyOverride?: ChatTurn[], workspaceId?: string): Promise<{ text: string; usage?: number; contextUsage?: ContextUsage; thoughtChain?: ThoughtChainStep[] }> => {
     // 文本类附件：直接拼进用户文本作为上下文
     let enriched = userText;
     const textAtts = atts.filter((a) => a.kind === 'text' && a.dataUrl);
@@ -362,6 +383,7 @@ export default function DmChatApp({ empId }: Props) {
       turns: [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content: enriched }],
       tools: [...TOOLS, ...getConnectorTools()], scene: 'dm', label: emp.name, modelConfig: getEmployeeModel(emp),
       extraSystemContext: [emp.soul, skillContext].filter(Boolean).join('\n\n'), scope: `dm:${empId}`, attachments: imageAtts,
+      workspaceId,
       shouldStop: executionControl.shouldStop,
       waitIfPaused: executionControl.waitIfPaused,
       consumeSteeringMessages: () => steeringMessagesRef.current.splice(0),

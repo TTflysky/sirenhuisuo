@@ -1,4 +1,5 @@
 import type { Employee, Team } from '../types';
+import { APP_VERSION } from '../appVersion';
 
 export interface SyncProfile {
   schemaVersion?: number;
@@ -41,4 +42,23 @@ export function applySyncProfile(input: unknown): { employees: number; teams: nu
 
   const modelLibrary = Array.isArray(settings.modelLibrary) ? settings.modelLibrary : [];
   return { employees: profile.employees.length, teams: profile.teams.length, models: modelLibrary.length };
+}
+
+export function createUpgradeSnapshot(): UpgradeSnapshot {
+  const values: Record<string, string> = {};
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index);
+    if (!key || !key.startsWith('hermes_office_')) continue;
+    const value = localStorage.getItem(key);
+    if (value !== null) values[key] = value;
+  }
+  return { schema: 1, appVersion: APP_VERSION, createdAt: new Date().toISOString(), localStorage: values };
+}
+
+export function restoreUpgradeSnapshot(snapshot: UpgradeSnapshot): void {
+  if (!snapshot || snapshot.schema !== 1 || !snapshot.localStorage || typeof snapshot.localStorage !== 'object') throw new Error('更新备份格式无效');
+  for (const [key, value] of Object.entries(snapshot.localStorage)) {
+    if (!key.startsWith('hermes_office_') || typeof value !== 'string') continue;
+    localStorage.setItem(key, value);
+  }
 }

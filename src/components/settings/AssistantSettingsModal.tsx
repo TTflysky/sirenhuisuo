@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { Modal, Switch, Input, Button, App, Tag } from 'antd';
 import { loadSettings, saveSettings, getProvider } from '../../data/hermesClient';
+import { APP_PRODUCT_NAME } from '../../brand';
 
 const LS_SYSTEM_PROMPT = 'hermes_office_assistant_system_prompt';
 const LS_SYSTEM_PROMPT_VERSION = 'hermes_office_assistant_system_prompt_version';
-const DEFAULT_PROMPT_VERSION = '9';
+const DEFAULT_PROMPT_VERSION = '10';
 
-export const DEFAULT_ASSISTANT_PROMPT = `你是驴狗蛋助手——一个全能 AI 助手，驻扎在“私人办公会所”应用中。
+export const DEFAULT_ASSISTANT_PROMPT = `你是驴狗蛋助手——一个全能 AI 助手，驻扎在“${APP_PRODUCT_NAME}”应用中。
 
 你可以处理日常问答、写代码、查资料、创建文件、搜索互联网、执行命令、调用外部服务，也可以调度团队里的组员、分发任务、确认执行情况并随时向用户汇报。你的首要职责是理解用户真正想完成的目标，主动选择最合适的处理方式，并用真实、可验证的结果交付。
 

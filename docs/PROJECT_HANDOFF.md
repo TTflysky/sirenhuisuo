@@ -1,7 +1,7 @@
 # 项目交接手册
 
 > 最后整理：2026-07-27
-> 当前源码版本：`v0.8.11`
+> 当前源码版本：`v0.9.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 
@@ -9,7 +9,7 @@
 
 ## 1. 产品目标与不可破坏的规则
 
-私人办公会所是一个 Windows 桌面多智能体办公应用。用户可创建员工、配置多个 OpenAI 兼容模型、组成团队，让助理负责理解、拆解、调度、交接和验收。
+太极 AI 办公会所是一个 Windows 桌面多智能体办公应用。用户可创建员工、配置多个 OpenAI 兼容模型、组成团队，让助理负责理解、拆解、调度、交接和验收。
 
 以下规则是产品核心，改动前必须保留：
 
@@ -123,13 +123,14 @@ npm.cmd install
 npm.cmd run build
 npm.cmd run lint
 npm.cmd run verify:agent-kernel
+npm.cmd run verify:foundation
 npm.cmd run verify:steering-e2e
 npm.cmd run verify:tool-window
 
-$env:ELECTRON_BUILDER_CACHE='E:\私人办公会所项目\.electron-builder-cache'
+$env:ELECTRON_BUILDER_CACHE='L:\AI办公室\eb-cache'
 $env:CSC_IDENTITY_AUTO_DISCOVERY='false'
 npm.cmd run dist:win
-Get-FileHash -Algorithm SHA256 'release\hermes-office-pro-setup-<version>.exe'
+Get-FileHash -Algorithm SHA256 'release\taiji-office-setup-<version>.exe'
 ```
 
 发布检查清单：
@@ -138,7 +139,7 @@ Get-FileHash -Algorithm SHA256 'release\hermes-office-pro-setup-<version>.exe'
 2. `npm.cmd run build` 必须通过；`npm.cmd run lint` 的新增警告必须为零；`git diff --check` 必须通过。
 3. 构建安装包并记录绝对路径、文件大小和 SHA-256。
 4. `git add`、`git commit`、通过本机代理推送 `main`。
-5. 创建 `v<version>` GitHub Release，上传 `hermes-office-pro-setup-<version>.exe`、同名 `.blockmap` 和 `latest.yml`。
+5. 创建 `v<version>` GitHub Release，上传 `taiji-office-setup-<version>.exe`、同名 `.blockmap` 和 `latest.yml`。
 6. 用 GitHub API 或 Release 页面确认：远端 `main`、README 版本、Release 标签和三个发布资产都存在。
 
 本机网络若需要代理，Git/GitHub 使用：`http://127.0.0.1:65532`。不要把 GitHub Token、代理凭据或 API Key 写进代码、文档和提交记录。

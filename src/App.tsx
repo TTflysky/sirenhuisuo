@@ -32,6 +32,8 @@ import { checkBackend } from './data/hermesClient';
 import { APP_VERSION } from './appVersion';
 import { BUS_CHANNELS, onBus, sendBus } from './ipcBus';
 import { formatExecutionDuration } from './hooks/useAgentExecutionControl';
+import { createUpgradeSnapshot } from './utils/configSync';
+import { APP_BRAND_NAME, APP_PRODUCT_NAME } from './brand';
 
 type View = 'office' | 'analytics' | 'autopilot' | 'skill-library';
 type ThemeName = 'light' | 'dark' | 'eye-care' | 'soft-gray' | 'ocean-blue' | 'quiet-blue' | 'glass-light' | 'glass-dark' | 'spruce' | 'graphite' | 'cyberpunk';
@@ -86,6 +88,24 @@ export default function App() {
     localStorage.setItem('hermes_office_theme', themeName);
     window.electronAPI?.broadcast?.('theme-changed', themeName);
   }, [themeName]);
+
+  useEffect(() => {
+    const api = window.electronAPI;
+    if (!api?.getUpgradeStatus || !api.recordUpgradeValidation) return;
+    const timer = window.setTimeout(() => void (async () => {
+      const status = await api.getUpgradeStatus();
+      if (!status.ok || status.journal?.toVersion !== APP_VERSION || status.journal.status !== 'ready-to-install') return;
+      let models = 0;
+      try {
+        const settings = JSON.parse(localStorage.getItem('hermes_office_settings') || '{}');
+        models = Array.isArray(settings.modelLibrary) ? settings.modelLibrary.length : settings.model || settings.apiHost ? 1 : 0;
+      } catch {}
+      let workspaceReady = false;
+      try { workspaceReady = Boolean(await api.getWorkspace()); } catch {}
+      await api.recordUpgradeValidation({ ok: true, employees: state.employees.length, teams: state.teams.length, models, taskRuns: state.taskRuns.length, workspaceReady });
+    })(), 1800);
+    return () => window.clearTimeout(timer);
+  }, [state.employees.length, state.taskRuns.length, state.teams.length]);
 
   useEffect(() => {
     const applyTheme = (theme: unknown) => {
@@ -181,9 +201,9 @@ export default function App() {
       {/* 标题栏 */}
       <div className="titlebar">
         <div className="titlebar-left">
-          <div className="titlebar-brand" aria-label="私人办公会所">
+          <div className="titlebar-brand" aria-label={APP_PRODUCT_NAME}>
             <span className="titlebar-brand-mark"><AppstoreOutlined /></span>
-            <span className="titlebar-title">私人办公会所</span>
+            <span className="titlebar-title">{APP_BRAND_NAME}</span>
             <span className="titlebar-version" title={`当前版本 v${APP_VERSION}`}>v{APP_VERSION}</span>
           </div>
           {/* 视图切换 */}
@@ -217,7 +237,12 @@ export default function App() {
           {/* 自动更新状态 */}
           {updateStatus && (
             <div className={`update-status update-${updateStatus.status}`} title={updateStatus.message}
-              onClick={() => updateStatus.status === 'downloaded' && window.electronAPI?.installUpdate()}
+              onClick={() => {
+                if (updateStatus.status !== 'downloaded') return;
+                void window.electronAPI?.installUpdate(createUpgradeSnapshot()).then((result) => {
+                  if (!result.ok) setUpdateStatus({ status: 'error', message: `更新前备份失败：${result.error ?? '未知错误'}` });
+                });
+              }}
               style={updateStatus.status === 'downloaded' ? { cursor: 'pointer', textDecoration: 'underline' } : {}}
             >
               {updateStatus.status === 'checking' && '🔍 检查更新…'}

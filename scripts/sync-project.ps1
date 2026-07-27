@@ -42,7 +42,7 @@ function Save-RemoteFile([string]$Uri, [string]$Path) {
   New-Item -ItemType Directory -Path $parent -Force | Out-Null
   try {
     Import-Module BitsTransfer -ErrorAction Stop
-    Start-BitsTransfer -Source $Uri -Destination $Path -DisplayName 'Hermes Office sync' -Description 'Downloading verified project artifact'
+    Start-BitsTransfer -Source $Uri -Destination $Path -DisplayName 'Taiji sync' -Description 'Downloading verified project artifact'
   } catch {
     Invoke-WebRequest -Uri $Uri -Headers $headers -OutFile $Path -UseBasicParsing
   }
@@ -113,7 +113,11 @@ function Sync-Source($State) {
 
 function Sync-Installer($State) {
   if (-not $State.Release) { throw "GitHub Release v$($State.Version) is not available." }
-  $asset = $State.Release.assets | Where-Object { $_.name -eq "hermes-office-pro-setup-$($State.Version).exe" } | Select-Object -First 1
+  $asset = $State.Release.assets | Where-Object { $_.name -eq "taiji-office-setup-$($State.Version).exe" } | Select-Object -First 1
+  if (-not $asset) {
+    # v0.8.x and earlier used the internal package name. Keep old releases installable.
+    $asset = $State.Release.assets | Where-Object { $_.name -eq "hermes-office-pro-setup-$($State.Version).exe" } | Select-Object -First 1
+  }
   if (-not $asset) { throw "Release v$($State.Version) does not contain the installer." }
 
   $downloadDir = Join-Path $workspaceRoot "downloads\v$($State.Version)"
@@ -140,7 +144,7 @@ function Sync-Installer($State) {
 }
 
 $state = Get-RemoteState
-Write-Host "Hermes Office v$($state.Version) | $($state.ShortSha) | $($state.CommitDate)" -ForegroundColor Green
+Write-Host "Taiji v$($state.Version) | $($state.ShortSha) | $($state.CommitDate)" -ForegroundColor Green
 Write-Host ($state.Message -split "`n" | Select-Object -First 1)
 
 if ($Mode -in @('Source', 'All')) { [void](Sync-Source $state) }

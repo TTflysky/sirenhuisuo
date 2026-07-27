@@ -4,6 +4,7 @@ import { seedEmployees } from './defaultEmployees';
 import { seedTeams } from './defaultTeams';
 import type { OutputScope } from './outputs';
 import { loadTaskRuns } from './taskRuns';
+import { redactToolArguments } from '../engine/securityBoundary';
 import { ensureDistinctEmployeeColors } from './employeeColors';
 import {
   canonicalToolCallKey,
@@ -88,6 +89,8 @@ export interface AppSettings {
   sandboxEnabled?: boolean;
   /** 工具动作的审批强度。 */
   approvalMode?: ApprovalMode;
+  /** 连接器独立审批强度；未设置时兼容沿用工具审批。 */
+  connectorApprovalMode?: ApprovalMode;
 }
 
 export type ApprovalMode = 'ask' | 'delegate' | 'full';
@@ -95,6 +98,7 @@ export type ApprovalMode = 'ask' | 'delegate' | 'full';
 export interface ExecutionPolicy {
   sandboxEnabled: boolean;
   approvalMode: ApprovalMode;
+  connectorApprovalMode: ApprovalMode;
 }
 
 export const APPROVAL_MODE_OPTIONS: Array<{ value: ApprovalMode; label: string; description: string }> = [
@@ -149,6 +153,7 @@ export function getExecutionPolicy(settings: AppSettings = loadSettings()): Exec
   return {
     sandboxEnabled: settings.sandboxEnabled !== false,
     approvalMode: settings.approvalMode === 'ask' || settings.approvalMode === 'full' ? settings.approvalMode : 'delegate',
+    connectorApprovalMode: settings.connectorApprovalMode === 'ask' || settings.connectorApprovalMode === 'full' ? settings.connectorApprovalMode : settings.connectorApprovalMode === 'delegate' ? 'delegate' : settings.approvalMode === 'ask' || settings.approvalMode === 'full' ? settings.approvalMode : 'delegate',
   };
 }
 
@@ -1030,7 +1035,7 @@ function getUserActionForFailure(raw: string): string {
     return '先在对应服务完成登录、验证码或授权，完成后回复“继续”，我会接着验证。';
   }
   if (/EACCES|EPERM|permission|权限|拒绝访问|administrator/iu.test(raw)) {
-    return '请用管理员身份重新打开私人办公会所，然后回复“继续”，我会从失败步骤接着做。';
+    return '请用管理员身份重新打开太极，然后回复“继续”，我会从失败步骤接着做。';
   }
   if (/timeout|timed out|ECONN|ENOTFOUND|network|网络|连接失败/iu.test(raw)) {
     return '先确认电脑能正常访问对应网站或服务，然后回复“继续”，我会重新连接并验证。';
@@ -1356,7 +1361,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
           ? { toolCallId: tc.id, name: tc.name, success: false, output: blockedReason }
           : await (async () => {
             executed = true;
-            onToolCall?.(tc.name, tc.arguments);
+            onToolCall?.(tc.name, redactToolArguments(tc.arguments));
             return executeTool({ id: tc.id, name: tc.name, args: (() => { try { return JSON.parse(tc.arguments); } catch { return {}; } })(), scope, workspaceId: opts.workspaceId });
           })();
         const resultSuccess = executed && isUsefulToolOutcome(tc.name, result.success, result.output);
@@ -1371,7 +1376,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
           iterationHadFailure = true;
         }
         if (executed && cached === undefined) toolResultCache.set(cacheKey, { output: result.output.slice(0, 6000), success: resultSuccess });
-        if (executed) onToolResult?.(tc.name, tc.arguments, result.output, resultSuccess);
+        if (executed) onToolResult?.(tc.name, redactToolArguments(tc.arguments), result.output, resultSuccess);
         callLog.push({ name: tc.name, args: tc.arguments, result: result.output.slice(0, 1200), success: resultSuccess });
 
         if (isPreparationOnlyTool(tc.name) && newEvidence) preparationOnlyStreak += 1;

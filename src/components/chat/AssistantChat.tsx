@@ -13,7 +13,10 @@ import SkillPickerButton from '../skills/SkillPickerButton';
 import ExecutionPolicyControl from './ExecutionPolicyControl';
 import type { SkillReference } from '../../types';
 import type { OutputRecord } from '../../data/outputs';
-import { fileToAttachment, attachmentsFromClipboard, attachmentWorkspaceContext, formatFileSize, persistAttachments } from '../../utils/attachments';
+import {
+  fileToAttachment, attachmentsFromClipboard, attachmentWorkspaceContext, formatFileSize, persistAttachments,
+  copyAttachmentsToWorkspace, createTaskWorkspaceId, initializeTaskWorkspace,
+} from '../../utils/attachments';
 import { useFileDrop } from '../../hooks/useFileDrop';
 import { formatExecutionDuration, useAgentExecutionControl } from '../../hooks/useAgentExecutionControl';
 import AssistantSettingsModal, { getAssistantPrompt } from '../settings/AssistantSettingsModal';
@@ -95,6 +98,7 @@ export default function AssistantChat() {
   const endRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const steeringMessagesRef = useRef<string[]>([]);
+  const activeWorkspaceIdRef = useRef<string | undefined>(undefined);
   const queuedFollowUpsRef = useRef<Array<{ prompt: string; display: string }>>([]);
   const previousExecutionStateRef = useRef<'running' | 'paused' | 'stopping'>('running');
   const executionControl = useAgentExecutionControl(busy);
@@ -188,6 +192,18 @@ export default function AssistantChat() {
         return;
       }
       const mode = loadSettings().followUpMode ?? 'steer';
+      if (activeWorkspaceIdRef.current && atts.length) {
+        try {
+          await copyAttachmentsToWorkspace('assistant', activeWorkspaceIdRef.current, atts);
+        } catch (error) {
+          push({
+            id: `h-${Date.now()}-attachment-error`, authorId: 'assistant', roleId: 'custom',
+            content: `这次附件还没有交给当前任务：${error instanceof Error ? error.message : String(error)}。原任务保持当前状态。`,
+            mentions: [], timestamp: Date.now(), kind: 'text',
+          });
+          return;
+        }
+      }
       if (mode === 'steer') {
         const holdForFeedback = shouldHoldTaskForFeedback(enriched);
         if (isExplicitPauseSteering([enriched]) || holdForFeedback) executionControl.pause();
@@ -213,6 +229,23 @@ export default function AssistantChat() {
     setLiveExecutionSteps([]);
     executionControl.reset();
 
+    const workspaceId = createTaskWorkspaceId('assistant');
+    activeWorkspaceIdRef.current = workspaceId;
+    try {
+      await initializeTaskWorkspace(workspaceId, { kind: 'assistant', label: content.slice(0, 60) || '助理任务', taskId: workspaceId.split('/').pop() });
+      await copyAttachmentsToWorkspace('assistant', workspaceId, atts);
+    } catch (error) {
+      push({
+        id: `h-${Date.now()}-workspace-error`, authorId: 'assistant', roleId: 'custom',
+        content: `还不能开始。本次独立工作区没有准备好：${error instanceof Error ? error.message : String(error)}。请到“设置 → 诊断中心”检查工作区。`,
+        mentions: [], timestamp: Date.now(), kind: 'text',
+      });
+      activeWorkspaceIdRef.current = undefined;
+      setBusy(false);
+      setStatus('');
+      return;
+    }
+
     // 无当前助理 API 时本地回复（支持助理独立模型配置）
     const assistantSettings = resolveChatSettings();
     if (!resolveApiBase(assistantSettings)) {
@@ -223,6 +256,7 @@ export default function AssistantChat() {
       });
       setBusy(false);
       setStatus('');
+      if (activeWorkspaceIdRef.current === workspaceId) activeWorkspaceIdRef.current = undefined;
       const queued = queuedFollowUpsRef.current.shift();
       if (queued) setPendingRequest({ id: `queued-${Date.now()}`, prompt: queued.prompt, display: queued.display, createdAt: Date.now(), alreadyDisplayed: true });
       return;
@@ -267,6 +301,7 @@ ${employeeDirectory}
         scene: 'assistant',
         label: '驴狗蛋助手',
         scope: 'assistant',
+        workspaceId,
         attachments: imageAtts,
         extraSystemContext: [organizationContext, skillContext].filter(Boolean).join('\n\n'),
         shouldStop: executionControl.shouldStop,
@@ -355,6 +390,7 @@ ${employeeDirectory}
       });
     }
     setBusy(false);
+    if (activeWorkspaceIdRef.current === workspaceId) activeWorkspaceIdRef.current = undefined;
     setStatus('');
     const queued = queuedFollowUpsRef.current.shift();
     if (queued) setPendingRequest({ id: `queued-${Date.now()}`, prompt: queued.prompt, display: queued.display, createdAt: Date.now(), alreadyDisplayed: true });
