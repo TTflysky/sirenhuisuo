@@ -1,3 +1,5 @@
+import type { ExecutionControllerSnapshot } from './engine/executionController.mjs';
+
 // ===== 角色标识：沿用 OPC 铁律 4 角色 + 真人 + 自定义 =====
 export type OpcRoleId = 'pm' | 'planner' | 'coder' | 'checker' | 'custom';
 export type RoleId = OpcRoleId | 'human';
@@ -195,6 +197,8 @@ export interface TaskRecoveryContext {
   };
   interruptedAt?: number;
   interruptionReason?: string;
+  /** 统一执行控制器的可恢复快照，不包含工具原始参数或凭据。 */
+  controller?: ExecutionControllerSnapshot;
 }
 
 export interface TaskPlanStep {

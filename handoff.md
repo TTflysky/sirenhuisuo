@@ -1,12 +1,12 @@
 # 太极项目当前交接
 
 > 更新时间：2026-07-27
-> 当前版本：`v0.9.6`
+> 当前版本：`v0.10.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
-> Release：[v0.9.6](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.9.6)
+> Release：[v0.10.0](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.10.0)
 
-`v0.9.6` 修复 IMA 验证执行内核：官方 Skill 继续提供公开规则，Electron 主进程原生适配器负责固定端点调用、重试和业务验收，不再通过 PowerShell 拼接 JSON。纯验证请求直接返回客户端证据，不再让模型重复读取 Skill 或要求用户提供命令。连接器是统一能力入口，MCP 只是其中一种协议；IMA 当前不是 MCP Server。用户凭据仍只保存在本机。
+`v0.10.0` 建立统一 `ExecutionController`：助理、员工私聊和团队任务都按“观察结果、判断进度、失败分类、重试或换路线、重新验收”推进。模型瞬时失败保留上下文最多尝试 5 次，工具重复失败会禁用原路线；没有真实证据不能宣布完成。团队控制器快照随任务持久化，跨电脑接手时可直接看到失败类型、已有证据与恢复位置。用户凭据仍只保存在本机。
 
 ## 办公室端直接开始
 
@@ -16,7 +16,7 @@
 npm.cmd run sync:project
 ```
 
-进入新下载的 `sirenhuisuo-v0.9.6-<commit>` 目录后依次执行：
+进入新下载的 `sirenhuisuo-v0.10.0-<commit>` 目录后依次执行：
 
 ```powershell
 npm.cmd install
@@ -24,6 +24,7 @@ npm.cmd run build
 npm.cmd run lint
 npm.cmd run verify:foundation
 npm.cmd run verify:agent-kernel
+npm.cmd run verify:execution-controller
 npm.cmd run verify:connector-adapters
 npm.cmd run verify:package
 ```
@@ -52,6 +53,15 @@ npm.cmd run verify:package
 - 每次客户端进程有独立会话编号；新开窗口不会误判中断。
 - 客户端退出或重启后，旧 `running/queued` 团队任务会转为暂停的“待恢复”任务。
 - 原工作区、已完成步骤、证据和未决问题保留，恢复时从未完成步骤继续。
+- `TaskRecoveryContext.controller` 保存统一执行状态机快照，包括失败分类、路线哈希、观察、证据和验收状态，不保存原始工具参数或凭据。
+
+### 3A. 统一执行控制器：已完成首版
+
+- `src/engine/executionController.mjs` 是助理、员工私聊和团队任务的统一裁决源。
+- 工具调用前检查路线许可，结果返回后分类成功或失败；瞬时错误可重试，确定性错误直接换路线。
+- 模型请求失败每 10 秒重试，最多 5 次；团队上一步没有结果时停止后续步骤。
+- 最终文本必须经过证据门槛和独立复核；没有真实证据时拒绝模型口头完成声明。
+- 用户运行中插话会进入 `applyExecutionSteering` 重新判断，团队点击继续会重新验证旧阻塞条件。
 
 ### 4. Skill 健康与恢复：已完成原子修复闭环
 
@@ -105,6 +115,10 @@ npm.cmd run verify:package
 - `src/diagnostics/systemDiagnostics.ts`
 - `src/components/settings/DiagnosticsTab.tsx`
 - `src/data/taskRuns.ts`
+- `src/engine/executionController.mjs`
+- `src/engine/executionController.d.mts`
+- `src/data/hermesClient.ts`
+- `src/engine/teamDiscussion.ts`
 - `src/engine/securityBoundary.ts`
 - `src/data/skills.ts`
 - `src/data/connectors.ts`
@@ -116,6 +130,7 @@ npm.cmd run verify:package
 - `electron/knowledge.cjs`
 - `src/brand.ts`
 - `scripts/verify-foundation.mjs`
+- `scripts/verify-execution-controller.mjs`
 - `scripts/verify-foundation-e2e.mjs`
 - `scripts/verify-skill-atomic.cjs`
 - `scripts/verify-update-download.cjs`
@@ -129,11 +144,12 @@ npm.cmd run verify:package
 - `npm.cmd run lint`：通过；只有已有非阻断警告。
 - `npm.cmd run verify:foundation`：通过；隔离目录内容为 `first-content / second-content`，附件为 `attachment-content`，敏感参数已隐藏，旧会话任务转为暂停待恢复，诊断领域为 5 项。
 - `npm.cmd run verify:agent-kernel`：通过；118 次重复 Skill 读取只执行 1 次。
+- `npm.cmd run verify:execution-controller`：通过；覆盖瞬时错误重试后换路线、参数错误、认证边界、替代路线恢复、无证据禁止完成、独立复核、快照恢复、插话转向和模型 5 次重试。
 - `npm.cmd run verify:connector-adapters`：通过；覆盖 IMA 原生成功、业务失败、畸形响应、三次网络重试、凭据不泄漏和 Windows 命令退出码传播。
 - `npm.cmd run verify:skill-atomic`：通过；无效包不触碰旧 Skill，成功替换不残留旧文件，哈希损坏被拦截，并真实验证根 Skill 可读取知识库与笔记子规则。
 - `npm.cmd run verify:update-download`：通过；模拟断线后 Range 续传、服务器忽略断点、等长损坏缓存和 SHA-256 拦截。
 - `npm.cmd run verify:web-search`：通过；覆盖 Bing XML 解析、主源超时后备用源成功和双源具体错误聚合。
-- `npm.cmd run verify:package`：通过；包内版本为 `0.9.6`，入口、连接器适配器、命令外壳和三份 IMA 规则均可读取，安装器、blockmap 与 `latest.yml` 完整。
+- `npm.cmd run verify:package`：通过；包内版本为 `0.10.0`，入口、连接器适配器、命令外壳和三份 IMA 规则均可读取，安装器、blockmap 与 `latest.yml` 完整。
 - `npm.cmd run diagnose:web-search`：通过；Electron 实网使用 DuckDuckGo，首轮空结果自动重试后约 3.1 秒返回 8 条中文 AI 资讯。
 - `npm.cmd run verify:docx`：通过；生成的 Word 可重新解析正文。
 - 安装版 `npm.cmd run verify:foundation-ui`：通过；真实 Electron IPC 和诊断中心五项完整显示。
@@ -144,14 +160,15 @@ npm.cmd run verify:package
 
 ## 安装与发布资产
 
-- 安装包：`E:\私人办公会所项目\release\taiji-office-setup-0.9.6.exe`
-- Blockmap：`E:\私人办公会所项目\release\taiji-office-setup-0.9.6.exe.blockmap`
+- 安装包：`E:\私人办公会所项目\release\taiji-office-setup-0.10.0.exe`
+- Blockmap：`E:\私人办公会所项目\release\taiji-office-setup-0.10.0.exe.blockmap`
 - 更新清单：`E:\私人办公会所项目\release\latest.yml`
-- 安装包大小：`173836552` 字节。
-- Blockmap 大小：`180802` 字节。
-- 安装包 SHA-256：`4D9541DB105894194C1110D32C8A6847FC9ACBAB5403DD387B883F21125DA288`。
-- `app.asar` SHA-256：`4CD21ABE007C1F19DDC47CD9E5EE9100B0523C60BD22BE5A4E5C34779CCCC753`。
-- 包内版本：`0.9.6`。
+- 安装包大小：`173840481` 字节。
+- Blockmap 大小：`180805` 字节。
+- 安装包 SHA-256：`BB480F96815D1A550D1AB5FCBE542D8AD2D1234C85B575C068D351C184C5D3E5`。
+- Blockmap SHA-256：`041513EE25E5AC7A326617A7701448C3653BE82BDBD8E8AF267E8254A68275A0`。
+- `app.asar` SHA-256：`8F7E34FBDA31777C145C5A002F897E38837987CB55F91137F668CADE13FD44DF`。
+- 包内版本：`0.10.0`。
 - 解包版受控启动 8 秒保持运行，未出现启动即崩溃。
 - 安装目录只保留 `太极 AI 办公会所.exe` 和对应卸载程序，没有旧产品可执行文件残留。
 
@@ -176,7 +193,8 @@ npm.cmd run verify:package
 1. 在用户真实配置上验收五个场景：新建员工后助手立即找到、团队任务异常退出后恢复、损坏 Skill 修复、连接器真实连接证据、一次自动更新与回滚。
 2. 完成一次隔离目录的真实跨版本自动更新与回滚演练并记录证据。
 3. 给升级日志增加用户可导出的通俗诊断报告。
-4. 抽出统一 `ExecutionController`，让助手、员工私聊和团队共享“目标状态、动作结果、失败分类、证据验收、换路线与重规划”循环，避免继续靠各聊天入口的零散提示词补丁。
-5. 按用户新反馈继续优化，但同层问题必须同步检查助手、员工私聊和团队三条路径。
+4. 在用户真实模型上构造一次“超时后恢复”、一次“工具参数错误后换路线”和一次“团队审查退回”任务，核对 UI 状态、任务快照和最终交付一致。
+5. 为控制器增加可选的模型候选路线，在主模型连续失败后自动切换已验证备用模型，而不是只有原模型重试与真实停机交接。
+6. 按用户新反馈继续优化，但同层问题必须同步检查助手、员工私聊和团队三条路径。
 
 每次完成后仍按：预检、构建、回归、打包、覆盖安装、哈希校验、更新本文件、发布 GitHub `main` 与同版本 Release 的顺序交付。

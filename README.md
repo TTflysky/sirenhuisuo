@@ -1,4 +1,4 @@
-# 太极 AI 办公会所 v0.9.6
+# 太极 AI 办公会所 v0.10.0
 
 > 面向 Windows 的多模型 AI 虚拟办公室。创建员工、组建团队，让不同模型按照职责协作完成真实任务。
 
@@ -6,7 +6,7 @@
 
 ## 项目状态
 
-- 当前版本：`0.9.6`
+- 当前版本：`0.10.0`
 - 发布分支：`main`
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 33、React 19、TypeScript 6、Ant Design 6、Vite 8
@@ -16,6 +16,9 @@
 
 ### 稳定任务闭环
 
+- 助理、员工私聊和团队任务共享统一 `ExecutionController`：每一步都会观察真实结果、判断进度、分类失败、选择重试或换路线，并在结束前重新验收最初目标。
+- 模型请求超时或瞬时网络错误每 10 秒保留上下文重试，最多 5 次；工具路线重复失败会被禁用，不能靠反复调用同一工具假装推进。
+- 只有账号凭据、登录授权、审批或业务选择等客户端无法自行取得的条件才会暂停询问用户；普通失败由系统先自动诊断并尝试替代路线。
 - 助手、员工私聊和团队任务每次请求都使用独立工作区；任务恢复沿用原目录，不会与另一项任务的同名文件互相覆盖。
 - 设置首页提供统一诊断中心，一次检查模型、连接器、Skill、工作区和审批策略，并告诉用户缺什么、去哪里处理。
 - 团队任务持久化摘要、证据、未决问题、运行中插话和上下文预算；客户端异常退出后会进入“待恢复”，不从头重跑。
@@ -132,13 +135,13 @@
 
 最新安装包可从 GitHub Releases 下载：
 
-- [直接下载 v0.9.6 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.9.6/taiji-office-setup-0.9.6.exe)
-- [查看 v0.9.6 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.9.6)
+- [直接下载 v0.10.0 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.10.0/taiji-office-setup-0.10.0.exe)
+- [查看 v0.10.0 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.10.0)
 
 本地构建的安装程序生成在：
 
 ```text
-release/taiji-office-setup-0.9.6.exe
+release/taiji-office-setup-0.10.0.exe
 ```
 
 可以直接覆盖安装旧版本。应用数据保存在用户目录，正常覆盖安装不会删除员工、团队、聊天和模型配置。

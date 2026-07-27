@@ -1,4 +1,5 @@
 import type { Employee, SkillReference, TaskPlanStep, TaskRun, TaskRunMemberSnapshot, TaskRunStatus, TaskRunStep, Team } from '../types';
+import { createExecutionController } from '../engine/executionController.mjs';
 
 const LS_TASK_RUNS = 'hermes_office_task_runs_v1';
 const MAX_RUNS = 120;
@@ -18,6 +19,11 @@ function defaultRecoveryContext(run: TaskRun) {
     unresolvedIssues: run.lastError ? [run.lastError.slice(0, 320)] : [],
     steeringMessages: [],
     budget: { toolAttempts: 0, updatedAt: run.updatedAt || Date.now() },
+    controller: createExecutionController({
+      goal: run.goal ?? run.request,
+      acceptanceCriteria: run.acceptanceCriteria ?? ['完成用户目标', '产出可观察结果', '完成必要验证'],
+      requiresEvidence: true,
+    }),
   };
 }
 
@@ -28,6 +34,7 @@ export function loadTaskRuns(): TaskRun[] {
     const sessionId = getExecutionSessionId();
     let recovered = false;
     const normalized = runs.map((run) => {
+      const recoveryDefaults = defaultRecoveryContext(run);
       const next: TaskRun = {
         ...run,
         workspaceId: run.workspaceId ?? `legacy/team_${run.teamId}`,
@@ -38,7 +45,12 @@ export function loadTaskRuns(): TaskRun[] {
         evidence: run.evidence ?? [], revisionCount: run.revisionCount ?? 0, maxRevisions: run.maxRevisions ?? 2,
         steps: (run.steps ?? []).map((step, index) => ({ ...step, evidence: step.evidence ?? [], order: step.order ?? index + 1, kind: step.kind ?? 'work', assignment: step.assignment ?? step.title, dependsOnStepIds: step.dependsOnStepIds ?? [] })),
         memberSnapshot: run.memberSnapshot ?? [],
-        recoveryContext: run.recoveryContext ?? defaultRecoveryContext(run),
+        recoveryContext: {
+          ...recoveryDefaults,
+          ...(run.recoveryContext ?? {}),
+          budget: { ...recoveryDefaults.budget, ...(run.recoveryContext?.budget ?? {}) },
+          controller: run.recoveryContext?.controller ?? recoveryDefaults.controller,
+        },
       };
       const staleExecution = (next.status === 'running' || next.status === 'queued')
         && sessionId !== 'browser-session'
@@ -123,6 +135,11 @@ export function createTaskRun(team: Team, employees: Employee[], request: string
     recoveryContext: {
       summary: '任务已创建，正在完成启动前检查。', completedEvidence: [], unresolvedIssues: [], steeringMessages: [],
       budget: { toolAttempts: 0, updatedAt: now },
+      controller: createExecutionController({
+        goal: request,
+        acceptanceCriteria: ['完成用户要求的工作', '留下可观察的结果或文件', '由执行者或审查步骤确认结果'],
+        requiresEvidence: true,
+      }),
     },
   };
 }

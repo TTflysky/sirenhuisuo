@@ -4,6 +4,7 @@ import { TOOLS, executeTool } from './tools';
 import { getConnectorTools } from './connectorTools';
 import { diagnoseModel } from '../diagnostics/modelDiagnostics';
 import { BEGINNER_RESPONSE_GUIDE, isToolResultSuccessful } from '../data/assistantPresentation';
+import { blockExecution, createExecutionController, observeExecutionResult, type ExecutionControllerSnapshot } from './executionController.mjs';
 
 // ===== 讨论回调 =====
 export interface DiscussionHandlers {
@@ -17,6 +18,7 @@ export interface DiscussionHandlers {
   onReviewDecision?: (stepId: string, approved: boolean, reason?: string, responsibleEmployeeId?: string) => void;
   onRunFailed?: (error: string) => void;
   onSteeringReply?: (emp: Employee, content: string, tokens?: number, contextUsage?: ContextUsage, stepId?: string) => void;
+  onExecutionState?: (state: ExecutionControllerSnapshot, emp?: Employee, stepId?: string) => void;
 }
 
 export interface TeamDiscussionOptions {
@@ -33,6 +35,7 @@ export interface TeamDiscussionOptions {
   /** 本次任务专属磁盘目录；暂停、恢复和审查必须继续使用同一个目录。 */
   workspaceId?: string;
   runSteps?: TaskRunStep[];
+  initialExecutionState?: ExecutionControllerSnapshot;
 }
 
 // 角色在讨论中的职责描述（系统提示词扩展）
@@ -81,7 +84,10 @@ async function memberSpeak(
   consumeSteeringMessages?: () => string[],
   getModelRequestSignal?: () => AbortSignal,
   onSteeringReply?: (content: string, tokens?: number, contextUsage?: ContextUsage) => void,
-): Promise<{ text: string; tokens?: number; contextUsage?: ContextUsage; failed?: boolean; producedFile?: boolean }> {
+  initialExecutionState?: ExecutionControllerSnapshot,
+  onExecutionState?: (state: ExecutionControllerSnapshot) => void,
+  executionRouteScope?: string,
+): Promise<{ text: string; tokens?: number; contextUsage?: ContextUsage; failed?: boolean; producedFile?: boolean; executionState?: ExecutionControllerSnapshot }> {
   const effectiveModel = getEmployeeModel(emp);
   if (!resolveApiBase(effectiveModel)) {
     return { text: `⚠️ ${emp.name} 未配置可用模型，当前步骤没有执行。请在设置中为该成员或全局激活模型填写 API 地址和密钥后点击继续执行。`, failed: true };
@@ -101,6 +107,7 @@ async function memberSpeak(
 
   let handoffContext = '';
   let producedFile = false;
+  let latestExecutionState = initialExecutionState;
   try {
     if (/读取并继承|审查|修订/u.test(extraInstruction)) {
       const listArgs = JSON.stringify({ filter: '' });
@@ -145,14 +152,27 @@ async function memberSpeak(
       shouldStop,
       consumeSteeringMessages,
       getModelRequestSignal,
+      initialExecutionState,
+      onExecutionState(state) {
+        latestExecutionState = state;
+        onExecutionState?.(state);
+      },
+      executionRouteScope,
       onSteeringReply(content, usage, contextUsage) {
         onSteeringReply?.(content, usage.totalTokens || undefined, contextUsage);
       },
     });
     if (requireFileOutput && !producedFile) {
-      return { text: `⚠️ ${emp.name} 没有生成可交接文件，本步骤未完成。系统会保留上下文并要求补交实际产出。`, tokens: r.usage.totalTokens, contextUsage: r.contextUsage, failed: true };
+      latestExecutionState = observeExecutionResult(r.executionState, {
+        toolName: 'acceptance_check', routeKey: `${executionRouteScope ?? emp.id}:required-file`, success: false,
+        result: '验收未通过：没有生成可交接文件', contributesEvidence: false,
+      });
+      latestExecutionState = blockExecution(latestExecutionState, '当前交付步骤没有生成要求的真实文件，验收未通过。', 'business');
+      onExecutionState?.(latestExecutionState);
+      return { text: `⚠️ ${emp.name} 没有生成可交接文件，本步骤未完成。系统会保留上下文并要求补交实际产出。`, tokens: r.usage.totalTokens, contextUsage: r.contextUsage, failed: true, executionState: latestExecutionState };
     }
-    return { text: r.content, tokens: r.usage.totalTokens, contextUsage: r.contextUsage, producedFile };
+    const controllerBlocked = r.executionState.status === 'awaiting_user' || r.executionState.status === 'blocked' || r.executionState.status === 'stopped';
+    return { text: r.content, tokens: r.usage.totalTokens, contextUsage: r.contextUsage, producedFile, failed: controllerBlocked, executionState: r.executionState };
   } catch (e: any) {
     const raw = e?.message ?? '模型错误';
     const reason = e?.name === 'AbortError' || /aborted|signal is aborted/iu.test(raw)
@@ -160,7 +180,11 @@ async function memberSpeak(
       : raw;
     const contextChars = contextMessages.slice(-12).reduce((total, message) => total + Math.min(message.content.length, 3500), 0) + Math.min(skillContext.length + handoffContext.length + (emp.soul?.length ?? 0), 40000);
     const diagnosis = await diagnoseModel(effectiveModel, { contextChars });
-    return { text: `⚠️ ${emp.name} 无法响应：${reason}\n\n${diagnosis}`, failed: true };
+    if (latestExecutionState?.status === 'running') {
+      latestExecutionState = blockExecution(latestExecutionState, '模型请求已经完成自动重试，但仍没有返回可供后续步骤使用的结果。', 'timeout');
+      onExecutionState?.(latestExecutionState);
+    }
+    return { text: `⚠️ ${emp.name} 无法响应：${reason}\n\n${diagnosis}`, failed: true, executionState: latestExecutionState };
   }
 }
 
@@ -200,6 +224,12 @@ export async function runTeamDiscussion(
   let revisionCount = 0;
   let runFailed = false;
   const maxRevisions = 2;
+  let sharedExecutionState = opts.initialExecutionState ?? createExecutionController({
+    goal: opts.userText ?? task?.description ?? task?.title ?? '完成团队任务',
+    acceptanceCriteria: ['完成用户要求', '形成真实可观察结果', '通过最终验收'],
+    requiresEvidence: true,
+  });
+  handlers.onExecutionState?.(sharedExecutionState);
   if (!useAI) {
     handlers.onRunFailed?.('团队成员没有可用模型配置，任务未执行。请在设置中激活全局模型或为成员选择模型后点击继续执行。');
     handlers.onStatus('');
@@ -252,7 +282,14 @@ export async function runTeamDiscussion(
         control?.consumeSteeringMessages,
         control?.getModelRequestSignal,
         (reply, replyTokens, replyContextUsage) => handlers.onSteeringReply?.(emp, reply, replyTokens, replyContextUsage, step.id),
+        sharedExecutionState,
+        (state) => {
+          sharedExecutionState = state;
+          handlers.onExecutionState?.(state, emp, step.id);
+        },
+        `${opts.runId ?? opts.discussionId ?? team.id}:${step.id}`,
       );
+      if (r.executionState) sharedExecutionState = r.executionState;
       content = r.text;
       tokens = r.tokens;
       contextUsage = r.contextUsage;

@@ -8,6 +8,7 @@ export function isExplicitResumeSteering(messages: string[]): boolean;
 export function getDirectExecutionControl(message: string): 'pause' | 'resume' | 'stop' | null;
 export function shouldHoldTaskForFeedback(message: string): boolean;
 export function requiresFreshWebResearch(message: string): boolean;
+export function requiresObservableExecutionEvidence(message: string): boolean;
 export function buildFreshWebQuery(message: string): string;
 export function isResearchOnlyRequest(message: string): boolean;
 export function buildResearchFallback(userText: string, searchOutput: string, modelError?: string): string;

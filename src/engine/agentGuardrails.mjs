@@ -119,6 +119,16 @@ function isExplicitNewWork(text) {
     || /(?:今天|明天|最新|实时).{0,20}(?:天气|新闻|价格|股价|汇率|资料|信息)/u.test(text);
 }
 
+export function requiresObservableExecutionEvidence(message) {
+  const text = String(message ?? '').trim();
+  if (!text) return false;
+  if (requiresFreshWebResearch(text) || /连接器|知识库|MCP|Obsidian|Vault/iu.test(text) && /配置|验证|测试|接入|连接|关联/iu.test(text)) return true;
+  const concreteTarget = /文件|代码|脚本|项目|仓库|程序|应用|安装包|构建|界面|UI|功能|逻辑|内核|连接器|知识库|数据库|Skill|技能|接口|API|配置|工作区/iu.test(text);
+  const concreteAction = /安装|部署|创建|生成|编写|写入|保存|修改|修复|优化|改进|调整|完善|更新|升级|删除|移除|覆盖|同步|提交|打包|下载|上传|运行|执行|测试|验证|接入|连接|关联|配置|补齐|恢复/iu.test(text);
+  const explicitCommand = /执行命令|运行命令|打开(?:设置|文件|页面|程序)|真正(?:写入|保存|安装|连接|执行)|落盘/iu.test(text);
+  return explicitCommand || (concreteTarget && concreteAction);
+}
+
 export function requiresFreshWebResearch(message) {
   const text = String(message ?? '').trim();
   if (!text) return false;

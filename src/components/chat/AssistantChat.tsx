@@ -23,6 +23,7 @@ import AssistantSettingsModal, { getAssistantPrompt } from '../settings/Assistan
 import { useStore } from '../../store';
 import { BUS_CHANNELS, onBus, sendBus } from '../../ipcBus';
 import { getDirectExecutionControl, isExplicitPauseSteering, isExplicitResumeSteering, shouldHoldTaskForFeedback } from '../../engine/agentGuardrails.mjs';
+import { executionControllerStatus } from '../../engine/executionController.mjs';
 import {
   BEGINNER_RESPONSE_GUIDE,
   getToolActivity,
@@ -308,6 +309,9 @@ ${employeeDirectory}
         waitIfPaused: executionControl.waitIfPaused,
         consumeSteeringMessages: () => steeringMessagesRef.current.splice(0),
         getModelRequestSignal: executionControl.getModelRequestSignal,
+        onExecutionState(state) {
+          setStatus(executionControllerStatus(state));
+        },
         onSteeringReply(content, usage, contextUsage) {
           push({
             id: `h-${Date.now()}-steering`, authorId: 'assistant', roleId: 'custom',

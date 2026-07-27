@@ -2,10 +2,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import ts from 'typescript';
 
 async function loadStandaloneTypeScript(relativePath) {
-  const source = await fs.readFile(relativePath, 'utf8');
+  const rawSource = await fs.readFile(relativePath, 'utf8');
+  const source = rawSource.replace(/from\s+(['"])(\.{1,2}\/[^'"]+)\1/g, (_match, quote, specifier) => {
+    const resolved = path.resolve(path.dirname(relativePath), specifier);
+    return `from ${quote}${pathToFileURL(resolved).href}${quote}`;
+  });
   const transpiled = ts.transpileModule(source, {
     compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext },
     fileName: relativePath,
@@ -45,6 +50,8 @@ async function verifyStaleTaskRecovery() {
     assert.equal(recovered.steps[0].status, 'paused');
     assert.match(recovered.recoveryContext.summary, /待恢复/u);
     assert.match(recovered.recoveryContext.interruptionReason, /中断/u);
+    assert.equal(recovered.recoveryContext.controller.goal, '验证重启恢复');
+    assert.equal(recovered.recoveryContext.controller.requiresEvidence, true);
     return recovered.recoveryContext.summary;
   } finally {
     globalThis.window = savedWindow;

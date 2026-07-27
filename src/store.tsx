@@ -36,6 +36,7 @@ import { BEGINNER_RESPONSE_GUIDE } from './data/assistantPresentation';
 import { isToolResultSuccessful } from './data/assistantPresentation';
 import { getDirectExecutionControl, isConversationOnlyMessage, shouldHoldTaskForFeedback } from './engine/agentGuardrails.mjs';
 import { APP_PRODUCT_NAME } from './brand';
+import { applyExecutionSteering, executionControllerStatus, type ExecutionControllerSnapshot } from './engine/executionController.mjs';
 
 // ===== Action =====
 type Action =
@@ -658,6 +659,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     let stepCounter = 0;
     let liveRun = opts?.runId ? stateRef.current.taskRuns.find((item) => item.id === opts.runId) : undefined;
+    let latestExecutionState: ExecutionControllerSnapshot | undefined = liveRun?.recoveryContext?.controller;
     const updateRun = (mutate: (run: TaskRun) => void) => {
       if (!liveRun) return;
       liveRun = updateTaskRun(liveRun, mutate);
@@ -678,8 +680,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     Promise.resolve().then(() => runTeamDiscussion(
       team,
       stateRef.current.employees,
-      opts ?? {},
+      { ...(opts ?? {}), initialExecutionState: liveRun?.recoveryContext?.controller },
       {
+        onExecutionState(controller, emp, stepId) {
+          latestExecutionState = controller;
+          const statusText = executionControllerStatus(controller);
+          if (emp) dispatch({ type: 'UPDATE_EMPLOYEE', id: emp.id, partial: { isWorking: controller.status === 'running', currentTask: statusText } });
+          updateRun((run) => {
+            if (!run.recoveryContext) return;
+            run.recoveryContext.controller = controller;
+            run.recoveryContext.summary = statusText;
+            run.recoveryContext.budget.toolAttempts = controller.attemptCount;
+            run.recoveryContext.budget.updatedAt = Date.now();
+            const step = run.steps.find((item) => item.id === stepId);
+            if (step && step.events.at(-1)?.detail !== statusText) {
+              step.events.push({ ts: Date.now(), type: controller.status === 'blocked' || controller.status === 'awaiting_user' ? 'error' : 'status', detail: statusText });
+            }
+          });
+        },
         onMessage(emp, content, mentions, tokens, discussionRound, inReplyToMessageId, stepId, contextUsage) {
           stepCounter += 1;
           const s = client.loadSettings();
@@ -704,7 +722,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           updateRun((run) => {
             const step = run.steps.find((item) => item.id === stepId) ?? run.steps.find((item) => item.employeeId === emp.id && item.status === 'running');
             if (!step) return;
-            step.status = /^⚠️|无法响应|执行失败/u.test(content) ? 'failed' : 'completed';
+            const controllerFailed = latestExecutionState?.status === 'awaiting_user'
+              || latestExecutionState?.status === 'blocked'
+              || latestExecutionState?.status === 'stopped';
+            step.status = controllerFailed ? 'failed' : 'completed';
             step.completedAt = Date.now();
             if (step.status === 'failed') {
               step.lastError = content;
@@ -1187,6 +1208,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           next.recoveryContext.summary = '恢复检查已通过，准备从未完成步骤继续。';
           next.recoveryContext.interruptedAt = undefined;
           next.recoveryContext.interruptionReason = undefined;
+          if (next.recoveryContext.controller) {
+            next.recoveryContext.controller = applyExecutionSteering(next.recoveryContext.controller, '用户已要求继续执行；重新验证上次阻塞条件，再从未完成步骤推进。');
+          }
         }
       }) });
       const skillContext = await buildSkillContext(run.skillRefs ?? []);

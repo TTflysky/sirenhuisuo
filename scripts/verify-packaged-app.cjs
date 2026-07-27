@@ -24,6 +24,14 @@ for (const file of requiredFiles) {
   assert.ok(asar.extractFile(archive, file).length > 0, `Packaged file is empty: ${file}`);
 }
 
+const archiveFiles = asar.listPackage(archive);
+const rendererBundle = archiveFiles.find((file) => /\\dist\\assets\\index-[^\\]+\.js$/u.test(file));
+assert.ok(rendererBundle, 'Packaged renderer bundle was not found');
+const rendererSource = asar.extractFile(archive, rendererBundle.replace(/^\\/u, '')).toString('utf8');
+for (const marker of ['正在选择可验证动作', '正在对照最初目标重新验收', '模型请求已自动重试 5 次']) {
+  assert.match(rendererSource, new RegExp(marker), `ExecutionController marker missing from packaged renderer: ${marker}`);
+}
+
 const installer = path.join(root, 'release', `taiji-office-setup-${sourcePackage.version}.exe`);
 const blockmap = `${installer}.blockmap`;
 const latest = path.join(root, 'release', 'latest.yml');
@@ -36,5 +44,6 @@ console.log(JSON.stringify({
   passed: true,
   version: packaged.version,
   requiredFiles: requiredFiles.length,
+  executionControllerMarkers: 3,
   installerBytes: fs.statSync(installer).size,
 }, null, 2));

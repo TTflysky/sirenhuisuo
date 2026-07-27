@@ -9,6 +9,7 @@ import {
   isExplicitResumeSteering,
   isExplicitStopSteering,
   isPreparationOnlyTool,
+  requiresObservableExecutionEvidence,
   shouldHoldTaskForFeedback,
   toolResourceKey,
 } from '../src/engine/agentGuardrails.mjs';
@@ -47,6 +48,9 @@ assert.equal(isPreparationOnlyTool('read_skill'), true);
 assert.equal(isPreparationOnlyTool('run_command'), false);
 assert.ok(getToolCallLimit('read_skill', true) <= 3);
 assert.ok(getToolCallLimit('inspect_connectors', true) <= 2);
+assert.equal(requiresObservableExecutionEvidence('帮我分析这段提示词并给建议'), false);
+assert.equal(requiresObservableExecutionEvidence('修改项目代码并重新打包'), true);
+assert.equal(requiresObservableExecutionEvidence('联网搜索今天的 AI 资讯'), true);
 
 const repeatedSkillCalls = Array.from({ length: 118 }, () => '{"id":"ima-skill"}');
 const resources = new Set();
@@ -61,6 +65,10 @@ assert.equal(executableReads, 1, '118 repeated Skill reads must collapse to one 
 
 const mainSource = await fs.readFile(new URL('../electron/main.cjs', import.meta.url), 'utf8');
 const clientSource = await fs.readFile(new URL('../src/data/hermesClient.ts', import.meta.url), 'utf8');
+const assistantChatSource = await fs.readFile(new URL('../src/components/chat/AssistantChat.tsx', import.meta.url), 'utf8');
+const dmChatSource = await fs.readFile(new URL('../src/components/chat/DmChatApp.tsx', import.meta.url), 'utf8');
+const teamDiscussionSource = await fs.readFile(new URL('../src/engine/teamDiscussion.ts', import.meta.url), 'utf8');
+const storeSource = await fs.readFile(new URL('../src/store.tsx', import.meta.url), 'utf8');
 assert.match(mainSource, /connector-config'\) return \{ width: 620, height: 820,/u);
 assert.match(mainSource, /const height = Math\.min\(spec\.height,/u);
 assert.match(clientSource, /maxTotalToolAttempts = connectorSetupTask \? 24 : 96/u);
@@ -93,6 +101,23 @@ assert.match(skillsSource, /documents\.push\(\{ path:/u);
 assert.match(toolsSource, /skillInstructionText/u);
 assert.match(clientSource, /respondToSteering/u);
 assert.match(clientSource, /steeringCheckpointTurns/u);
+assert.match(clientSource, /canExecuteRoute\(executionState/u);
+assert.match(clientSource, /observeExecutionResult\(executionState/u);
+assert.match(clientSource, /evaluateExecutionConclusion\(executionState/u);
+assert.match(clientSource, /markExecutionBudgetReached\(executionState/u);
+assert.match(clientSource, /retryLimit: maxResearchSummaryAttempts - 1/u);
+assert.match(clientSource, /executionRetryExhausted = true/u);
+assert.match(clientSource, /executionControllerGuidance\(executionState\)/u);
+assert.match(clientSource, /requiresObservableExecutionEvidence/u);
+assert.match(clientSource, /cognitiveOnlyCompletion/u);
+assert.doesNotMatch(clientSource, /buildRecoveryGuide\(/u);
+assert.match(assistantChatSource, /onExecutionState\(state\)/u);
+assert.match(dmChatSource, /controllerState\?: ExecutionControllerSnapshot/u);
+assert.match(dmChatSource, /initialExecutionState,/u);
+assert.match(teamDiscussionSource, /sharedExecutionState/u);
+assert.match(teamDiscussionSource, /executionRouteScope/u);
+assert.match(storeSource, /recoveryContext\.controller = controller/u);
+assert.doesNotMatch(storeSource, /step\.status = \/\^⚠️\|无法响应\|执行失败/u);
 assert.ok(
   clientSource.indexOf('await waitIfPaused?.();', clientSource.indexOf('for (let iter = 0; iter < maxIter; iter++)'))
     < clientSource.indexOf('const atTurnStartGuidance = consumeSteeringMessages?.() ?? [];'),

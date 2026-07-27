@@ -19,6 +19,7 @@ import {
   isResearchOnlyRequest,
   isResearchDeliveryDeflection,
   requiresFreshWebResearch,
+  requiresObservableExecutionEvidence,
   toolResourceKey,
 } from '../engine/agentGuardrails.mjs';
 import {
@@ -28,12 +29,23 @@ import {
   EXECUTION_SELF_REVIEW_GUIDE,
   SKILL_RECOVERY_GUIDE,
   buildContinuationGuide,
-  buildRecoveryGuide,
   getToolStage,
   guardInstallationSummary,
   humanizeExecutionError,
   isToolResultSuccessful,
 } from './assistantPresentation';
+import {
+  applyExecutionSteering,
+  blockExecution,
+  canExecuteRoute,
+  createExecutionController,
+  evaluateExecutionConclusion,
+  executionControllerGuidance,
+  markExecutionBudgetReached,
+  observeExecutionResult,
+  restoreExecutionController,
+  type ExecutionControllerSnapshot,
+} from '../engine/executionController.mjs';
 
 const LS_EMPLOYEES = 'hermes_office_employees';
 const LS_TEAMS = 'hermes_office_teams';
@@ -1054,6 +1066,12 @@ export interface AgentLoopOpts {
   getModelRequestSignal?: () => AbortSignal; // 新指令可以中断正在等待的模型响应
   onSteeringReply?: (content: string, usage: TokenUsage, contextUsage?: ContextUsage) => void;
   onModelRetry?: (attempt: number, maxAttempts: number, error: string, nextDelayMs: number) => void;
+  /** 恢复中的统一执行状态；未提供时从当前用户目标创建。 */
+  initialExecutionState?: ExecutionControllerSnapshot;
+  /** 每次观察、恢复决策或验收状态变化时通知调用方。 */
+  onExecutionState?: (state: ExecutionControllerSnapshot) => void;
+  /** 团队多步骤共享控制器时用于隔离各步骤的同名工具路线。 */
+  executionRouteScope?: string;
 }
 
 function getUserActionForFailure(raw: string): string {
@@ -1079,11 +1097,11 @@ function getUserActionForFailure(raw: string): string {
   return '请展开最后一条“执行过程”查看通俗原因；如果需要你提供账号、授权、文件或选择，助手会明确说明具体缺少哪一项。';
 }
 
-export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: string; usage: TokenUsage; contextUsage?: ContextUsage; model: string }> {
+export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: string; usage: TokenUsage; contextUsage?: ContextUsage; model: string; executionState: ExecutionControllerSnapshot }> {
   const {
     turns, tools, scene, label, onToolCall, onToolResult, modelConfig, extraSystemContext,
     scope, attachments, shouldStop, waitIfPaused, consumeSteeringMessages,
-    getModelRequestSignal, onSteeringReply, onModelRetry,
+    getModelRequestSignal, onSteeringReply, onModelRetry, initialExecutionState, onExecutionState,
   } = opts;
   let currentTurns = [...turns];
   const originalUserContent = [...turns].reverse().find((turn) => turn.role === 'user')?.content;
@@ -1096,6 +1114,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   const isSkillInstallation = isInstallationTask && !connectorTask && /skill|技能|插件/iu.test(originalUserText);
   const conversationOnly = isConversationOnlyMessage(originalUserText);
   const researchOnlyTask = isResearchOnlyRequest(originalUserText);
+  const requiresExecutionEvidence = !conversationOnly && requiresObservableExecutionEvidence(originalUserText);
   currentTurns = conversationOnly
     ? [{ role: 'system', content: '当前用户消息是在询问状态、纠正行为、表达反馈或进行普通对话。必须直接结合最近上下文回答这条消息，不得调用工具，不得自动恢复、重放或继续上一项任务。只有用户明确提出新的执行目标或明确要求继续时，才能重新开始执行。' }, ...currentTurns]
     : [{ role: 'system', content: `${AUTONOMOUS_EXECUTION_GUIDE}\n\n${CAPABILITY_ROUTING_GUIDE}\n\n${SKILL_RECOVERY_GUIDE}` }, ...currentTurns];
@@ -1138,7 +1157,6 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   const automaticSkillRecoveries = new Set<string>();
   let stopped = false;
   let finalReviewRequested = false;
-  let consecutiveFailures = 0;
   let phaseStartSuccessCount = 0;
   let phaseStartLogIndex = 0;
   let stalledPhases = 0;
@@ -1153,6 +1171,25 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   let requiredResearchOutput = '';
   let researchSummaryFailures = 0;
   const maxResearchSummaryAttempts = 5;
+  let executionState = initialExecutionState
+    ? restoreExecutionController(initialExecutionState, { goal: originalUserText, requiresEvidence: requiresExecutionEvidence, maxAttempts: maxTotalToolAttempts })
+    : createExecutionController({ goal: originalUserText, requiresEvidence: requiresExecutionEvidence, maxAttempts: maxTotalToolAttempts });
+  const publishExecutionState = (next: ExecutionControllerSnapshot) => {
+    executionState = next;
+    onExecutionState?.(executionState);
+  };
+  const executionRouteKey = (name: string, argumentsText: string) => `${opts.executionRouteScope ?? scene}:${canonicalToolCallKey(name, argumentsText)}`;
+  const observeToolOutcome = (name: string, argumentsText: string, output: string, success: boolean, evidenceKind = 'progress', contributesEvidence = success) => {
+    publishExecutionState(observeExecutionResult(executionState, {
+      toolName: name,
+      routeKey: executionRouteKey(name, argumentsText),
+      success,
+      result: output,
+      contributesEvidence,
+      evidenceKind,
+    }));
+  };
+  onExecutionState?.(executionState);
 
   // Connector setup and verification have client-enforced gates. The model receives
   // the evidence after the checks; it cannot replace them with a narrated checklist.
@@ -1171,6 +1208,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         workspaceId: opts.workspaceId,
       });
       const useful = isUsefulToolOutcome(name, result.success, result.output);
+      observeToolOutcome(name, argumentsText, result.output, useful, name === 'test_connector' ? 'connection' : 'progress');
       onToolResult?.(name, argumentsText, result.output, useful);
       callLog.push({ name, args: argumentsText, result: result.output.slice(0, 1200), success: useful });
       toolResultCache.set(canonicalToolCallKey(name, argumentsText), { output: result.output.slice(0, 6000), success: useful });
@@ -1185,11 +1223,13 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       requiredVerification = (await runRequiredConnectorTool('test_connector', { connector: connectorQuery })).result;
     }
     if (requiredVerification && isConnectorVerificationOnlyRequest(originalUserText)) {
+      publishExecutionState(evaluateExecutionConclusion(executionState, { content: requiredVerification.output, reviewed: true }));
       return {
         content: requiredVerification.output,
         usage: totalUsage,
         contextUsage: latestContextUsage,
         model: 'client-connector-adapter',
+        executionState,
       };
     }
     currentTurns.push({
@@ -1214,6 +1254,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       workspaceId: opts.workspaceId,
     });
     const useful = isUsefulToolOutcome('web_search', searched.success, searched.output);
+    observeToolOutcome('web_search', searchArgs, searched.output, useful, 'research');
     requiredResearchSucceeded = useful;
     requiredResearchOutput = searched.output;
     onToolResult?.('web_search', searchArgs, searched.output, useful);
@@ -1241,6 +1282,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
           workspaceId: opts.workspaceId,
         });
         const readUseful = isUsefulToolOutcome('read_web_page', read.success, read.output);
+        observeToolOutcome('read_web_page', readArgs, read.output, readUseful, 'research');
         onToolResult?.('read_web_page', readArgs, read.output, readUseful);
         callLog.push({ name: 'read_web_page', args: readArgs, result: read.output.slice(0, 1200), success: readUseful });
         toolCallsThisPhase += 1;
@@ -1288,8 +1330,8 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         workspaceId: opts.workspaceId,
       });
       const useful = isUsefulToolOutcome(name, recovered.success, recovered.output);
+      observeToolOutcome(name, argumentsText, recovered.output, useful, 'recovery');
       if (useful && !isPreparationOnlyTool(name)) successfulCalls.add(`${name}:${argumentsText}`);
-      else consecutiveFailures += 1;
       onToolResult?.(name, argumentsText, recovered.output, useful);
       callLog.push({ name, args: argumentsText, result: recovered.output.slice(0, 1200), success: useful });
       toolCallsThisPhase += 1;
@@ -1317,6 +1359,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const instruction = pendingMessages.join('\n').trim();
       if (!instruction) return { stopped: false };
+      publishExecutionState(applyExecutionSteering(executionState, instruction));
       const userTurn: ChatTurn = {
         role: 'user',
         content: `## 用户刚刚插话（优先于当前计划）\n${instruction}`,
@@ -1400,7 +1443,6 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       ];
       phaseStartSuccessCount = successfulCalls.size;
       phaseStartLogIndex = callLog.length;
-      consecutiveFailures = 0;
       finalReviewRequested = false;
       toolCallsThisPhase = 0;
       phaseToolBudgetReached = false;
@@ -1426,7 +1468,6 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       ];
       phaseStartSuccessCount = successfulCalls.size;
       phaseStartLogIndex = callLog.length;
-      consecutiveFailures = 0;
       finalReviewRequested = false;
     }
     let r: ChatResult;
@@ -1441,22 +1482,38 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         continue;
       }
       if (shouldStop?.()) { stopped = true; break; }
+      researchSummaryFailures += 1;
+      const errorText = error?.message ?? String(error);
+      publishExecutionState(observeExecutionResult(executionState, {
+        toolName: 'model_request',
+        routeKey: executionRouteKey('model_request', JSON.stringify({ model: modelConfig?.model ?? 'active-model', scene })),
+        success: false,
+        result: errorText,
+        contributesEvidence: false,
+        retryLimit: maxResearchSummaryAttempts - 1,
+      }));
+      if (executionState.decision.kind === 'retry' && researchSummaryFailures < maxResearchSummaryAttempts) {
+        const retryDelayMs = 10000;
+        onModelRetry?.(researchSummaryFailures, maxResearchSummaryAttempts, errorText, retryDelayMs);
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+        await waitIfPaused?.();
+        if (shouldStop?.()) { stopped = true; break; }
+        continue;
+      }
+      onModelRetry?.(researchSummaryFailures, maxResearchSummaryAttempts, errorText, 0);
       if (researchOnlyTask && requiredResearchSucceeded) {
-        researchSummaryFailures += 1;
-        const errorText = error?.message ?? String(error);
-        if (researchSummaryFailures < maxResearchSummaryAttempts) {
-          const retryDelayMs = 10000;
-          onModelRetry?.(researchSummaryFailures, maxResearchSummaryAttempts, errorText, retryDelayMs);
-          await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
-          await waitIfPaused?.();
-          if (shouldStop?.()) { stopped = true; break; }
-          continue;
-        }
-        onModelRetry?.(researchSummaryFailures, maxResearchSummaryAttempts, errorText, 0);
         finalContent = buildResearchFallback(originalUserText, requiredResearchOutput, errorText);
+        observeToolOutcome('client_research_fallback', JSON.stringify({ query: buildFreshWebQuery(originalUserText) }), finalContent, true, 'research');
+        publishExecutionState(evaluateExecutionConclusion(executionState, { content: finalContent, reviewed: true }));
         break;
       }
+      publishExecutionState(blockExecution(executionState, '模型请求已自动重试 5 次，但仍未返回有效结果。', executionState.decision.failureClass));
+      error.executionRetryExhausted = true;
       throw error;
+    }
+    if (researchSummaryFailures > 0) {
+      observeToolOutcome('model_request', JSON.stringify({ model: modelConfig?.model ?? 'active-model', scene }), '模型已恢复并返回有效结果', true, 'model', false);
+      researchSummaryFailures = 0;
     }
     totalUsage.promptTokens += r.usage.promptTokens;
     totalUsage.completionTokens += r.usage.completionTokens;
@@ -1496,11 +1553,13 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         totalToolAttempts += 1;
         toolCallsThisPhase += 1;
         const cacheKey = canonicalToolCallKey(tc.name, tc.arguments);
+        const routeGate = canExecuteRoute(executionState, { toolName: tc.name, routeKey: executionRouteKey(tc.name, tc.arguments) });
+        const controllerRetry = executionState.decision.kind === 'retry' && executionState.decision.routeId === routeGate.routeId;
         const resourceKey = toolResourceKey(tc.name, tc.arguments);
         const resourceReadCount = resourceKey ? (resourceReadCounts.get(resourceKey) ?? 0) : 0;
         const toolCallCount = (toolCallCounts.get(tc.name) ?? 0) + 1;
         toolCallCounts.set(tc.name, toolCallCount);
-        const cached = toolResultCache.get(cacheKey);
+        const cached = controllerRetry ? undefined : toolResultCache.get(cacheKey);
         const repeatedFailedSkillRead = tc.name === 'read_skill' && failedSkillReads.has(cacheKey);
         const connectorSkillRouteConfirmed = callLog.some((call) => call.name === 'inspect_connectors' && call.success && /接入方式:\s*Skill/u.test(call.result));
         const misroutedConnectorSkill = connectorSetupTask && (tc.name === 'search_skills' || tc.name === 'read_skill') && !connectorSkillRouteConfirmed;
@@ -1509,7 +1568,9 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
           : tc.name === 'read_file' ? (connectorSetupTask ? 4 : 12) : Number.POSITIVE_INFINITY;
         const toolLimitReached = toolCallCount > getToolCallLimit(tc.name, connectorSetupTask);
         const resourceLimitReached = Boolean(resourceKey) && resourceReadCount >= resourceLimit;
-        const blockedReason = misroutedConnectorSkill
+        const blockedReason = !routeGate.allowed
+          ? routeGate.reason ?? '执行控制器已阻止重复或无效路线，必须换一种方法。'
+          : misroutedConnectorSkill
           ? '请先调用 inspect_connectors 确认这个外部服务究竟使用 HTTP、MCP 还是 Skill。只有检查结果明确显示 Skill 后，才安装或读取对应 Skill。'
           : repeatedFailedSkillRead
           ? '这个 Skill 已经读取失败，已阻止重复尝试。必须改用不同来源、替代工具或明确交接真实缺项。'
@@ -1531,15 +1592,11 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
           })();
         const resultSuccess = executed && isUsefulToolOutcome(tc.name, result.success, result.output);
         const newEvidence = resultSuccess && cached === undefined;
+        observeToolOutcome(tc.name, tc.arguments, result.output, resultSuccess, tc.name === 'write_file' ? 'file' : tc.name === 'test_connector' ? 'connection' : 'progress');
         if (resourceKey && executed) resourceReadCounts.set(resourceKey, resourceReadCount + 1);
         if (tc.name === 'read_skill' && !resultSuccess) failedSkillReads.add(cacheKey);
         if (newEvidence && !isPreparationOnlyTool(tc.name)) successfulCalls.add(cacheKey);
-        if (newEvidence) {
-          consecutiveFailures = 0;
-        } else {
-          consecutiveFailures += 1;
-          iterationHadFailure = true;
-        }
+        if (!newEvidence) iterationHadFailure = true;
         if (executed && cached === undefined) toolResultCache.set(cacheKey, { output: result.output.slice(0, 6000), success: resultSuccess });
         if (executed) onToolResult?.(tc.name, redactToolArguments(tc.arguments), result.output, resultSuccess);
         callLog.push({ name: tc.name, args: tc.arguments, result: result.output.slice(0, 1200), success: resultSuccess });
@@ -1592,21 +1649,35 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       if (steeringHandled) continue;
       if (phaseToolBudgetReached) continue;
       if (iterationHadFailure) {
-        currentTurns.push({ role: 'system', content: buildRecoveryGuide(consecutiveFailures) });
+        currentTurns.push({ role: 'system', content: executionControllerGuidance(executionState) });
       }
     } else if (r.content) {
-      if (callLog.length > 0 && !finalReviewRequested && !(researchOnlyTask && requiredResearchSucceeded)) {
-        currentTurns.push({ role: 'assistant', content: r.content });
-        currentTurns.push({ role: 'system', content: EXECUTION_SELF_REVIEW_GUIDE });
-        finalReviewRequested = true;
-        continue;
+      if (!conversationOnly) {
+        const cognitiveOnlyCompletion = !executionState.requiresEvidence && callLog.length === 0;
+        publishExecutionState(evaluateExecutionConclusion(executionState, { content: r.content, reviewed: cognitiveOnlyCompletion || finalReviewRequested }));
+        const nextDecision = executionState.decision.kind;
+        if (nextDecision === 'verify') {
+          currentTurns.push({ role: 'assistant', content: r.content });
+          currentTurns.push({ role: 'system', content: `${EXECUTION_SELF_REVIEW_GUIDE}\n\n${executionControllerGuidance(executionState)}` });
+          finalReviewRequested = true;
+          continue;
+        }
+        if (nextDecision === 'act' || nextDecision === 'continue' || nextDecision === 'retry' || nextDecision === 'switch_route') {
+          currentTurns.push({ role: 'assistant', content: r.content });
+          currentTurns.push({ role: 'system', content: executionControllerGuidance(executionState) });
+          finalReviewRequested = false;
+          continue;
+        }
       }
-      // 执行过工具的任务必须经过一次独立自检，再接受最终答复。
       finalContent = r.content;
       break;
     } else {
       break;
     }
+  }
+
+  if (executionBudgetReached && executionState.status === 'running') {
+    publishExecutionState(markExecutionBudgetReached(executionState));
   }
 
   if (researchOnlyTask && requiredResearchSucceeded) {
@@ -1697,7 +1768,12 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         : '还没有完成连接器配置。\n\n目前没有拿到真实连接测试通过的证据。请先打开对应连接器配置，填写必要信息并保存，然后再进行连接测试。';
     }
   }
-  return { content: finalContent, usage: totalUsage, contextUsage: latestContextUsage, model: finalModel };
+  const controllerDidNotComplete = !conversationOnly && executionState.status !== 'completed';
+  const falselyClaimsControllerCompletion = /(?:已经|已)(?:成功)?(?:完成|处理|配置|安装|连接)|处理好了|现在可以(?:使用|调用)/u.test(finalContent);
+  if (controllerDidNotComplete && falselyClaimsControllerCompletion) {
+    finalContent = `还没有完成。\n\n${executionState.decision.reason}\n\n系统没有取得足够的真实执行与验收证据，因此没有采纳模型刚才的完成声明。已产生的文件和执行记录仍然保留。`;
+  }
+  return { content: finalContent, usage: totalUsage, contextUsage: latestContextUsage, model: finalModel, executionState };
 }
 
 // ===== 初始加载 =====

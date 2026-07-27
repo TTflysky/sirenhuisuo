@@ -23,6 +23,7 @@ import { getConnectorTools } from '../../engine/connectorTools';
 import { useFileDrop } from '../../hooks/useFileDrop';
 import { formatExecutionDuration, useAgentExecutionControl } from '../../hooks/useAgentExecutionControl';
 import { getDirectExecutionControl, isExplicitPauseSteering, isExplicitResumeSteering, shouldHoldTaskForFeedback } from '../../engine/agentGuardrails.mjs';
+import { executionControllerStatus, type ExecutionControllerSnapshot } from '../../engine/executionController.mjs';
 import {
   BEGINNER_RESPONSE_GUIDE,
   getToolActivity,
@@ -46,6 +47,7 @@ interface DmRetryJob {
   status: 'waiting' | 'failed';
   nextRetryAt?: number;
   lastError: string;
+  controllerState?: ExecutionControllerSnapshot;
 }
 
 const DM_RETRY_SETTINGS_KEY = 'hermes_office_dm_retry_settings_v1';
@@ -291,10 +293,22 @@ export default function DmChatApp({ empId }: Props) {
     executionControl.reset();
     dispatch({ type: 'UPDATE_EMPLOYEE', id: empId, partial: { isWorking: true } });
     activeWorkspaceIdRef.current = job.workspaceId;
+    let latestControllerState = job.controllerState;
     try {
       await initializeTaskWorkspace(job.workspaceId, { kind: 'dm', label: `${emp.name} / ${job.userText.slice(0, 50) || '私聊任务'}`, taskId: job.id });
       await copyAttachmentsToWorkspace(`dm:${empId}`, job.workspaceId, job.attachments);
-      const { text: reply, usage, contextUsage, thoughtChain } = await generateReply(job.userText, job.attachments, job.skillContext, job.history, job.workspaceId);
+      const { text: reply, usage, contextUsage, thoughtChain } = await generateReply(
+        job.userText,
+        job.attachments,
+        job.skillContext,
+        job.history,
+        job.workspaceId,
+        job.controllerState,
+        (controllerState) => {
+          latestControllerState = controllerState;
+          saveRetryJob(empId, { ...job, controllerState });
+        },
+      );
       setStatus('正在整理清晰的结果…');
       push({ id: `dm-${Date.now()}-${empId}`, authorId: empId, roleId: emp.role, content: reply, mentions: [], timestamp: Date.now(), kind: 'text', tokens: usage, contextUsage, thoughtChain });
       setRetryJob(null);
@@ -302,9 +316,9 @@ export default function DmChatApp({ empId }: Props) {
     } catch (error) {
       const attempt = job.attempt + 1;
       const lastError = error instanceof Error ? error.message : String(error);
-      const canRetry = retrySettings.autoRetry && attempt < retrySettings.maxAttempts;
+      const canRetry = retrySettings.autoRetry && !(error as any)?.executionRetryExhausted && attempt < retrySettings.maxAttempts;
       const next: DmRetryJob = {
-        ...job, attempt, lastError,
+        ...job, attempt, lastError, controllerState: latestControllerState,
         status: canRetry ? 'waiting' : 'failed',
         nextRetryAt: canRetry ? Date.now() + retrySettings.intervalSeconds * 1000 : undefined,
       };
@@ -351,7 +365,7 @@ export default function DmChatApp({ empId }: Props) {
   };
 
   // 优先真调 OpenAI 兼容模型（带员工提示词），失败/未配置则回落本地剧本
-  const generateReply = async (userText: string, atts: Attachment[] = [], skillContext = '', historyOverride?: ChatTurn[], workspaceId?: string): Promise<{ text: string; usage?: number; contextUsage?: ContextUsage; thoughtChain?: ThoughtChainStep[] }> => {
+  const generateReply = async (userText: string, atts: Attachment[] = [], skillContext = '', historyOverride?: ChatTurn[], workspaceId?: string, initialExecutionState?: ExecutionControllerSnapshot, onExecutionState?: (state: ExecutionControllerSnapshot) => void): Promise<{ text: string; usage?: number; contextUsage?: ContextUsage; thoughtChain?: ThoughtChainStep[]; executionState?: ExecutionControllerSnapshot }> => {
     // 文本类附件：直接拼进用户文本作为上下文
     let enriched = userText;
     const textAtts = atts.filter((a) => a.kind === 'text' && a.dataUrl);
@@ -388,6 +402,11 @@ export default function DmChatApp({ empId }: Props) {
       waitIfPaused: executionControl.waitIfPaused,
       consumeSteeringMessages: () => steeringMessagesRef.current.splice(0),
       getModelRequestSignal: executionControl.getModelRequestSignal,
+      initialExecutionState,
+      onExecutionState(state) {
+        setStatus(executionControllerStatus(state));
+        onExecutionState?.(state);
+      },
       onSteeringReply(content, usage, contextUsage) {
         push({
           id: `dm-${Date.now()}-${empId}-steering`, authorId: empId, roleId: emp.role,
@@ -431,7 +450,7 @@ export default function DmChatApp({ empId }: Props) {
         setLiveExecutionSteps((current) => [...current, step].slice(-50));
       },
     });
-    return { text: r.content ?? '（无回复）', usage: r.usage.totalTokens, contextUsage: r.contextUsage, thoughtChain: thoughtChain.length ? thoughtChain : undefined };
+    return { text: r.content ?? '（无回复）', usage: r.usage.totalTokens, contextUsage: r.contextUsage, thoughtChain: thoughtChain.length ? thoughtChain : undefined, executionState: r.executionState };
   };
 
   const openOutputFromMessage = (output: OutputRecord) => {
