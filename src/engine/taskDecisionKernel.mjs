@@ -8,6 +8,7 @@ import {
   resolveActionableUserGoal,
   shouldHoldTaskForFeedback,
 } from './agentGuardrails.mjs';
+import { taskRequirementLabels } from './taskFidelity.mjs';
 
 export const TASK_DECISION_TOOL_NAME = 'compile_task_decision';
 
@@ -55,6 +56,12 @@ export const TASK_DECISION_TOOL = {
           maxItems: 6,
           items: { type: 'string' },
         },
+        requiredConstraints: {
+          type: 'array',
+          maxItems: 8,
+          items: { type: 'string' },
+          description: '从用户原话中识别的不可丢失条件，例如对象、地点、时间、指定工具和交付格式。',
+        },
         requiresEvidence: { type: 'boolean' },
         needsUser: { type: 'boolean' },
         missingUserCondition: { type: 'string' },
@@ -73,7 +80,7 @@ function clean(value, maxLength = 2000) {
 }
 
 function defaultAcceptance(route, goal) {
-  if (route === 'web_search') return ['取得当前可核验的外部资料', '直接回答用户问题并保留来源链接'];
+  if (route === 'web_search') return [`查询结果必须直接对应“${clean(goal, 160)}”中的对象、地点、时间和主题`, '取得当前可核验的外部资料，偏题结果不得交付', '直接回答用户问题并保留来源链接'];
   if (route === 'inspect_connectors') return ['识别真实接入方式和缺失条件', '完成保存并通过真实连接测试后才宣布可用'];
   if (route === 'read_file' || route === 'list_files') return ['读取真实目标内容', '根据读取结果回答，不凭空猜测'];
   if (route === 'write_file') return ['生成真实文件并登记为产出物', '验证文件可以打开且内容符合要求'];
@@ -106,6 +113,7 @@ export function createFallbackTaskDecision(input = {}) {
   const capabilityCorrection = isActionableCapabilityCorrection(latestMessage);
   const goal = clean(resolveActionableUserGoal(latestMessage, previousUserMessage)) || latestMessage;
   const feedbackOnly = shouldHoldTaskForFeedback(latestMessage) && isConversationOnlyMessage(latestMessage);
+  const requiredConstraints = taskRequirementLabels(goal);
   const mustExecute = capabilityCorrection
     || requiresFreshWebResearch(goal)
     || requiresObservableExecutionEvidence(goal)
@@ -115,6 +123,7 @@ export function createFallbackTaskDecision(input = {}) {
     return {
       mode: 'conversation', goal: latestMessage, primaryRoute: 'direct_answer',
       acceptanceCriteria: ['回应用户当前控制指令或反馈，不偷跑旧任务'],
+      requiredConstraints,
       requiresEvidence: false, needsUser: false, missingUserCondition: '', searchQuery: '',
       decisionReason: '这是对当前执行的控制或反馈，应先回应用户。', confidence: 1, source: 'rules',
     };
@@ -125,6 +134,7 @@ export function createFallbackTaskDecision(input = {}) {
     return {
       mode: 'execute', goal, primaryRoute,
       acceptanceCriteria: defaultAcceptance(primaryRoute, goal),
+      requiredConstraints,
       requiresEvidence: requiresObservableExecutionEvidence(goal) || primaryRoute !== 'direct_answer',
       needsUser: false, missingUserCondition: '',
       searchQuery: primaryRoute === 'web_search' ? buildFreshWebQuery(goal) : '',
@@ -138,6 +148,7 @@ export function createFallbackTaskDecision(input = {}) {
     goal: latestMessage,
     primaryRoute: 'direct_answer',
     acceptanceCriteria: defaultAcceptance('direct_answer', latestMessage),
+    requiredConstraints,
     requiresEvidence: false, needsUser: false, missingUserCondition: '', searchQuery: '',
     decisionReason: '当前消息没有明确要求执行外部操作。', confidence: 0.72, source: 'rules',
   };
@@ -158,7 +169,6 @@ export function normalizeTaskDecision(candidate, input = {}) {
   const fallback = createFallbackTaskDecision(input);
   if (!candidate || typeof candidate !== 'object') return fallback;
   const latestMessage = clean(input.latestMessage);
-  const previousUserMessage = clean(input.previousUserMessage);
   const control = getDirectExecutionControl(latestMessage);
   const capabilityCorrection = isActionableCapabilityCorrection(latestMessage);
   const hardExecute = capabilityCorrection || requiresFreshWebResearch(fallback.goal) || requiresObservableExecutionEvidence(fallback.goal);
@@ -166,8 +176,10 @@ export function normalizeTaskDecision(candidate, input = {}) {
     || (shouldHoldTaskForFeedback(latestMessage) && isConversationOnlyMessage(latestMessage));
   const proposedMode = ['conversation', 'answer', 'execute'].includes(candidate.mode) ? candidate.mode : fallback.mode;
   const mode = hardHold ? 'conversation' : hardExecute ? 'execute' : proposedMode;
-  const restoredGoal = capabilityCorrection ? resolveActionableUserGoal(latestMessage, previousUserMessage) : candidate.goal;
-  const goal = clean(restoredGoal) || fallback.goal;
+  // The model may classify and plan the request, but it cannot rewrite away parts
+  // of the user's authoritative goal. Capability corrections are already restored
+  // by createFallbackTaskDecision.
+  const goal = fallback.goal;
   let primaryRoute = ROUTES.has(candidate.primaryRoute) ? candidate.primaryRoute : fallback.primaryRoute;
   if (mode !== 'execute') primaryRoute = 'direct_answer';
   if (requiresFreshWebResearch(goal)) primaryRoute = 'web_search';
@@ -175,6 +187,9 @@ export function normalizeTaskDecision(candidate, input = {}) {
   const criteria = Array.isArray(candidate.acceptanceCriteria)
     ? candidate.acceptanceCriteria.map((item) => clean(item, 240)).filter(Boolean).slice(0, 6)
     : [];
+  const requiredConstraints = taskRequirementLabels(goal);
+  const protectedCriteria = defaultAcceptance(primaryRoute, goal);
+  const acceptanceCriteria = [...new Set([...protectedCriteria, ...criteria])].slice(0, 8);
   const missingUserCondition = clean(candidate.missingUserCondition, 300);
   const genuinelyNeedsUser = mode === 'execute'
     && Boolean(candidate.needsUser)
@@ -184,11 +199,14 @@ export function normalizeTaskDecision(candidate, input = {}) {
     mode,
     goal,
     primaryRoute,
-    acceptanceCriteria: criteria.length ? criteria : defaultAcceptance(primaryRoute, goal),
+    acceptanceCriteria,
+    requiredConstraints,
     requiresEvidence: mode === 'execute' && (Boolean(candidate.requiresEvidence) || fallback.requiresEvidence),
     needsUser: genuinelyNeedsUser,
     missingUserCondition: genuinelyNeedsUser ? missingUserCondition : '',
-    searchQuery: primaryRoute === 'web_search' ? clean(candidate.searchQuery, 300) || buildFreshWebQuery(goal) : '',
+    // Search parameters are derived from the authoritative goal. A model-proposed
+    // shorter query previously dropped places and subjects such as “全椒县天气”.
+    searchQuery: primaryRoute === 'web_search' ? buildFreshWebQuery(goal) : '',
     decisionReason: clean(candidate.decisionReason, 240) || fallback.decisionReason,
     confidence: Math.max(0, Math.min(1, Number(candidate.confidence) || fallback.confidence)),
     source: 'model',
@@ -208,6 +226,7 @@ export function buildTaskDecisionMessages(input = {}) {
 - 用户纠正“为什么不调用工具/不会搜索”时，要恢复最近尚未完成的真实目标，而不是把纠正句当作新目标。
 - 不得因为尚未检查就假定缺少 API、账号或文件。只有明确缺少且客户端无法自行取得的凭据、授权、批准或业务选择，needsUser 才能为 true。
 - acceptanceCriteria 描述最终可验收结果，不能把“调用了工具”“尝试了”当作完成。
+- requiredConstraints 必须保留用户原话中的对象、地点、时间、指定工具和交付格式，不得为了缩短任务而删除条件。
 - primaryRoute 只选第一条最有效路线；Skill 是可选能力，不是所有任务的必经步骤。
 - decisionReason 只写一句可展示依据，不输出隐藏思维过程。`,
     },
@@ -227,10 +246,13 @@ export function buildTaskDecisionMessages(input = {}) {
 
 export function buildTaskContract(decision, taskExperience = '') {
   const criteria = (decision.acceptanceCriteria ?? []).map((item, index) => `${index + 1}. ${item}`).join('\n');
+  const constraints = (decision.requiredConstraints ?? []).map((item, index) => `${index + 1}. ${item}`).join('\n');
   return `## 太极任务合同
 模式：${decision.mode}
 真实目标：${decision.goal}
 首选路线：${decision.primaryRoute}
+不可丢失条件：
+${constraints || '1. 以用户原始请求的完整语义为准'}
 完成标准：
 ${criteria || '1. 直接、准确地满足用户当前目标'}
 是否必须有真实证据：${decision.requiresEvidence ? '是' : '否'}

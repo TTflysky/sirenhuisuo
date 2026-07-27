@@ -22,6 +22,13 @@ import {
   createFallbackTaskDecision,
   normalizeTaskDecision,
 } from '../src/engine/taskDecisionKernel.mjs';
+import {
+  assessEvidenceAlignment,
+  assessTaskCompletion,
+  extractTaskRequirements,
+  validateSearchQueryAgainstGoal,
+  validateToolCallAgainstGoal,
+} from '../src/engine/taskFidelity.mjs';
 
 const allToolNames = ['web_search', 'inspect_connectors', 'read_file', 'list_files', 'search_skills', 'write_file', 'run_command'];
 
@@ -85,6 +92,30 @@ assert.equal(correctionDecision.mode, 'execute');
 assert.equal(correctionDecision.goal, '查一下今天的抖音热度榜，然后给我');
 assert.equal(correctionDecision.primaryRoute, 'web_search');
 
+const weatherGoal = '查看一下今天的天气情况，安徽省滁州市全椒县';
+const driftedWeatherDecision = normalizeTaskDecision({
+  mode: 'execute',
+  goal: '了解安徽省',
+  primaryRoute: 'web_search',
+  acceptanceCriteria: ['找到安徽省资料'],
+  requiresEvidence: true,
+  needsUser: false,
+  missingUserCondition: '',
+  searchQuery: '安徽省',
+  decisionReason: '缩短查询',
+  confidence: 0.9,
+}, { latestMessage: weatherGoal, availableTools: allToolNames });
+assert.equal(driftedWeatherDecision.goal, weatherGoal, 'The model must not rewrite away the authoritative user goal');
+assert.equal(driftedWeatherDecision.searchQuery, '今天的天气情况，安徽省滁州市全椒县');
+assert.deepEqual(driftedWeatherDecision.requiredConstraints, ['时间：今天', '地点：安徽省滁州市全椒县', '主题：天气情况']);
+assert.equal(validateSearchQueryAgainstGoal(weatherGoal, '安徽省').passed, false);
+assert.equal(validateSearchQueryAgainstGoal(weatherGoal, driftedWeatherDecision.searchQuery).passed, true);
+assert.equal(assessEvidenceAlignment(weatherGoal, '安徽省位于中国东部，是旅游目的地。').passed, false);
+assert.equal(assessEvidenceAlignment(weatherGoal, '全椒县 2026-07-28 天气：29°C，湿度 89%。', { requireTime: true }).passed, true);
+assert.ok(extractTaskRequirements(weatherGoal).some((item) => item.id === 'weather'));
+assert.equal(validateToolCallAgainstGoal('使用生图工具生成一张小猫图片', 'write_file', JSON.stringify({ path: '小猫.svg' })).allowed, false);
+assert.equal(assessTaskCompletion('使用生图工具生成一张小猫图片', '已经生成', [{ name: 'write_file', args: '{"path":"小猫.svg"}', result: 'saved', success: true }]).passed, false);
+
 const unsafeNeedUserDecision = normalizeTaskDecision({
   mode: 'execute',
   goal: '检查项目状态',
@@ -130,6 +161,10 @@ assert.equal(isActionableCapabilityCorrection('你难道不会用技能查询吗
 assert.equal(
   resolveActionableUserGoal('你难道不会用技能查询吗？', '查一下今天的抖音热度榜，然后给我'),
   '查一下今天的抖音热度榜，然后给我',
+);
+assert.equal(
+  resolveActionableUserGoal('我需要用生图工具生成，而不是你直接画一张。', '生成一张小猫图片'),
+  '生成一张小猫图片\n新增约束：我需要用生图工具生成，而不是你直接画一张。',
 );
 assert.equal(isConversationOnlyMessage('我今天有点累，先聊两句。'), true);
 assert.equal(isConversationOnlyMessage('继续'), false);

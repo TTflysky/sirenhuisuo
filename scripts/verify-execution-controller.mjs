@@ -47,6 +47,15 @@ evidence = evaluateExecutionConclusion(evidence, { content: '已重新读取并�
 assert.equal(evidence.decision.kind, 'complete');
 assert.equal(evidence.status, 'completed');
 
+let offTarget = createExecutionController({ goal: '查询今天全椒县天气', acceptanceCriteria: ['必须包含全椒县当天气象数据'] });
+offTarget = observeExecutionResult(offTarget, { toolName: 'web_search', routeKey: 'generic-anhui', success: true, result: '安徽省百科', contributesEvidence: true });
+offTarget = evaluateExecutionConclusion(offTarget, { content: '安徽省简介', reviewed: false, acceptancePassed: false, acceptanceIssues: ['没有全椒县天气数据'] });
+assert.equal(offTarget.decision.kind, 'verify');
+offTarget = evaluateExecutionConclusion(offTarget, { content: '安徽省简介', reviewed: true, acceptancePassed: false, acceptanceIssues: ['没有全椒县天气数据'] });
+assert.equal(offTarget.decision.kind, 'switch_route');
+assert.equal(offTarget.status, 'running');
+assert.deepEqual(offTarget.acceptanceIssues, ['没有全椒县天气数据']);
+
 const restored = restoreExecutionController(transient, { goal: transient.goal });
 assert.equal(restored.status, 'running');
 assert.equal(restored.progressCount, 1);

@@ -1,8 +1,8 @@
-export type ExecutionFailureClass = 'none' | 'approval' | 'authentication' | 'authorization' | 'rate_limit' | 'timeout' | 'network' | 'server' | 'permission' | 'dependency' | 'not_found' | 'invalid_input' | 'conflict' | 'duplicate' | 'unsupported' | 'business' | 'unknown';
+export type ExecutionFailureClass = 'none' | 'approval' | 'authentication' | 'authorization' | 'rate_limit' | 'timeout' | 'network' | 'server' | 'permission' | 'dependency' | 'not_found' | 'invalid_input' | 'conflict' | 'duplicate' | 'unsupported' | 'business' | 'off_target' | 'unknown';
 export type ExecutionDecisionKind = 'act' | 'continue' | 'retry' | 'switch_route' | 'await_user' | 'verify' | 'complete' | 'stop';
 export interface ExecutionDecision { kind: ExecutionDecisionKind; reason: string; at: number; failureClass?: ExecutionFailureClass; routeId?: string; requiresUser?: boolean }
 export interface ExecutionControllerSnapshot {
-  version: number; goal: string; acceptanceCriteria: string[]; requiresEvidence: boolean;
+  version: number; goal: string; acceptanceCriteria: string[]; acceptanceIssues: string[]; requiresEvidence: boolean;
   status: 'running' | 'awaiting_user' | 'blocked' | 'completed' | 'stopped';
   phase: 'observe' | 'act' | 'recover' | 'verify' | 'blocked' | 'complete';
   attemptCount: number; progressCount: number; consecutiveFailures: number; recoveryCycles: number; routeChanges: number;
@@ -19,7 +19,7 @@ export function createExecutionController(options?: { goal?: string; acceptanceC
 export function restoreExecutionController(snapshot: ExecutionControllerSnapshot | undefined, options?: Parameters<typeof createExecutionController>[0]): ExecutionControllerSnapshot;
 export function canExecuteRoute(state: ExecutionControllerSnapshot, input?: { routeKey?: string; toolName?: string }): { allowed: boolean; routeId: string; reason?: string };
 export function observeExecutionResult(state: ExecutionControllerSnapshot, input?: { routeKey?: string; toolName?: string; success?: boolean; result?: string; reason?: string; contributesEvidence?: boolean; verified?: boolean; evidenceKind?: string; retryLimit?: number }): ExecutionControllerSnapshot;
-export function evaluateExecutionConclusion(state: ExecutionControllerSnapshot, input?: { content?: string; reviewed?: boolean }): ExecutionControllerSnapshot;
+export function evaluateExecutionConclusion(state: ExecutionControllerSnapshot, input?: { content?: string; reviewed?: boolean; acceptancePassed?: boolean; acceptanceIssues?: string[] }): ExecutionControllerSnapshot;
 export function applyExecutionSteering(state: ExecutionControllerSnapshot, instruction?: string): ExecutionControllerSnapshot;
 export function markExecutionBudgetReached(state: ExecutionControllerSnapshot): ExecutionControllerSnapshot;
 export function blockExecution(state: ExecutionControllerSnapshot, reason?: string, failureClass?: ExecutionFailureClass): ExecutionControllerSnapshot;

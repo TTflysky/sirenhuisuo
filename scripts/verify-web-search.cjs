@@ -22,8 +22,8 @@ const rss = `<?xml version="1.0" encoding="utf-8"?>
 
 const duckHtml = `<!doctype html><html><body>
 <div class="result">
-  <a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.org%2Ffallback">备用 AI 资料</a>
-  <a class="result__snippet">备用搜索源返回的摘要。</a>
+  <a rel="nofollow" class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.org%2Ffallback">2026 备用 AI 新闻</a>
+  <a class="result__snippet">备用搜索源返回的新闻摘要。</a>
 </div>
 </body></html>`;
 
@@ -100,6 +100,7 @@ async function run() {
     assert.equal(guardrails.isConversationOnlyMessage('为什么他没有调用查询工具？'), true);
     assert.equal(guardrails.requiresFreshWebResearch('那你提炼一下最新的热点然后跟我说，直接给我内容就好'), true);
     assert.equal(guardrails.buildFreshWebQuery('那你提炼一下最新的热点然后跟我说，直接给我内容就好'), '最新的热点');
+    assert.equal(guardrails.buildFreshWebQuery('查看一下今天的天气情况，安徽省滁州市全椒县'), '今天的天气情况，安徽省滁州市全椒县');
     assert.deepEqual(guardrails.extractResearchSources(`搜索结果：\n\n1. 示例资讯\nhttps://example.com/news\n摘要`, 1), [{ title: '示例资讯', url: 'https://example.com/news', snippet: '摘要' }]);
     assert.equal(guardrails.isResearchDeliveryDeflection('目前不能可靠提供热点，前面只拿到了资讯入口，没有拿到具体新闻标题和正文。请把链接发给我。'), true);
     assert.equal(guardrails.isResearchDeliveryDeflection('这是三条热点的内容摘要，并附有可点击来源。'), false);
@@ -110,6 +111,25 @@ async function run() {
     assert.doesNotMatch(noSnippetFallback, /请打开来源/u);
     const linked = guardrails.ensureResearchSourceLinks('这是整理后的摘要。', '给我 1 条', `搜索结果：\n\n1. 示例资讯\nhttps://example.com/news\n摘要`);
     assert.match(linked, /\*\*来源链接\*\*.*https:\/\/example\.com\/news/su);
+
+    const offTargetWeather = `搜索结果：\n\n1. 安徽省_百度百科\nhttps://example.com/anhui\n安徽省位于中国东部。`;
+    assert.equal(guardrails.isResearchEvidenceRelevant('查看一下今天的天气情况，安徽省滁州市全椒县', offTargetWeather), false);
+    assert.match(guardrails.buildResearchFallback('查看一下今天的天气情况，安徽省滁州市全椒县', offTargetWeather), /拦截这些偏题结果/u);
+
+    const weatherPayload = {
+      current_condition: [{ temp_C: '29', FeelsLikeC: '37', humidity: '89', winddir16Point: 'ESE', windspeedKmph: '10', weatherCode: '113', weatherDesc: [{ value: 'Clear' }], uvIndex: '0' }],
+      nearest_area: [{ areaName: [{ value: 'Chuanchiaohsien' }], country: [{ value: 'China' }], region: [{ value: 'Anhui' }], latitude: '32.098', longitude: '118.258' }],
+      weather: [{ date: '2026-07-28', mintempC: '25', maxtempC: '27', uvIndex: '2', hourly: [{ chanceofrain: '26' }] }],
+    };
+    const weather = await searchWeb('今天 安徽省滁州市全椒县 天气', {
+      fetchImpl: async (url) => {
+        assert.match(String(url), /wttr\.in\/.*%E5%85%A8%E6%A4%92%E5%8E%BF/iu);
+        return new Response(JSON.stringify(weatherPayload), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      },
+      timeoutMs: 1000,
+    });
+    assert.equal(weather.provider, 'wttr.in 实时天气');
+    assert.match(weather.results[0].snippet, /全椒县.*2026-07-28.*29°C.*湿度 89%/u);
 
     console.log(JSON.stringify({
       passed: true,

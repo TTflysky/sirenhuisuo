@@ -1,7 +1,7 @@
 # 项目交接手册
 
 > 最后整理：2026-07-28
-> 当前源码版本：`v0.11.0`
+> 当前源码版本：`v0.11.1`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 
@@ -22,7 +22,7 @@
 7. 每次功能发布必须：升级版本、构建 Windows 安装包、计算 SHA-256、提交并推送 `main`、创建 GitHub Release 并上传安装包和 blockmap。
 8. 面向用户的最终回答必须先说清楚成功、失败或进行中；原始工具名、命令、参数、退出码和日志只放在折叠执行过程中，不能在消息正文重复展示。
 9. 工具审批和命令沙盒必须同时覆盖助手、员工私聊和团队聊天。审批被拒绝时必须返回“未执行”的真实结果，不能把取消、权限不足或沙盒拦截描述成完成。
-10. 所有执行入口必须先通过 `taskDecisionKernel` 还原真实目标、首选路线和完成标准，再通过统一 `ExecutionController` 观察结果、分类失败、决定重试或换路线并重新验收；不得重新引入按回复文案、关键词猜测或松散计数器判断任务成败的分支。
+10. 所有执行入口必须先通过 `taskDecisionKernel` 还原真实目标、首选路线和完成标准，再由 `taskFidelity` 固定不可丢失条件，最后通过统一 `ExecutionController` 观察结果、分类失败、决定重试或换路线并重新验收；不得重新引入按回复文案、关键词猜测或“工具返回内容就算成功”的分支。
 
 ## 2. 当前已交付的能力
 
@@ -56,6 +56,7 @@
 | `src/store.tsx` | 全局状态、团队消息路由、助理调度、任务运行的启动/暂停/继续/关闭。 |
 | `src/data/hermesClient.ts` | OpenAI 兼容请求、模型配置解析、聊天/员工/团队/Token 本地持久化、Agent 循环。 |
 | `src/engine/taskDecisionKernel.mjs` | 将每次用户消息编译为任务合同，结合语义模型决策和高置信度安全规则，决定聊天、回答或执行及首选路线。 |
+| `src/engine/taskFidelity.mjs` | 从用户原话提取不可丢失的目标约束，在工具调用、证据返回和最终交付三个阶段检查目标一致性。 |
 | `src/engine/taskLearningMemory.ts` | 保存、归并和检索任务成功/失败经验；只提供路线参考，当前真实证据优先。 |
 | `src/engine/agentGuardrails.mjs` | 最新消息分类、实时搜索识别与查询清洗、文字控制、反馈挂起、工具语义去重和资源读取上限。 |
 | `src/engine/teamDiscussion.ts` | 计划步骤执行、员工发言、工具回调、审查与交接。 |

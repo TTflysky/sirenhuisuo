@@ -16,6 +16,7 @@ const FAILURE_DEFINITIONS = [
   { code: 'duplicate', pattern: /重复调用|完全相同|继续读取不会|达到.{0,8}尝试次数|不会产生新证据/iu, retryable: false, needsUser: false, label: '当前路线正在重复且没有新证据' },
   { code: 'unsupported', pattern: /不支持|unsupported|没有对应.{0,12}(?:适配器|能力)|能力缺失/iu, retryable: false, needsUser: false, label: '当前工具不支持这项操作' },
   { code: 'business', pattern: /业务码|业务状态|验证未通过|验收未通过|接口返回.{0,16}(?:失败|错误|code)/iu, retryable: false, needsUser: false, label: '外部服务业务验收未通过' },
+  { code: 'off_target', pattern: /偏题|与原始目标不一致|丢失了.{0,20}(?:条件|地点|时间|主题)|没有覆盖.{0,20}(?:目标|地点|时间|主题)|不满足指定方式/u, retryable: false, needsUser: false, label: '结果没有回答原始目标' },
 ];
 
 function clone(value) {
@@ -63,6 +64,7 @@ export function createExecutionController(options = {}) {
     version: CONTROLLER_VERSION,
     goal: String(options.goal ?? '').trim(),
     acceptanceCriteria: Array.isArray(options.acceptanceCriteria) ? options.acceptanceCriteria.filter(Boolean).slice(0, 12) : [],
+    acceptanceIssues: [],
     requiresEvidence: options.requiresEvidence !== false,
     status: 'running',
     phase: 'observe',
@@ -225,7 +227,21 @@ export function evaluateExecutionConclusion(snapshot, input = {}) {
   if (!input.reviewed) {
     state.phase = 'verify';
     state.decision = decision('verify', '回到最初目标，根据真实证据做一次独立验收。');
+  } else if (input.acceptancePassed === false) {
+    state.acceptanceIssues = Array.isArray(input.acceptanceIssues) ? input.acceptanceIssues.filter(Boolean).slice(0, 12) : ['现有结果没有覆盖原始目标'];
+    if (state.routeChanges < state.maxRouteChanges) {
+      state.status = 'running';
+      state.phase = 'recover';
+      state.routeChanges += 1;
+      state.recoveryCycles += 1;
+      state.decision = decision('switch_route', `目标一致性验收未通过：${state.acceptanceIssues.join('；')}`, { failureClass: 'off_target' });
+    } else {
+      state.status = 'blocked';
+      state.phase = 'blocked';
+      state.decision = decision('stop', `多条路线仍未覆盖原始目标：${state.acceptanceIssues.join('；')}`, { failureClass: 'off_target' });
+    }
   } else {
+    state.acceptanceIssues = [];
     state.status = 'completed';
     state.phase = 'complete';
     state.decision = decision('complete', '最终结论已经过目标复核并有真实证据支撑。');

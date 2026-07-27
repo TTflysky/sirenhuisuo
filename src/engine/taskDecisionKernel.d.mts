@@ -5,6 +5,7 @@ export interface TaskDecision {
   goal: string;
   primaryRoute: TaskPrimaryRoute;
   acceptanceCriteria: string[];
+  requiredConstraints: string[];
   requiresEvidence: boolean;
   needsUser: boolean;
   missingUserCondition: string;

@@ -1,12 +1,12 @@
 # 太极项目当前交接
 
 > 更新时间：2026-07-28
-> 当前版本：`v0.11.0`
+> 当前版本：`v0.11.1`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
-> Release：[v0.11.0](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.11.0)
+> Release：[v0.11.1](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.11.1)
 
-`v0.11.0` 在 `v0.10.0` 的统一 `ExecutionController` 之上新增任务决策内核与任务经验库。每次消息先被编译为真实目标、首选路线、完成标准和证据要求，再进入共享工具循环；人格只决定表达和职责，不再承担“是否行动”的底层判断。开发电脑只运行 `npm.cmd run publish:release` 发布，接手电脑只运行 `npm.cmd run sync:project` 同步。发布命令自动回归、打包、推送 `main`、上传 Release 三件套并核对远端 SHA-256；两端共用 Git Credential Manager 登录，不保存 Token。
+`v0.11.1` 在任务决策内核与 `ExecutionController` 之间新增目标一致性层。用户原始目标不可被模型缩写覆盖；时间、地点、主题、指定工具和交付格式会在工具调用前、证据返回后和最终交付前三次验收。联网搜索返回偏题网页时不能再宣布成功，天气优先使用结构化实时数据。开发电脑只运行 `npm.cmd run publish:release` 发布，接手电脑只运行 `npm.cmd run sync:project` 同步。
 
 ## 办公室端直接开始
 
@@ -150,7 +150,10 @@ npm.cmd run verify:package
 - `npm.cmd run verify:skill-atomic`：通过；无效包不触碰旧 Skill，成功替换不残留旧文件，哈希损坏被拦截，并真实验证根 Skill 可读取知识库与笔记子规则。
 - `npm.cmd run verify:update-download`：通过；模拟断线后 Range 续传、服务器忽略断点、等长损坏缓存和 SHA-256 拦截。
 - `npm.cmd run verify:web-search`：通过；覆盖 Bing XML 解析、主源超时后备用源成功和双源具体错误聚合。
-- `npm.cmd run verify:package`：通过；包内版本为 `0.11.0`，入口、连接器适配器、命令外壳和三份 IMA 规则均可读取，安装器、blockmap 与 `latest.yml` 完整。
+- `npm.cmd run verify:web-search` 新增目标一致性覆盖：安徽百科不能冒充全椒县天气；结构化天气数据必须包含地点、日期、温度、湿度等真实字段。
+- `npm.cmd run verify:agent-kernel`：通过模型目标漂移、搜索词条件丢失、指定生图工具却写 SVG、用户新增约束合并和最终目标验收回归。
+- 全椒县天气实网验证：`wttr.in 实时天气` 返回全椒县、安徽、坐标 `32.098, 118.258`、日期 `2026-07-28` 及完整气象字段；偏题网页未参与结果。
+- `npm.cmd run verify:package`：通过；包内版本为 `0.11.1`，入口、连接器适配器、命令外壳和三份 IMA 规则均可读取，安装器、blockmap 与 `latest.yml` 完整。
 - `npm.cmd run diagnose:web-search`：通过；Electron 实网使用 DuckDuckGo，首轮空结果自动重试后约 3.1 秒返回 8 条中文 AI 资讯。
 - `npm.cmd run verify:docx`：通过；生成的 Word 可重新解析正文。
 - 安装版 `npm.cmd run verify:foundation-ui`：通过；真实 Electron IPC 和诊断中心五项完整显示。
@@ -161,11 +164,11 @@ npm.cmd run verify:package
 
 ## 安装与发布资产
 
-- 安装包：`release\taiji-office-setup-0.11.0.exe`
-- Blockmap：`release\taiji-office-setup-0.11.0.exe.blockmap`
+- 安装包：`release\taiji-office-setup-0.11.1.exe`
+- Blockmap：`release\taiji-office-setup-0.11.1.exe.blockmap`
 - 更新清单：`release\latest.yml`
-- 包内版本：`0.11.0`。
-- 安装包大小：`173843882` 字节；SHA-256：`A6C1EA49F35139DB511656AC38D563B4E48FED237F29E0938527FB69B816E801`。
+- 包内版本：`0.11.1`。
+- 安装包大小：`173849131` 字节；SHA-256：`F2137901C9C2D0C6EF89AF30A30423F9429DD3E16B4E946D1E77D747289F302C`。
 - 最终文件大小和 SHA-256 以 `npm.cmd run publish:release` 的成功输出及 GitHub Release digest 为准；发布脚本会逐项比对本地与远端，不再把易过期的单次构建摘要固化在交接文档中。
 - 解包版受控启动 8 秒保持运行，未出现启动即崩溃。
 - 安装目录只保留 `太极 AI 办公会所.exe` 和对应卸载程序，没有旧产品可执行文件残留。

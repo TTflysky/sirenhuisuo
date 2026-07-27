@@ -11,13 +11,14 @@ import {
   buildFreshWebQuery,
   buildResearchFallback,
   ensureResearchSourceLinks,
-  extractResearchSources,
+  extractRelevantResearchSources,
   getToolCallLimit,
   isActionableCapabilityCorrection,
   isExplicitStopSteering,
   isPreparationOnlyTool,
   isResearchOnlyRequest,
   isResearchDeliveryDeflection,
+  isResearchEvidenceRelevant,
   requiresFreshWebResearch,
   toolResourceKey,
 } from '../engine/agentGuardrails.mjs';
@@ -55,6 +56,7 @@ import {
   parseTaskDecisionToolCall,
   type TaskDecision,
 } from '../engine/taskDecisionKernel.mjs';
+import { assessTaskCompletion, validateToolCallAgainstGoal } from '../engine/taskFidelity.mjs';
 import { buildTaskLearningContext, recordTaskLearning } from '../engine/taskLearningMemory';
 
 const LS_EMPLOYEES = 'hermes_office_employees';
@@ -1044,10 +1046,11 @@ function estimateTokens(text: string): number {
 }
 
 /** A successful transport response is not always useful progress for the task. */
-function isUsefulToolOutcome(name: string, success: boolean, output: string): boolean {
+function isUsefulToolOutcome(name: string, success: boolean, output: string, goal = ''): boolean {
   if (!success || !isToolResultSuccessful(output, success)) return false;
   if (name === 'search_skills') return !/没有找到.{0,80}(?:技能|匹配)|技能库为空/u.test(output);
-  if (name === 'web_search') return !/未找到直接结果|API 暂时不可用|搜索 API/u.test(output);
+  if (name === 'web_search') return !/未找到直接结果|API 暂时不可用|搜索 API/u.test(output)
+    && (!goal || isResearchEvidenceRelevant(goal, output));
   return true;
 }
 
@@ -1336,7 +1339,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         scope,
         workspaceId: opts.workspaceId,
       });
-      const useful = isUsefulToolOutcome(name, result.success, result.output);
+      const useful = isUsefulToolOutcome(name, result.success, result.output, originalUserText);
       observeToolOutcome(name, argumentsText, result.output, useful, name === 'test_connector' ? 'connection' : 'progress');
       onToolResult?.(name, argumentsText, result.output, useful);
       callLog.push({ name, args: argumentsText, result: result.output.slice(0, 1200), success: useful });
@@ -1383,7 +1386,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       scope,
       workspaceId: opts.workspaceId,
     });
-    const useful = isUsefulToolOutcome('web_search', searched.success, searched.output);
+    const useful = isUsefulToolOutcome('web_search', searched.success, searched.output, originalUserText);
     observeToolOutcome('web_search', searchArgs, searched.output, useful, 'research');
     requiredResearchSucceeded = useful;
     requiredResearchOutput = searched.output;
@@ -1400,7 +1403,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     });
 
     if (useful && researchOnlyTask) {
-      const sources = extractResearchSources(searched.output, 5);
+      const sources = extractRelevantResearchSources(originalUserText, searched.output, 5);
       const pageResults = await Promise.all(sources.map(async (source, index) => {
         const readArgs = JSON.stringify({ url: source.url });
         onToolCall?.('read_web_page', readArgs);
@@ -1411,7 +1414,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
           scope,
           workspaceId: opts.workspaceId,
         });
-        const readUseful = isUsefulToolOutcome('read_web_page', read.success, read.output);
+        const readUseful = isUsefulToolOutcome('read_web_page', read.success, read.output, originalUserText);
         observeToolOutcome('read_web_page', readArgs, read.output, readUseful, 'research');
         onToolResult?.('read_web_page', readArgs, read.output, readUseful);
         callLog.push({ name: 'read_web_page', args: readArgs, result: read.output.slice(0, 1200), success: readUseful });
@@ -1459,7 +1462,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         scope,
         workspaceId: opts.workspaceId,
       });
-      const useful = isUsefulToolOutcome(name, recovered.success, recovered.output);
+      const useful = isUsefulToolOutcome(name, recovered.success, recovered.output, originalUserText);
       observeToolOutcome(name, argumentsText, recovered.output, useful, 'recovery');
       if (useful && !isPreparationOnlyTool(name)) successfulCalls.add(`${name}:${argumentsText}`);
       onToolResult?.(name, argumentsText, recovered.output, useful);
@@ -1696,10 +1699,18 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         }
         totalToolAttempts += 1;
         toolCallsThisPhase += 1;
-        const cacheKey = canonicalToolCallKey(tc.name, tc.arguments);
-        const routeGate = canExecuteRoute(executionState, { toolName: tc.name, routeKey: executionRouteKey(tc.name, tc.arguments) });
+        let effectiveArguments = tc.arguments;
+        if (tc.name === 'web_search') {
+          let parsed: Record<string, unknown> = {};
+          try { parsed = JSON.parse(tc.arguments || '{}') as Record<string, unknown>; } catch {}
+          parsed.query = buildFreshWebQuery(originalUserText);
+          effectiveArguments = JSON.stringify(parsed);
+        }
+        const fidelityGate = validateToolCallAgainstGoal(originalUserText, tc.name, effectiveArguments);
+        const cacheKey = canonicalToolCallKey(tc.name, effectiveArguments);
+        const routeGate = canExecuteRoute(executionState, { toolName: tc.name, routeKey: executionRouteKey(tc.name, effectiveArguments) });
         const controllerRetry = executionState.decision.kind === 'retry' && executionState.decision.routeId === routeGate.routeId;
-        const resourceKey = toolResourceKey(tc.name, tc.arguments);
+        const resourceKey = toolResourceKey(tc.name, effectiveArguments);
         const resourceReadCount = resourceKey ? (resourceReadCounts.get(resourceKey) ?? 0) : 0;
         const toolCallCount = (toolCallCounts.get(tc.name) ?? 0) + 1;
         toolCallCounts.set(tc.name, toolCallCount);
@@ -1712,7 +1723,9 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
           : tc.name === 'read_file' ? (connectorSetupTask ? 4 : 12) : Number.POSITIVE_INFINITY;
         const toolLimitReached = toolCallCount > getToolCallLimit(tc.name, connectorSetupTask);
         const resourceLimitReached = Boolean(resourceKey) && resourceReadCount >= resourceLimit;
-        const blockedReason = !routeGate.allowed
+        const blockedReason = !fidelityGate.allowed
+          ? `${fidelityGate.reason} 当前工具调用与原始目标不一致，已在执行前拦截，必须选择能满足全部条件的路线。`
+          : !routeGate.allowed
           ? routeGate.reason ?? '执行控制器已阻止重复或无效路线，必须换一种方法。'
           : misroutedConnectorSkill
           ? '请先调用 inspect_connectors 确认这个外部服务究竟使用 HTTP、MCP 还是 Skill。只有检查结果明确显示 Skill 后，才安装或读取对应 Skill。'
@@ -1731,19 +1744,19 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
           ? { toolCallId: tc.id, name: tc.name, success: false, output: blockedReason }
           : await (async () => {
             executed = true;
-            onToolCall?.(tc.name, redactToolArguments(tc.arguments));
-            return executeTool({ id: tc.id, name: tc.name, args: (() => { try { return JSON.parse(tc.arguments); } catch { return {}; } })(), scope, workspaceId: opts.workspaceId });
+            onToolCall?.(tc.name, redactToolArguments(effectiveArguments));
+            return executeTool({ id: tc.id, name: tc.name, args: (() => { try { return JSON.parse(effectiveArguments); } catch { return {}; } })(), scope, workspaceId: opts.workspaceId });
           })();
-        const resultSuccess = executed && isUsefulToolOutcome(tc.name, result.success, result.output);
+        const resultSuccess = executed && isUsefulToolOutcome(tc.name, result.success, result.output, originalUserText);
         const newEvidence = resultSuccess && cached === undefined;
-        observeToolOutcome(tc.name, tc.arguments, result.output, resultSuccess, tc.name === 'write_file' ? 'file' : tc.name === 'test_connector' ? 'connection' : 'progress');
+        observeToolOutcome(tc.name, effectiveArguments, result.output, resultSuccess, tc.name === 'write_file' ? 'file' : tc.name === 'test_connector' ? 'connection' : 'progress');
         if (resourceKey && executed) resourceReadCounts.set(resourceKey, resourceReadCount + 1);
         if (tc.name === 'read_skill' && !resultSuccess) failedSkillReads.add(cacheKey);
         if (newEvidence && !isPreparationOnlyTool(tc.name)) successfulCalls.add(cacheKey);
         if (!newEvidence) iterationHadFailure = true;
         if (executed && cached === undefined) toolResultCache.set(cacheKey, { output: result.output.slice(0, 6000), success: resultSuccess });
-        if (executed) onToolResult?.(tc.name, redactToolArguments(tc.arguments), result.output, resultSuccess);
-        callLog.push({ name: tc.name, args: tc.arguments, result: result.output.slice(0, 1200), success: resultSuccess });
+        if (executed) onToolResult?.(tc.name, redactToolArguments(effectiveArguments), result.output, resultSuccess);
+        callLog.push({ name: tc.name, args: effectiveArguments, result: result.output.slice(0, 1200), success: resultSuccess });
 
         if (isPreparationOnlyTool(tc.name) && newEvidence) preparationOnlyStreak += 1;
         else if (newEvidence) preparationOnlyStreak = 0;
@@ -1752,7 +1765,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
 
         if (resultSuccess && tc.name === 'write_file') {
           try {
-            const writtenArgs = JSON.parse(tc.arguments || '{}') as { path?: string };
+            const writtenArgs = JSON.parse(effectiveArguments || '{}') as { path?: string };
             const writtenResource = toolResourceKey('read_file', JSON.stringify({ path: writtenArgs.path ?? '' }));
             if (writtenResource) resourceReadCounts.delete(writtenResource);
           } catch {}
@@ -1798,7 +1811,13 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     } else if (r.content) {
       if (!conversationOnly) {
         const cognitiveOnlyCompletion = !executionState.requiresEvidence && callLog.length === 0;
-        publishExecutionState(evaluateExecutionConclusion(executionState, { content: r.content, reviewed: cognitiveOnlyCompletion || finalReviewRequested }));
+        const acceptance = assessTaskCompletion(originalUserText, r.content, callLog);
+        publishExecutionState(evaluateExecutionConclusion(executionState, {
+          content: r.content,
+          reviewed: cognitiveOnlyCompletion || finalReviewRequested,
+          acceptancePassed: acceptance.passed,
+          acceptanceIssues: acceptance.issues,
+        }));
         const nextDecision = executionState.decision.kind;
         if (nextDecision === 'verify') {
           currentTurns.push({ role: 'assistant', content: r.content });

@@ -1,3 +1,5 @@
+import { assessEvidenceAlignment, extractTaskRequirements } from './taskFidelity.mjs';
+
 const PREPARATION_ONLY_TOOLS = new Set([
   'inspect_connectors',
   'list_files',
@@ -132,7 +134,8 @@ export function resolveActionableUserGoal(message, previousUserMessage) {
   const current = String(message ?? '').trim();
   const previous = String(previousUserMessage ?? '').trim();
   if (!isActionableCapabilityCorrection(current) || !previous || isConversationOnlyMessage(previous)) return current;
-  return previous;
+  const addsHardConstraint = /(?:我)?(?:需要|要求|必须|只能|务必|改用|换成|不能|不要).{0,48}(?:工具|方式|格式|文件|模型|路线)|而不是/u.test(current);
+  return addsHardConstraint ? `${previous}\n新增约束：${current}` : previous;
 }
 
 export function requiresObservableExecutionEvidence(message) {
@@ -165,7 +168,7 @@ export function buildFreshWebQuery(message) {
   const original = String(message ?? '').trim().slice(0, 300);
   if (!original) return '';
   const withoutCommand = original
-    .replace(/^(?:请|麻烦|现在|先|直接)?(?:你)?(?:帮我|给我|替我)?(?:去)?(?:联网搜索|上网搜索|网络搜索|搜索互联网|网上查|上网查|搜索|搜(?:一下|集)?|查(?:一下|查看)?|查找|查询|检索|找(?:一下)?|调研|了解|获取)(?:一下|一下子)?[：:，,\s]*/u, '')
+    .replace(/^(?:请|麻烦|现在|先|直接)?(?:你)?(?:帮我|给我|替我)?(?:去)?(?:联网搜索|上网搜索|网络搜索|搜索互联网|网上查|上网查|查看|搜索|搜(?:一下|集)?|查(?:一下)?|查找|查询|检索|找(?:一下)?|看(?:一下)?|调研|了解|获取)(?:一下|一下子)?[：:，,\s]*/u, '')
     .replace(/^(?:那|那么)?(?:你)?(?:帮我|给我|替我)?(?:提炼|整理|总结|汇总|介绍|说说)(?:一下)?[：:，,\s]*/u, '')
     .replace(/(?:然后|并且|之后|再)[，,\s]*(?:帮我|给我)?(?:做|整理|生成|写|制作|汇总).{0,80}$/u, '')
     .replace(/[，,]\s*\d{1,2}\s*(?:条|个|则|项|篇).{0,80}$/u, '')
@@ -198,6 +201,22 @@ export function extractResearchSources(searchOutput, limit = 5) {
   return parsedResearchRows(searchOutput).slice(0, safeLimit);
 }
 
+function relevantResearchRows(userText, searchOutput) {
+  const rows = parsedResearchRows(searchOutput);
+  if (!String(userText ?? '').trim()) return rows;
+  const requireTime = extractTaskRequirements(userText).some((item) => item.kind === 'time');
+  return rows.filter((row) => assessEvidenceAlignment(userText, `${row.title}\n${row.url}\n${row.snippet}`, { requireTime }).passed);
+}
+
+export function extractRelevantResearchSources(userText, searchOutput, limit = 5) {
+  const safeLimit = Math.max(1, Math.min(Number.isFinite(limit) ? Math.floor(limit) : 5, 8));
+  return relevantResearchRows(userText, searchOutput).slice(0, safeLimit);
+}
+
+export function isResearchEvidenceRelevant(userText, searchOutput) {
+  return relevantResearchRows(userText, searchOutput).length > 0;
+}
+
 export function isResearchDeliveryDeflection(content) {
   const text = String(content ?? '').trim();
   if (!text) return true;
@@ -215,10 +234,10 @@ function requestedResearchCount(userText, available) {
 }
 
 export function buildResearchFallback(userText, searchOutput, modelError = '') {
-  const rows = parsedResearchRows(searchOutput);
+  const rows = relevantResearchRows(userText, searchOutput);
   const count = requestedResearchCount(userText, rows.length);
   if (rows.length === 0) {
-    return `搜索已经完成，但整理模型暂时没有回应。以下是搜索服务返回的原始资料：\n\n${String(searchOutput ?? '').slice(0, 10000)}`;
+    return `这次没有查到能直接回答“${String(userText ?? '').trim().slice(0, 160)}”的可靠结果。搜索服务虽然返回了内容，但没有覆盖原问题中的关键对象、地点、时间或主题，因此太极已拦截这些偏题结果，没有把它们冒充答案。`;
   }
   const items = rows.slice(0, count).map((row, index) => {
     const summary = row.snippet || '该来源未返回可核验摘要，当前仅确认标题与来源，不补写未经证实的细节。';
@@ -229,7 +248,7 @@ export function buildResearchFallback(userText, searchOutput, modelError = '') {
 }
 
 export function ensureResearchSourceLinks(content, userText, searchOutput) {
-  const rows = parsedResearchRows(searchOutput);
+  const rows = relevantResearchRows(userText, searchOutput);
   if (rows.length === 0) return content;
   const count = requestedResearchCount(userText, rows.length);
   const selected = rows.slice(0, count);
