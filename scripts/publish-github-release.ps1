@@ -146,8 +146,10 @@ try {
   $env:GH_TOKEN = $token
   [IO.File]::WriteAllText($notesPath, (Get-ReleaseNotes $version), [Text.UTF8Encoding]::new($false))
 
-  & gh release view $tag --repo $repoName --json tagName *> $null
-  $releaseExists = $LASTEXITCODE -eq 0
+  $releaseListJson = & gh release list --repo $repoName --limit 100 --json tagName
+  if ($LASTEXITCODE -ne 0) { throw 'Unable to query existing GitHub Releases.' }
+  $releaseList = @($releaseListJson | ConvertFrom-Json)
+  $releaseExists = @($releaseList | Where-Object { $_.tagName -eq $tag }).Count -gt 0
   if ($releaseExists) {
     Invoke-CheckedCommand gh @('release', 'upload', $tag, $assetPaths[0], $assetPaths[1], $assetPaths[2], '--repo', $repoName, '--clobber')
     Invoke-CheckedCommand gh @('release', 'edit', $tag, '--repo', $repoName, '--title', "Taiji Office $tag", '--notes-file', $notesPath)

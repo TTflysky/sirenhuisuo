@@ -149,7 +149,7 @@ npm.cmd run verify:package
 - `npm.cmd run verify:skill-atomic`：通过；无效包不触碰旧 Skill，成功替换不残留旧文件，哈希损坏被拦截，并真实验证根 Skill 可读取知识库与笔记子规则。
 - `npm.cmd run verify:update-download`：通过；模拟断线后 Range 续传、服务器忽略断点、等长损坏缓存和 SHA-256 拦截。
 - `npm.cmd run verify:web-search`：通过；覆盖 Bing XML 解析、主源超时后备用源成功和双源具体错误聚合。
-- `npm.cmd run verify:package`：通过；包内版本为 `0.10.0`，入口、连接器适配器、命令外壳和三份 IMA 规则均可读取，安装器、blockmap 与 `latest.yml` 完整。
+- `npm.cmd run verify:package`：通过；包内版本为 `0.10.1`，入口、连接器适配器、命令外壳和三份 IMA 规则均可读取，安装器、blockmap 与 `latest.yml` 完整。
 - `npm.cmd run diagnose:web-search`：通过；Electron 实网使用 DuckDuckGo，首轮空结果自动重试后约 3.1 秒返回 8 条中文 AI 资讯。
 - `npm.cmd run verify:docx`：通过；生成的 Word 可重新解析正文。
 - 安装版 `npm.cmd run verify:foundation-ui`：通过；真实 Electron IPC 和诊断中心五项完整显示。
@@ -160,15 +160,11 @@ npm.cmd run verify:package
 
 ## 安装与发布资产
 
-- 安装包：`E:\私人办公会所项目\release\taiji-office-setup-0.10.0.exe`
-- Blockmap：`E:\私人办公会所项目\release\taiji-office-setup-0.10.0.exe.blockmap`
+- 安装包：`E:\私人办公会所项目\release\taiji-office-setup-0.10.1.exe`
+- Blockmap：`E:\私人办公会所项目\release\taiji-office-setup-0.10.1.exe.blockmap`
 - 更新清单：`E:\私人办公会所项目\release\latest.yml`
-- 安装包大小：`173840481` 字节。
-- Blockmap 大小：`180805` 字节。
-- 安装包 SHA-256：`BB480F96815D1A550D1AB5FCBE542D8AD2D1234C85B575C068D351C184C5D3E5`。
-- Blockmap SHA-256：`041513EE25E5AC7A326617A7701448C3653BE82BDBD8E8AF267E8254A68275A0`。
-- `app.asar` SHA-256：`8F7E34FBDA31777C145C5A002F897E38837987CB55F91137F668CADE13FD44DF`。
-- 包内版本：`0.10.0`。
+- 包内版本：`0.10.1`。
+- 最终文件大小和 SHA-256 以 `npm.cmd run publish:release` 的成功输出及 GitHub Release digest 为准；发布脚本会逐项比对本地与远端，不再把易过期的单次构建摘要固化在交接文档中。
 - 解包版受控启动 8 秒保持运行，未出现启动即崩溃。
 - 安装目录只保留 `太极 AI 办公会所.exe` 和对应卸载程序，没有旧产品可执行文件残留。
 
