@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CheckCircleOutlined, DownloadOutlined, FolderOpenOutlined, LinkOutlined, RobotOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { App, Button, Input, Modal, Select, Switch } from 'antd';
 import type { Connector, ConnectorAuth } from '../../data/connectors';
 import { checkConnector, connectorMissingFields, findConnectorPreset, upsertConnector } from '../../data/connectors';
 import { BUS_CHANNELS, sendBus } from '../../ipcBus';
+import { findBundledSkill } from '../../data/skills';
 
 const LS_PENDING_REQUEST = 'hermes_office_assistant_pending_request';
 
@@ -25,6 +26,15 @@ export default function ConnectorConfigModal({ connector, onClose, onSaved, stan
   const [installingSkill, setInstallingSkill] = useState(false);
   const [enabled, setEnabled] = useState(connector.enabled);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (installedSkillId || !preset?.bundledSkillSource) return;
+    let active = true;
+    void findBundledSkill(preset.bundledSkillSource).then((skill) => {
+      if (active && skill) setInstalledSkillId(skill.id);
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [installedSkillId, preset?.bundledSkillSource]);
 
   const parseHeaders = () => Object.fromEntries(headers.split('\n').map((line) => line.split(/:\s*/, 2)).filter(([key, value]) => key && value));
   const buildConnector = (): Connector => ({
@@ -134,7 +144,7 @@ export default function ConnectorConfigModal({ connector, onClose, onSaved, stan
           <>
             <label><span>官方说明页</span><div className="knowledge-path-row"><Input value={documentationUrl} onChange={(event) => setDocumentationUrl(event.target.value)} placeholder="由助手阅读官方说明后填写" /><Button icon={<LinkOutlined />} disabled={!documentationUrl.trim()} onClick={() => void window.electronAPI?.openExternal(documentationUrl.trim())}>打开</Button></div></label>
             <label><span>官方 Skill 下载地址</span><div className="knowledge-path-row"><Input value={skillSourceUrl} onChange={(event) => { setSkillSourceUrl(event.target.value); setInstalledSkillId(''); }} placeholder="SKILL.md、GitHub 目录或 ZIP" /><Button icon={<DownloadOutlined />} loading={installingSkill} onClick={() => void installSkillPackage()}>{installedSkillId ? '重装' : '安装'}</Button></div></label>
-            {installedSkillId && <div className="knowledge-skill-status"><CheckCircleOutlined /> Skill 已安装并关联，保存后由助手按说明验证</div>}
+            {installedSkillId && <div className="knowledge-skill-status"><CheckCircleOutlined /> Skill 已内置或关联，保存后自动按完整规则验证</div>}
             {(preset?.credentialFields ?? connector.credentialFields ?? []).map((field) => (
               <label key={field.key}><span>{field.label}{field.required ? ' *' : ''}</span>{field.secret
                 ? <Input.Password value={credentials[field.key] ?? ''} onChange={(event) => setCredentials((current) => ({ ...current, [field.key]: event.target.value }))} placeholder={field.placeholder} />

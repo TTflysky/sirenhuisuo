@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChangeEvent, ClipboardEvent, KeyboardEvent, RefObject } from 'react';
 import type { Skill, SkillReference } from '../../types';
-import { listSkills, readSkill, skillReference } from '../../data/skills';
+import { listSkills, readSkill, skillInstructionText, skillReference } from '../../data/skills';
 
 interface Props { value: string; onChange: (value: string) => void; onChangeEvent?: (event: ChangeEvent<HTMLTextAreaElement>) => void; selected: SkillReference[]; onSelectedChange: (value: SkillReference[]) => void; onKeyDown?: (e: KeyboardEvent<HTMLTextAreaElement>) => void; onPaste?: (e: ClipboardEvent<HTMLTextAreaElement>) => void; disabled?: boolean; placeholder?: string; rows?: number; className?: string; ref?: RefObject<HTMLTextAreaElement | null>; }
 export async function resolveSkillContext(refs: SkillReference[]): Promise<string> {
   const chosen = refs.slice(0, 5);
   const bodies = await Promise.all(chosen.map(async (ref) => { try { return await readSkill(ref.id); } catch { return null; } }));
-  return bodies.filter(Boolean).map((skill) => `--- SKILL ${skill!.name} (${skill!.id}) ---\n${skill!.content.slice(0, 32000)}\n--- END SKILL ---`).join('\n');
+  return bodies.filter(Boolean).map((skill) => `--- SKILL ${skill!.name} (${skill!.id}) ---\n${skillInstructionText(skill!, 60000)}\n--- END SKILL ---`).join('\n');
 }
 const MIN_POPUP_HEIGHT = 300;
 const MAX_POPUP_HEIGHT = 600;

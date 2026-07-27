@@ -1,12 +1,12 @@
 # 太极项目当前交接
 
 > 更新时间：2026-07-27
-> 当前版本：`v0.9.4`
+> 当前版本：`v0.9.5`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
-> Release：[v0.9.4](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.9.4)
+> Release：[v0.9.5](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.9.5)
 
-`v0.9.4` 补齐“搜索成功后必须在聊天气泡中总结交付”的闭环，并把连接器验证从模型自由判断升级为客户端强制闭环：配置保存后自动读取 Skill 规则、执行最小只读调用并核对业务状态，不改变既有任务、模型和用户数据结构。
+`v0.9.5` 完整内置 IMA 官方 Skill 1.1.8，并修复根 `SKILL.md` 只做路由时子模块规则未被客户端读取的问题。IMA 用户只需填写本机 Client ID 与 API Key；手动安装的新版本 Skill 仍优先，失效关联才回退内置版本。后续外部 API 继续采用“适配器和规则内置、用户凭据仅本机保存”的统一架构。
 
 ## 办公室端直接开始
 
@@ -16,7 +16,7 @@
 npm.cmd run sync:project
 ```
 
-进入新下载的 `sirenhuisuo-v0.9.4-<commit>` 目录后依次执行：
+进入新下载的 `sirenhuisuo-v0.9.5-<commit>` 目录后依次执行：
 
 ```powershell
 npm.cmd install
@@ -105,6 +105,7 @@ npm.cmd run verify:agent-kernel
 - `src/data/taskRuns.ts`
 - `src/engine/securityBoundary.ts`
 - `src/data/skills.ts`
+- `src/data/connectors.ts`
 - `electron/main.cjs`
 - `electron/preload.cjs`
 - `electron/skills.cjs`
@@ -126,7 +127,7 @@ npm.cmd run verify:agent-kernel
 - `npm.cmd run lint`：通过；只有已有非阻断警告。
 - `npm.cmd run verify:foundation`：通过；隔离目录内容为 `first-content / second-content`，附件为 `attachment-content`，敏感参数已隐藏，旧会话任务转为暂停待恢复，诊断领域为 5 项。
 - `npm.cmd run verify:agent-kernel`：通过；118 次重复 Skill 读取只执行 1 次。
-- `npm.cmd run verify:skill-atomic`：通过；无效包不触碰旧 Skill，成功替换不残留旧文件，哈希损坏被拦截。
+- `npm.cmd run verify:skill-atomic`：通过；无效包不触碰旧 Skill，成功替换不残留旧文件，哈希损坏被拦截，并真实验证根 Skill 可读取知识库与笔记子规则。
 - `npm.cmd run verify:update-download`：通过；模拟断线后 Range 续传、服务器忽略断点、等长损坏缓存和 SHA-256 拦截。
 - `npm.cmd run verify:web-search`：通过；覆盖 Bing XML 解析、主源超时后备用源成功和双源具体错误聚合。
 - `npm.cmd run diagnose:web-search`：通过；Electron 实网使用 DuckDuckGo，首轮空结果自动重试后约 3.1 秒返回 8 条中文 AI 资讯。
@@ -139,13 +140,13 @@ npm.cmd run verify:agent-kernel
 
 ## 安装与发布资产
 
-- 安装包：`E:\私人办公会所项目\release\taiji-office-setup-0.9.4.exe`
-- Blockmap：`E:\私人办公会所项目\release\taiji-office-setup-0.9.4.exe.blockmap`
+- 安装包：`E:\私人办公会所项目\release\taiji-office-setup-0.9.5.exe`
+- Blockmap：`E:\私人办公会所项目\release\taiji-office-setup-0.9.5.exe.blockmap`
 - 更新清单：`E:\私人办公会所项目\release\latest.yml`
-- 安装包大小：`173804946` 字节。
-- 安装包 SHA-256：`82C0FBE1EDC6CDD1AC3C4A1A848F5D0BACE5B1C57C1855A398922403A3DBFEA9`。
-- `app.asar` SHA-256：`382F524FA383839CE22B89AD7BBD47DE31DD3624B6DA722F3B36B64A2FF74BE3`。
-- 包内版本：`0.9.4`。
+- 安装包大小：`173831202` 字节。
+- 安装包 SHA-256：`356025C72FF752A0258189AE8531A3B6D42A9E77F4AAD7E3331DA44B37ADA603`。
+- `app.asar` SHA-256：`0A78ABFE935C9CDCE78ECE350D157ECC0EDA2D3D237EE7125DEAD0E1A64E7641`。
+- 包内版本：`0.9.5`。
 - 安装目录只保留 `太极 AI 办公会所.exe` 和对应卸载程序，没有旧产品可执行文件残留。
 
 ## 已知边界

@@ -73,6 +73,10 @@ const connectorsSource = await fs.readFile(new URL('../src/data/connectors.ts', 
 assert.match(connectorsSource, /search_knowledge_base/u);
 assert.match(toolsSource, /读取了已关联 Skill/u);
 assert.match(toolsSource, /preset-verified/u);
+const skillsSource = await fs.readFile(new URL('../electron/skills.cjs', import.meta.url), 'utf8');
+assert.match(skillsSource, /referencedPaths/u);
+assert.match(skillsSource, /documents\.push\(\{ path:/u);
+assert.match(toolsSource, /skillInstructionText/u);
 assert.match(clientSource, /respondToSteering/u);
 assert.match(clientSource, /steeringCheckpointTurns/u);
 assert.ok(

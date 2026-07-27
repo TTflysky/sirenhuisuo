@@ -1,4 +1,4 @@
-# 太极 AI 办公会所 v0.9.4
+# 太极 AI 办公会所 v0.9.5
 
 > 面向 Windows 的多模型 AI 虚拟办公室。创建员工、组建团队，让不同模型按照职责协作完成真实任务。
 
@@ -6,7 +6,7 @@
 
 ## 项目状态
 
-- 当前版本：`0.9.4`
+- 当前版本：`0.9.5`
 - 发布分支：`main`
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 33、React 19、TypeScript 6、Ant Design 6、Vite 8
@@ -72,7 +72,7 @@
 - 技能中心按“内置 Skill / 我的 Skill / Skill 商城”分类展示。
 - Hermes Agent、SkillHub、SkillsMP、Skills.sh 和 Anthropic Skills 以第三方市场卡片展示并在系统浏览器打开。
 - 支持通过 `SKILL.md`、GitHub 文件、技能目录或仓库地址一键安装到本机 WorkBuddy 技能目录。
-- 安装包内置 73 个 Skill，其中包含完整迁入的 69 个 Hermes Agent Skill，以及知识检索、任务规划、文档交付和代码审查 4 个基础 Skill。
+- 安装包内置 76 个 Skill 规则入口，其中包含 69 个 Hermes Agent Skill、4 个基础 Skill，以及 IMA 官方 1.1.8 的总入口、知识库和笔记规则。
 - 员工根据任务需要自行判断是否检索 Skill，不再强制每个任务调用。
 - Skill 或工具调用失败时展示具体错误，方便重试或改用其他方案。
 - 技能库会继续保留内置技能和用户安装技能；完整目录安装、依赖健康检查、损坏隔离、来源记录和一键修复已经接入。
@@ -87,7 +87,9 @@
 
 - 连接器入口统一管理网页知识库、Obsidian、ima、QQ 邮箱、腾讯文档、企业微信、GitHub、自定义 HTTP 及 MCP 服务。
 - Skill 连接器保存后会自动交给助手读取真实说明并执行最小验证，只有真实调用成功才显示已连接。
-- IMA 的最小验证由客户端闭环执行：读取已关联 Skill 规则、临时注入本地凭据、运行只读查询并核对 API 业务码，不依赖模型是否主动调用工具，也不会要求用户再说一次“继续”。
+- IMA 官方 Skill 1.1.8 已完整内置；用户只需填写 Client ID 和 API Key。根规则引用的知识库、笔记子规则会统一读入，不再因验收规则位于子模块而误报缺失。
+- IMA 的最小验证由客户端闭环执行：读取已关联完整 Skill 规则、临时注入本地凭据、运行只读查询并核对 API 业务码，不依赖模型是否主动调用工具，也不会要求用户再说一次“继续”。
+- 后续外部 API 使用同一架构：能力适配器、公开规则和安全验收逻辑随安装包内置；用户 API Key、OAuth 和账号凭据只保存在本机，不进入源码、安装资源或 GitHub。
 - 网页知识库可读取网页、公开文档和在线知识库正文。
 - Obsidian 可原生选择 Vault，并向员工提供搜索笔记和读取笔记工具。
 - 助手、员工、团队和自主任务共享“检查状态 → 准备配置 → 用户填写专属凭据 → 真实测试 → 开放调用”的连接器生命周期，不会把连接器安装误当成 Skill 安装。
@@ -128,13 +130,13 @@
 
 最新安装包可从 GitHub Releases 下载：
 
-- [直接下载 v0.9.4 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.9.4/taiji-office-setup-0.9.4.exe)
-- [查看 v0.9.4 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.9.4)
+- [直接下载 v0.9.5 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.9.5/taiji-office-setup-0.9.5.exe)
+- [查看 v0.9.5 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.9.5)
 
 本地构建的安装程序生成在：
 
 ```text
-release/taiji-office-setup-0.9.4.exe
+release/taiji-office-setup-0.9.5.exe
 ```
 
 可以直接覆盖安装旧版本。应用数据保存在用户目录，正常覆盖安装不会删除员工、团队、聊天和模型配置。

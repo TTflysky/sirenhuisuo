@@ -164,7 +164,24 @@ async function readSkill(projectRoot, id) {
   const stat = await fs.stat(found._path);
   if (!stat.isFile() || stat.size > MAX_BODY_BYTES) throw new Error('技能正文超过大小限制');
   const content = await fs.readFile(found._path, 'utf8');
-  return { id: found.id, name: found.name, content: content.slice(0, MAX_BODY_BYTES) };
+  const skillDir = path.dirname(found._path);
+  const referencedPaths = unique([...content.matchAll(/`((?:[A-Za-z0-9._-]+\/){1,4}SKILL\.md)`/g)].map((match) => match[1])).slice(0, 12);
+  const documents = [];
+  let totalBytes = Buffer.byteLength(content, 'utf8');
+  for (const relativePath of referencedPaths) {
+    const target = path.resolve(skillDir, relativePath);
+    try {
+      if (!(await insideRealRoot(skillDir, target))) continue;
+      const childStat = await fs.stat(target);
+      if (!childStat.isFile() || childStat.size > MAX_BODY_BYTES) continue;
+      const childContent = await fs.readFile(target, 'utf8');
+      const childBytes = Buffer.byteLength(childContent, 'utf8');
+      if (totalBytes + childBytes > MAX_BODY_BYTES) break;
+      documents.push({ path: relativePath.replace(/\\/g, '/'), content: childContent });
+      totalBytes += childBytes;
+    } catch {}
+  }
+  return { id: found.id, name: found.name, content: content.slice(0, MAX_BODY_BYTES), documents };
 }
 
 async function resolveSkillDirectory(projectRoot, id) {

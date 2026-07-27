@@ -103,6 +103,8 @@ export interface ConnectorPreset {
   documentationUrl?: string;
   skillSourceUrl?: string;
   skillName?: string;
+  /** Stable top-level source directory shipped in the desktop installer. */
+  bundledSkillSource?: string;
   /** Trusted, read-only probe maintained by the client for a known Skill connector. */
   verification?: {
     command: string;
@@ -154,8 +156,11 @@ export const CONNECTOR_PRESETS: ConnectorPreset[] = [
   {
     key: 'ima',
     label: 'ima 知识库', icon: '📚', type: 'custom', kind: 'skill-bridge', mcpServerName: 'ima-skill',
-    desc: '按照 IMA 官方 Skill 说明安装，并配置 API Key 与 Client ID',
+    desc: '内置 IMA 官方 Skill，配置 API Key 与 Client ID 后即可验证',
     skillName: 'ima',
+    bundledSkillSource: 'ima-skill',
+    documentationUrl: 'https://ima.qq.com/agent-interface',
+    skillSourceUrl: 'https://app-dl.ima.qq.com/skills/ima-skills-1.1.8.zip',
     verification: {
       command: `node .\\ima_api.cjs 'openapi/wiki/v1/search_knowledge_base' '{"query":"","cursor":"","limit":1}'`,
       requiredSkillText: ['ima_api.cjs', 'search_knowledge_base'],
@@ -435,6 +440,21 @@ export function upsertConnector(connector: Connector): void {
 
 /* ===== 连接测试 ===== */
 
+export async function ensureConnectorSkillAssociation(connector: Connector): Promise<void> {
+  if (connector.kind !== 'skill-bridge') return;
+  const listed = await window.electronAPI?.skillsList?.();
+  if (!listed?.ok) return;
+  if (listed.skills?.some((skill) => skill.id === connector.installedSkillId)) return;
+  const preset = findConnectorPreset(connector.mcpServerName || connector.label);
+  const candidates = preset?.bundledSkillSource
+    ? listed.skills?.filter((skill) => skill.scope === 'built-in' && skill.source === preset.bundledSkillSource)
+    : undefined;
+  const bundled = candidates?.find((skill) => skill.name === preset?.bundledSkillSource) ?? candidates?.[0];
+  if (!bundled) return;
+  connector.installedSkillId = bundled.id;
+  updateConnector(connector.id, { installedSkillId: bundled.id });
+}
+
 /** 快速 ping 检测连接器是否可达 */
 export async function checkConnector(c: Connector): Promise<{ status: Connector['status']; error?: string; runtimeStatus?: Connector['runtimeStatus']; actions?: ConnectorAction[] }> {
   if (c.kind === 'knowledge-url') {
@@ -448,6 +468,7 @@ export async function checkConnector(c: Connector): Promise<{ status: Connector[
     return result?.ok ? { status: 'connected' } : { status: 'disconnected', error: result?.error ?? 'Obsidian Vault 不可用' };
   }
   if (c.kind === 'skill-bridge') {
+    await ensureConnectorSkillAssociation(c);
     const missing = connectorMissingFields(c);
     if (missing.length > 0) return { status: 'disconnected', error: `还缺少：${missing.join('、')}` };
     const listed = await window.electronAPI?.skillsList?.();

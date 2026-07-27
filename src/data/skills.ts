@@ -1,5 +1,17 @@
 import type { Skill, SkillReference } from '../types';
 
+export interface ReadSkillResult {
+  id: string;
+  name: string;
+  content: string;
+  documents?: Array<{ path: string; content: string }>;
+}
+
+export function skillInstructionText(skill: ReadSkillResult, maxLength = 60000): string {
+  const sections = [skill.content, ...(skill.documents ?? []).map((document) => `## Referenced Skill document: ${document.path}\n${document.content}`)];
+  return sections.join('\n\n').slice(0, maxLength);
+}
+
 export async function listSkills(): Promise<Skill[]> {
   if (!window.electronAPI?.skillsList) return [];
   const result = await window.electronAPI.skillsList();
@@ -7,7 +19,13 @@ export async function listSkills(): Promise<Skill[]> {
   return result.skills ?? [];
 }
 
-export async function readSkill(id: string): Promise<{ id: string; name: string; content: string }> {
+export async function findBundledSkill(source: string): Promise<Skill | undefined> {
+  const skills = await listSkills();
+  const candidates = skills.filter((skill) => skill.scope === 'built-in' && skill.source === source);
+  return candidates.find((skill) => skill.name === source) ?? candidates[0];
+}
+
+export async function readSkill(id: string): Promise<ReadSkillResult> {
   if (!window.electronAPI?.skillsRead) throw new Error('当前环境不支持技能读取');
   const result = await window.electronAPI.skillsRead(id);
   if (!result.ok || !result.skill) throw new Error(result.error ?? '技能读取失败');
@@ -82,6 +100,6 @@ export async function matchSkills(request: string, limit = 3): Promise<SkillRefe
 export async function buildSkillContext(refs: SkillReference[]): Promise<string> {
   const unique = refs.filter((ref, index) => refs.findIndex((item) => item.id === ref.id) === index).slice(0, 5);
   const bodies = await Promise.all(unique.map(async (ref) => { try { return await readSkill(ref.id); } catch { return null; } }));
-  const content = bodies.filter((item): item is NonNullable<typeof item> => !!item).map((item) => `## Skill: ${item.name}\n${item.content.slice(0, 12000)}`);
+  const content = bodies.filter((item): item is NonNullable<typeof item> => !!item).map((item) => `## Skill: ${item.name}\n${skillInstructionText(item)}`);
   return content.length ? `以下 Skill 已由调度器自动匹配并授权用于当前任务。按需执行，不要声称无法访问：\n\n${content.join('\n\n')}` : '';
 }

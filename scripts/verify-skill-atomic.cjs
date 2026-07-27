@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const fs = require('fs/promises');
 const os = require('os');
 const path = require('path');
-const { replaceSkillDirectoryAtomically, validateStagedSkill } = require('../electron/skills.cjs');
+const { listSkills, readSkill, replaceSkillDirectoryAtomically, validateStagedSkill } = require('../electron/skills.cjs');
 
 async function writeSkill(directory, { body, mode = 'directory', references = {}, hash } = {}) {
   await fs.mkdir(directory, { recursive: true });
@@ -27,7 +27,9 @@ async function writeSkill(directory, { body, mode = 'directory', references = {}
 
 async function run() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'taiji-skill-atomic-test-'));
+  const originalUserProfile = process.env.USERPROFILE;
   try {
+    process.env.USERPROFILE = path.join(root, 'profile');
     const target = path.join(root, 'atomic-skill');
     await writeSkill(target, { references: { 'legacy.txt': 'old-only' } });
 
@@ -56,8 +58,28 @@ async function run() {
 
     const leftovers = (await fs.readdir(root)).filter((name) => name.startsWith('.backup-'));
     assert.deepEqual(leftovers, []);
+
+    const projectRoot = path.join(root, 'project');
+    const bundledSkill = path.join(projectRoot, 'skills', 'ima-test');
+    await writeSkill(bundledSkill, {
+      body: '---\nname: ima-test\n---\n\nRead `knowledge-base/SKILL.md` and `notes/SKILL.md`.\n',
+      references: {
+        'knowledge-base/SKILL.md': '# Knowledge Base\n\nUse `search_knowledge_base`.\n',
+        'notes/SKILL.md': '# Notes\n\nUse `search_note`.\n',
+      },
+    });
+    const listed = await listSkills(projectRoot);
+    const bundled = listed.find((skill) => skill.name === 'ima-test');
+    assert.ok(bundled, 'referenced Skill bundle must be scanned');
+    assert.equal(bundled.scope, 'built-in');
+    const read = await readSkill(projectRoot, bundled.id);
+    assert.deepEqual(read.documents.map((document) => document.path), ['knowledge-base/SKILL.md', 'notes/SKILL.md']);
+    assert.ok(read.documents.some((document) => document.content.includes('search_knowledge_base')));
+    assert.ok(read.documents.some((document) => document.content.includes('search_note')));
     console.log('Skill atomic replacement verification passed.');
   } finally {
+    if (originalUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = originalUserProfile;
     await fs.rm(root, { recursive: true, force: true });
   }
 }

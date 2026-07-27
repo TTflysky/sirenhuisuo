@@ -30,7 +30,7 @@ export interface OpenToolOptions { type: ToolWindowType; refId?: string; payload
 export interface OpenToolResult { ok: boolean; reused?: boolean; error?: string; }
 
 export interface SkillListResult { ok: boolean; skills?: import('./types').Skill[]; error?: string; }
-export interface SkillReadResult { ok: boolean; skill?: { id: string; name: string; content: string }; error?: string; }
+export interface SkillReadResult { ok: boolean; skill?: { id: string; name: string; content: string; documents?: Array<{ path: string; content: string }> }; error?: string; }
 export interface SkillDeleteResult { ok: boolean; error?: string; }
 export interface SkillInstallResult { ok: boolean; skill?: import('./types').Skill; resolvedUrl?: string; error?: string; }
 export interface SkillSourceInspection {

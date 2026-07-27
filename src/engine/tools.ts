@@ -568,9 +568,10 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
       case 'read_skill': {
         const skillId = (args.id ?? '').trim();
         if (!skillId) return { toolCallId: id, name, success: false, output: '技能 ID 不能为空' };
-        const { readSkill } = await import('../data/skills');
+        const { readSkill, skillInstructionText } = await import('../data/skills');
         const skill = await readSkill(skillId);
-        return { toolCallId: id, name, success: true, output: `已读取 Skill「${skill.name}」：\n${skill.content.slice(0, 12000)}` };
+        const documents = skill.documents?.map((document) => document.path).join('、');
+        return { toolCallId: id, name, success: true, output: `已读取 Skill「${skill.name}」${documents ? `及其引用规则（${documents}）` : ''}：\n${skillInstructionText(skill)}` };
       }
 
       case 'install_skill': {
@@ -655,6 +656,10 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
           || connector.label.toLocaleLowerCase() === preset.label.toLocaleLowerCase()
         );
         const draft = createConnectorDraft(preset, existing);
+        if (!draft.installedSkillId && preset.bundledSkillSource) {
+          const { findBundledSkill } = await import('../data/skills');
+          draft.installedSkillId = (await findBundledSkill(preset.bundledSkillSource))?.id;
+        }
         if (args.label?.trim()) draft.label = args.label.trim();
         if (args.baseUrl?.trim()) draft.baseUrl = args.baseUrl.trim();
         if (args.localPath?.trim()) draft.localPath = args.localPath.trim();
@@ -678,7 +683,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
           return { toolCallId: id, name, success: false, output: `已保留“${draft.label}”配置草稿，但配置窗口没有打开：${opened?.error ?? '未知原因'}。请在连接器列表中手动点击设置。配置尚未完成。` };
         }
         const nextStep = draft.kind === 'skill-bridge'
-          ? `已为“${draft.label}”打开文档驱动配置窗口。先确认并填写官方说明页与 Skill 下载地址，安装后读取 Skill 说明，再填写其中要求的命名凭据。当前仍未通过真实调用，不得宣布完成。`
+          ? `已为“${draft.label}”打开文档驱动配置窗口。${draft.installedSkillId ? '安装包内置 Skill 已自动关联；' : '请先安装官方 Skill；'}填写其中要求的命名凭据后保存，客户端会读取完整规则并执行真实验证。当前仍未通过真实调用，不得宣布完成。`
           : `已为“${draft.label}”打开配置窗口。现在只是准备好了配置入口，并未连接成功。请用户填写服务要求的地址、目录或认证凭据并点击“一键配置”；保存后必须调用 test_connector 做真实测试。不得索要或编造密码、API Key、验证码。`;
         return {
           toolCallId: id,
@@ -691,7 +696,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
       case 'test_connector': {
         const query = (args.connector ?? '').trim();
         if (!query) return { toolCallId: id, name, success: false, output: '连接器名称或 ID 不能为空。请先调用 inspect_connectors。' };
-        const { checkConnector, connectorMissingFields, findConnectorPreset, loadConnectors, updateConnector } = await import('../data/connectors');
+        const { checkConnector, connectorMissingFields, ensureConnectorSkillAssociation, findConnectorPreset, loadConnectors, updateConnector } = await import('../data/connectors');
         const normalized = query.toLocaleLowerCase();
         const preset = findConnectorPreset(query);
         const connector = loadConnectors().find((item) =>
@@ -703,6 +708,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         if (!connector) {
           return { toolCallId: id, name, success: false, output: `没有找到已配置的“${query}”连接器。请先调用 inspect_connectors，再用 prepare_connector 创建并打开配置。` };
         }
+        await ensureConnectorSkillAssociation(connector);
         const missing = connectorMissingFields(connector);
         if (missing.length > 0) {
           return { toolCallId: id, name, success: false, output: `“${connector.label}”还不能测试，因为缺少：${missing.join('、')}。请调用 prepare_connector 打开配置窗口，让用户填写后再测试。` };
@@ -719,10 +725,10 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
             return { toolCallId: id, name, success: false, output: `“${connector.label}”的 Skill 和凭据已经准备好，但这个预设还没有客户端维护的安全验收命令。请读取已安装 Skill“${connector.installedSkillId ?? '未知'}”的说明，找到官方规定的健康检查或最小查询命令，然后调用 run_command，并传 connector="${connector.id}"、verification=true。只有该命令真实成功后才算已连接。` };
           }
 
-          const { readSkill } = await import('../data/skills');
+          const { readSkill, skillInstructionText } = await import('../data/skills');
           let skillContent = '';
           try {
-            skillContent = (await readSkill(connector.installedSkillId)).content;
+            skillContent = skillInstructionText(await readSkill(connector.installedSkillId));
           } catch (error) {
             const detail = error instanceof Error ? error.message : String(error);
             updateConnector(connector.id, { status: 'disconnected', error: `无法读取 Skill 规则：${detail}`, lastChecked: Date.now() });
