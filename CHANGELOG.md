@@ -1,5 +1,13 @@
 # 更新日志
 
+## v0.10.1 (2026-07-27)
+
+### 一键发布与跨电脑接力
+- 新增 `npm.cmd run publish:release` 唯一发布入口，自动执行回归、Windows 打包、推送 `main`、创建或更新同版本 GitHub Release，并上传安装器、blockmap 和 `latest.yml`。
+- 发布后同时核对远端 `main` 提交、Release 目标分支、三个资产的文件大小和 SHA-256；远端缺文件、传输不完整或摘要不一致都会明确失败。
+- 发布与同步脚本统一从 Windows Git Credential Manager 读取现有 GitHub OAuth，只在当前进程使用，不保存或输出 Token。
+- `release:win` 兼容命令已指向同一发布入口，移除交接文档中的旧临时脚本路径，办公室与家里不再分别维护上传方式。
+
 ## v0.10.0 (2026-07-27)
 
 ### 统一 ExecutionController

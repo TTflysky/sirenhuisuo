@@ -64,7 +64,9 @@ npm.cmd run build
 ## 完成交接
 
 1. 更新 `docs/PROJECT_HANDOFF.md`、`CHANGELOG.md` 和版本号。
-2. 运行 `npm.cmd run lint`、`npm.cmd run build`、`npm.cmd run dist:win`。
-3. 提交并发布到 GitHub `main`，创建同版本 Release。
-4. Release 必须包含安装器、`.blockmap` 和 `latest.yml`，否则客户端无法自动更新。
+2. 提交本次改动，确认处于干净的 `main` 分支。
+3. 只运行 `npm.cmd run publish:release`。该命令自动回归、打包、推送并创建或更新同版本 Release。
+4. 脚本会强制核对安装器、`.blockmap`、`latest.yml` 的远端大小和 SHA-256，任何一项缺失都不会报告成功。
 5. 另一台电脑再次运行 `npm.cmd run sync:project`，即可从同一提交继续。
+
+固定分工只有两条命令：开发电脑发布用 `npm.cmd run publish:release`，接手电脑同步用 `npm.cmd run sync:project`。两者共用 Windows Git Credential Manager 的现有 GitHub 登录，不需要手动填写 Token。

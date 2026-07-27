@@ -1,12 +1,12 @@
 # 太极项目当前交接
 
 > 更新时间：2026-07-27
-> 当前版本：`v0.10.0`
+> 当前版本：`v0.10.1`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
-> Release：[v0.10.0](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.10.0)
+> Release：[v0.10.1](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.10.1)
 
-`v0.10.0` 建立统一 `ExecutionController`：助理、员工私聊和团队任务都按“观察结果、判断进度、失败分类、重试或换路线、重新验收”推进。模型瞬时失败保留上下文最多尝试 5 次，工具重复失败会禁用原路线；没有真实证据不能宣布完成。团队控制器快照随任务持久化，跨电脑接手时可直接看到失败类型、已有证据与恢复位置。用户凭据仍只保存在本机。
+`v0.10.1` 固定跨电脑操作标准：开发电脑只运行 `npm.cmd run publish:release` 发布，接手电脑只运行 `npm.cmd run sync:project` 同步。发布命令自动回归、打包、推送 `main`、上传 Release 三件套并核对远端 SHA-256；两端共用 Git Credential Manager 登录，不保存 Token。`v0.10.0` 建立的统一 `ExecutionController` 保持不变。
 
 ## 办公室端直接开始
 
@@ -16,7 +16,7 @@
 npm.cmd run sync:project
 ```
 
-进入新下载的 `sirenhuisuo-v0.10.0-<commit>` 目录后依次执行：
+进入新下载的 `sirenhuisuo-v0.10.1-<commit>` 目录后依次执行：
 
 ```powershell
 npm.cmd install
@@ -181,7 +181,7 @@ npm.cmd run verify:package
 
 ## 踩过的坑
 
-- 源码快照不是 Git 工作树，不能用本目录的 `git status/push` 判断远端；发布继续使用工作区根目录的 `publish-v061.ps1` 和 Git Credential Manager OAuth。
+- 源码快照不是 Git 工作树，不能用快照目录的 `git status/push` 判断远端；开发工作树统一运行 `npm.cmd run publish:release`，授权统一读取 Git Credential Manager OAuth。
 - 不要修改内部 `name`、`appId` 或 `hermes_office_*` 键，否则品牌改名会造成用户数据看似丢失。
 - 回滚不能先恢复配置再下载旧安装包；下载失败会让当前版本提前加载旧配置。
 - 系统 Node 24 与当前 ASAR 版本组合可能生成索引错位的不可启动包；必须使用 `npm.cmd run dist:win`。脚本固定复用项目缓存中的官方便携 Node 20.18.3，把临时目录定向到构建缓存，并在结束时自动验收 ASAR。
@@ -197,4 +197,4 @@ npm.cmd run verify:package
 5. 为控制器增加可选的模型候选路线，在主模型连续失败后自动切换已验证备用模型，而不是只有原模型重试与真实停机交接。
 6. 按用户新反馈继续优化，但同层问题必须同步检查助手、员工私聊和团队三条路径。
 
-每次完成后仍按：预检、构建、回归、打包、覆盖安装、哈希校验、更新本文件、发布 GitHub `main` 与同版本 Release 的顺序交付。
+每次完成后先升级版本并更新本文件，提交到干净的 `main`，然后运行 `npm.cmd run publish:release` 一次完成预检、回归、打包、推送、Release 上传和远端哈希校验。

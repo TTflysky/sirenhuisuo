@@ -14,23 +14,14 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $workspaceRoot = Split-Path -Parent $projectRoot
 $apiRoot = "https://api.github.com/repos/$owner/$repository"
 
-function Get-GitHubToken {
-  try {
-    $request = "protocol=https`nhost=github.com`nusername=$owner`n`n"
-    $response = $request | & git credential fill 2>$null
-    if ($LASTEXITCODE -ne 0) { return $null }
-    $line = $response | Where-Object { $_ -like 'password=*' } | Select-Object -First 1
-    if ($line) { return $line.Substring('password='.Length) }
-  } catch {}
-  return $null
-}
+. (Join-Path $PSScriptRoot 'github-auth.ps1')
 
 $headers = @{
   Accept = 'application/vnd.github+json'
   'User-Agent' = 'hermes-office-project-sync'
   'X-GitHub-Api-Version' = '2022-11-28'
 }
-$token = Get-GitHubToken
+$token = Get-TaijiGitHubToken
 if ($token) { $headers.Authorization = "Bearer $token" }
 
 function Invoke-GitHubJson([string]$Uri) {

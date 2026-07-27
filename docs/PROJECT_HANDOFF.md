@@ -1,7 +1,7 @@
 # 项目交接手册
 
 > 最后整理：2026-07-27
-> 当前源码版本：`v0.10.0`
+> 当前源码版本：`v0.10.1`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 
@@ -131,32 +131,22 @@
 
 ## 7. 开发、测试与发布
 
-```powershell
-npm.cmd install
-npm.cmd run build
-npm.cmd run lint
-npm.cmd run verify:agent-kernel
-npm.cmd run verify:foundation
-npm.cmd run verify:update-download
-npm.cmd run verify:web-search
-npm.cmd run diagnose:web-search
-npm.cmd run verify:steering-e2e
-npm.cmd run verify:tool-window
+开发过程中可以单独运行对应回归。正式交付只使用一个入口：
 
-$env:ELECTRON_BUILDER_CACHE='L:\AI办公室\eb-cache'
-$env:CSC_IDENTITY_AUTO_DISCOVERY='false'
-npm.cmd run dist:win
-Get-FileHash -Algorithm SHA256 'release\taiji-office-setup-<version>.exe'
+```powershell
+npm.cmd run publish:release
 ```
+
+该命令要求当前位于干净的 `main` 分支，版本与文档已经提交。它会自动运行核心回归、稳定 Windows 打包、推送 `main`、创建或更新同版本 Release，上传三个更新资产，并核对远端提交、大小和 SHA-256。不要再使用临时发布脚本或裸 `gh release` 命令。
 
 发布检查清单：
 
 1. `package.json`、`package-lock.json`、README、CHANGELOG 使用同一版本号。
 2. `npm.cmd run build` 必须通过；`npm.cmd run lint` 的新增警告必须为零；`git diff --check` 必须通过。
 3. 构建安装包并记录绝对路径、文件大小和 SHA-256。
-4. `git add`、`git commit`、通过本机代理推送 `main`。
-5. 创建 `v<version>` GitHub Release，上传 `taiji-office-setup-<version>.exe`、同名 `.blockmap` 和 `latest.yml`。
-6. 用 GitHub API 或 Release 页面确认：远端 `main`、README 版本、Release 标签和三个发布资产都存在。
+4. `git add`、`git commit`，保持工作区干净。
+5. 运行 `npm.cmd run publish:release`；脚本自动完成推送、Release 和三个发布资产上传。
+6. 以命令最后输出的远端提交、Release URL、安装包路径和 SHA-256 为发布凭据。
 
 本机网络若需要代理，Git/GitHub 使用：`http://127.0.0.1:65532`。不要把 GitHub Token、代理凭据或 API Key 写进代码、文档和提交记录。
 

@@ -1,4 +1,4 @@
-# 太极 AI 办公会所 v0.10.0
+# 太极 AI 办公会所 v0.10.1
 
 > 面向 Windows 的多模型 AI 虚拟办公室。创建员工、组建团队，让不同模型按照职责协作完成真实任务。
 
@@ -6,7 +6,7 @@
 
 ## 项目状态
 
-- 当前版本：`0.10.0`
+- 当前版本：`0.10.1`
 - 发布分支：`main`
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 33、React 19、TypeScript 6、Ant Design 6、Vite 8
@@ -135,13 +135,13 @@
 
 最新安装包可从 GitHub Releases 下载：
 
-- [直接下载 v0.10.0 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.10.0/taiji-office-setup-0.10.0.exe)
-- [查看 v0.10.0 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.10.0)
+- [直接下载 v0.10.1 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.10.1/taiji-office-setup-0.10.1.exe)
+- [查看 v0.10.1 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.10.1)
 
 本地构建的安装程序生成在：
 
 ```text
-release/taiji-office-setup-0.10.0.exe
+release/taiji-office-setup-0.10.1.exe
 ```
 
 可以直接覆盖安装旧版本。应用数据保存在用户目录，正常覆盖安装不会删除员工、团队、聊天和模型配置。
@@ -162,6 +162,16 @@ npm run dev
 ```bash
 npm start
 ```
+
+### 固定发布与接手
+
+开发电脑完成版本更新并提交到干净的 `main` 后，只运行：
+
+```powershell
+npm.cmd run publish:release
+```
+
+另一台电脑接手时只运行 `npm.cmd run sync:project`。发布命令自动完成回归、Windows 打包、推送、Release 三件套上传及远端 SHA-256 校验；两条命令都复用 Git Credential Manager 中已有的 GitHub 登录，不需要手动填写 Token。
 
 ### 构建与打包
 

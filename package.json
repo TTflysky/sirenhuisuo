@@ -1,7 +1,7 @@
 {
   "name": "hermes-office-pro",
   "private": true,
-  "version": "0.10.0",
+  "version": "0.10.1",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -27,7 +27,8 @@
     "verify:foundation": "node scripts/verify-foundation.mjs",
     "verify:foundation-ui": "node scripts/verify-foundation-e2e.mjs",
     "dist:win": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1",
-    "release:win": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1 -Publish",
+    "publish:release": "powershell -ExecutionPolicy Bypass -File scripts/publish-github-release.ps1",
+    "release:win": "npm.cmd run publish:release",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
