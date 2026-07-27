@@ -17,15 +17,12 @@
  * 5. 已安装的客户端启动后自动检测更新
  */
 const { autoUpdater } = require('electron-updater');
-const { app, ipcMain, safeStorage } = require('electron');
-const fs = require('fs');
+const { app, ipcMain, safeStorage, net } = require('electron');
 const fsp = require('fs/promises');
 const path = require('path');
-const crypto = require('crypto');
-const { Readable } = require('stream');
-const { pipeline } = require('stream/promises');
 const { spawn } = require('child_process');
 const { version: APP_VERSION } = require('../package.json');
+const { downloadGitHubReleaseInstaller } = require('./releaseDownload.cjs');
 const log = require('electron-log');
 
 // ---- 日志 ----
@@ -117,33 +114,22 @@ ipcMain.handle('upgrade:readBackup', async () => {
   } catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
 });
 
-async function sha256(filePath) {
-  return new Promise((resolve, reject) => {
-    const hash = crypto.createHash('sha256');
-    const input = fs.createReadStream(filePath);
-    input.on('error', reject); input.on('data', (chunk) => hash.update(chunk)); input.on('end', () => resolve(hash.digest('hex')));
-  });
-}
-
 async function downloadReleaseInstaller(version) {
-  const releaseResponse = await fetch(`https://api.github.com/repos/TTflysky/sirenhuisuo/releases/tags/v${encodeURIComponent(version)}`, {
-    headers: { 'User-Agent': 'Taiji-Rollback/1.0', Accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(20000),
+  let lastLoggedPercent = -1;
+  return downloadGitHubReleaseInstaller({
+    owner: 'TTflysky',
+    repo: 'sirenhuisuo',
+    version,
+    directory: upgradeDir(),
+    fetchImpl: (url, options) => net.fetch(url, options),
+    onProgress: ({ transferred, total }) => {
+      if (!total) return;
+      const percent = Math.floor((transferred / total) * 100);
+      if (percent < lastLoggedPercent + 5 && percent !== 100) return;
+      lastLoggedPercent = percent;
+      log.info(`[rollback] v${version} 下载 ${percent}% (${transferred}/${total})`);
+    },
   });
-  if (!releaseResponse.ok) throw new Error(`无法读取 v${version} 回滚版本：HTTP ${releaseResponse.status}`);
-  const release = await releaseResponse.json();
-  const asset = (release.assets || []).find((item) => /\.exe$/i.test(item.name) && /setup/i.test(item.name));
-  if (!asset?.browser_download_url) throw new Error(`v${version} Release 中没有找到安装包`);
-  const installerPath = path.join(upgradeDir(), `rollback-${version}.exe`);
-  const response = await fetch(asset.browser_download_url, { headers: { 'User-Agent': 'Taiji-Rollback/1.0' }, signal: AbortSignal.timeout(120000) });
-  if (!response.ok || !response.body) throw new Error(`回滚安装包下载失败：HTTP ${response.status}`);
-  await fsp.mkdir(upgradeDir(), { recursive: true });
-  await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(installerPath));
-  if (asset.digest && /^sha256:/i.test(asset.digest)) {
-    const expected = asset.digest.slice(7).toLowerCase();
-    const actual = await sha256(installerPath);
-    if (actual !== expected) { await fsp.rm(installerPath, { force: true }); throw new Error('回滚安装包校验失败，已拒绝启动'); }
-  }
-  return installerPath;
 }
 
 ipcMain.handle('upgrade:prepareRollback', async () => {

@@ -1,5 +1,18 @@
 # 更新日志
 
+## v0.9.2 (2026-07-27)
+
+### 回滚下载可靠性
+- 回滚安装包取消 120 秒整包总超时，改为 5 分钟无数据才判定连接停滞；慢速网络持续传输时不会被误判失败。
+- 正式客户端回滚下载改用 Electron 网络栈，沿用 Chromium 与系统代理设置，避免 GitHub CLI 可连接而普通 Node 请求掉线。
+- 下载使用 `.part` 临时文件和 HTTP Range 断点续传，网络中断最多自动重试 5 次；服务器忽略 Range 时会从头覆盖，禁止把完整响应追加成超大损坏文件。
+- 已下载文件、等长临时文件、Release 记录大小和 SHA-256 会在启动旧安装包前统一校验；异常缓存自动丢弃，校验完成后原子改名为可执行安装包。
+- 新增 `verify:update-download`，本地模拟半途断线、断点续传、服务器忽略 Range、等长损坏缓存和哈希不匹配。
+- Windows 打包脚本发现 `node_modules/electron/dist/electron.exe` 缺失时，优先校验并解压本机 Electron 版本缓存；缓存不存在时才联网，避免每次构建重复下载运行时。
+
+### 工程验证
+- `npm.cmd run verify:update-download`、`node --check electron/releaseDownload.cjs electron/autoUpdate.cjs` 和 `git diff --check` 通过。
+
 ## v0.9.1 (2026-07-27)
 
 ### Skill 原子安装与修复

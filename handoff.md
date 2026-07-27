@@ -1,12 +1,12 @@
 # 太极项目当前交接
 
 > 更新时间：2026-07-27
-> 当前版本：`v0.9.1`
+> 当前版本：`v0.9.2`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
-> Release：[v0.9.1](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.9.1)
+> Release：[v0.9.2](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.9.2)
 
-`v0.9.1` 在 `v0.9.0` 八项稳定闭环上补齐 Skill 原子安装与修复，不改变既有任务、模型和用户数据结构。
+`v0.9.2` 在八项稳定闭环和 Skill 原子修复基础上补齐回滚安装包的断点续传、慢速网络容错与原子校验，不改变既有任务、模型和用户数据结构。
 
 ## 办公室端直接开始
 
@@ -16,7 +16,7 @@
 npm.cmd run sync:project
 ```
 
-进入新下载的 `sirenhuisuo-v0.9.1-<commit>` 目录后依次执行：
+进入新下载的 `sirenhuisuo-v0.9.2-<commit>` 目录后依次执行：
 
 ```powershell
 npm.cmd install
@@ -83,6 +83,10 @@ npm.cmd run verify:agent-kernel
 - 新版本启动后自动验证数据数量和工作区，并写入升级日志。
 - 回滚严格按“下载并校验旧安装包 -> 读取旧配置备份 -> 恢复配置 -> 启动旧安装包”执行；下载失败不会先改当前配置。
 - GitHub Release 提供 digest 时校验 SHA-256。
+- 回滚安装包使用 `.part` 临时文件和 HTTP Range 断点续传；连续 5 分钟没有数据才重试，慢速但持续传输不会被 120 秒整包超时误杀。
+- 正式客户端通过 Electron `net.fetch` 下载，继承 Chromium/系统代理；纯下载模块允许注入网络实现，便于本地断线测试。
+- `scripts/build-windows.ps1` 在 Electron 运行时缺失时优先恢复 `%LOCALAPPDATA%\electron\Cache\electron-v<version>-win32-x64.zip`，缓存不存在才联网下载。
+- 服务器忽略 Range 时从头覆盖；等长损坏缓存、超出 Release 大小和 SHA-256 不匹配都会被丢弃，只有校验完成后才原子改名为可执行安装包。
 
 ### 8. 太极品牌迁移：已完成
 
@@ -105,10 +109,12 @@ npm.cmd run verify:agent-kernel
 - `electron/preload.cjs`
 - `electron/skills.cjs`
 - `electron/autoUpdate.cjs`
+- `electron/releaseDownload.cjs`
 - `src/brand.ts`
 - `scripts/verify-foundation.mjs`
 - `scripts/verify-foundation-e2e.mjs`
 - `scripts/verify-skill-atomic.cjs`
+- `scripts/verify-update-download.cjs`
 - `scripts/sync-project.ps1`
 
 ## 验证证据
@@ -118,6 +124,7 @@ npm.cmd run verify:agent-kernel
 - `npm.cmd run verify:foundation`：通过；隔离目录内容为 `first-content / second-content`，附件为 `attachment-content`，敏感参数已隐藏，旧会话任务转为暂停待恢复，诊断领域为 5 项。
 - `npm.cmd run verify:agent-kernel`：通过；118 次重复 Skill 读取只执行 1 次。
 - `npm.cmd run verify:skill-atomic`：通过；无效包不触碰旧 Skill，成功替换不残留旧文件，哈希损坏被拦截。
+- `npm.cmd run verify:update-download`：通过；模拟断线后 Range 续传、服务器忽略断点、等长损坏缓存和 SHA-256 拦截。
 - `npm.cmd run verify:docx`：通过；生成的 Word 可重新解析正文。
 - 安装版 `npm.cmd run verify:foundation-ui`：通过；真实 Electron IPC 和诊断中心五项完整显示。
 - 安装版 `npm.cmd run verify:assistant-background`：通过；助理隐藏后执行计时继续。
@@ -127,13 +134,13 @@ npm.cmd run verify:agent-kernel
 
 ## 安装与发布资产
 
-- 安装包：`E:\私人办公会所项目\release\taiji-office-setup-0.9.1.exe`
-- Blockmap：`E:\私人办公会所项目\release\taiji-office-setup-0.9.1.exe.blockmap`
+- 安装包：`E:\私人办公会所项目\release\taiji-office-setup-0.9.2.exe`
+- Blockmap：`E:\私人办公会所项目\release\taiji-office-setup-0.9.2.exe.blockmap`
 - 更新清单：`E:\私人办公会所项目\release\latest.yml`
-- 安装包大小：`173170540` 字节。
-- 安装包 SHA-256：`484F342A36F5E618A18CA0FA528EC6C1E86605CBC1A0FEA4986ED1B49923F602`。
-- `app.asar` SHA-256：`12EA0B7FA33C81289CF48860ECCA45C983432990DF51B50528FC72C53C7EA5D7`。
-- 包内版本：`0.9.1`。
+- 安装包大小：`173801148` 字节。
+- 安装包 SHA-256：`C46B41941082533A86A5858BF08180B595ADEAC29DC453C204C061CE2A4E4A0D`。
+- `app.asar` SHA-256：`4CE036A05C1336742B0B93AC365961F188BB6FB199B9F4F468CA526246180C1D`。
+- 包内版本：`0.9.2`。
 - 安装目录只保留 `太极 AI 办公会所.exe` 和对应卸载程序，没有旧产品可执行文件残留。
 
 ## 已知边界

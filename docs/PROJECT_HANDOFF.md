@@ -1,7 +1,7 @@
 # 项目交接手册
 
 > 最后整理：2026-07-27
-> 当前源码版本：`v0.9.1`
+> 当前源码版本：`v0.9.2`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 
@@ -67,6 +67,7 @@
 | `electron/preload.cjs` | 受限的 `window.electronAPI` 桥接。新增 IPC 必须同步更新此文件和 `src/electron.d.ts`。 |
 | `electron/skills.cjs` | 扫描 `%USERPROFILE%/.workbuddy/skills`、项目 `skills/` 和 `.workbuddy/skills`。 |
 | `electron/autoUpdate.cjs` | 通过 GitHub Releases 检查并下载更新；后台检查失败只写诊断日志，不冒充模型网络故障。 |
+| `electron/releaseDownload.cjs` | 回滚安装包断点续传、无数据超时、大小与 SHA-256 校验、临时文件原子落盘。 |
 
 ## 4. 数据位置与隐私边界
 
@@ -125,6 +126,7 @@ npm.cmd run build
 npm.cmd run lint
 npm.cmd run verify:agent-kernel
 npm.cmd run verify:foundation
+npm.cmd run verify:update-download
 npm.cmd run verify:steering-e2e
 npm.cmd run verify:tool-window
 
