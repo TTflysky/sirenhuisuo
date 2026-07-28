@@ -1,7 +1,7 @@
 {
   "name": "hermes-office-pro",
   "private": true,
-  "version": "0.22.0",
+  "version": "0.23.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -34,6 +34,7 @@
     "verify:task-runtime-store": "node scripts/verify-task-runtime-store.cjs",
     "verify:task-worker": "node scripts/verify-task-worker.cjs",
     "verify:native-execution": "node scripts/verify-native-execution-adapter.cjs",
+    "verify:tool-registry": "node scripts/verify-tool-registry.mjs",
     "verify:office-layout": "node scripts/verify-office-layout.mjs",
     "verify:office-scroll": "node scripts/verify-office-scroll.mjs",
     "verify:team-membership": "node scripts/verify-team-membership.mjs",

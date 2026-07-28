@@ -92,6 +92,7 @@ if (-not $SkipTests) {
     'verify:connector-protocol',
     'verify:task-runtime-store',
     'verify:task-worker',
+    'verify:tool-registry',
     'verify:native-execution',
     'verify:office-layout',
     'verify:team-membership',

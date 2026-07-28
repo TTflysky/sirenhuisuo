@@ -23,6 +23,7 @@ const requiredFiles = [
   'electron/nativeExecutionAdapter.cjs',
   'src\\engine\\taskFidelity.mjs',
   'src\\engine\\taskRunner.mjs',
+  'src\\engine\\toolRegistry.mjs',
   'skills\\ima-skill\\SKILL.md',
   'skills\\ima-skill\\knowledge-base\\SKILL.md',
   'skills\\ima-skill\\notes\\SKILL.md',

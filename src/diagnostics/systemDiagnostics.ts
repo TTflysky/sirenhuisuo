@@ -2,9 +2,10 @@ import { checkConnector, connectorMissingFields, loadConnectors } from '../data/
 import { getActiveModel, getExecutionPolicy, getProvider } from '../data/hermesClient';
 import { listSkills } from '../data/skills';
 import { diagnoseModel } from './modelDiagnostics';
+import { getToolRegistrySnapshot } from '../engine/toolCatalog';
 
 export type DiagnosticStatus = 'ready' | 'warning' | 'blocked';
-export type DiagnosticArea = 'model' | 'connector' | 'skill' | 'workspace' | 'permission';
+export type DiagnosticArea = 'model' | 'connector' | 'skill' | 'tool' | 'workspace' | 'permission';
 
 export interface SystemDiagnosticItem {
   id: string;
@@ -105,6 +106,25 @@ async function diagnoseSkills(): Promise<SystemDiagnosticItem> {
   }
 }
 
+async function diagnoseToolRegistry(): Promise<SystemDiagnosticItem> {
+  const snapshot = getToolRegistrySnapshot();
+  const sources = new Map<string, number>();
+  snapshot.tools.forEach((tool) => sources.set(tool.source, (sources.get(tool.source) ?? 0) + 1));
+  const problems = [
+    ...snapshot.collisions.map((name) => `${name} 名称冲突`),
+    ...snapshot.invalid.map((item) => `${item.name}：${item.errors.join('、')}`),
+  ];
+  const status: DiagnosticStatus = snapshot.ready === 0 || snapshot.blocked > 0 ? 'blocked' : 'ready';
+  return {
+    id: 'tool', area: 'tool', title: '工具注册中心', status,
+    summary: `${snapshot.ready} 个可用，协议 v${snapshot.protocolVersion}${snapshot.blocked ? `，${snapshot.blocked} 个已隔离` : ''}`,
+    detail: problems.length
+      ? problems.slice(0, 8).join('；')
+      : [...sources.entries()].map(([source, count]) => `${source} ${count} 个`).join('；'),
+    action: status === 'ready' ? '名称、参数 Schema、来源和运行时边界均已通过预检。' : '修复冲突或损坏定义后重新检查；已隔离工具不会交给模型。',
+  };
+}
+
 async function diagnoseWorkspace(): Promise<SystemDiagnosticItem> {
   const api = window.electronAPI;
   if (!api?.fsInitWorkspace || !api.fsWrite || !api.fsRead) {
@@ -147,10 +167,10 @@ async function diagnosePermission(): Promise<SystemDiagnosticItem> {
 
 export async function runSystemDiagnostics(): Promise<SystemDiagnosticReport> {
   const settled = await Promise.allSettled([
-    diagnoseActiveModel(), diagnoseConnectors(), diagnoseSkills(), diagnoseWorkspace(), diagnosePermission(),
+    diagnoseActiveModel(), diagnoseConnectors(), diagnoseSkills(), diagnoseToolRegistry(), diagnoseWorkspace(), diagnosePermission(),
   ]);
-  const names = ['AI 模型', '连接器与知识库', 'Skill 健康', '任务工作区', '安全与审批'];
-  const areas: DiagnosticArea[] = ['model', 'connector', 'skill', 'workspace', 'permission'];
+  const names = ['AI 模型', '连接器与知识库', 'Skill 健康', '工具注册中心', '任务工作区', '安全与审批'];
+  const areas: DiagnosticArea[] = ['model', 'connector', 'skill', 'tool', 'workspace', 'permission'];
   const items = settled.map((result, index): SystemDiagnosticItem => result.status === 'fulfilled' ? result.value : {
     id: areas[index], area: areas[index], title: names[index], status: 'blocked', summary: '检查过程出错',
     detail: result.reason instanceof Error ? result.reason.message : String(result.reason), action: '处理提示后重新检查。',

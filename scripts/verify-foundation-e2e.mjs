@@ -194,9 +194,9 @@ try {
       count: document.querySelectorAll('.diagnostic-item').length,
       titles: [...document.querySelectorAll('.diagnostic-item strong')].map((item) => item.textContent.trim())
     }))()`);
-    return result.count === 5 ? result : null;
-  }, '诊断中心没有完成五项检查');
-  assert.deepEqual(diagnostics.titles, ['AI 模型', '连接器与知识库', 'Skill 健康', '任务工作区', '安全与审批']);
+    return result.count === 6 ? result : null;
+  }, '诊断中心没有完成六项检查');
+  assert.deepEqual(diagnostics.titles, ['AI 模型', '连接器与知识库', 'Skill 健康', '工具注册中心', '任务工作区', '安全与审批']);
 
   const cognitiveMemory = await settings.evaluate(`(() => {
     const button = [...document.querySelectorAll('.settings-nav-section button')].find((item) => item.textContent.includes('记忆'));

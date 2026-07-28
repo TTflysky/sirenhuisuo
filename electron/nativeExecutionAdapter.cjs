@@ -145,7 +145,8 @@ function createNativeExecutionAdapter(options) {
       engineModulesPromise = Promise.all([
         import(pathToFileURL(path.join(projectRoot, 'src/engine/taskFidelity.mjs')).href),
         import(pathToFileURL(path.join(projectRoot, 'src/engine/taskRunner.mjs')).href),
-      ]).then(([fidelity, runner]) => ({ fidelity, runner }));
+        import(pathToFileURL(path.join(projectRoot, 'src/engine/toolRegistry.mjs')).href),
+      ]).then(([fidelity, runner, toolRegistry]) => ({ fidelity, runner, toolRegistry }));
     }
     return engineModulesPromise;
   }
@@ -377,12 +378,22 @@ function createNativeExecutionAdapter(options) {
   }
 
   async function executeStep(job, run, step, member) {
-    const { fidelity } = await loadEngineModules();
+    const { fidelity, toolRegistry } = await loadEngineModules();
     const messages = [
       { role: 'system', content: buildSystem(run, step, member, job) },
       buildUserTurn(run, step, job),
     ];
-    const tools = [...options.toolRuntime.definitions, ...(job.connectorTools || [])];
+    const registry = toolRegistry.buildToolRegistry([...options.toolRuntime.definitions, ...(job.connectorTools || [])]);
+    const tools = registry.definitions;
+    emit(job, 'tool_registry_ready', {
+      stepId: step.id,
+      protocolVersion: registry.protocolVersion,
+      ready: registry.ready,
+      blocked: registry.blocked,
+      collisions: registry.collisions,
+      invalid: registry.invalid,
+    });
+    if (!tools.length) throw new Error('统一工具注册中心没有可用工具，任务无法开始');
     const cache = new Map();
     const callLog = [];
     let preparationStreak = 0;
@@ -419,7 +430,9 @@ function createNativeExecutionAdapter(options) {
           const gate = fidelity.validateToolCallAgainstGoal(run.goal || run.request, name, JSON.stringify(args));
           let result;
           const key = toolKey(name, args);
-          if (!gate.allowed) result = { name, success: false, output: `${gate.reason}当前调用与原始目标不一致，已在主进程拦截。` };
+          const preflight = toolRegistry.preflightToolCall(registry, name, args, { approvalGranted: true });
+          if (!preflight.ok) result = { name, success: false, output: `工具预检未通过：${preflight.message}` };
+          else if (!gate.allowed) result = { name, success: false, output: `${gate.reason}当前调用与原始目标不一致，已在主进程拦截。` };
           else if (cache.has(key)) result = { name, success: false, output: '完全相同的工具调用已执行，不能重复消耗算力，必须更换路线。' };
           else result = await options.toolRuntime.execute(name, args, {
             taskId: job.taskId, scope: `team:${run.teamId}`, workspaceId: run.workspaceId,

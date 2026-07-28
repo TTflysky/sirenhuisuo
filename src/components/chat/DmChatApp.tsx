@@ -18,8 +18,7 @@ import {
   fileToAttachment, attachmentsFromClipboard, attachmentWorkspaceContext, formatFileSize, persistAttachments,
   copyAttachmentsToWorkspace, createTaskWorkspaceId, initializeTaskWorkspace,
 } from '../../utils/attachments';
-import { TOOLS } from '../../engine/tools';
-import { getConnectorTools } from '../../engine/connectorTools';
+import { getRegisteredTools } from '../../engine/toolCatalog';
 import { useFileDrop } from '../../hooks/useFileDrop';
 import { formatExecutionDuration, useAgentExecutionControl } from '../../hooks/useAgentExecutionControl';
 import { getDirectExecutionControl, isExplicitPauseSteering, isExplicitResumeSteering, shouldHoldTaskForFeedback } from '../../engine/agentGuardrails.mjs';
@@ -395,7 +394,7 @@ export default function DmChatApp({ empId }: Props) {
     const showThoughtChain = loadSettings().showThoughtChain !== false;
     const r = await runAgentLoop({
       turns: [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content: enriched }],
-      tools: [...TOOLS, ...getConnectorTools()], scene: 'dm', label: emp.name, modelConfig: getEmployeeModel(emp),
+      tools: getRegisteredTools(), scene: 'dm', label: emp.name, modelConfig: getEmployeeModel(emp),
       extraSystemContext: [emp.soul, skillContext].filter(Boolean).join('\n\n'), scope: `dm:${empId}`, attachments: imageAtts,
       workspaceId,
       shouldStop: executionControl.shouldStop,

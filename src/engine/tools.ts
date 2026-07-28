@@ -19,6 +19,7 @@ import { classifySensitiveAction, containsInlineSecret, redactToolArgsObject } f
 import type { ConnectorProtocolResult } from './connectorProtocol.mjs';
 import { createFileArtifactEvidence, createReviewSubmissionEvidence, createToolExecutionEvidence } from './executionEvidence.mjs';
 import type { FileArtifactEvidence, ReviewSubmissionEvidence, ToolExecutionEvidence } from './executionEvidence.mjs';
+import { buildToolRegistry, preflightToolCall } from './toolRegistry.mjs';
 export type { FileArtifactEvidence, ReviewSubmissionEvidence, ToolExecutionEvidence } from './executionEvidence.mjs';
 
 // ===== Tool Schema（OpenAI function-calling 格式）=====
@@ -419,6 +420,13 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
   const { name, args, id } = call;
   const physicalWorkspace = workspacePath(call.scope, call.workspaceId);
   try {
+    const registryDefinitions = name.startsWith('connector_')
+      ? [...TOOLS, ...(await import('./connectorTools')).getConnectorTools()]
+      : TOOLS;
+    const preflight = preflightToolCall(buildToolRegistry(registryDefinitions), name, args, { approvalGranted: true });
+    if (!preflight.ok) {
+      return { toolCallId: id, name, success: false, output: `工具预检未通过：${preflight.message}` };
+    }
     switch (name) {
       case 'write_file': {
         const path = safePath(args.path ?? 'untitled.txt');

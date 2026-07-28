@@ -1,8 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { ChatMessage, ThoughtChainStep } from '../../types';
 import { runAgentLoop, resolveApiBase, resolveChatSettings, extractUserInsights, loadSettings, type ChatTurn, type Attachment } from '../../data/hermesClient';
-import { TOOLS } from '../../engine/tools';
-import { getConnectorTools } from '../../engine/connectorTools';
+import { getRegisteredTools } from '../../engine/toolCatalog';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
 import ChatMessageText from './ChatMessageText';
 import ThoughtChainView from './ThoughtChainView';
@@ -313,8 +312,7 @@ export default function AssistantChat() {
       }));
 
       // 合并内置工具和连接器工具
-      const connectorTools = getConnectorTools();
-      const allTools = [...TOOLS, ...connectorTools];
+      const allTools = getRegisteredTools();
 
       // 思维链采集
       const settings = loadSettings();
