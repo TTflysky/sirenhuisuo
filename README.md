@@ -1,4 +1,4 @@
-# 太极 AI 办公会所 v0.12.0
+# 太极 AI 办公会所 v0.14.0
 
 > 面向 Windows 的多模型 AI 虚拟办公室。创建员工、组建团队，让不同模型按照职责协作完成真实任务。
 
@@ -6,7 +6,7 @@
 
 ## 项目状态
 
-- 当前版本：`0.12.0`
+- 当前版本：`0.14.0`
 - 发布分支：`main`
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 33、React 19、TypeScript 6、Ant Design 6、Vite 8
@@ -141,13 +141,13 @@
 
 最新安装包可从 GitHub Releases 下载：
 
-- [直接下载 v0.12.0 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.12.0/taiji-office-setup-0.12.0.exe)
-- [查看 v0.12.0 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.12.0)
+- [直接下载 v0.14.0 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.14.0/taiji-office-setup-0.14.0.exe)
+- [查看 v0.14.0 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.14.0)
 
 本地构建的安装程序生成在：
 
 ```text
-release/taiji-office-setup-0.12.0.exe
+release/taiji-office-setup-0.14.0.exe
 ```
 
 可以直接覆盖安装旧版本。应用数据保存在用户目录，正常覆盖安装不会删除员工、团队、聊天和模型配置。
@@ -252,6 +252,17 @@ release/                 Windows 安装包输出目录
 - 删除应用前建议自行备份重要产出物。
 
 ## 最近版本
+
+### v0.14.0
+
+- 新增版本化任务上下文快照，恢复任务时继续使用目标、验收标准、决策、未决问题和最近执行记录。
+- 新增 Skill 使用证据，记录匹配、读取成功/失败、搜索和实际调用，并在团队任务面板显示。
+
+### v0.13.0
+
+- 新增 Electron 主进程托管的版本化任务运行快照，窗口重启后可恢复任务、步骤、证据和执行器状态。
+- 首次升级自动迁移旧版 `localStorage` 任务数据；快照写入采用临时文件替换并串行化，损坏或无效数据不会覆盖原文件。
+- 新增任务快照单元验证和安装包必需文件校验。
 
 ### v0.6.2
 

@@ -5,6 +5,7 @@ import { getConnectorTools } from './connectorTools';
 import { diagnoseModel } from '../diagnostics/modelDiagnostics';
 import { BEGINNER_RESPONSE_GUIDE, isToolResultSuccessful } from '../data/assistantPresentation';
 import { blockExecution, createExecutionController, observeExecutionResult, type ExecutionControllerSnapshot } from './executionController.mjs';
+import type { TaskPlan } from './taskPlan.mjs';
 
 // ===== 讨论回调 =====
 export interface DiscussionHandlers {
@@ -35,6 +36,7 @@ export interface TeamDiscussionOptions {
   /** 本次任务专属磁盘目录；暂停、恢复和审查必须继续使用同一个目录。 */
   workspaceId?: string;
   runSteps?: TaskRunStep[];
+  formalPlan?: TaskPlan;
   initialExecutionState?: ExecutionControllerSnapshot;
 }
 
@@ -245,6 +247,11 @@ export async function runTeamDiscussion(
     id: step.id, employeeId: step.employeeId, order: step.order, kind: step.kind, title: step.title,
     assignment: step.assignment, dependsOnStepIds: step.dependsOnStepIds, revisionOfStepId: step.revisionOfStepId,
   }));
+  // Keep the legacy rendering shape, but enforce dependencies before a member runs.
+  const queuedStepIds = new Set(queue.map((step) => step.id));
+  const completedStepIds = new Set(
+    queue.flatMap((step) => step.dependsOnStepIds).filter((stepId) => !queuedStepIds.has(stepId)),
+  );
   const completedWorkSteps: TaskPlanStep[] = [];
   let latestGuidance = '';
   const executionLimit = Math.max(maxRounds, queue.length) + maxRevisions * 2;
@@ -252,7 +259,13 @@ export async function runTeamDiscussion(
     if (control?.shouldStop?.()) break;
     const stepGuidance = control?.consumeSteeringMessages?.() ?? [];
     if (stepGuidance.length) latestGuidance = stepGuidance.join('\n');
-    const step = queue.shift()!;
+    const readyIndex = queue.findIndex((candidate) => candidate.dependsOnStepIds.every((dependency) => completedStepIds.has(dependency)));
+    if (readyIndex < 0) {
+      runFailed = true;
+      handlers.onRunFailed?.('任务步骤存在未完成的前置依赖，已停止继续执行，避免跳过上一步结果。');
+      break;
+    }
+    const [step] = queue.splice(readyIndex, 1);
     const emp = employees.find((employee) => employee.id === step.employeeId) ?? participants.find((employee) => employee.id === step.employeeId);
     if (!emp) continue;
     const role = emp.role;
@@ -351,6 +364,8 @@ export async function runTeamDiscussion(
         queue.unshift(revisionStep, reviewAgain);
       }
     }
+
+    completedStepIds.add(step.id);
 
     if (task) {
       const lane = laneOf[role];

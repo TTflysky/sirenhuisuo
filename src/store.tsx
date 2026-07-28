@@ -19,6 +19,7 @@ import type {
   DiscussionTriggerInput,
   Project,
   TaskRun,
+  SkillUsageEvidence,
 } from './types';
 import { ROLE_SCARF } from './types';
 import * as client from './data/hermesClient';
@@ -28,19 +29,21 @@ import { runTeamDiscussion } from './engine/teamDiscussion';
 import { evaluateDiscussionTrigger } from './engine/discussionTrigger';
 import { findFreeStation } from './data/hermesClient';
 import { sendBus, onBus, BUS_CHANNELS } from './ipcBus';
-import { createTaskRun, getExecutionSessionId, saveTaskRuns, updateTaskRun } from './data/taskRuns';
+import { appendTaskRunContext, createTaskRun, getExecutionSessionId, hydrateTaskRunsFromMainStore, saveTaskRuns, taskRunContextPrompt, updateTaskRun } from './data/taskRuns';
 import { buildTaskPlan, matchProjectMembers, matchTeamMembers } from './engine/taskMatcher';
-import { buildSkillContext, listSkills, matchSkills } from './data/skills';
+import { buildSkillContextWithEvidence, listSkills, matchSkills } from './data/skills';
 import { attachmentWorkspaceContext, copyAttachmentsToWorkspace, initializeTaskWorkspace } from './utils/attachments';
 import { BEGINNER_RESPONSE_GUIDE } from './data/assistantPresentation';
 import { isToolResultSuccessful } from './data/assistantPresentation';
 import { getDirectExecutionControl, isConversationOnlyMessage, shouldHoldTaskForFeedback } from './engine/agentGuardrails.mjs';
 import { APP_PRODUCT_NAME } from './brand';
 import { applyExecutionSteering, executionControllerStatus, type ExecutionControllerSnapshot } from './engine/executionController.mjs';
+import { beginTaskStep, recordTaskStepResult } from './engine/taskRunner.mjs';
 
 // ===== Action =====
 type Action =
   | { type: 'INIT'; state: AppState }
+  | { type: 'HYDRATE_TASK_RUNS'; runs: TaskRun[] }
   | { type: 'ADD_EMPLOYEE'; emp: Employee }
   | { type: 'UPDATE_EMPLOYEE'; id: string; partial: Partial<Employee> }
   | { type: 'REMOVE_EMPLOYEE'; id: string }
@@ -74,6 +77,9 @@ function reducer(s: AppState, a: Action): AppState {
   switch (a.type) {
     case 'INIT':
       return a.state;
+
+    case 'HYDRATE_TASK_RUNS':
+      return { ...s, taskRuns: a.runs };
 
     case 'ADD_EMPLOYEE': {
       const next = client.upsertEmployee(a.emp, s.employees);
@@ -281,7 +287,7 @@ interface StoreCtx {
 const StoreContext = createContext<StoreCtx | null>(null);
 
 // INIT 是各窗口自己的初始化加载，不应跨窗口广播。
-const SKIP_BROADCAST = new Set<Action['type']>(['INIT']);
+const SKIP_BROADCAST = new Set<Action['type']>(['INIT', 'HYDRATE_TASK_RUNS']);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, rawDispatch] = useReducer(reducer, initialState);
@@ -314,6 +320,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const appState = client.fetchInitial();
     dispatch({ type: 'INIT', state: appState });
+    void hydrateTaskRunsFromMainStore().then((runs) => {
+      if (runs) dispatch({ type: 'HYDRATE_TASK_RUNS', runs });
+    });
     // 后端探测
     client.checkBackend().then((online) => {
       dispatch({ type: 'SET_STATUS', partial: { backendOnline: online } });
@@ -726,6 +735,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               || latestExecutionState?.status === 'blocked'
               || latestExecutionState?.status === 'stopped';
             step.status = controllerFailed ? 'failed' : 'completed';
+            if (stepId && run.runner) {
+              run.runner = recordTaskStepResult(run.runner, {
+                stepId,
+                success: !controllerFailed,
+                output: { summary: content.slice(0, 1200) },
+                error: controllerFailed ? content : undefined,
+              });
+            }
             step.completedAt = Date.now();
             if (step.status === 'failed') {
               step.lastError = content;
@@ -757,6 +774,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               run.recoveryContext.budget.updatedAt = Date.now();
             }
             step.events.push({ ts: Date.now(), type: step.status === 'failed' ? 'error' : 'result', detail: content.slice(0, 360) });
+            appendTaskRunContext(run, {
+              type: step.status === 'failed' ? 'error' : 'progress', source: 'member', stepId,
+              summary: `${emp.name}：${content.slice(0, 420)}`, verified: step.status !== 'failed' && step.kind === 'review',
+            });
           });
         },
         onSteeringReply(emp, content, tokens, contextUsage, stepId) {
@@ -800,12 +821,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 const evidence = { ts: Date.now(), source: 'tool' as const, kind, summary: `${toolName}：${result}`.slice(0, 260), verified };
                 step.evidence = [...(step.evidence ?? []), evidence].slice(-12);
                 run.evidence = [...(run.evidence ?? []), evidence].slice(-40);
+                appendTaskRunContext(run, {
+                  type: verified ? 'progress' : 'error', source: 'tool', stepId,
+                  summary: `${toolName}：${result}`.slice(0, 420), verified,
+                });
                 if (run.recoveryContext) {
                   run.recoveryContext.budget.toolAttempts += 1;
                   run.recoveryContext.budget.updatedAt = Date.now();
                   if (verified) {
                     run.recoveryContext.completedEvidence = [...run.recoveryContext.completedEvidence, `${toolName}：${result.slice(0, 220)}`].slice(-20);
                   }
+                }
+                if (/^(search_skills|read_skill|install_skill)$/u.test(toolName)) {
+                  let skillId = '';
+                  try { skillId = JSON.parse(toolArgs || '{}').id || JSON.parse(toolArgs || '{}').installedSkillId || ''; } catch {}
+                  const skillRef = (run.skillRefs ?? []).find((ref) => ref.id === skillId);
+                  const action: SkillUsageEvidence['action'] = toolName === 'search_skills' ? 'searched' : toolName === 'read_skill' ? (verified ? 'read' : 'read-failed') : 'called';
+                  run.skillEvidence = [...(run.skillEvidence ?? []), {
+                    ts: Date.now(), skillId: skillId || skillRef?.id, skillName: skillRef?.name,
+                    action, toolName, reason: `成员 ${emp.name} 实际调用 ${toolName}`, detail: result.slice(0, 240), verified,
+                  }].slice(-60);
                 }
               }
             }
@@ -822,11 +857,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           updateProgress(Math.min(totalSteps, stepCounter + 1), emp.id, emp.name, emp.role, client.getEmployeeModel(emp).model);
           dispatch({ type: 'UPDATE_EMPLOYEE', id: emp.id, partial: { isWorking: true } });
           updateRun((run) => {
+            if (run.runner) {
+              try { run.runner = beginTaskStep(run.runner, stepId); } catch (error) {
+                run.lastError = error instanceof Error ? error.message : String(error);
+              }
+            }
             const step = run.steps.find((item) => item.id === stepId);
             if (step) {
               step.status = 'running'; step.startedAt = Date.now(); step.attempts += 1;
               step.events.push({ ts: Date.now(), type: 'status', detail: `开始第 ${step.order} 步：${step.assignment}` });
             }
+            appendTaskRunContext(run, { type: 'progress', source: 'system', stepId, summary: `${emp.name} 开始执行第 ${step?.order ?? '?'} 步：${step?.assignment ?? '未命名步骤'}` });
             if (run.recoveryContext) {
               run.recoveryContext.summary = `${emp.name} 正在执行“${step?.title ?? '当前步骤'}”。`;
               run.recoveryContext.budget.updatedAt = Date.now();
@@ -852,6 +893,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             const evidence = { ts: Date.now(), source: 'review' as const, kind: 'review' as const, summary: approved ? `审查通过：${reason ?? '符合验收要求'}` : `审查退回：${reason ?? '需要修改'}`, verified: approved };
             step.evidence = [...(step.evidence ?? []), evidence].slice(-12);
             run.evidence = [...(run.evidence ?? []), evidence].slice(-40);
+            appendTaskRunContext(run, { type: approved ? 'resolved' : 'blocked', source: 'review', stepId, summary: evidence.summary, verified: approved });
           });
         },
         onRunFailed(error) {
@@ -870,6 +912,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             }
             const activeReview = [...run.steps].reverse().find((step) => step.kind === 'review' && step.reviewDecision === 'reject');
             if (activeReview) { activeReview.status = 'failed'; activeReview.lastError = error; }
+            appendTaskRunContext(run, { type: 'blocked', source: 'system', summary: error.slice(0, 420), verified: false });
           });
         },
         onDone() {
@@ -1116,8 +1159,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (!team) return;
     const plan = buildTaskPlan(team, current.employees, request, employeeIds);
     const skillRefs = explicitSkillRefs.length ? explicitSkillRefs : await matchSkills(request);
-    const skillContext = await buildSkillContext(skillRefs);
+    const skillBundle = await buildSkillContextWithEvidence(skillRefs);
+    const skillContext = skillBundle.context;
     const run = createTaskRun(team, current.employees, request, plan, sourceMessageId, skillRefs);
+    run.skillEvidence = skillBundle.evidence;
+    appendTaskRunContext(run, {
+      type: skillRefs.length ? 'decision' : 'progress', source: 'system',
+      summary: skillRefs.length ? `已匹配 ${skillRefs.length} 个 Skill，并记录读取结果。` : '本任务没有匹配到必要 Skill，使用通用工具继续。',
+      verified: true,
+    });
     run.projectId = team.projectId;
     run.memberSnapshot.forEach((snapshot) => {
       const employee = current.employees.find((item) => item.id === snapshot.id);
@@ -1167,7 +1217,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'CREATE_TASK_RUN', run });
     enqueueDiscussion(teamId, {
       userText: request, attachments, triggerMessageId: sourceMessageId, discussionId: run.id,
-      forcedMemberIds: run.steps.map((step) => step.employeeId), runSteps: run.steps, maxRounds: run.steps.length, runId: run.id, workspaceId: run.workspaceId, extraSystemContext: skillContext,
+      forcedMemberIds: run.steps.map((step) => step.employeeId), runSteps: run.steps, maxRounds: run.steps.length, runId: run.id, workspaceId: run.workspaceId,
+      extraSystemContext: [skillContext, taskRunContextPrompt(run)].filter(Boolean).join('\n\n'),
     }, 120);
   };
 
@@ -1201,7 +1252,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }) });
         return;
       }
-      dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
+      const resumedRun = updateTaskRun(run, (next) => {
         next.status = 'queued'; next.phase = 'preflight'; next.lastError = undefined; next.handoff = undefined; next.executionSessionId = getExecutionSessionId();
         next.steps.forEach((step) => { if (pendingStepIds.has(step.id)) step.status = 'queued'; });
         if (next.recoveryContext) {
@@ -1212,9 +1263,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             next.recoveryContext.controller = applyExecutionSteering(next.recoveryContext.controller, '用户已要求继续执行；重新验证上次阻塞条件，再从未完成步骤推进。');
           }
         }
-      }) });
-      const skillContext = await buildSkillContext(run.skillRefs ?? []);
-      enqueueDiscussion(run.teamId, { userText: run.request, triggerMessageId: run.sourceMessageId, discussionId: run.id, forcedMemberIds: pending, runSteps: pendingSteps, maxRounds: pendingSteps.length, runId, workspaceId: run.workspaceId, extraSystemContext: skillContext }, 50);
+      });
+      dispatch({ type: 'UPDATE_TASK_RUN', run: resumedRun });
+      const skillBundle = await buildSkillContextWithEvidence(run.skillRefs ?? []);
+      const resumedWithSkills = updateTaskRun(resumedRun, (next) => {
+        next.skillEvidence = [...(next.skillEvidence ?? []), ...skillBundle.evidence].slice(-60);
+        appendTaskRunContext(next, { type: 'progress', source: 'system', summary: '恢复任务时重新读取已选 Skill，并沿用原任务上下文。', verified: true });
+      });
+      dispatch({ type: 'UPDATE_TASK_RUN', run: resumedWithSkills });
+      enqueueDiscussion(run.teamId, { userText: run.request, triggerMessageId: run.sourceMessageId, discussionId: run.id, forcedMemberIds: pending, runSteps: pendingSteps, maxRounds: pendingSteps.length, runId, workspaceId: run.workspaceId, extraSystemContext: [skillBundle.context, taskRunContextPrompt(resumedWithSkills)].filter(Boolean).join('\n\n') }, 50);
     })();
   };
 

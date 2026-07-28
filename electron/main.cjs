@@ -12,6 +12,7 @@ const { version: APP_VERSION } = require('../package.json');
 const { sanitizeInjectedEnv, redactInjectedValues } = require('./secretSafety.cjs');
 const { verifyConnectorAdapter } = require('./connectorAdapters.cjs');
 const { buildPowerShellCommand } = require('./commandShell.cjs');
+const { createTaskRuntimeStore } = require('./taskRuntimeStore.cjs');
 const log = require('electron-log');
 // Isolate automated Electron verification from a user's real local data.
 if (process.env.TAIJI_TEST_USER_DATA) app.setPath('userData', path.resolve(process.env.TAIJI_TEST_USER_DATA));
@@ -24,6 +25,7 @@ ipcMain.on('app:getSessionId', (event) => { event.returnValue = APP_SESSION_ID; 
 
 // ===== 自主代理工作区（沙箱目录，所有文件读写/命令执行都限制在此）=====
 const WORKSPACE = path.join(app.getPath('userData'), 'workspace');
+const taskRuntimeStore = createTaskRuntimeStore(path.join(app.getPath('userData'), 'task-runtime'));
 const TEXT_FILE_EXTENSIONS = new Set([
   '.txt', '.md', '.markdown', '.json', '.jsonl', '.csv', '.tsv', '.yaml', '.yml',
   '.xml', '.log', '.js', '.jsx', '.ts', '.tsx', '.py', '.java', '.c', '.cpp', '.h',
@@ -853,6 +855,8 @@ function createWindow() {
       return { ok: false, error: String(e?.message ?? e) };
     }
   });
+  ipcMain.handle('task-store:read', async () => taskRuntimeStore.read());
+  ipcMain.handle('task-store:write', async (_event, runs) => taskRuntimeStore.write(runs));
 
   ipcMain.handle('connector:verifyPreset', async (_event, input) => {
     const result = await verifyConnectorAdapter(input, { fetchImpl: (url, options) => net.fetch(url, options) });

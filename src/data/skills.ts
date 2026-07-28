@@ -98,8 +98,32 @@ export async function matchSkills(request: string, limit = 3): Promise<SkillRefe
 }
 
 export async function buildSkillContext(refs: SkillReference[]): Promise<string> {
+  return (await buildSkillContextWithEvidence(refs)).context;
+}
+
+export async function buildSkillContextWithEvidence(refs: SkillReference[]): Promise<{
+  context: string;
+  evidence: import('../types').SkillUsageEvidence[];
+}> {
   const unique = refs.filter((ref, index) => refs.findIndex((item) => item.id === ref.id) === index).slice(0, 5);
-  const bodies = await Promise.all(unique.map(async (ref) => { try { return await readSkill(ref.id); } catch { return null; } }));
+  const matchedAt = Date.now();
+  const evidence: import('../types').SkillUsageEvidence[] = unique.map((ref) => ({
+    ts: matchedAt, skillId: ref.id, skillName: ref.name, action: 'matched',
+    reason: '调度器根据当前任务匹配 Skill', verified: true,
+  }));
+  const bodies = await Promise.all(unique.map(async (ref) => {
+    try {
+      const skill = await readSkill(ref.id);
+      evidence.push({ ts: Date.now(), skillId: ref.id, skillName: skill.name, action: 'read', reason: '已读取 Skill 主规则和引用文档', verified: true });
+      return skill;
+    } catch (error) {
+      evidence.push({ ts: Date.now(), skillId: ref.id, skillName: ref.name, action: 'read-failed', reason: 'Skill 读取失败', detail: String(error).slice(0, 240), verified: false });
+      return null;
+    }
+  }));
   const content = bodies.filter((item): item is NonNullable<typeof item> => !!item).map((item) => `## Skill: ${item.name}\n${skillInstructionText(item)}`);
-  return content.length ? `以下 Skill 已由调度器自动匹配并授权用于当前任务。按需执行，不要声称无法访问：\n\n${content.join('\n\n')}` : '';
+  return {
+    context: content.length ? `以下 Skill 已由调度器自动匹配并授权用于当前任务。按需执行，不要声称无法访问：\n\n${content.join('\n\n')}` : '',
+    evidence,
+  };
 }

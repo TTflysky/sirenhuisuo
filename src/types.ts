@@ -1,4 +1,6 @@
 import type { ExecutionControllerSnapshot } from './engine/executionController.mjs';
+import type { TaskContract, TaskPlan } from './engine/taskPlan.mjs';
+import type { TaskRunnerSnapshot } from './engine/taskRunner.mjs';
 
 // ===== 角色标识：沿用 OPC 铁律 4 角色 + 真人 + 自定义 =====
 export type OpcRoleId = 'pm' | 'planner' | 'coder' | 'checker' | 'custom';
@@ -91,6 +93,16 @@ export interface Skill {
   sourceUrl?: string;
 }
 export interface SkillReference { id: string; name: string; }
+export interface SkillUsageEvidence {
+  ts: number;
+  skillId?: string;
+  skillName?: string;
+  action: 'matched' | 'read' | 'read-failed' | 'searched' | 'called' | 'skipped';
+  toolName?: string;
+  reason?: string;
+  detail?: string;
+  verified?: boolean;
+}
 
 export type DiscussionUrgency = 'low' | 'normal' | 'high' | 'critical';
 export type DiscussionTriggerSource = 'manual' | 'message' | 'task' | 'mention-followup';
@@ -259,6 +271,8 @@ export interface TaskRun {
   memberSnapshot: TaskRunMemberSnapshot[];
   steps: TaskRunStep[];
   skillRefs?: SkillReference[];
+  skillEvidence?: SkillUsageEvidence[];
+  context?: import('./engine/taskContext.mjs').TaskContextSnapshot;
   sourceMessageId?: string;
   lastError?: string;
   revisionCount?: number;
@@ -270,6 +284,10 @@ export interface TaskRun {
   evidence?: TaskEvidence[];
   handoff?: { ts: number; completed: string[]; blocked: string; nextAction: string };
   recoveryContext?: TaskRecoveryContext;
+  /** Versioned execution contract and durable step runner state. */
+  contract?: TaskContract;
+  plan?: TaskPlan;
+  runner?: TaskRunnerSnapshot;
   verification?: Array<{ kind: TaskEvidenceKind; label: string; status: 'passed' | 'blocked' | 'pending'; detail: string }>;
 }
 

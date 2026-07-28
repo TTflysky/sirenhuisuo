@@ -33,6 +33,14 @@ export interface FsWriteResult { ok: boolean; path?: string; size?: number; erro
 export interface FsReadResult { ok: boolean; path?: string; content?: string; format?: string; size?: number; truncated?: boolean; warnings?: string[]; error?: string; }
 export interface FsListResult { ok: boolean; path?: string; items?: FsEntry[]; error?: string; }
 export interface FsZipResult { ok: boolean; path?: string; error?: string; }
+export interface TaskStoreReadResult {
+  ok: boolean;
+  exists?: boolean;
+  schemaVersion?: number;
+  runs?: import('./types').TaskRun[];
+  error?: string;
+}
+export interface TaskStoreWriteResult { ok: boolean; schemaVersion?: number; count?: number; error?: string; }
 
 export type ChatWindowType = 'dm-chat' | 'team-chat' | 'assistant-chat';
 export interface OpenChatOptions { type: ChatWindowType; refId: string; }
@@ -71,6 +79,8 @@ declare global {
     toggleMax: () => void;
     close: () => void;
     getAppSessionId: () => string;
+    taskStoreRead: () => Promise<TaskStoreReadResult>;
+    taskStoreWrite: (runs: import('./types').TaskRun[]) => Promise<TaskStoreWriteResult>;
     getAssistantLock: () => Promise<{ locked: boolean }>;
     setAssistantLock: (locked: boolean) => Promise<{ locked: boolean }>;
     getChatLock: (opts: OpenChatOptions) => Promise<{ locked: boolean }>;

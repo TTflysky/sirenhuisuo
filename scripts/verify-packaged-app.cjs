@@ -16,6 +16,7 @@ assert.equal(packaged.main, sourcePackage.main);
 const requiredFiles = [
   'electron/commandShell.cjs',
   'electron/connectorAdapters.cjs',
+  'electron/taskRuntimeStore.cjs',
   'skills\\ima-skill\\SKILL.md',
   'skills\\ima-skill\\knowledge-base\\SKILL.md',
   'skills\\ima-skill\\notes\\SKILL.md',
@@ -28,7 +29,7 @@ const archiveFiles = asar.listPackage(archive);
 const rendererBundle = archiveFiles.find((file) => /\\dist\\assets\\index-[^\\]+\.js$/u.test(file));
 assert.ok(rendererBundle, 'Packaged renderer bundle was not found');
 const rendererSource = asar.extractFile(archive, rendererBundle.replace(/^\\/u, '')).toString('utf8');
-for (const marker of ['正在选择可验证动作', '正在对照最初目标重新验收', '模型请求已自动重试 5 次']) {
+for (const marker of ['正在选择可验证动作', '正在对照最初目标重新验收', '模型请求已自动重试 5 次', '任务上下文快照', 'Skill 证据']) {
   assert.match(rendererSource, new RegExp(marker), `ExecutionController marker missing from packaged renderer: ${marker}`);
 }
 
@@ -45,5 +46,6 @@ console.log(JSON.stringify({
   version: packaged.version,
   requiredFiles: requiredFiles.length,
   executionControllerMarkers: 3,
+  p1Markers: 2,
   installerBytes: fs.statSync(installer).size,
 }, null, 2));

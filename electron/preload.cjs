@@ -5,6 +5,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   toggleMax: () => ipcRenderer.send('win:toggle-max'),
   close: () => ipcRenderer.send('win:close'),
   getAppSessionId: () => ipcRenderer.sendSync('app:getSessionId'),
+  taskStoreRead: () => ipcRenderer.invoke('task-store:read'),
+  taskStoreWrite: (runs) => ipcRenderer.invoke('task-store:write', runs),
   getAssistantLock: () => ipcRenderer.invoke('win:getAssistantLock'),
   setAssistantLock: (locked) => ipcRenderer.invoke('win:setAssistantLock', locked),
   getChatLock: (opts) => ipcRenderer.invoke('win:getChatLock', opts),

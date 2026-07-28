@@ -1,8 +1,52 @@
 import type { Employee, SkillReference, TaskPlanStep, TaskRun, TaskRunMemberSnapshot, TaskRunStatus, TaskRunStep, Team } from '../types';
 import { createExecutionController } from '../engine/executionController.mjs';
+import { createTaskContract, createPlan } from '../engine/taskPlan.mjs';
+import { createTaskRunner, restoreTaskRunner } from '../engine/taskRunner.mjs';
+import { appendTaskContextEvent, buildTaskContextPrompt, createTaskContext, restoreTaskContext, type TaskContextEventInput } from '../engine/taskContext.mjs';
 
 const LS_TASK_RUNS = 'hermes_office_task_runs_v1';
 const MAX_RUNS = 120;
+const DEFAULT_ACCEPTANCE = ['完成用户要求的工作', '留下可观察的结果或文件', '由执行者或审查步骤确认结果'];
+
+function formalPlanForRun(run: Pick<TaskRun, 'id' | 'request' | 'goal' | 'steps'>) {
+  const contract = createTaskContract({
+    contractId: `contract-${run.id}`,
+    scope: `team-run:${run.id}`,
+    decision: {
+      mode: 'execute', goal: run.goal ?? run.request, primaryRoute: 'team_dispatch',
+      acceptanceCriteria: DEFAULT_ACCEPTANCE,
+      requiredConstraints: ['每一步必须留下真实结果', '后续步骤等待前置步骤完成'],
+      requiresEvidence: true, source: 'rules', confidence: 1,
+    },
+  });
+  const plan = createPlan({
+    planId: `plan-${run.id}`, contract,
+    steps: run.steps.map((step) => ({
+      stepId: step.id,
+      type: step.kind === 'review' ? 'review' : 'tool',
+      connector: `team-member:${step.employeeId}`,
+      input: { assignment: step.assignment, employeeId: step.employeeId },
+      expectedOutputSchema: { type: 'object' },
+      dependsOn: step.dependsOnStepIds,
+      sideEffect: step.kind !== 'review',
+      idempotencyKey: `run-${run.id}-${step.id}`,
+      metadata: { legacyStepId: step.id, employeeId: step.employeeId, kind: step.kind },
+    })),
+  });
+  return { contract, plan };
+}
+
+function addFormalExecutionState(run: TaskRun): TaskRun {
+  if (run.contract && run.plan && run.runner) return run;
+  if (!run.steps?.length) return run;
+  const { contract, plan } = formalPlanForRun(run);
+  return {
+    ...run,
+    contract: run.contract ?? contract,
+    plan: run.plan ?? plan,
+    runner: run.runner ?? createTaskRunner(plan, { traceId: run.id, createdAt: run.createdAt }),
+  };
+}
 
 export function getExecutionSessionId(): string {
   try {
@@ -27,15 +71,13 @@ function defaultRecoveryContext(run: TaskRun) {
   };
 }
 
-export function loadTaskRuns(): TaskRun[] {
+function normalizeTaskRuns(runs: TaskRun[]): TaskRun[] {
   try {
-    const raw = localStorage.getItem(LS_TASK_RUNS);
-    const runs = raw ? JSON.parse(raw) as TaskRun[] : [];
     const sessionId = getExecutionSessionId();
     let recovered = false;
     const normalized = runs.map((run) => {
       const recoveryDefaults = defaultRecoveryContext(run);
-      const next: TaskRun = {
+      const next: TaskRun = addFormalExecutionState({
         ...run,
         workspaceId: run.workspaceId ?? `legacy/team_${run.teamId}`,
         phase: run.phase ?? (run.status === 'completed' ? 'completed' : run.status === 'failed' ? 'blocked' : run.status === 'running' ? 'executing' : 'preflight'),
@@ -45,13 +87,19 @@ export function loadTaskRuns(): TaskRun[] {
         evidence: run.evidence ?? [], revisionCount: run.revisionCount ?? 0, maxRevisions: run.maxRevisions ?? 2,
         steps: (run.steps ?? []).map((step, index) => ({ ...step, evidence: step.evidence ?? [], order: step.order ?? index + 1, kind: step.kind ?? 'work', assignment: step.assignment ?? step.title, dependsOnStepIds: step.dependsOnStepIds ?? [] })),
         memberSnapshot: run.memberSnapshot ?? [],
+        context: restoreTaskContext(run.context, {
+          taskId: run.id,
+          goal: run.goal ?? run.request,
+          acceptanceCriteria: run.acceptanceCriteria,
+          createdAt: run.createdAt,
+        }),
         recoveryContext: {
           ...recoveryDefaults,
           ...(run.recoveryContext ?? {}),
           budget: { ...recoveryDefaults.budget, ...(run.recoveryContext?.budget ?? {}) },
           controller: run.recoveryContext?.controller ?? recoveryDefaults.controller,
         },
-      };
+      });
       const staleExecution = (next.status === 'running' || next.status === 'queued')
         && sessionId !== 'browser-session'
         && next.executionSessionId !== sessionId;
@@ -61,6 +109,7 @@ export function loadTaskRuns(): TaskRun[] {
       next.status = 'paused';
       next.phase = 'blocked';
       next.updatedAt = now;
+      if (next.runner) next.runner = restoreTaskRunner(next.runner) ?? next.runner;
       next.steps = next.steps.map((step) => step.status === 'running' || step.status === 'queued'
         ? { ...step, status: 'paused', events: [...step.events, { ts: now, type: 'status', detail: '客户端上次退出，步骤已保留并等待恢复' }] }
         : step);
@@ -85,8 +134,71 @@ export function loadTaskRuns(): TaskRun[] {
   }
 }
 
+function saveLocalTaskRuns(runs: TaskRun[]): TaskRun[] {
+  const limited = runs.slice(-MAX_RUNS);
+  try { localStorage.setItem(LS_TASK_RUNS, JSON.stringify(limited)); } catch {}
+  return limited;
+}
+
+function writeMainTaskRuns(runs: TaskRun[]): void {
+  try {
+    const writer = typeof window !== 'undefined' ? window.electronAPI?.taskStoreWrite : undefined;
+    if (writer) void writer(runs.slice(-MAX_RUNS)).catch(() => {});
+  } catch {}
+}
+
+export function loadTaskRuns(): TaskRun[] {
+  try {
+    const raw = localStorage.getItem(LS_TASK_RUNS);
+    return normalizeTaskRuns(raw ? JSON.parse(raw) as TaskRun[] : []);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Main-process storage is authoritative when present. A missing snapshot is
+ * treated as a first-run migration from the legacy renderer cache.
+ */
+export async function hydrateTaskRunsFromMainStore(): Promise<TaskRun[] | null> {
+  try {
+    const reader = typeof window !== 'undefined' ? window.electronAPI?.taskStoreRead : undefined;
+    if (!reader) return null;
+    const result = await reader();
+    if (!result.ok) return null;
+    if (result.exists) {
+      const normalized = normalizeTaskRuns(result.runs ?? []);
+      saveLocalTaskRuns(normalized);
+      return normalized;
+    }
+    const migrated = loadTaskRuns();
+    saveLocalTaskRuns(migrated);
+    writeMainTaskRuns(migrated);
+    return migrated;
+  } catch {
+    return null;
+  }
+}
+
 export function saveTaskRuns(runs: TaskRun[]): void {
-  try { localStorage.setItem(LS_TASK_RUNS, JSON.stringify(runs.slice(-MAX_RUNS))); } catch {}
+  const limited = saveLocalTaskRuns(runs);
+  writeMainTaskRuns(limited);
+}
+
+export function appendTaskRunContext(run: TaskRun, event: TaskContextEventInput): void {
+  run.context = appendTaskContextEvent(run.context, {
+    ...event,
+    stepId: event.stepId,
+  });
+}
+
+export function taskRunContextPrompt(run: TaskRun): string {
+  return buildTaskContextPrompt(run.context ?? createTaskContext({
+    taskId: run.id,
+    goal: run.goal ?? run.request,
+    acceptanceCriteria: run.acceptanceCriteria,
+    createdAt: run.createdAt,
+  }));
 }
 
 export function createTaskRun(team: Team, employees: Employee[], request: string, plan: TaskPlanStep[], sourceMessageId?: string, skillRefs?: SkillReference[], workspaceId?: string): TaskRun {
@@ -106,7 +218,7 @@ export function createTaskRun(team: Team, employees: Employee[], request: string
     attempts: 0,
     events: [{ ts: now, type: 'status', detail: '等待执行' }],
   }));
-  return {
+  const baseRun: TaskRun = {
     id,
     teamId: team.id,
     workspaceId: workspaceId ?? `tasks/team/${team.id}/run-${id}`,
@@ -129,6 +241,8 @@ export function createTaskRun(team: Team, employees: Employee[], request: string
     memberSnapshot,
     steps,
     skillRefs,
+    skillEvidence: [],
+    context: createTaskContext({ taskId: id, goal: request, acceptanceCriteria: ['完成用户要求的工作', '留下可观察的结果或文件', '由执行者或审查步骤确认结果'], createdAt: now }),
     sourceMessageId,
     revisionCount: 0,
     maxRevisions: 2,
@@ -142,6 +256,8 @@ export function createTaskRun(team: Team, employees: Employee[], request: string
       }),
     },
   };
+  const { contract, plan: formalPlan } = formalPlanForRun(baseRun);
+  return { ...baseRun, contract, plan: formalPlan, runner: createTaskRunner(formalPlan, { traceId: id, createdAt: now }) };
 }
 
 export function updateTaskRun(run: TaskRun, mutate: (current: TaskRun) => void): TaskRun {
