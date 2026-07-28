@@ -17,6 +17,7 @@ const { createTaskWorker } = require('./taskWorker.cjs');
 const { createNativeToolRuntime } = require('./nativeToolRuntime.cjs');
 const { createNativeExecutionAdapter } = require('./nativeExecutionAdapter.cjs');
 const { createWorktreeManager } = require('./worktreeManager.cjs');
+const { createEcosystemHealth } = require('./ecosystemHealth.cjs');
 // Isolate automated Electron verification from a user's real local data.
 if (process.env.TAIJI_TEST_USER_DATA) app.setPath('userData', path.resolve(process.env.TAIJI_TEST_USER_DATA));
 if (process.env.TAIJI_TEST_DEBUG_PORT) app.commandLine.appendSwitch('remote-debugging-port', String(process.env.TAIJI_TEST_DEBUG_PORT));
@@ -62,6 +63,16 @@ const nativeToolRuntime = createNativeToolRuntime({
   createWordDocument: createVerifiedWordDocument,
   readWorkspaceFile,
   runCommand: executeWorkspaceCommand,
+});
+const ecosystemHealth = createEcosystemHealth({
+  appVersion: APP_VERSION,
+  projectRoot: PROJECT_ROOT,
+  workspaceRoot: WORKSPACE,
+  store: taskRuntimeStore,
+  worker: taskWorker,
+  toolRuntime: nativeToolRuntime,
+  worktreeManager,
+  listSkills,
 });
 const nativeExecutionAdapter = createNativeExecutionAdapter({
   projectRoot: PROJECT_ROOT,
@@ -1012,6 +1023,7 @@ function createWindow() {
   ipcMain.handle('worktree:recover', async (_event, taskId) => worktreeManager.recover(taskId));
   ipcMain.handle('worktree:release', async (_event, taskId) => worktreeManager.release(taskId));
   ipcMain.handle('worktree:health', async () => worktreeManager.health());
+  ipcMain.handle('system:ecosystemHealth', async (_event, input) => ecosystemHealth.run(input));
 
   ipcMain.handle('connector:verifyPreset', async (_event, input) => {
     const result = await verifyConnectorAdapter(input, { fetchImpl: (url, options) => net.fetch(url, options) });
@@ -1237,7 +1249,7 @@ function createWindow() {
   });
 
   // ===== 自动更新（仅打包后生效）=====
-  initAutoUpdater(win);
+  initAutoUpdater(win, { runtimeHealthProvider: () => ecosystemHealth.run({ mode: 'runtime' }) });
   }
 
   // 主窗口关闭时，关闭所有原生聊天子窗口

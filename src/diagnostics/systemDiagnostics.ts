@@ -5,7 +5,7 @@ import { diagnoseModel } from './modelDiagnostics';
 import { getToolRegistrySnapshot } from '../engine/toolCatalog';
 
 export type DiagnosticStatus = 'ready' | 'warning' | 'blocked';
-export type DiagnosticArea = 'model' | 'connector' | 'skill' | 'tool' | 'workspace' | 'permission';
+export type DiagnosticArea = 'model' | 'connector' | 'skill' | 'tool' | 'runtime' | 'workspace' | 'permission';
 
 export interface SystemDiagnosticItem {
   id: string;
@@ -125,6 +125,41 @@ async function diagnoseToolRegistry(): Promise<SystemDiagnosticItem> {
   };
 }
 
+async function diagnoseTaskRuntime(): Promise<SystemDiagnosticItem> {
+  const api = window.electronAPI;
+  if (!api?.ecosystemHealth) {
+    return {
+      id: 'runtime', area: 'runtime', title: '任务内核与恢复', status: 'blocked',
+      summary: '当前环境没有任务内核健康接口',
+      detail: '无法核对任务账本、后台 Worker、工具注册、升级身份和 Git 隔离状态。',
+      action: '请使用太极桌面客户端，并确认客户端已经更新到当前版本。',
+    };
+  }
+  try {
+    const report = await api.ecosystemHealth({ mode: 'runtime' });
+    const problems = report.checks.filter((check) => check.status !== 'ready');
+    const detail = problems.length
+      ? problems.map((check) => `${check.title}：${check.summary}`).join('；')
+      : report.checks.map((check) => check.title).join('、');
+    return {
+      id: 'runtime', area: 'runtime', title: '任务内核与恢复', status: report.status,
+      summary: `${report.ready}/${report.checks.length} 项正常${report.warning ? `，${report.warning} 项提醒` : ''}${report.blocked ? `，${report.blocked} 项不可用` : ''}`,
+      detail,
+      action: report.status === 'ready'
+        ? '任务账本、后台执行、工具、Skill、工作区、版本身份和代码隔离均通过检查。'
+        : report.canRelease
+          ? '核心任务能力可用；按提醒检查 Git 或可选能力即可。'
+          : '先处理上面的核心故障并重新检查，系统不会把未通过的升级记为成功。',
+      settingsTab: report.canRelease ? undefined : 'workspace',
+    };
+  } catch (error) {
+    return {
+      id: 'runtime', area: 'runtime', title: '任务内核与恢复', status: 'blocked', summary: '任务内核健康检查失败',
+      detail: error instanceof Error ? error.message : String(error), action: '重新启动客户端后再检查；仍失败时查看升级日志和任务账本。',
+    };
+  }
+}
+
 async function diagnoseWorkspace(): Promise<SystemDiagnosticItem> {
   const api = window.electronAPI;
   if (!api?.fsInitWorkspace || !api.fsWrite || !api.fsRead) {
@@ -167,10 +202,10 @@ async function diagnosePermission(): Promise<SystemDiagnosticItem> {
 
 export async function runSystemDiagnostics(): Promise<SystemDiagnosticReport> {
   const settled = await Promise.allSettled([
-    diagnoseActiveModel(), diagnoseConnectors(), diagnoseSkills(), diagnoseToolRegistry(), diagnoseWorkspace(), diagnosePermission(),
+    diagnoseActiveModel(), diagnoseConnectors(), diagnoseSkills(), diagnoseToolRegistry(), diagnoseTaskRuntime(), diagnoseWorkspace(), diagnosePermission(),
   ]);
-  const names = ['AI 模型', '连接器与知识库', 'Skill 健康', '工具注册中心', '任务工作区', '安全与审批'];
-  const areas: DiagnosticArea[] = ['model', 'connector', 'skill', 'tool', 'workspace', 'permission'];
+  const names = ['AI 模型', '连接器与知识库', 'Skill 健康', '工具注册中心', '任务内核与恢复', '任务工作区', '安全与审批'];
+  const areas: DiagnosticArea[] = ['model', 'connector', 'skill', 'tool', 'runtime', 'workspace', 'permission'];
   const items = settled.map((result, index): SystemDiagnosticItem => result.status === 'fulfilled' ? result.value : {
     id: areas[index], area: areas[index], title: names[index], status: 'blocked', summary: '检查过程出错',
     detail: result.reason instanceof Error ? result.reason.message : String(result.reason), action: '处理提示后重新检查。',

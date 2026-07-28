@@ -47,6 +47,7 @@ ipcMain.handle('update:check', async () => {
 
 // ---- IPC：供 renderer 调用立即重启安装 ----
 let downloadedVersion = '';
+let runtimeHealthProvider;
 
 function upgradeDir() {
   return path.join(app.getPath('userData'), 'upgrade-backups');
@@ -96,9 +97,11 @@ ipcMain.handle('upgrade:recordValidation', async (_event, validation) => {
     if (!journal || journal.toVersion !== APP_VERSION) return { ok: true, recorded: false };
     const expected = journal.backupSummary || {};
     const dataPreserved = ['employees', 'teams', 'models', 'taskRuns'].every((key) => Number(validation?.[key] || 0) >= Number(expected[key] || 0));
-    const ok = Boolean(validation?.workspaceReady) && dataPreserved;
+    const runtimeHealth = runtimeHealthProvider ? await runtimeHealthProvider() : null;
+    const runtimeReady = !runtimeHealth || runtimeHealth.ok === true;
+    const ok = Boolean(validation?.workspaceReady) && dataPreserved && runtimeReady;
     journal.status = ok ? 'validated' : 'validation-failed';
-    journal.validation = { ...validation, ok, dataPreserved, checkedAt: new Date().toISOString() };
+    journal.validation = { ...validation, ok, dataPreserved, runtimeReady, runtimeHealth, checkedAt: new Date().toISOString() };
     await writeJournal(journal);
     return { ok: true, recorded: true };
   } catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
@@ -169,7 +172,8 @@ ipcMain.handle('upgrade:rollback', async () => {
 });
 
 // ---- 对外暴露启动函数（main.cjs 中调用） ----
-function initAutoUpdater(mainWindow) {
+function initAutoUpdater(mainWindow, options = {}) {
+  runtimeHealthProvider = typeof options.runtimeHealthProvider === 'function' ? options.runtimeHealthProvider : runtimeHealthProvider;
   // 事件 → IPC 转发给 renderer
   autoUpdater.on('checking-for-update', () => {
     mainWindow.webContents.send('update:status', { status: 'checking', message: '正在检查更新…' });

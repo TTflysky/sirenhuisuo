@@ -1,7 +1,7 @@
 # 项目交接手册
 
-> 最后整理：2026-07-28
-> 当前源码版本：`v0.27.0`
+> 最后整理：2026-07-29
+> 当前源码版本：`v0.28.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 
@@ -86,6 +86,7 @@
 | `electron/executionAdapterProtocol.cjs` | Execution Adapter v1 协议：校验严格递增检查点，并把步骤开始/完成/失败与任务最终状态应用到主进程权威投影。 |
 | `electron/nativeExecutionAdapter.cjs` | Electron 主进程团队执行循环：模型调用、工具编排、目标验收、审查退回、运行中插话和后台生命周期。 |
 | `electron/nativeToolRuntime.cjs` | 主进程工具运行时：工作区文件、命令、联网、Skill、Connector、知识库与结构化证据，持久化前统一脱敏。 |
+| `electron/ecosystemHealth.cjs` | 生态健康协议 v1：统一检查版本身份、任务账本、Worker、工具、Skill、工作区与 Git Worktree，并作为升级验收门禁。 |
 | `electron/preload.cjs` | 受限的 `window.electronAPI` 桥接。新增 IPC 必须同步更新此文件和 `src/electron.d.ts`。 |
 | `electron/skills.cjs` | 扫描 `%USERPROFILE%/.workbuddy/skills`、项目 `skills/` 和 `.workbuddy/skills`。 |
 | `electron/autoUpdate.cjs` | 通过 GitHub Releases 检查并下载更新；后台检查失败只写诊断日志，不冒充模型网络故障。 |

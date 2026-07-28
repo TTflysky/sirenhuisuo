@@ -211,6 +211,27 @@ export interface WorktreeResult {
   worktreesRoot?: string;
   error?: string;
 }
+export interface EcosystemHealthCheck {
+  id: 'identity' | 'task-store' | 'worker' | 'tools' | 'skills' | 'workspace' | 'worktree';
+  title: string;
+  status: 'ready' | 'warning' | 'blocked';
+  summary: string;
+  detail: string;
+  critical: boolean;
+}
+export interface EcosystemHealthReport {
+  ok: boolean;
+  healthVersion: number;
+  mode: 'runtime' | 'release';
+  appVersion: string;
+  checkedAt: number;
+  status: 'ready' | 'warning' | 'blocked';
+  canRelease: boolean;
+  ready: number;
+  warning: number;
+  blocked: number;
+  checks: EcosystemHealthCheck[];
+}
 export interface TaskStoreReadResult {
   ok: boolean;
   exists?: boolean;
@@ -330,6 +351,7 @@ declare global {
     worktreeRecover: (taskId: string) => Promise<WorktreeResult>;
     worktreeRelease: (taskId: string) => Promise<WorktreeResult>;
     worktreeHealth: () => Promise<WorktreeResult>;
+    ecosystemHealth: (input?: { mode?: 'runtime' | 'release' }) => Promise<EcosystemHealthReport>;
     onTaskWorkerChanged: (callback: (event: unknown) => void) => () => void;
     onTaskExecutionChanged: (callback: (event: NativeExecutionEvent) => void) => () => void;
     getAssistantLock: () => Promise<{ locked: boolean }>;

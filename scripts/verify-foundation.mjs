@@ -88,12 +88,12 @@ async function verifyIsolatedWorkspaceLayout() {
 async function verifyDiagnosticsCoverage() {
   const source = await fs.readFile('src/diagnostics/systemDiagnostics.ts', 'utf8');
   const view = await fs.readFile('src/components/settings/DiagnosticsTab.tsx', 'utf8');
-  for (const name of ['diagnoseActiveModel()', 'diagnoseConnectors()', 'diagnoseSkills()', 'diagnoseToolRegistry()', 'diagnoseWorkspace()', 'diagnosePermission()']) {
+  for (const name of ['diagnoseActiveModel()', 'diagnoseConnectors()', 'diagnoseSkills()', 'diagnoseToolRegistry()', 'diagnoseTaskRuntime()', 'diagnoseWorkspace()', 'diagnosePermission()']) {
     assert.match(source, new RegExp(name.replace(/[()]/g, '\\$&')));
   }
-  for (const label of ['AI 模型', '连接器与知识库', 'Skill 健康', '工具注册中心', '任务工作区', '安全与审批']) assert.match(source, new RegExp(label));
+  for (const label of ['AI 模型', '连接器与知识库', 'Skill 健康', '工具注册中心', '任务内核与恢复', '任务工作区', '安全与审批']) assert.match(source, new RegExp(label));
   assert.match(view, /diagnostic-item/u);
-  return 6;
+  return 7;
 }
 
 const [workspace, redacted, recovery, diagnostics] = await Promise.all([

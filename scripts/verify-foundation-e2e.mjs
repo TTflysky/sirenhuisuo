@@ -71,11 +71,14 @@ async function loadStandaloneTypeScript(relativePath) {
   const taskPlanSource = await fs.readFile('src/engine/taskPlan.mjs', 'utf8');
   const taskPlanUrl = dataUrl(taskPlanSource);
   const taskRunnerSource = (await fs.readFile('src/engine/taskRunner.mjs', 'utf8')).replaceAll('./taskPlan.mjs', taskPlanUrl);
+  const taskContextUrl = dataUrl(await fs.readFile('src/engine/taskContext.mjs', 'utf8'));
+  const taskContextRouterSource = (await fs.readFile('src/engine/taskContextRouter.mjs', 'utf8')).replaceAll('./taskContext.mjs', taskContextUrl);
   const moduleUrls = new Map([
     ['../engine/executionController.mjs', dataUrl(await fs.readFile('src/engine/executionController.mjs', 'utf8'))],
     ['../engine/taskPlan.mjs', taskPlanUrl],
     ['../engine/taskRunner.mjs', dataUrl(taskRunnerSource)],
-    ['../engine/taskContext.mjs', dataUrl(await fs.readFile('src/engine/taskContext.mjs', 'utf8'))],
+    ['../engine/taskContext.mjs', taskContextUrl],
+    ['../engine/taskContextRouter.mjs', dataUrl(taskContextRouterSource)],
   ]);
   for (const [specifier, url] of moduleUrls) source = source.replaceAll(specifier, url);
   const transpiled = ts.transpileModule(source, {
@@ -194,9 +197,9 @@ try {
       count: document.querySelectorAll('.diagnostic-item').length,
       titles: [...document.querySelectorAll('.diagnostic-item strong')].map((item) => item.textContent.trim())
     }))()`);
-    return result.count === 6 ? result : null;
-  }, '诊断中心没有完成六项检查');
-  assert.deepEqual(diagnostics.titles, ['AI 模型', '连接器与知识库', 'Skill 健康', '工具注册中心', '任务工作区', '安全与审批']);
+    return result.count === 7 ? result : null;
+  }, '诊断中心没有完成七项检查');
+  assert.deepEqual(diagnostics.titles, ['AI 模型', '连接器与知识库', 'Skill 健康', '工具注册中心', '任务内核与恢复', '任务工作区', '安全与审批']);
 
   const cognitiveMemory = await settings.evaluate(`(() => {
     const button = [...document.querySelectorAll('.settings-nav-section button')].find((item) => item.textContent.includes('记忆'));

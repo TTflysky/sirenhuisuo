@@ -1,12 +1,12 @@
 # 太极项目当前交接
 
-> 更新时间：2026-07-28
-> 当前版本：`v0.27.0`
+> 更新时间：2026-07-29
+> 当前版本：`v0.28.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
-> Release：`v0.22.0` 已完成构建并正式发布；`v0.23.0` 至 `v0.28.0` 按连续升级计划本地推进，最终统一发布
+> Release：`v0.23.0` 至 `v0.28.0` 已完成连续源码升级，最终由 `v0.28.0` 一次性统一发布
 
-`v0.27.0` 已加入 Git Worktree 管理协议 v1。代码任务可按需创建独占分支和物理工作树，恢复点同时保存已跟踪补丁和未跟踪文件内容；目录丢失后可校验重建。有未提交修改时清理会被拒绝，普通非 Git 任务不受影响。
+`v0.28.0` 已形成统一生态闭环：主进程集中检查版本身份、任务账本、后台 Worker、工具注册、Skill、物理工作区和 Git Worktree；设置诊断中心新增任务内核与恢复项，升级完成前也会执行同一套运行健康校验。
 
 ## 办公室端直接开始
 
@@ -45,9 +45,9 @@ npm.cmd run verify:package
 
 ### 2. 统一诊断中心：已完成
 
-- 设置首页改为诊断中心，一次真实检查 AI 模型、连接器与知识库、Skill、工作区和安全审批。
+- 设置首页改为诊断中心，一次真实检查 AI 模型、连接器与知识库、Skill、工具注册、任务内核与恢复、工作区和安全审批。
 - 每项显示“可用 / 需确认 / 缺配置”、通俗原因、下一步和设置入口。
-- 安装版 Electron 已实测五项全部渲染，工作区创建、写入和读回通过。
+- 主进程生态健康报告同时检查版本身份、账本、Worker、工具、安装 Skill、物理工作区和 Git Worktree，并区分核心阻塞与可选提醒。
 
 ### 3. 上下文与预算管理：已完成首个可恢复版本
 
@@ -153,7 +153,7 @@ npm.cmd run verify:package
 
 - `npm.cmd run build`：通过。
 - `npm.cmd run lint`：通过；只有已有非阻断警告。
-- `npm.cmd run verify:foundation`：通过；隔离目录内容为 `first-content / second-content`，附件为 `attachment-content`，敏感参数已隐藏，旧会话任务转为暂停待恢复，诊断领域为 5 项。
+- `npm.cmd run verify:foundation`：通过；隔离目录内容为 `first-content / second-content`，附件为 `attachment-content`，敏感参数已隐藏，旧会话任务转为暂停待恢复，诊断领域为 7 项。
 - `npm.cmd run verify:agent-kernel`：通过；118 次重复 Skill 读取只执行 1 次。
 - `npm.cmd run verify:execution-controller`：通过；覆盖瞬时错误重试后换路线、参数错误、认证边界、替代路线恢复、无证据禁止完成、独立复核、快照恢复、插话转向和模型 5 次重试。
 - `npm.cmd run verify:connector-adapters`：通过；覆盖 IMA 原生成功、业务失败、畸形响应、三次网络重试、凭据不泄漏和 Windows 命令退出码传播。
@@ -161,7 +161,9 @@ npm.cmd run verify:package
 - `npm.cmd run verify:execution-evidence`：通过；覆盖真实磁盘文件证据、仅渲染登记降级和结构化审查退回。
 - `npm.cmd run verify:task-runner`：通过；覆盖审查退回责任步骤、动态追加修订/复审节点并最终完成。
 - `npm.cmd run verify:task-context`：通过；上下文 v1 自动迁移到 v2，最近 120 条事件、确定性压缩、模型摘要边界、交付路径和历史关联均通过。
+- `npm.cmd run verify:context-router`：通过；覆盖运行中抢占重排、预算换路线和恢复胶囊压缩。
 - `npm.cmd run verify:task-history`：通过；中文历史检索命中正确团队任务，运行中任务不参与旧经验注入，只读提示与上下文/Runner 回放顺序通过。
+- `npm.cmd run verify:task-delegation`：通过；覆盖自动选择责任员工、动态子任务持久化和局部修订/复审。
 - `npm.cmd run verify:task-runtime-store`：通过；覆盖旧快照迁移、并发首次读取、事件序号与哈希链、创建/更新/移除、重复写入去重、账本重建和损坏尾部隔离恢复。
 - `npm.cmd run verify:skill-atomic`：通过；无效包不触碰旧 Skill，成功替换不残留旧文件，哈希损坏被拦截，并真实验证根 Skill 可读取知识库与笔记子规则。
 - `npm.cmd run verify:update-download`：通过；模拟断线后 Range 续传、服务器忽略断点、等长损坏缓存和 SHA-256 拦截。
@@ -172,9 +174,12 @@ npm.cmd run verify:package
 - `npm.cmd run verify:task-worker`：通过；覆盖命令幂等、租约、心跳、暂停/恢复、跨会话过期回收、停止、关闭和损坏命令尾部隔离。
 - `npm.cmd run verify:task-worker` 新增 Adapter 覆盖：步骤开始/完成检查点、重复序号拒绝，以及旧渲染快照不能覆盖主进程权威检查点。
 - `npm.cmd run verify:native-execution`：通过；无界面订阅时完成工作与审查步骤，重复写入只执行一次，暂停可中断模型，凭据未进入任务投影。
-- `npm.cmd run verify:package`：通过；包内版本为 `0.22.0`，任务账本、Worker、原生 Adapter、工具运行时和所需 Engine 模块可读取，安装器、blockmap 和 `latest.yml` 版本一致。
+- `npm.cmd run verify:worktree`：通过；覆盖同仓库双任务隔离、补丁与未跟踪文件恢复、丢失目录重建和脏工作树拒绝清理。
+- `npm.cmd run verify:ecosystem-health`：通过；七项健康检查全部可用，并验证核心账本故障会阻止发布、Git 可选能力故障只给出提醒。
 - 打包客户端普通隔离启动连续存活 12 秒；已修复 Electron 33 Windows 下巡检计时器 `unref()` 导致的 `0x80000003` 原生异常。
-- `npm.cmd run verify:foundation-ui`：通过；真实 Electron IPC 覆盖工作区、Worker 控制、诊断中心、记忆页、敏感信息脱敏和旧任务恢复。
+- `npm.cmd run verify:foundation-ui`：通过；真实 Electron IPC 覆盖工作区、Worker 控制、诊断中心七项、记忆页、敏感信息脱敏和旧任务恢复。
+- `npm.cmd run verify:office-scroll`：通过；真实渲染 999 个工位，办公区形成纵向滚动并响应鼠标滚轮。
+- `npm.cmd run verify:team-window-layout`：通过；团队窗口从默认完整尺寸缩到 560px 后，头像不压缩、不裁切且无横向溢出。
 - `npm.cmd run diagnose:web-search`：通过；Electron 实网使用 DuckDuckGo，首轮空结果自动重试后约 3.1 秒返回 8 条中文 AI 资讯。
 - `npm.cmd run verify:docx`：通过；生成的 Word 可重新解析正文。
 - 安装版 `npm.cmd run verify:foundation-ui`：通过；真实 Electron IPC 和诊断中心五项完整显示。
@@ -185,10 +190,10 @@ npm.cmd run verify:package
 
 ## 安装与发布资产
 
-- 安装包：`release\taiji-office-setup-0.22.0.exe`
-- Blockmap：`release\taiji-office-setup-0.22.0.exe.blockmap`
+- 安装包：`release\taiji-office-setup-0.28.0.exe`
+- Blockmap：`release\taiji-office-setup-0.28.0.exe.blockmap`
 - 更新清单：`release\latest.yml`
-- 包内版本：`0.22.0`。
+- 包内版本和三项资产将在 `publish:release` 内自动核对为 `0.28.0`，任一不一致都会停止上传。
 - 最终文件大小和 SHA-256 以 `npm.cmd run publish:release` 的成功输出及 GitHub Release digest 为准；发布脚本会逐项比对本地与远端，不再把易过期的单次构建摘要固化在交接文档中。
 - 解包版受控启动 8 秒保持运行，未出现启动即崩溃。
 - 安装目录只保留 `太极 AI 办公会所.exe` 和对应卸载程序，没有旧产品可执行文件残留。
@@ -211,7 +216,7 @@ npm.cmd run verify:package
 
 ## 下一步
 
-1. `v0.28.0` 完成生态闭环、升级诊断、全量回归和最终统一发布。
-2. 发布后由用户统一安装验收，不再拆分中间安装包。
+1. 在 GitHub Release 下载并覆盖安装 `v0.28.0`，统一验收 `v0.23.0` 至 `v0.28.0` 的连续升级结果。
+2. 验收发现的问题按同层级入口统一修复，不再恢复逐个截图、逐个小版本的发布节奏。
 
 每次完成后先升级版本并更新本文件，提交到干净的 `main`，然后运行 `npm.cmd run publish:release` 一次完成预检、回归、打包、推送、Release 上传和远端哈希校验。

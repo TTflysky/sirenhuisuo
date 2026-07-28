@@ -64,6 +64,7 @@ try {
 
   const teamTarget = await waitFor(async () => (await listTargets()).find((target) => target.url.includes('#chat') && target.url.includes('team-opc')), '没有找到团队聊天窗口');
   team = await connect(teamTarget);
+  await team.evaluate('window.resizeTo(560, 760)');
   const metrics = await waitFor(async () => {
     const value = await team.evaluate(`(() => {
       const sidebar = document.querySelector('.team-member-sidebar');

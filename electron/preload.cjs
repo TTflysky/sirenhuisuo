@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   worktreeRecover: (taskId) => ipcRenderer.invoke('worktree:recover', taskId),
   worktreeRelease: (taskId) => ipcRenderer.invoke('worktree:release', taskId),
   worktreeHealth: () => ipcRenderer.invoke('worktree:health'),
+  ecosystemHealth: (input) => ipcRenderer.invoke('system:ecosystemHealth', input),
   onTaskWorkerChanged: (callback) => {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on('task-worker:changed', handler);
