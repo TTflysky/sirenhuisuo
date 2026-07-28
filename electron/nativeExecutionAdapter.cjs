@@ -411,6 +411,32 @@ function createNativeExecutionAdapter(options) {
     }
   }
 
+  async function executeWorktreeTool(job, run, name, args) {
+    if (!options.worktreeManager) return { name, success: false, output: '当前客户端没有启用 Git Worktree 管理器。' };
+    if (name === 'prepare_git_worktree') {
+      const created = await options.worktreeManager.create({ taskId: job.taskId, sourceRepo: args.sourceRepo, baseRef: args.baseRef });
+      if (!created.ok) return { name, success: false, output: created.error || '创建 Git 工作树失败' };
+      run.workspaceId = created.worktree.workspaceId;
+      run.worktree = created.worktree;
+      await updateRun(job.taskId, (next) => {
+        next.workspaceId = created.worktree.workspaceId;
+        next.worktree = created.worktree;
+        if (next.recoveryContext) next.recoveryContext.summary = `代码任务已切换到独立 Git Worktree：${created.worktree.branch}`;
+      }, '原生 Adapter 启用 Git Worktree 隔离');
+      emit(job, 'worktree_ready', { worktree: created.worktree, idempotencyHit: created.idempotencyHit === true });
+      return { name, success: true, output: `独立代码工作树已就绪。分支：${created.worktree.branch}；任务工作区：${created.worktree.workspaceId}`,
+        structuredEvidence: { worktree: { branch: created.worktree.branch, head: created.worktree.head, workspaceId: created.worktree.workspaceId } } };
+    }
+    const checkpoint = await options.worktreeManager.checkpoint(job.taskId, { label: args.label || '模型请求恢复点' });
+    if (!checkpoint.ok) return { name, success: false, output: checkpoint.error || '创建 Git 工作树恢复点失败' };
+    await updateRun(job.taskId, (next) => {
+      if (next.worktree) { next.worktree.lastCheckpointId = checkpoint.checkpoint.checkpointId; next.worktree.updatedAt = Date.now(); }
+    }, '原生 Adapter 保存 Git Worktree 恢复点');
+    emit(job, 'worktree_checkpointed', { checkpoint: checkpoint.checkpoint });
+    return { name, success: true, output: `代码恢复点已保存：${checkpoint.checkpoint.checkpointId}；差异补丁 SHA-256：${checkpoint.checkpoint.patchSha256}`,
+      structuredEvidence: { worktreeCheckpoint: checkpoint.checkpoint } };
+  }
+
   async function executeStep(job, run, step, member) {
     const { fidelity, toolRegistry, contextRouter } = await loadEngineModules();
     const stepRecoveryPrompt = contextRouter.buildRecoveryPrompt({
@@ -508,6 +534,7 @@ function createNativeExecutionAdapter(options) {
           else if (!gate.allowed) result = { name, success: false, output: `${gate.reason}当前调用与原始目标不一致，已在主进程拦截。` };
           else if (cache.has(key)) result = { name, success: false, output: '完全相同的工具调用已执行，不能重复消耗算力，必须更换路线。' };
           else if (name === 'delegate_subtask') result = await delegateSubtask(job, run, step, args);
+          else if (name === 'prepare_git_worktree' || name === 'checkpoint_git_worktree') result = await executeWorktreeTool(job, run, name, args);
           else result = await options.toolRuntime.execute(name, args, {
             taskId: job.taskId, scope: `team:${run.teamId}`, workspaceId: run.workspaceId,
             executionPolicy: job.executionPolicy, connectors: job.connectors, connectorActions: job.connectorActions,
@@ -558,6 +585,7 @@ function createNativeExecutionAdapter(options) {
       return { content: finalContent, review, callLog, usageModel: response.model };
     }
     await options.store.createRecoveryPoint({ taskId: job.taskId, label: '模型轮次预算恢复点' }).catch(() => {});
+    if (run.worktree && options.worktreeManager) await options.worktreeManager.checkpoint(job.taskId, { label: '模型轮次预算恢复点' }).catch(() => {});
     throw new ExecutionControlSignal('checkpoint', `当前步骤经过 ${MAX_MODEL_ROUNDS_PER_STEP} 轮仍未形成可验收结果。系统已保存目标、证据、未决问题和当前步骤，没有判定失败；可从恢复点继续或更换模型后继续。`);
   }
 
@@ -683,6 +711,10 @@ function createNativeExecutionAdapter(options) {
   async function failStep(job, step, member, error) {
     const { runner } = await loadEngineModules();
     const reason = text(error?.message || error, 1200);
+    const failedRun = await readRun(job.taskId).catch(() => undefined);
+    if (failedRun?.worktree && options.worktreeManager) {
+      await options.worktreeManager.checkpoint(job.taskId, { label: `步骤失败：${step.title}` }).catch(() => {});
+    }
     try { await checkpoint(job, { kind: 'step_failed', stepId: step.id, summary: reason }); } catch {}
     await updateRun(job.taskId, (run) => {
       run.status = 'failed'; run.phase = 'blocked'; run.lastError = reason;
@@ -717,6 +749,11 @@ function createNativeExecutionAdapter(options) {
     ];
     const blocked = checks.filter((item) => !item.passed);
     if (unfinished.length || blocked.length) throw new Error(unfinished.length ? `仍有 ${unfinished.length} 个步骤未完成` : `验收未通过：${blocked.map((item) => item.detail).join('；')}`);
+    const beforeFinish = await readRun(job.taskId);
+    if (beforeFinish?.worktree && options.worktreeManager) {
+      const checkpoint = await options.worktreeManager.checkpoint(job.taskId, { label: '任务完成恢复点' });
+      if (!checkpoint.ok) throw new Error(checkpoint.error || '最终 Git 工作树恢复点创建失败');
+    }
     await updateRun(job.taskId, (next) => {
       next.verification = checks.map((item) => ({ kind: item.kind, label: item.label, status: item.passed ? 'passed' : 'blocked', detail: item.detail }));
       next.status = 'completed'; next.phase = 'completed'; next.lastError = undefined;
@@ -840,8 +877,14 @@ function createNativeExecutionAdapter(options) {
     if (!taskId) return { ok: false, error: '原生 Adapter 缺少 taskId' };
     const existing = jobs.get(taskId);
     if (existing && ACTIVE_JOB_STATES.has(existing.state)) return { ok: true, idempotencyHit: true, job: safeJob(existing) };
-    try { await ensureRun({ ...input, taskId }); }
+    let storedRun;
+    try { storedRun = await ensureRun({ ...input, taskId }); }
     catch (error) { return { ok: false, error: error?.message || String(error) }; }
+    if (storedRun?.worktree && options.worktreeManager) {
+      const recovered = await options.worktreeManager.recover(taskId);
+      if (!recovered.ok) return { ok: false, error: recovered.error || '任务 Git Worktree 无法恢复' };
+      await updateRun(taskId, (next) => { next.workspaceId = recovered.worktree.workspaceId; next.worktree = { ...next.worktree, ...recovered.worktree }; }, '原生 Adapter 恢复 Git Worktree');
+    }
     const members = new Map((input.members || []).map((member) => [String(member.id), { ...member, id: String(member.id) }]));
     if (!members.size) return { ok: false, error: '原生 Adapter 没有收到可执行成员与模型配置' };
     const connectorActions = [];

@@ -177,6 +177,40 @@ export interface TaskDelegationResult {
   job?: NativeExecutionJob;
   error?: string;
 }
+export interface WorktreeRecord {
+  protocolVersion: number;
+  taskId: string;
+  sourceRepo: string;
+  path: string;
+  workspaceId: string;
+  branch: string;
+  baseRef: string;
+  head: string;
+  state: 'active' | 'released';
+  createdAt: number;
+  updatedAt: number;
+  lastCheckpointId?: string;
+  clean?: boolean;
+  changes?: string[] | number;
+}
+export interface WorktreeResult {
+  ok: boolean;
+  worktree?: WorktreeRecord;
+  checkpoint?: { checkpointId: string; taskId: string; head: string; patchPath: string; patchSha256: string; untracked: Array<{ path: string; size: number; sha256: string }>; createdAt: number };
+  idempotencyHit?: boolean;
+  recovered?: boolean;
+  released?: boolean;
+  recoverable?: boolean;
+  sourceRepo?: string;
+  head?: string;
+  branch?: string;
+  clean?: boolean;
+  changes?: number;
+  version?: string;
+  active?: number;
+  worktreesRoot?: string;
+  error?: string;
+}
 export interface TaskStoreReadResult {
   ok: boolean;
   exists?: boolean;
@@ -289,6 +323,13 @@ declare global {
     taskExecutionSteer: (input: { taskId: string; message: string }) => Promise<NativeExecutionResult>;
     taskDelegationCreate: (input: TaskDelegationCreateInput) => Promise<TaskDelegationResult>;
     taskDelegationStatus: (taskId: string) => Promise<TaskDelegationResult>;
+    worktreeInspect: (sourceRepo: string) => Promise<WorktreeResult>;
+    worktreeCreate: (input: { taskId: string; sourceRepo: string; baseRef?: string }) => Promise<WorktreeResult>;
+    worktreeStatus: (taskId: string) => Promise<WorktreeResult>;
+    worktreeCheckpoint: (input: { taskId: string; label?: string }) => Promise<WorktreeResult>;
+    worktreeRecover: (taskId: string) => Promise<WorktreeResult>;
+    worktreeRelease: (taskId: string) => Promise<WorktreeResult>;
+    worktreeHealth: () => Promise<WorktreeResult>;
     onTaskWorkerChanged: (callback: (event: unknown) => void) => () => void;
     onTaskExecutionChanged: (callback: (event: NativeExecutionEvent) => void) => () => void;
     getAssistantLock: () => Promise<{ locked: boolean }>;

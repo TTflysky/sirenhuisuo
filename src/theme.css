@@ -522,6 +522,10 @@ html, body, #root, .app-root {
 .task-delegation-row.status-running small { color: var(--accent); }
 .task-delegation-row.status-completed small { color: var(--success); }
 .task-delegation-row.status-failed small { color: var(--danger); }
+.task-run-worktree { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 7px 0; border-bottom: 1px solid var(--border-light); font-size: 10px; }
+.task-run-worktree strong { color: var(--text); }
+.task-run-worktree span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--accent); }
+.task-run-worktree small { color: var(--text-muted); }
 .task-run-verification { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 7px 0; border-bottom: 1px solid var(--border-light); color: var(--text-muted); font-size: 10px; }
 .task-run-verification strong { color: var(--text); margin-right: 2px; }
 .task-run-verification span { padding: 2px 4px; border: 1px solid var(--border-light); border-radius: 4px; }

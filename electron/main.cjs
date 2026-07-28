@@ -16,6 +16,7 @@ const { createTaskRuntimeStore } = require('./taskRuntimeStore.cjs');
 const { createTaskWorker } = require('./taskWorker.cjs');
 const { createNativeToolRuntime } = require('./nativeToolRuntime.cjs');
 const { createNativeExecutionAdapter } = require('./nativeExecutionAdapter.cjs');
+const { createWorktreeManager } = require('./worktreeManager.cjs');
 // Isolate automated Electron verification from a user's real local data.
 if (process.env.TAIJI_TEST_USER_DATA) app.setPath('userData', path.resolve(process.env.TAIJI_TEST_USER_DATA));
 if (process.env.TAIJI_TEST_DEBUG_PORT) app.commandLine.appendSwitch('remote-debugging-port', String(process.env.TAIJI_TEST_DEBUG_PORT));
@@ -29,6 +30,10 @@ ipcMain.on('app:getSessionId', (event) => { event.returnValue = APP_SESSION_ID; 
 
 // ===== 自主代理工作区（沙箱目录，所有文件读写/命令执行都限制在此）=====
 const WORKSPACE = path.join(app.getPath('userData'), 'workspace');
+const worktreeManager = createWorktreeManager({
+  workspaceRoot: WORKSPACE,
+  stateRoot: path.join(app.getPath('userData'), 'task-runtime', 'git-worktrees'),
+});
 const taskRuntimeStore = createTaskRuntimeStore(path.join(app.getPath('userData'), 'task-runtime'));
 const taskWorker = createTaskWorker({
   rootDir: path.join(app.getPath('userData'), 'task-runtime'),
@@ -63,6 +68,7 @@ const nativeExecutionAdapter = createNativeExecutionAdapter({
   store: taskRuntimeStore,
   worker: taskWorker,
   toolRuntime: nativeToolRuntime,
+  worktreeManager,
   sessionId: APP_SESSION_ID,
   fetchImpl: (url, options) => net.fetch(url, options),
   onChanged(event) {
@@ -999,6 +1005,13 @@ function createWindow() {
   ipcMain.handle('task-execution:steer', async (_event, input) => nativeExecutionAdapter.steer(input?.taskId, input?.message));
   ipcMain.handle('task-delegation:create', async (_event, input) => nativeExecutionAdapter.delegate(input?.taskId, input));
   ipcMain.handle('task-delegation:status', async (_event, taskId) => nativeExecutionAdapter.delegationStatus(taskId));
+  ipcMain.handle('worktree:inspect', async (_event, sourceRepo) => worktreeManager.inspectRepository(sourceRepo));
+  ipcMain.handle('worktree:create', async (_event, input) => worktreeManager.create(input));
+  ipcMain.handle('worktree:status', async (_event, taskId) => worktreeManager.status(taskId));
+  ipcMain.handle('worktree:checkpoint', async (_event, input) => worktreeManager.checkpoint(input?.taskId, input));
+  ipcMain.handle('worktree:recover', async (_event, taskId) => worktreeManager.recover(taskId));
+  ipcMain.handle('worktree:release', async (_event, taskId) => worktreeManager.release(taskId));
+  ipcMain.handle('worktree:health', async () => worktreeManager.health());
 
   ipcMain.handle('connector:verifyPreset', async (_event, input) => {
     const result = await verifyConnectorAdapter(input, { fetchImpl: (url, options) => net.fetch(url, options) });

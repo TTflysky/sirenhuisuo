@@ -314,6 +314,21 @@ export interface TaskRun {
   teamId: string;
   /** 任务专属真实工作区，相同任务的恢复执行会继续使用此目录。 */
   workspaceId?: string;
+  /** Git 代码任务可选的独立 Worktree。普通任务不创建。 */
+  worktree?: {
+    protocolVersion: number;
+    taskId: string;
+    sourceRepo: string;
+    path: string;
+    workspaceId: string;
+    branch: string;
+    baseRef: string;
+    head: string;
+    state: 'active' | 'released';
+    createdAt: number;
+    updatedAt: number;
+    lastCheckpointId?: string;
+  };
   /** 标识真正执行此任务的客户端进程，供重启恢复判断。 */
   executionSessionId?: string;
   /** 主进程 Worker 持久租约。执行适配器必须在运行前领取并定期续租。 */

@@ -383,6 +383,9 @@ export default function TeamChatApp({ teamId }: Props) {
             <span>{delegation.employeeName}</span><b>{delegation.title}</b><small>{delegation.status === 'queued' ? '等待' : delegation.status === 'running' ? '进行中' : delegation.status === 'completed' ? '已完成' : delegation.status === 'failed' ? '失败' : '已取消'}</small>
           </div>)}
         </div>}
+        {run.worktree && <div className="task-run-worktree">
+          <strong>代码工作树</strong><span>{run.worktree.branch}</span><small title={run.worktree.path}>{run.worktree.state === 'active' ? '已隔离' : '已释放'} · {run.worktree.head.slice(0, 8)}</small>
+        </div>}
         {!!run.verification?.length && <div className="task-run-verification"><strong>验收证据</strong>{run.verification.map((item) => <span key={item.kind} className={`is-${item.status}`} title={item.detail}>{item.status === 'passed' ? '✓' : '!'} {item.label}</span>)}</div>}
         {run.steps.map((step) => {
           const emp = state.employees.find((item) => item.id === step.employeeId);

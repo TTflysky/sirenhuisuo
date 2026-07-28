@@ -31,6 +31,12 @@ const NATIVE_TOOL_DEFINITIONS = [
     assignment: stringField('子任务的具体工作内容'), employeeId: stringField('可选：当前团队成员 ID；不填由系统按职责选择'),
     title: stringField('可选：子任务标题'), acceptanceCriteria: { type: 'array', items: { type: 'string' } },
   }, ['assignment']),
+  tool('prepare_git_worktree', '仅用于本地 Git 代码任务：从指定仓库创建当前任务独占的分支与 Worktree，后续文件和命令都在隔离工作树执行。', {
+    sourceRepo: stringField('本地 Git 仓库绝对路径'), baseRef: stringField('可选：基线分支、Tag 或提交'),
+  }, ['sourceRepo']),
+  tool('checkpoint_git_worktree', '保存当前代码工作树的 HEAD、差异补丁和未跟踪文件清单，形成可校验恢复点。', {
+    label: stringField('可选恢复点名称'),
+  }, []),
   tool('run_command', '在当前任务工作区执行 Windows PowerShell 命令，必须遵守沙盒与审批策略。', {
     cmd: stringField('完整 PowerShell 命令'), verification: { type: 'boolean' }, connector: stringField('可选连接器 ID'),
   }, ['cmd']),

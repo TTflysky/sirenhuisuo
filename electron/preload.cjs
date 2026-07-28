@@ -23,6 +23,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   taskExecutionSteer: (input) => ipcRenderer.invoke('task-execution:steer', input),
   taskDelegationCreate: (input) => ipcRenderer.invoke('task-delegation:create', input),
   taskDelegationStatus: (taskId) => ipcRenderer.invoke('task-delegation:status', taskId),
+  worktreeInspect: (sourceRepo) => ipcRenderer.invoke('worktree:inspect', sourceRepo),
+  worktreeCreate: (input) => ipcRenderer.invoke('worktree:create', input),
+  worktreeStatus: (taskId) => ipcRenderer.invoke('worktree:status', taskId),
+  worktreeCheckpoint: (input) => ipcRenderer.invoke('worktree:checkpoint', input),
+  worktreeRecover: (taskId) => ipcRenderer.invoke('worktree:recover', taskId),
+  worktreeRelease: (taskId) => ipcRenderer.invoke('worktree:release', taskId),
+  worktreeHealth: () => ipcRenderer.invoke('worktree:health'),
   onTaskWorkerChanged: (callback) => {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on('task-worker:changed', handler);
