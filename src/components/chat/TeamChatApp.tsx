@@ -377,6 +377,12 @@ export default function TeamChatApp({ teamId }: Props) {
           {run.recoveryContext.unresolvedIssues.length > 0 && <details><summary>未决问题 {run.recoveryContext.unresolvedIssues.length}</summary>{run.recoveryContext.unresolvedIssues.slice(-4).map((issue, index) => <p key={`${index}-${issue.slice(0, 20)}`}>{issue}</p>)}</details>}
           {run.recoveryContext.steeringMessages.length > 0 && <details><summary>运行中插话 {run.recoveryContext.steeringMessages.length}</summary>{run.recoveryContext.steeringMessages.slice(-4).map((message, index) => <p key={`${index}-${message.slice(0, 20)}`}>{message}</p>)}</details>}
         </div>}
+        {!!run.delegations?.length && <div className="task-run-delegations">
+          <strong>动态子任务</strong>
+          {run.delegations.map((delegation) => <div key={delegation.id} className={`task-delegation-row status-${delegation.status}`}>
+            <span>{delegation.employeeName}</span><b>{delegation.title}</b><small>{delegation.status === 'queued' ? '等待' : delegation.status === 'running' ? '进行中' : delegation.status === 'completed' ? '已完成' : delegation.status === 'failed' ? '失败' : '已取消'}</small>
+          </div>)}
+        </div>}
         {!!run.verification?.length && <div className="task-run-verification"><strong>验收证据</strong>{run.verification.map((item) => <span key={item.kind} className={`is-${item.status}`} title={item.detail}>{item.status === 'passed' ? '✓' : '!'} {item.label}</span>)}</div>}
         {run.steps.map((step) => {
           const emp = state.employees.find((item) => item.id === step.employeeId);

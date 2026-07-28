@@ -268,6 +268,8 @@ export interface TaskRunStep {
   assignment: string;
   dependsOnStepIds: string[];
   revisionOfStepId?: string;
+  /** 由运行中动态委派创建的子任务记录。 */
+  delegationId?: string;
   reviewDecision?: 'pass' | 'reject';
   reviewReason?: string;
   responsibleEmployeeId?: string;
@@ -342,6 +344,8 @@ export interface TaskRun {
   recoveryContext?: TaskRecoveryContext;
   /** 可校验的长期任务恢复胶囊，只保存目标、结构化证据、未决问题和预算，不保存凭据。 */
   recoveryCapsule?: import('./engine/taskContextRouter.mjs').TaskRecoveryCapsule;
+  /** 运行中新增的子任务。每项都有独立责任人、依赖与验收记录。 */
+  delegations?: import('./engine/taskDelegation.mjs').TaskDelegation[];
   /** Versioned execution contract and durable step runner state. */
   contract?: TaskContract;
   plan?: TaskPlan;

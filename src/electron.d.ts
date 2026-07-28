@@ -158,6 +158,25 @@ export interface NativeExecutionEvent {
   job: NativeExecutionJob;
   [key: string]: unknown;
 }
+export interface TaskDelegationCreateInput {
+  taskId: string;
+  parentStepId?: string;
+  employeeId?: string;
+  title?: string;
+  assignment: string;
+  acceptanceCriteria?: string[];
+}
+export interface TaskDelegationResult {
+  ok: boolean;
+  delegation?: import('./engine/taskDelegation.mjs').TaskDelegation;
+  delegations?: import('./engine/taskDelegation.mjs').TaskDelegation[];
+  step?: import('./types').TaskRunStep;
+  total?: number;
+  counts?: Record<string, number>;
+  active?: import('./engine/taskDelegation.mjs').TaskDelegation[];
+  job?: NativeExecutionJob;
+  error?: string;
+}
 export interface TaskStoreReadResult {
   ok: boolean;
   exists?: boolean;
@@ -268,6 +287,8 @@ declare global {
     taskExecutionStatus: (taskId?: string) => Promise<NativeExecutionResult>;
     taskExecutionEvents: (input: { taskId: string; afterSequence?: number }) => Promise<{ ok: boolean; events: NativeExecutionEvent[] }>;
     taskExecutionSteer: (input: { taskId: string; message: string }) => Promise<NativeExecutionResult>;
+    taskDelegationCreate: (input: TaskDelegationCreateInput) => Promise<TaskDelegationResult>;
+    taskDelegationStatus: (taskId: string) => Promise<TaskDelegationResult>;
     onTaskWorkerChanged: (callback: (event: unknown) => void) => () => void;
     onTaskExecutionChanged: (callback: (event: NativeExecutionEvent) => void) => () => void;
     getAssistantLock: () => Promise<{ locked: boolean }>;

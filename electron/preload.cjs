@@ -21,6 +21,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   taskExecutionStatus: (taskId) => ipcRenderer.invoke('task-execution:status', taskId),
   taskExecutionEvents: (input) => ipcRenderer.invoke('task-execution:events', input),
   taskExecutionSteer: (input) => ipcRenderer.invoke('task-execution:steer', input),
+  taskDelegationCreate: (input) => ipcRenderer.invoke('task-delegation:create', input),
+  taskDelegationStatus: (taskId) => ipcRenderer.invoke('task-delegation:status', taskId),
   onTaskWorkerChanged: (callback) => {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on('task-worker:changed', handler);

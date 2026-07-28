@@ -151,6 +151,14 @@ async function main() {
   assert.equal(pausedJob.state, 'paused');
   const pausedSnapshot = await store.read();
   assert.equal(pausedSnapshot.runs.find((item) => item.id === pausedRun.id).status, 'paused');
+  const delegatedWhilePaused = await pauseAdapter.delegate(pausedRun.id, {
+    parentStepId: 'work-1', employeeId: 'reviewer', title: '暂停后新增校验子任务', assignment: '读取主步骤产出并检查完整性', acceptanceCriteria: ['列出检查结果'],
+  });
+  assert.equal(delegatedWhilePaused.ok, true, delegatedWhilePaused.error);
+  const delegatedStatus = await pauseAdapter.delegationStatus(pausedRun.id);
+  assert.equal(delegatedStatus.total, 1);
+  assert.equal(delegatedStatus.active[0].employeeId, 'reviewer');
+  assert.equal((await store.read()).runs.find((item) => item.id === pausedRun.id).steps.some((step) => step.delegationId === delegatedWhilePaused.delegation.id), true);
 
   let queueFirstStarted = false;
   let queueSecondStarted = false;

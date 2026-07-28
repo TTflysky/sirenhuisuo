@@ -148,7 +148,8 @@ function createNativeExecutionAdapter(options) {
         import(pathToFileURL(path.join(projectRoot, 'src/engine/taskRunner.mjs')).href),
         import(pathToFileURL(path.join(projectRoot, 'src/engine/toolRegistry.mjs')).href),
         import(pathToFileURL(path.join(projectRoot, 'src/engine/taskContextRouter.mjs')).href),
-      ]).then(([fidelity, runner, toolRegistry, contextRouter]) => ({ fidelity, runner, toolRegistry, contextRouter }));
+        import(pathToFileURL(path.join(projectRoot, 'src/engine/taskDelegation.mjs')).href),
+      ]).then(([fidelity, runner, toolRegistry, contextRouter, taskDelegation]) => ({ fidelity, runner, toolRegistry, contextRouter, taskDelegation }));
     }
     return engineModulesPromise;
   }
@@ -380,6 +381,36 @@ function createNativeExecutionAdapter(options) {
     emit(job, 'tool_result', { stepId: step.id, member: publicMember(member), toolName: name, arguments: safeArgs, success: result.success, output: safeResult.output.slice(0, 1200) });
   }
 
+  async function delegateSubtask(job, run, step, args) {
+    const { runner, taskDelegation } = await loadEngineModules();
+    const current = await readRun(job.taskId);
+    if (!current) return { name: 'delegate_subtask', success: false, output: '找不到当前任务，无法创建子任务。' };
+    try {
+      const appended = taskDelegation.appendDelegation(current, {
+        parentStepId: step.id,
+        employeeId: args.employeeId,
+        title: args.title,
+        assignment: args.assignment,
+        acceptanceCriteria: args.acceptanceCriteria,
+      });
+      await updateRun(job.taskId, (next) => {
+        next.delegations = appended.run.delegations;
+        next.steps = appended.run.steps;
+        if (next.runner) {
+          try { next.runner = runner.appendTaskRunnerSteps(next.runner, [formalStep(next.id, appended.step)], `动态委派子任务：${appended.delegation.title}`); next.plan = next.runner.plan; } catch {}
+        }
+      }, `原生 Adapter 动态委派 ${appended.delegation.employeeName}`);
+      emit(job, 'subtask_delegated', { parentStepId: step.id, delegation: appended.delegation });
+      return {
+        name: 'delegate_subtask', success: true,
+        output: `已将“${appended.delegation.title}”委派给 ${appended.delegation.employeeName}。子任务会在当前步骤完成后进入队列，验收标准：${appended.delegation.acceptanceCriteria.join('；')}`,
+        structuredEvidence: { delegation: { id: appended.delegation.id, delegatedStepId: appended.delegation.delegatedStepId } },
+      };
+    } catch (error) {
+      return { name: 'delegate_subtask', success: false, output: `无法创建子任务：${text(error?.message || error, 600)}` };
+    }
+  }
+
   async function executeStep(job, run, step, member) {
     const { fidelity, toolRegistry, contextRouter } = await loadEngineModules();
     const stepRecoveryPrompt = contextRouter.buildRecoveryPrompt({
@@ -476,6 +507,7 @@ function createNativeExecutionAdapter(options) {
           if (!preflight.ok) result = { name, success: false, output: `工具预检未通过：${preflight.message}` };
           else if (!gate.allowed) result = { name, success: false, output: `${gate.reason}当前调用与原始目标不一致，已在主进程拦截。` };
           else if (cache.has(key)) result = { name, success: false, output: '完全相同的工具调用已执行，不能重复消耗算力，必须更换路线。' };
+          else if (name === 'delegate_subtask') result = await delegateSubtask(job, run, step, args);
           else result = await options.toolRuntime.execute(name, args, {
             taskId: job.taskId, scope: `team:${run.teamId}`, workspaceId: run.workspaceId,
             executionPolicy: job.executionPolicy, connectors: job.connectors, connectorActions: job.connectorActions,
@@ -551,6 +583,8 @@ function createNativeExecutionAdapter(options) {
       if (next.runner) {
         try { next.runner = runner.beginTaskStep(next.runner, step.id); } catch {}
       }
+      const delegated = next.delegations?.find((item) => item.id === step.delegationId);
+      if (delegated) { delegated.status = 'running'; delegated.updatedAt = Date.now(); }
       if (next.recoveryContext) {
         next.recoveryContext.summary = `${member.name}正在执行“${step.title}”。`;
         next.recoveryContext.interruptedAt = undefined;
@@ -591,6 +625,12 @@ function createNativeExecutionAdapter(options) {
         if (next.runner) {
           try { next.runner = runner.recordTaskStepResult(next.runner, { stepId: step.id, success: true, output: { summary: result.content.slice(0, 1200) } }); next.plan = next.runner.plan; } catch {}
         }
+        const delegated = next.delegations?.find((item) => item.id === step.delegationId);
+        if (delegated) {
+          delegated.status = 'completed'; delegated.updatedAt = Date.now(); delegated.completedAt = Date.now();
+          delegated.output = { summary: result.content.slice(0, 1200) };
+          delegated.evidence = (next.steps.find((item) => item.id === step.id)?.evidence || []).slice(-30);
+        }
       }, `原生 Adapter 完成步骤 ${step.id}`);
     }
     await appendExecutionMessage(job, run, member, result.content, 'text');
@@ -598,7 +638,7 @@ function createNativeExecutionAdapter(options) {
   }
 
   async function appendRevisionSteps(job, reviewStep, review) {
-    const { runner } = await loadEngineModules();
+    const { runner, taskDelegation } = await loadEngineModules();
     await updateRun(job.taskId, (run) => {
       const revisionCount = Number(run.revisionCount) || 0;
       const maxRevisions = Number(run.maxRevisions) || 2;
@@ -611,12 +651,21 @@ function createNativeExecutionAdapter(options) {
       const now = Date.now();
       const member = job.members.get(employeeId);
       const reviewer = job.members.get(reviewStep.employeeId);
-      const revision = {
-        id: `revision-${job.taskId}-${count}-${employeeId}`, employeeId, order: run.steps.length + 1, kind: 'revision',
-        title: `${member?.name || employeeId} · 第 ${count} 次修订`, assignment: `审查未通过：${review.reason}。只修复责任范围问题，不重做无关步骤。`,
-        dependsOnStepIds: [reviewStep.id], revisionOfStepId: target?.id, status: 'queued', attempts: 0,
-        evidence: [], events: [{ ts: now, type: 'status', detail: '审查退回后新增修订步骤' }],
-      };
+      let revision;
+      if (target?.delegationId) {
+        const delegated = taskDelegation.createDelegationRevision(run, target.delegationId, {
+          reviewStepId: reviewStep.id, responsibleEmployeeId: employeeId, reason: review.reason,
+        });
+        run.delegations = delegated.run.delegations;
+        revision = { ...delegated.step, kind: 'revision', revisionOfStepId: target.id };
+      } else {
+        revision = {
+          id: `revision-${job.taskId}-${count}-${employeeId}`, employeeId, order: run.steps.length + 1, kind: 'revision',
+          title: `${member?.name || employeeId} · 第 ${count} 次修订`, assignment: `审查未通过：${review.reason}。只修复责任范围问题，不重做无关步骤。`,
+          dependsOnStepIds: [reviewStep.id], revisionOfStepId: target?.id, status: 'queued', attempts: 0,
+          evidence: [], events: [{ ts: now, type: 'status', detail: '审查退回后新增修订步骤' }],
+        };
+      }
       const recheck = {
         id: `review-${job.taskId}-${count}-${reviewStep.employeeId}`, employeeId: reviewStep.employeeId, order: run.steps.length + 2, kind: 'review',
         title: `${reviewer?.name || reviewStep.employeeId} · 修订后复审`, assignment: `读取修订产出，验证“${review.reason}”是否已解决，再提交结构化审查。`,
@@ -642,6 +691,8 @@ function createNativeExecutionAdapter(options) {
       if (run.runner) {
         try { run.runner = runner.recordTaskStepResult(run.runner, { stepId: step.id, success: false, retryable: false, error: reason }); run.plan = run.runner.plan; } catch {}
       }
+      const delegated = run.delegations?.find((item) => item.id === step.delegationId);
+      if (delegated) { delegated.status = 'failed'; delegated.updatedAt = Date.now(); delegated.completedAt = Date.now(); delegated.error = reason; }
       if (run.recoveryContext) {
         run.recoveryContext.summary = `${member.name}的步骤被阻塞，主进程已保留上下文。`;
         run.recoveryContext.unresolvedIssues = [...run.recoveryContext.unresolvedIssues, reason].slice(-20);
@@ -856,6 +907,37 @@ function createNativeExecutionAdapter(options) {
     return { ok: true, job: safeJob(job) };
   }
 
+  async function delegate(taskId, input = {}) {
+    const current = await readRun(String(taskId || '')).catch(() => undefined);
+    if (!current) return { ok: false, error: '找不到要委派子任务的父任务' };
+    const job = jobs.get(current.id);
+    const { runner, taskDelegation } = await loadEngineModules();
+    try {
+      const appended = taskDelegation.appendDelegation(current, input);
+      if (job && !job.members.has(appended.delegation.employeeId)) {
+        return { ok: false, error: `员工 ${appended.delegation.employeeName} 不在当前执行器成员列表中，请先把员工加入团队后再委派` };
+      }
+      await updateRun(current.id, (next) => {
+        next.delegations = appended.run.delegations;
+        next.steps = appended.run.steps;
+        if (next.runner) {
+          try { next.runner = runner.appendTaskRunnerSteps(next.runner, [formalStep(next.id, appended.step)], `手动添加子任务：${appended.delegation.title}`); next.plan = next.runner.plan; } catch {}
+        }
+      }, `手动动态委派 ${appended.delegation.employeeName}`);
+      if (job) emit(job, 'subtask_delegated', { parentStepId: input.parentStepId, delegation: appended.delegation, source: 'manual' });
+      return { ok: true, delegation: appended.delegation, step: appended.step, job: job ? safeJob(job) : undefined };
+    } catch (error) {
+      return { ok: false, error: text(error?.message || error, 1000) };
+    }
+  }
+
+  async function delegationStatus(taskId) {
+    const run = await readRun(String(taskId || '')).catch(() => undefined);
+    if (!run) return { ok: false, error: '找不到任务' };
+    const { taskDelegation } = await loadEngineModules();
+    return { ok: true, ...taskDelegation.delegationSummary(run), delegations: clone(run.delegations || []) };
+  }
+
   function status(taskId) {
     if (taskId) {
       const job = jobs.get(String(taskId));
@@ -878,7 +960,7 @@ function createNativeExecutionAdapter(options) {
     }
   }
 
-  return { start, steer, status, events, handleControl, stopAll };
+  return { start, steer, delegate, delegationStatus, status, events, handleControl, stopAll };
 }
 
 module.exports = {

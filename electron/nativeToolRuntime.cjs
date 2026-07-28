@@ -27,6 +27,10 @@ const NATIVE_TOOL_DEFINITIONS = [
     responsibleStepId: stringField('退回的责任步骤'), responsibleEmployeeId: stringField('退回的责任员工'),
     checkedArtifacts: { type: 'array', items: { type: 'string' } },
   }, ['decision', 'reason']),
+  tool('delegate_subtask', '将明确、可验收的子任务委派给当前团队成员。必须指定实际工作内容；系统会创建可恢复子任务和责任记录。', {
+    assignment: stringField('子任务的具体工作内容'), employeeId: stringField('可选：当前团队成员 ID；不填由系统按职责选择'),
+    title: stringField('可选：子任务标题'), acceptanceCriteria: { type: 'array', items: { type: 'string' } },
+  }, ['assignment']),
   tool('run_command', '在当前任务工作区执行 Windows PowerShell 命令，必须遵守沙盒与审批策略。', {
     cmd: stringField('完整 PowerShell 命令'), verification: { type: 'boolean' }, connector: stringField('可选连接器 ID'),
   }, ['cmd']),

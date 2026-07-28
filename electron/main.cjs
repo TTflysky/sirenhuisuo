@@ -997,6 +997,8 @@ function createWindow() {
   ipcMain.handle('task-execution:status', async (_event, taskId) => nativeExecutionAdapter.status(taskId));
   ipcMain.handle('task-execution:events', async (_event, input) => nativeExecutionAdapter.events(input?.taskId, input?.afterSequence));
   ipcMain.handle('task-execution:steer', async (_event, input) => nativeExecutionAdapter.steer(input?.taskId, input?.message));
+  ipcMain.handle('task-delegation:create', async (_event, input) => nativeExecutionAdapter.delegate(input?.taskId, input));
+  ipcMain.handle('task-delegation:status', async (_event, taskId) => nativeExecutionAdapter.delegationStatus(taskId));
 
   ipcMain.handle('connector:verifyPreset', async (_event, input) => {
     const result = await verifyConnectorAdapter(input, { fetchImpl: (url, options) => net.fetch(url, options) });
