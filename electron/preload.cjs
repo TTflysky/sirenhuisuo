@@ -11,10 +11,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   taskWorkerCommand: (command) => ipcRenderer.invoke('task-worker:command', command),
   taskWorkerStatus: () => ipcRenderer.invoke('task-worker:status'),
   taskWorkerCommands: (options) => ipcRenderer.invoke('task-worker:commands', options),
+  taskExecutionStart: (input) => ipcRenderer.invoke('task-execution:start', input),
+  taskExecutionStatus: (taskId) => ipcRenderer.invoke('task-execution:status', taskId),
+  taskExecutionEvents: (input) => ipcRenderer.invoke('task-execution:events', input),
+  taskExecutionSteer: (input) => ipcRenderer.invoke('task-execution:steer', input),
   onTaskWorkerChanged: (callback) => {
     const handler = (_event, data) => callback(data);
     ipcRenderer.on('task-worker:changed', handler);
     return () => ipcRenderer.removeListener('task-worker:changed', handler);
+  },
+  onTaskExecutionChanged: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('task-execution:changed', handler);
+    return () => ipcRenderer.removeListener('task-execution:changed', handler);
   },
   getAssistantLock: () => ipcRenderer.invoke('win:getAssistantLock'),
   setAssistantLock: (locked) => ipcRenderer.invoke('win:setAssistantLock', locked),

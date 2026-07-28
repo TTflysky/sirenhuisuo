@@ -157,6 +157,10 @@ export interface ChatMessage {
   attachments?: import('./data/hermesClient').Attachment[]; // 用户上传/粘贴的附件
   skillRefs?: SkillReference[];
   thoughtChain?: ThoughtChainStep[]; // 思维链步骤（AI 推理过程记录）
+  /** 主进程后台执行消息可携带快照名称，员工被删除后仍可回放。 */
+  authorName?: string;
+  /** 折叠工具记录的结构化摘要，不包含敏感凭据。 */
+  tool?: { name: string; args?: unknown; success: boolean };
 }
 
 /** 思维链单步——记录 AI 工具调用的完整推理过程 */
@@ -326,6 +330,8 @@ export interface TaskRun {
   contract?: TaskContract;
   plan?: TaskPlan;
   runner?: TaskRunnerSnapshot;
+  /** 主进程原生 Adapter 写入的团队聊天投影；凭据和原始模型请求不会持久化。 */
+  executionMessages?: ChatMessage[];
   verification?: Array<{ kind: TaskEvidenceKind; label: string; status: 'passed' | 'blocked' | 'pending'; detail: string }>;
 }
 

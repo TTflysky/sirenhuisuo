@@ -1,5 +1,19 @@
 # 更新日志
 
+## v0.21.0 (2026-07-28)
+
+### 主进程原生 Execution Adapter
+- 新增 `electron/nativeExecutionAdapter.cjs`，团队模型请求、工具循环、步骤依赖、Worker 租约、心跳、检查点、暂停和停止全部由 Electron 主进程执行；关闭团队窗口不再终止任务。
+- 渲染进程在 Electron 下只提交任务定义、员工有效模型、一次性连接器配置与审批策略，并从主进程任务投影恢复进度；浏览器开发环境保留旧执行器作为兼容回退。
+- 主进程执行消息写入 `TaskRun.executionMessages`，重新打开团队窗口后按消息 ID 合并工具调用与员工回复，不会因窗口关闭丢失可观察进度。
+- 运行中插话通过独立 IPC 注入当前原生 Job，下一轮模型会合并原目标和用户新约束；暂停、停止和关闭继续沿用 Worker 权威控制命令。
+
+### 原生工具与验收
+- 新增 `electron/nativeToolRuntime.cjs`，在主进程统一执行工作区文件、Word、命令、联网搜索、Skill、网页知识库、Obsidian、连接器 Action 与结构化审查。
+- 完全相同的工具调用不会重复执行；连续只读路线会被催促转向真实动作，搜索词固定保留原始目标，文件交付与审查步骤必须留下客户端证据。
+- API Key 与连接器凭据只保存在当前主进程 Job 内存中，不进入 TaskRun、JSONL 账本、Worker 命令或界面事件；工具参数写入投影前统一脱敏。
+- 新增 `verify:native-execution`，覆盖无界面订阅继续执行、重复工具拦截、文件与审查证据、暂停中断以及凭据不落盘；打包验收确认原生 Adapter 和所需 Engine 模块进入 ASAR。
+
 ## v0.20.0 (2026-07-28)
 
 ### Execution Adapter v1

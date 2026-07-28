@@ -94,6 +94,12 @@ function statusDetail(previousStatus, nextStatus, domains) {
 function mergeWorkerAuthority(current, incoming, source) {
   const next = clone(incoming);
   if (source !== 'renderer' || !current?.worker) return next;
+  if (current.worker.adapter === 'main-native-execution-adapter') {
+    // Native jobs own their complete projection. Renderer windows only read it
+    // and send control commands, so a stale full snapshot must not erase
+    // messages, evidence, revisions, recovery context or verification.
+    return clone(current);
+  }
   const currentSequence = Number(current.worker.checkpointSequence) || 0;
   const incomingSequence = Number(next.worker?.checkpointSequence) || 0;
   if (currentSequence < incomingSequence) return next;

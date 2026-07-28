@@ -41,6 +41,8 @@ import { applyExecutionSteering, executionControllerStatus, type ExecutionContro
 import { appendTaskRunnerSteps, beginTaskStep, recordTaskReviewDecision, recordTaskStepResult } from './engine/taskRunner.mjs';
 import { applyModelTaskSummary, shouldModelSummarizeTaskContext } from './engine/taskContext.mjs';
 import { buildTaskHistoryPrompt, searchTaskRunHistory } from './engine/taskHistory.mjs';
+import { CONNECTOR_PRESETS, loadConnectors } from './data/connectors';
+import { getConnectorTools } from './engine/connectorTools';
 
 // ===== Action =====
 type Action =
@@ -75,13 +77,33 @@ const initialState: AppState = {
 };
 
 // ===== Reducer =====
+function mergeTaskExecutionMessages(s: AppState, runs: TaskRun[]): AppState {
+  const byTeam = new Map<string, ChatMessage[]>();
+  for (const run of runs) {
+    if (!run.executionMessages?.length) continue;
+    const current = byTeam.get(run.teamId) ?? [];
+    current.push(...run.executionMessages);
+    byTeam.set(run.teamId, current);
+  }
+  if (!byTeam.size) return { ...s, taskRuns: runs };
+  const teams = s.teams.map((team) => {
+    const incoming = byTeam.get(team.id);
+    if (!incoming?.length) return team;
+    const seen = new Set(team.chatMessages.map((message) => message.id));
+    const appended = incoming.filter((message) => !seen.has(message.id));
+    if (!appended.length) return team;
+    return { ...team, chatMessages: [...team.chatMessages, ...appended].sort((a, b) => a.timestamp - b.timestamp).slice(-1200) };
+  });
+  return { ...s, teams, taskRuns: runs };
+}
+
 function reducer(s: AppState, a: Action): AppState {
   switch (a.type) {
     case 'INIT':
       return a.state;
 
     case 'HYDRATE_TASK_RUNS':
-      return { ...s, taskRuns: a.runs };
+      return mergeTaskExecutionMessages(s, a.runs);
 
     case 'ADD_EMPLOYEE': {
       const next = client.upsertEmployee(a.emp, s.employees);
@@ -330,11 +352,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (runs) dispatch({ type: 'HYDRATE_TASK_RUNS', runs });
       });
     });
+    const unsubscribeExecution = window.electronAPI?.onTaskExecutionChanged?.(() => {
+      void hydrateTaskRunsFromMainStore().then((runs) => {
+        if (runs) dispatch({ type: 'HYDRATE_TASK_RUNS', runs });
+      });
+    });
     // 后端探测
     client.checkBackend().then((online) => {
       dispatch({ type: 'SET_STATUS', partial: { backendOnline: online } });
     });
-    return () => unsubscribeWorker?.();
+    return () => { unsubscribeWorker?.(); unsubscribeExecution?.(); };
   }, [dispatch]);
 
   const sendMessage = (
@@ -1361,6 +1388,34 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const startNativeTaskExecution = async (run: TaskRun, extraSystemContext: string, attachments?: import('./data/hermesClient').Attachment[]) => {
+    if (!window.electronAPI?.taskExecutionStart) return null;
+    const current = stateRef.current;
+    const requiredIds = new Set(run.steps.map((step) => step.employeeId));
+    const members = run.memberSnapshot
+      .filter((member) => requiredIds.has(member.id))
+      .map((member) => {
+        const employee = current.employees.find((item) => item.id === member.id);
+        return { ...member, modelConfig: employee ? client.getEmployeeModel(employee) : {} };
+      });
+    const connectors = loadConnectors().map((connector) => {
+      const preset = CONNECTOR_PRESETS.find((item) => item.mcpServerName === connector.mcpServerName);
+      const actions = [...(preset?.actions ?? []), ...(connector.discoveredActions ?? [])]
+        .filter((action, index, all) => all.findIndex((item) => (item.mcpToolName ?? item.name) === (action.mcpToolName ?? action.name)) === index);
+      return { ...connector, actions };
+    });
+    return window.electronAPI.taskExecutionStart({
+      taskId: run.id,
+      run,
+      members,
+      attachments,
+      extraSystemContext,
+      executionPolicy: client.getExecutionPolicy(),
+      connectors,
+      connectorTools: getConnectorTools(),
+    });
+  };
+
   const startTaskRun = async (teamId: string, request: string, employeeIds: string[], sourceMessageId?: string, attachments?: import('./data/hermesClient').Attachment[], explicitSkillRefs: import('./types').SkillReference[] = []) => {
     const current = stateRef.current;
     const team = current.teams.find((item) => item.id === teamId);
@@ -1433,10 +1488,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return;
     }
     dispatch({ type: 'CREATE_TASK_RUN', run });
+    const extraSystemContext = [skillContext, historyContext, taskRunContextPrompt(run)].filter(Boolean).join('\n\n');
+    const nativeResult = await startNativeTaskExecution(run, extraSystemContext, attachments);
+    if (nativeResult) {
+      if (!nativeResult.ok) {
+        dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
+          next.status = 'failed';
+          next.phase = 'blocked';
+          next.lastError = nativeResult.error || '主进程执行器启动失败';
+          next.handoff = { ts: Date.now(), completed: [], blocked: next.lastError, nextAction: '检查模型和工作区配置后点击“继续执行”。' };
+        }) });
+      }
+      return;
+    }
     enqueueDiscussion(teamId, {
       userText: request, attachments, triggerMessageId: sourceMessageId, discussionId: run.id,
       forcedMemberIds: run.steps.map((step) => step.employeeId), runSteps: run.steps, maxRounds: run.steps.length, runId: run.id, workspaceId: run.workspaceId,
-      extraSystemContext: [skillContext, historyContext, taskRunContextPrompt(run)].filter(Boolean).join('\n\n'),
+      extraSystemContext,
     }, 120);
   };
 
@@ -1500,7 +1568,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
       dispatch({ type: 'UPDATE_TASK_RUN', run: resumedWithSkills });
       const workerPendingSteps = resumedWithSkills.steps.filter((step) => pendingStepIds.has(step.id));
-      enqueueDiscussion(workerRun.teamId, { userText: workerRun.request, triggerMessageId: workerRun.sourceMessageId, discussionId: workerRun.id, forcedMemberIds: pending, runSteps: workerPendingSteps, maxRounds: workerPendingSteps.length, runId, workspaceId: workerRun.workspaceId, extraSystemContext: [skillBundle.context, taskRunContextPrompt(resumedWithSkills)].filter(Boolean).join('\n\n') }, 50);
+      const extraSystemContext = [skillBundle.context, taskRunContextPrompt(resumedWithSkills)].filter(Boolean).join('\n\n');
+      const nativeResult = await startNativeTaskExecution(resumedWithSkills, extraSystemContext);
+      if (!nativeResult) {
+        enqueueDiscussion(workerRun.teamId, { userText: workerRun.request, triggerMessageId: workerRun.sourceMessageId, discussionId: workerRun.id, forcedMemberIds: pending, runSteps: workerPendingSteps, maxRounds: workerPendingSteps.length, runId, workspaceId: workerRun.workspaceId, extraSystemContext }, 50);
+      } else if (!nativeResult.ok) {
+        dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(resumedWithSkills, (next) => {
+          next.status = 'failed'; next.phase = 'blocked'; next.lastError = nativeResult.error || '主进程执行器恢复失败';
+        }) });
+      }
     })();
   };
 
@@ -1615,6 +1691,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (isConversationOnlyMessage(content)) {
         await enqueueAssistantSupervisor(team, content, false);
         return;
+      }
+      const activeRun = [...current.taskRuns].reverse().find((run) => run.teamId === teamId && (run.status === 'queued' || run.status === 'running'));
+      if (activeRun && (client.loadSettings().followUpMode ?? 'steer') === 'steer' && window.electronAPI?.taskExecutionSteer) {
+        const steered = await window.electronAPI.taskExecutionSteer({ taskId: activeRun.id, message: content });
+        if (steered.ok) {
+          await enqueueAssistantSupervisor(team, content, false);
+          return;
+        }
       }
       if (directMentions.length > 0 && !supervisorMentioned) {
         void startTaskRun(teamId, content, directMentions, messageId, attachments, skillRefs);

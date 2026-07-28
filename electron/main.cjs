@@ -14,6 +14,8 @@ const { verifyConnectorAdapter } = require('./connectorAdapters.cjs');
 const { buildPowerShellCommand } = require('./commandShell.cjs');
 const { createTaskRuntimeStore } = require('./taskRuntimeStore.cjs');
 const { createTaskWorker } = require('./taskWorker.cjs');
+const { createNativeToolRuntime } = require('./nativeToolRuntime.cjs');
+const { createNativeExecutionAdapter } = require('./nativeExecutionAdapter.cjs');
 // Isolate automated Electron verification from a user's real local data.
 if (process.env.TAIJI_TEST_USER_DATA) app.setPath('userData', path.resolve(process.env.TAIJI_TEST_USER_DATA));
 if (process.env.TAIJI_TEST_DEBUG_PORT) app.commandLine.appendSwitch('remote-debugging-port', String(process.env.TAIJI_TEST_DEBUG_PORT));
@@ -35,6 +37,37 @@ const taskWorker = createTaskWorker({
   onChanged(event) {
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) win.webContents.send('task-worker:changed', event);
+    }
+  },
+});
+const PROJECT_ROOT = path.resolve(__dirname, '..');
+const nativeToolRuntime = createNativeToolRuntime({
+  workspaceRoot: WORKSPACE,
+  projectRoot: PROJECT_ROOT,
+  fetchImpl: (url, options) => net.fetch(url, options),
+  listSkills,
+  readSkill,
+  installSkill,
+  verifyConnectorAdapter,
+  testObsidianVault,
+  searchObsidianVault,
+  readObsidianNote,
+  fetchKnowledgeUrl,
+  searchWeb,
+  createWordDocument: createVerifiedWordDocument,
+  readWorkspaceFile,
+  runCommand: executeWorkspaceCommand,
+});
+const nativeExecutionAdapter = createNativeExecutionAdapter({
+  projectRoot: PROJECT_ROOT,
+  store: taskRuntimeStore,
+  worker: taskWorker,
+  toolRuntime: nativeToolRuntime,
+  sessionId: APP_SESSION_ID,
+  fetchImpl: (url, options) => net.fetch(url, options),
+  onChanged(event) {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send('task-execution:changed', event);
     }
   },
 });
@@ -125,6 +158,82 @@ function sandboxPathEscape(command) {
     || /(?:^|[\s'"])[\\/]{2}/.test(text)
     || /(?:^|[\\/])\.\.(?:[\\/]|$)/.test(text)
     || /\$(?:env:(?:userprofile|home|appdata|localappdata|temp|windir|systemroot)|home|profile)\b|%(?:userprofile|appdata|localappdata|temp|windir|systemroot)%/i.test(text);
+}
+
+async function readWorkspaceFile(targetInput) {
+  const target = path.resolve(targetInput);
+  const relative = path.relative(WORKSPACE, target);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('文件路径越界');
+  const stat = await fsp.stat(target);
+  if (!stat.isFile()) throw new Error('目标不是文件');
+  if (stat.size > MAX_READABLE_FILE_BYTES) {
+    throw new Error(`文件过大（${Math.ceil(stat.size / 1024 / 1024)}MB），当前单文件读取上限为 50MB`);
+  }
+  const extension = path.extname(target).toLowerCase();
+  if (TEXT_FILE_EXTENSIONS.has(extension)) {
+    return { ok: true, path: target, content: await fsp.readFile(target, 'utf8'), format: 'text', size: stat.size };
+  }
+  if (PARSABLE_DOCUMENT_EXTENSIONS.has(extension)) {
+    try {
+      const ast = await officeParser.parseOffice(target, { extractAttachments: false, ocr: false });
+      const extracted = ast.toText();
+      const truncated = extracted.length > MAX_EXTRACTED_TEXT_CHARS;
+      return {
+        ok: true,
+        path: target,
+        content: truncated ? `${extracted.slice(0, MAX_EXTRACTED_TEXT_CHARS)}\n\n[内容过长，已截断]` : extracted,
+        format: ast.type || extension.slice(1),
+        size: stat.size,
+        truncated,
+        warnings: Array.isArray(ast.warnings) ? ast.warnings.map((warning) => String(warning?.message ?? warning)).slice(0, 10) : [],
+      };
+    } catch (error) {
+      throw new Error(`无法解析 ${extension || '该'} 文件：${String(error?.message ?? error)}`);
+    }
+  }
+  const possibleText = decodeTextBuffer(await fsp.readFile(target));
+  if (possibleText !== null) return { ok: true, path: target, content: possibleText, format: 'text', size: stat.size };
+  return { ok: false, path: target, size: stat.size, error: `文件已保存，但 ${extension || '该二进制格式'} 不支持直接提取文本` };
+}
+
+async function executeWorkspaceCommand(payload) {
+  const cmd = typeof payload === 'string' ? payload : payload?.cmd;
+  const scope = typeof payload === 'object' && typeof payload?.scope === 'string'
+    ? payload.scope.split(/[\\/]+/).map((part) => part.replace(/[^a-zA-Z0-9_-]/g, '_')).filter(Boolean).join('/') || 'global'
+    : 'global';
+  let cwd = safeJoin(scope);
+  const sandboxEnabled = typeof payload !== 'object' || payload?.sandboxEnabled !== false;
+  const extraEnv = sanitizeInjectedEnv(payload && typeof payload === 'object' ? payload.env : undefined);
+  if (typeof payload === 'object' && typeof payload?.skillId === 'string' && payload.skillId.trim()) {
+    try { cwd = await resolveSkillDirectory(PROJECT_ROOT, payload.skillId.trim()); }
+    catch (error) { return { success: false, exitCode: -1, stdout: '', stderr: `无法进入已安装 Skill：${String(error?.message ?? error)}`, cwd }; }
+  }
+  await fsp.mkdir(cwd, { recursive: true });
+  if (typeof cmd !== 'string' || !cmd.trim()) return { success: false, exitCode: -1, stdout: '', stderr: '命令不能为空', cwd };
+  if (sandboxEnabled && sandboxPathEscape(cmd)) {
+    return { success: false, exitCode: -1, stdout: '', stderr: '命令沙盒已阻止访问工作区以外的路径。请改用相对路径。', cwd };
+  }
+  const timeoutMs = 30000;
+  const maxOutput = 100 * 1024;
+  return new Promise((resolve) => {
+    const options = { cwd, timeout: timeoutMs, maxBuffer: 1024 * 1024, windowsHide: true, env: { ...process.env, ...extraEnv, FORCE_COLOR: '0' } };
+    const done = (error, stdout, stderr) => resolve({
+      success: !error,
+      exitCode: error ? (error.code || -1) : 0,
+      stdout: redactInjectedValues(stdout, extraEnv).slice(0, maxOutput),
+      stderr: redactInjectedValues(stderr, extraEnv).slice(0, maxOutput),
+      signal: error?.killed ? 'TIMEOUT' : undefined,
+      cwd,
+    });
+    const child = process.platform === 'win32'
+      ? execFile('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', buildPowerShellCommand(cmd)], options, done)
+      : exec(cmd, options, done);
+    const timer = setTimeout(() => {
+      try { child.kill('SIGTERM'); } catch {}
+      setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 2000);
+    }, timeoutMs);
+    child.on('close', () => clearTimeout(timer));
+  });
 }
 
 const chatWindows = new Map();
@@ -870,9 +979,17 @@ function createWindow() {
   ipcMain.handle('task-store:read', async () => taskRuntimeStore.read());
   ipcMain.handle('task-store:write', async (_event, runs, metadata) => taskRuntimeStore.write(runs, metadata));
   ipcMain.handle('task-ledger:read', async (_event, options) => taskRuntimeStore.read(options));
-  ipcMain.handle('task-worker:command', async (_event, command) => taskWorker.dispatch(command));
+  ipcMain.handle('task-worker:command', async (_event, command) => {
+    const result = await taskWorker.dispatch(command);
+    nativeExecutionAdapter.handleControl(command, result);
+    return result;
+  });
   ipcMain.handle('task-worker:status', async () => taskWorker.status());
   ipcMain.handle('task-worker:commands', async (_event, options) => taskWorker.readCommands(options));
+  ipcMain.handle('task-execution:start', async (_event, input) => nativeExecutionAdapter.start(input));
+  ipcMain.handle('task-execution:status', async (_event, taskId) => nativeExecutionAdapter.status(taskId));
+  ipcMain.handle('task-execution:events', async (_event, input) => nativeExecutionAdapter.events(input?.taskId, input?.afterSequence));
+  ipcMain.handle('task-execution:steer', async (_event, input) => nativeExecutionAdapter.steer(input?.taskId, input?.message));
 
   ipcMain.handle('connector:verifyPreset', async (_event, input) => {
     const result = await verifyConnectorAdapter(input, { fetchImpl: (url, options) => net.fetch(url, options) });
@@ -897,71 +1014,7 @@ function createWindow() {
     }
   });
 
-  ipcMain.handle('exec:command', async (_event, payload) => {
-    const cmd = typeof payload === 'string' ? payload : payload?.cmd;
-    const scope = typeof payload === 'object' && typeof payload?.scope === 'string'
-      ? payload.scope.split(/[\\/]+/).map((part) => part.replace(/[^a-zA-Z0-9_-]/g, '_')).filter(Boolean).join('/') || 'global'
-      : 'global';
-    let projectRoot = safeJoin(scope);
-    const sandboxEnabled = typeof payload !== 'object' || payload?.sandboxEnabled !== false;
-    const extraEnv = sanitizeInjectedEnv(payload && typeof payload === 'object' ? payload.env : undefined);
-    if (typeof payload === 'object' && typeof payload?.skillId === 'string' && payload.skillId.trim()) {
-      try {
-        projectRoot = await resolveSkillDirectory(path.resolve(__dirname, '..'), payload.skillId.trim());
-      } catch (error) {
-        return { success: false, exitCode: -1, stdout: '', stderr: `无法进入已安装 Skill：${String(error?.message ?? error)}`, cwd: projectRoot };
-      }
-    }
-    await fsp.mkdir(projectRoot, { recursive: true });
-    const timeoutMs = 30000;
-    const maxOutput = 100 * 1024; // 100KB 截断
-
-    if (typeof cmd !== 'string' || !cmd.trim()) {
-      return { success: false, exitCode: -1, stdout: '', stderr: '命令不能为空', cwd: projectRoot };
-    }
-    if (sandboxEnabled && sandboxPathEscape(cmd)) {
-      return {
-        success: false,
-        exitCode: -1,
-        stdout: '',
-        stderr: '命令沙盒已阻止访问工作区以外的路径。请改用相对路径，或在设置中明确关闭“命令沙盒”后再执行。',
-        cwd: projectRoot,
-      };
-    }
-
-    return new Promise((resolve) => {
-      const options = {
-        cwd: projectRoot,
-        timeout: timeoutMs,
-        maxBuffer: 1024 * 1024,
-        windowsHide: true,
-        env: { ...process.env, ...extraEnv, FORCE_COLOR: '0' },
-      };
-      const done = (err, stdout, stderr) => {
-        resolve({
-          success: !err,
-          exitCode: err ? ((err.code) || -1) : 0,
-          stdout: redactInjectedValues(stdout, extraEnv).slice(0, maxOutput),
-          stderr: redactInjectedValues(stderr, extraEnv).slice(0, maxOutput),
-          signal: err && err.killed ? 'TIMEOUT' : undefined,
-          cwd: projectRoot,
-        });
-      };
-      const child = process.platform === 'win32'
-        ? execFile('powershell.exe', [
-            '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command',
-            buildPowerShellCommand(cmd),
-          ], options, done)
-        : exec(cmd, options, done);
-
-      // 超时强制 kill
-      const timer = setTimeout(() => {
-        try { child.kill('SIGTERM'); } catch {}
-        setTimeout(() => { try { child.kill('SIGKILL'); } catch {} }, 2000);
-      }, timeoutMs);
-      child.on('close', () => clearTimeout(timer));
-    });
-  });
+  ipcMain.handle('exec:command', async (_event, payload) => executeWorkspaceCommand(payload));
 
   // ===== 文件系统 IPC（自主代理工作区，沙箱到 WORKSPACE）=====
   ipcMain.handle('fs:getWorkspace', async () => WORKSPACE);
@@ -1008,47 +1061,7 @@ function createWindow() {
   ipcMain.handle('fs:read', async (_event, { filePath }) => {
     try {
       const target = safeJoin(filePath || '');
-      const stat = await fsp.stat(target);
-      if (!stat.isFile()) throw new Error('目标不是文件');
-      if (stat.size > MAX_READABLE_FILE_BYTES) {
-        throw new Error(`文件过大（${Math.ceil(stat.size / 1024 / 1024)}MB），当前单文件读取上限为 50MB`);
-      }
-      const extension = path.extname(target).toLowerCase();
-      if (TEXT_FILE_EXTENSIONS.has(extension)) {
-        const content = await fsp.readFile(target, 'utf8');
-        return { ok: true, path: target, content, format: 'text', size: stat.size };
-      }
-      if (PARSABLE_DOCUMENT_EXTENSIONS.has(extension)) {
-        try {
-          const ast = await officeParser.parseOffice(target, { extractAttachments: false, ocr: false });
-          const extracted = ast.toText();
-          const truncated = extracted.length > MAX_EXTRACTED_TEXT_CHARS;
-          const content = truncated
-            ? `${extracted.slice(0, MAX_EXTRACTED_TEXT_CHARS)}\n\n[内容过长，已在 ${MAX_EXTRACTED_TEXT_CHARS} 字符处截断]`
-            : extracted;
-          return {
-            ok: true,
-            path: target,
-            content,
-            format: ast.type || extension.slice(1),
-            size: stat.size,
-            truncated,
-            warnings: Array.isArray(ast.warnings) ? ast.warnings.map((warning) => String(warning?.message ?? warning)).slice(0, 10) : [],
-          };
-        } catch (parseError) {
-          throw new Error(`无法解析 ${extension || '该'} 文件：${String(parseError?.message ?? parseError)}`);
-        }
-      }
-      const possibleText = decodeTextBuffer(await fsp.readFile(target));
-      if (possibleText !== null) {
-        return { ok: true, path: target, content: possibleText, format: 'text', size: stat.size };
-      }
-      return {
-        ok: false,
-        path: target,
-        size: stat.size,
-        error: `文件已真实保存，但 ${extension || '该二进制格式'} 不支持直接提取文本。请使用匹配的 Skill 或 run_command 工具处理。`,
-      };
+      return await readWorkspaceFile(target);
     } catch (e) {
       return { ok: false, error: String(e?.message ?? e) };
     }
@@ -1268,5 +1281,6 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  nativeExecutionAdapter.stopAll();
   taskWorker.stop();
 });

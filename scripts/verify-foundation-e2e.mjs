@@ -173,14 +173,16 @@ try {
       : { ok: false };
     const paused = await api.taskWorkerCommand({ taskId, type: 'pause', requestedBy: 'foundation-e2e' });
     const commands = await api.taskWorkerCommands({ taskId, limit: 20 });
+    const nativeStatus = await api.taskExecutionStatus();
     const closed = await api.taskWorkerCommand({ taskId, type: 'close', requestedBy: 'foundation-e2e' });
-    return { created, claimed, heartbeat, paused, commands, closed };
+    return { created, claimed, heartbeat, paused, commands, nativeStatus, closed };
   })()`);
   assert.equal(taskWorker.created.ok, true, 'Worker IPC 测试任务无法写入账本');
   assert.equal(taskWorker.claimed.ok, true, 'Worker 无法领取测试任务');
   assert.equal(taskWorker.heartbeat.ok, true, 'Worker 心跳未被主进程接受');
   assert.equal(taskWorker.paused.run?.worker?.state, 'paused', 'Worker 暂停命令未写入任务投影');
   assert.ok((taskWorker.commands.records || []).some((record) => record.commandType === 'claim' && record.type === 'command_completed'), 'Worker 命令日志缺少领取完成记录');
+  assert.equal(taskWorker.nativeStatus.ok, true, '原生 Execution Adapter 状态 IPC 不可用');
   assert.equal(taskWorker.closed.ok, true, 'Worker 无法关闭测试任务');
 
   const openSettings = await main.evaluate('window.electronAPI.openSettings()');

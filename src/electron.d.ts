@@ -107,6 +107,44 @@ export interface TaskWorkerCommandRecord {
   previousHash: string;
   hash: string;
 }
+export type NativeExecutionJobState = 'queued' | 'running' | 'paused' | 'awaiting_user' | 'stopped' | 'failed' | 'completed';
+export interface NativeExecutionJob {
+  protocolVersion: number;
+  jobId: string;
+  taskId: string;
+  state: NativeExecutionJobState;
+  startedAt?: number;
+  updatedAt: number;
+  finishedAt?: number;
+  currentStepId?: string;
+  currentMember?: { id: string; name: string; title?: string; role?: string; model?: string };
+  modelRounds: number;
+  toolCalls: number;
+  lastError?: string;
+  eventSequence: number;
+}
+export interface NativeExecutionStartInput {
+  taskId: string;
+  run: import('./types').TaskRun;
+  members: Array<import('./types').TaskRunMemberSnapshot & { modelConfig: import('./types').ModelConfig }>;
+  attachments?: import('./data/hermesClient').Attachment[];
+  extraSystemContext?: string;
+  executionPolicy?: import('./data/hermesClient').ExecutionPolicy;
+  connectors?: unknown[];
+  connectorTools?: unknown[];
+}
+export interface NativeExecutionResult { ok: boolean; job?: NativeExecutionJob; jobs?: NativeExecutionJob[]; idempotencyHit?: boolean; error?: string; }
+export interface NativeExecutionEvent {
+  protocolVersion: number;
+  sequence: number;
+  eventId: string;
+  occurredAt: number;
+  taskId: string;
+  jobId: string;
+  type: string;
+  job: NativeExecutionJob;
+  [key: string]: unknown;
+}
 export interface TaskStoreReadResult {
   ok: boolean;
   exists?: boolean;
@@ -171,7 +209,12 @@ declare global {
     taskWorkerCommand: (command: TaskWorkerCommand) => Promise<TaskWorkerCommandResult>;
     taskWorkerStatus: () => Promise<TaskWorkerStatusResult>;
     taskWorkerCommands: (options?: { taskId?: string; limit?: number }) => Promise<{ ok: boolean; records?: TaskWorkerCommandRecord[]; integrity?: TaskWorkerStatusResult['integrity']; error?: string }>;
+    taskExecutionStart: (input: NativeExecutionStartInput) => Promise<NativeExecutionResult>;
+    taskExecutionStatus: (taskId?: string) => Promise<NativeExecutionResult>;
+    taskExecutionEvents: (input: { taskId: string; afterSequence?: number }) => Promise<{ ok: boolean; events: NativeExecutionEvent[] }>;
+    taskExecutionSteer: (input: { taskId: string; message: string }) => Promise<NativeExecutionResult>;
     onTaskWorkerChanged: (callback: (event: unknown) => void) => () => void;
+    onTaskExecutionChanged: (callback: (event: NativeExecutionEvent) => void) => () => void;
     getAssistantLock: () => Promise<{ locked: boolean }>;
     setAssistantLock: (locked: boolean) => Promise<{ locked: boolean }>;
     getChatLock: (opts: OpenChatOptions) => Promise<{ locked: boolean }>;

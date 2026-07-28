@@ -89,6 +89,7 @@ if (-not $SkipTests) {
     'verify:foundation',
     'verify:connector-adapters',
     'verify:connector-protocol',
+    'verify:native-execution',
     'verify:skill-atomic',
     'verify:update-download',
     'verify:web-search',

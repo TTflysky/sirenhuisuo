@@ -1,7 +1,7 @@
 # 项目交接手册
 
 > 最后整理：2026-07-28
-> 当前源码版本：`v0.20.0`
+> 当前源码版本：`v0.21.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 
@@ -61,7 +61,7 @@
 | `src/engine/taskFidelity.mjs` | 从用户原话提取不可丢失的目标约束，在工具调用、证据返回和最终交付三个阶段检查目标一致性。 |
 | `src/engine/taskLearningMemory.ts` | 保存、归并和检索任务成功/失败经验；只提供路线参考，当前真实证据优先。 |
 | `src/engine/agentGuardrails.mjs` | 最新消息分类、实时搜索识别与查询清洗、文字控制、反馈挂起、工具语义去重和资源读取上限。 |
-| `src/engine/teamDiscussion.ts` | 计划步骤执行、员工发言、工具回调、审查与交接。 |
+| `src/engine/teamDiscussion.ts` | 浏览器开发环境的兼容团队执行器；Electron 正式客户端改用主进程原生 Adapter。 |
 | `src/engine/executionEvidence.mjs` | 文件交付与审查结论的版本化客户端证据协议。 |
 | `src/engine/taskContext.mjs` | 任务上下文 v2、确定性压缩、模型摘要边界与上下文提示。 |
 | `src/engine/taskHistory.mjs` | 跨会话历史检索、只读提示和任务事件回放。 |
@@ -82,8 +82,10 @@
 | `electron/connectorAdapters.cjs` | 内置外部服务原生适配器；IMA 固定只读验证、阶段诊断、重试和脱敏结果。 |
 | `electron/commandShell.cjs` | Windows PowerShell 命令包装并正确传播原生进程退出码。 |
 | `electron/taskRuntimeStore.cjs` | 追加式任务事件账本、SHA-256 哈希链、旧快照迁移、损坏尾部隔离和任务投影重建。JSONL 是事实源，JSON 快照只是缓存；渲染写入不能覆盖 Worker 权威检查点。 |
-| `electron/taskWorker.cjs` | 主进程 Worker 控制平面：命令日志、租约、心跳、检查点、暂停/恢复/停止、跨会话过期恢复和命令幂等。模型与工具执行仍通过当前渲染进程 Adapter v1 完成。 |
+| `electron/taskWorker.cjs` | 主进程 Worker 控制平面：命令日志、租约、心跳、检查点、暂停/恢复/停止、跨会话过期恢复和命令幂等。 |
 | `electron/executionAdapterProtocol.cjs` | Execution Adapter v1 协议：校验严格递增检查点，并把步骤开始/完成/失败与任务最终状态应用到主进程权威投影。 |
+| `electron/nativeExecutionAdapter.cjs` | Electron 主进程团队执行循环：模型调用、工具编排、目标验收、审查退回、运行中插话和后台生命周期。 |
+| `electron/nativeToolRuntime.cjs` | 主进程工具运行时：工作区文件、命令、联网、Skill、Connector、知识库与结构化证据，持久化前统一脱敏。 |
 | `electron/preload.cjs` | 受限的 `window.electronAPI` 桥接。新增 IPC 必须同步更新此文件和 `src/electron.d.ts`。 |
 | `electron/skills.cjs` | 扫描 `%USERPROFILE%/.workbuddy/skills`、项目 `skills/` 和 `.workbuddy/skills`。 |
 | `electron/autoUpdate.cjs` | 通过 GitHub Releases 检查并下载更新；后台检查失败只写诊断日志，不冒充模型网络故障。 |
