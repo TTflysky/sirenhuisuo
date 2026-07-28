@@ -29,7 +29,7 @@ const archiveFiles = asar.listPackage(archive);
 const rendererBundle = archiveFiles.find((file) => /\\dist\\assets\\index-[^\\]+\.js$/u.test(file));
 assert.ok(rendererBundle, 'Packaged renderer bundle was not found');
 const rendererSource = asar.extractFile(archive, rendererBundle.replace(/^\\/u, '')).toString('utf8');
-for (const marker of ['正在选择可验证动作', '正在对照最初目标重新验收', '模型请求已自动重试 5 次', '任务上下文快照', 'Skill 证据', '连接器证据', '客户端连接器证据', '交付文件事件', '计划图事件']) {
+for (const marker of ['正在选择可验证动作', '正在对照最初目标重新验收', '模型请求已自动重试 5 次', '任务上下文快照', 'Skill 证据', '连接器证据', '客户端连接器证据', '交付文件事件', '计划图事件', '历史任务检索', '任务回放', '确定性压缩摘要']) {
   assert.match(rendererSource, new RegExp(marker), `ExecutionController marker missing from packaged renderer: ${marker}`);
 }
 
@@ -46,6 +46,6 @@ console.log(JSON.stringify({
   version: packaged.version,
   requiredFiles: requiredFiles.length,
   executionControllerMarkers: 3,
-  p1Markers: 6,
+  p1Markers: 9,
   installerBytes: fs.statSync(installer).size,
 }, null, 2));

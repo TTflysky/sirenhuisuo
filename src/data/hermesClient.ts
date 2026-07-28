@@ -60,6 +60,12 @@ import {
 } from '../engine/taskDecisionKernel.mjs';
 import { assessTaskCompletion, validateToolCallAgainstGoal } from '../engine/taskFidelity.mjs';
 import { buildTaskLearningContext, recordTaskLearning } from '../engine/taskLearningMemory';
+import {
+  buildTaskSummaryMaterial,
+  restoreTaskContext,
+  type TaskContextSnapshot,
+  type TaskModelSummaryProposal,
+} from '../engine/taskContext.mjs';
 
 const LS_EMPLOYEES = 'hermes_office_employees';
 const LS_TEAMS = 'hermes_office_teams';
@@ -1036,6 +1042,36 @@ export async function chatCompletion(
   }
   if (!content && !toolCalls) throw new Error('模型返回为空');
   return { content, usage, contextUsage, model, toolCalls };
+}
+
+/**
+ * 长任务的模型摘要只负责导航，不改变结构化事实、验收结果或未决问题。
+ * 模型不可用时返回 null，调用方继续使用确定性压缩摘要。
+ */
+export async function summarizeTaskContext(
+  snapshot: TaskContextSnapshot,
+  modelConfig: ModelConfig = getAssistantModel(),
+): Promise<TaskModelSummaryProposal | null> {
+  const context = restoreTaskContext(snapshot);
+  if (!resolveApiBase(modelConfig) || context.events.length === 0) return null;
+  try {
+    const result = await chatCompletion([
+      {
+        role: 'system',
+        content: '你是任务上下文压缩器。只根据提供的结构化记录，用中文输出一段不超过500字的事实摘要。说明目标、已完成且已验证的结果、交付文件、未决问题和建议继续位置。不要补充记录中没有的事实，不要输出思考过程、标题、Markdown或JSON。',
+      },
+      { role: 'user', content: buildTaskSummaryMaterial(context) },
+    ], 'task-context-summary', '长任务摘要', undefined, modelConfig, undefined, undefined, undefined, {
+      toolChoice: 'none',
+      timeoutMs: 90000,
+      injectUserContext: false,
+    });
+    const narrative = result.content?.trim().slice(0, 1600);
+    if (!narrative) return null;
+    return { narrative, modelName: result.model, sourceEventCount: context.summary.sourceEventCount };
+  } catch {
+    return null;
+  }
 }
 
 // 粗略估算 token（中文≈1.5字/token，英文≈4字符/token）

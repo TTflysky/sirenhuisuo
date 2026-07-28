@@ -39,6 +39,8 @@ import { getDirectExecutionControl, isConversationOnlyMessage, shouldHoldTaskFor
 import { APP_PRODUCT_NAME } from './brand';
 import { applyExecutionSteering, executionControllerStatus, type ExecutionControllerSnapshot } from './engine/executionController.mjs';
 import { appendTaskRunnerSteps, beginTaskStep, recordTaskReviewDecision, recordTaskStepResult } from './engine/taskRunner.mjs';
+import { applyModelTaskSummary, shouldModelSummarizeTaskContext } from './engine/taskContext.mjs';
+import { buildTaskHistoryPrompt, searchTaskRunHistory } from './engine/taskHistory.mjs';
 
 // ===== Action =====
 type Action =
@@ -606,6 +608,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const supervisorBusyRef = React.useRef(new Set<string>());
   const pausedRunIdsRef = React.useRef(new Set<string>());
   const stoppedRunIdsRef = React.useRef(new Set<string>());
+  const taskSummaryAttemptsRef = React.useRef(new Set<string>());
+
+  useEffect(() => {
+    const terminalStatuses = new Set(['completed', 'paused', 'failed', 'stopped']);
+    for (const run of state.taskRuns) {
+      if (!terminalStatuses.has(run.status) || !run.context || !shouldModelSummarizeTaskContext(run.context)) continue;
+      const sourceEventCount = run.context.summary.sourceEventCount;
+      const attemptKey = `${run.id}:${sourceEventCount}`;
+      if (taskSummaryAttemptsRef.current.has(attemptKey)) continue;
+      taskSummaryAttemptsRef.current.add(attemptKey);
+      void client.summarizeTaskContext(run.context).then((proposal) => {
+        if (!proposal) return;
+        const latest = stateRef.current.taskRuns.find((item) => item.id === run.id);
+        if (!latest?.context) return;
+        dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(latest, (next) => {
+          next.context = applyModelTaskSummary(next.context, proposal);
+        }) });
+      });
+    }
+  }, [state.taskRuns, dispatch]);
 
   const isTeamControlRequest = (text: string): boolean => {
     const pause = /(?:暂停|停止|先停|停下|别做|不要继续).{0,12}(?:工作|任务|手上|当前|执行)|(?:工作|任务).{0,8}(?:暂停|停止)/u.test(text);
@@ -1222,12 +1244,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const skillBundle = await buildSkillContextWithEvidence(skillRefs);
     const skillContext = skillBundle.context;
     const run = createTaskRun(team, current.employees, request, plan, sourceMessageId, skillRefs);
+    const historyMatches = searchTaskRunHistory(current.taskRuns, request, { teams: current.teams, limit: 4 });
+    const historyContext = buildTaskHistoryPrompt(historyMatches);
     run.skillEvidence = skillBundle.evidence;
     appendTaskRunContext(run, {
       type: skillRefs.length ? 'decision' : 'progress', source: 'system',
       summary: skillRefs.length ? `已匹配 ${skillRefs.length} 个 Skill，并记录读取结果。` : '本任务没有匹配到必要 Skill，使用通用工具继续。',
       verified: true,
     });
+    if (historyMatches.length > 0) {
+      appendTaskRunContext(run, {
+        type: 'history', source: 'system',
+        summary: `检索到 ${historyMatches.length} 个相似历史任务，仅作为当前任务的只读参考。`,
+        verified: false,
+        data: { taskIds: historyMatches.map((item) => item.taskId) },
+      });
+    }
     run.projectId = team.projectId;
     run.memberSnapshot.forEach((snapshot) => {
       const employee = current.employees.find((item) => item.id === snapshot.id);
@@ -1278,7 +1310,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     enqueueDiscussion(teamId, {
       userText: request, attachments, triggerMessageId: sourceMessageId, discussionId: run.id,
       forcedMemberIds: run.steps.map((step) => step.employeeId), runSteps: run.steps, maxRounds: run.steps.length, runId: run.id, workspaceId: run.workspaceId,
-      extraSystemContext: [skillContext, taskRunContextPrompt(run)].filter(Boolean).join('\n\n'),
+      extraSystemContext: [skillContext, historyContext, taskRunContextPrompt(run)].filter(Boolean).join('\n\n'),
     }, 120);
   };
 

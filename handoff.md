@@ -1,12 +1,12 @@
 # 太极项目当前交接
 
 > 更新时间：2026-07-28
-> 当前版本：`v0.16.0`
+> 当前版本：`v0.17.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
-> Release：`v0.16.0` 本地验收中，暂未发布
+> Release：`v0.17.0` 本地验收中，暂未发布
 
-`v0.16.0` 已完成结构化文件/审查事件和正式修订 Plan 图：真实交付记录落盘与读回状态，审查者通过 `submit_review` 提交客户端结论，退回后将责任步骤、修订步骤和复审步骤写入 Runner。下一步按差异矩阵推进任务摘要压缩、跨会话检索与回放。
+`v0.17.0` 已完成长任务上下文压缩、模型辅助摘要、跨会话历史检索和只读任务回放。新任务会参考相似旧任务的已验证事实与交付路径，但旧记录不能覆盖当前目标、输入或验收标准。下一步按差异矩阵推进独立事件账本与后台 Worker。
 
 ## 办公室端直接开始
 
@@ -120,6 +120,10 @@ npm.cmd run verify:package
 - `src/engine/executionController.d.mts`
 - `src/engine/executionEvidence.mjs`
 - `src/engine/executionEvidence.d.mts`
+- `src/engine/taskContext.mjs`
+- `src/engine/taskContext.d.mts`
+- `src/engine/taskHistory.mjs`
+- `src/engine/taskHistory.d.mts`
 - `src/data/hermesClient.ts`
 - `src/engine/teamDiscussion.ts`
 - `src/engine/securityBoundary.ts`
@@ -135,6 +139,8 @@ npm.cmd run verify:package
 - `scripts/verify-foundation.mjs`
 - `scripts/verify-execution-controller.mjs`
 - `scripts/verify-execution-evidence.mjs`
+- `scripts/verify-task-context.mjs`
+- `scripts/verify-task-history.mjs`
 - `scripts/verify-foundation-e2e.mjs`
 - `scripts/verify-skill-atomic.cjs`
 - `scripts/verify-update-download.cjs`
@@ -153,13 +159,15 @@ npm.cmd run verify:package
 - `npm.cmd run verify:connector-protocol`：通过；覆盖六阶段协议、错误分类、脱敏和副作用幂等复用。
 - `npm.cmd run verify:execution-evidence`：通过；覆盖真实磁盘文件证据、仅渲染登记降级和结构化审查退回。
 - `npm.cmd run verify:task-runner`：通过；覆盖审查退回责任步骤、动态追加修订/复审节点并最终完成。
+- `npm.cmd run verify:task-context`：通过；上下文 v1 自动迁移到 v2，最近 120 条事件、确定性压缩、模型摘要边界、交付路径和历史关联均通过。
+- `npm.cmd run verify:task-history`：通过；中文历史检索命中正确团队任务，运行中任务不参与旧经验注入，只读提示与上下文/Runner 回放顺序通过。
 - `npm.cmd run verify:skill-atomic`：通过；无效包不触碰旧 Skill，成功替换不残留旧文件，哈希损坏被拦截，并真实验证根 Skill 可读取知识库与笔记子规则。
 - `npm.cmd run verify:update-download`：通过；模拟断线后 Range 续传、服务器忽略断点、等长损坏缓存和 SHA-256 拦截。
 - `npm.cmd run verify:web-search`：通过；覆盖 Bing XML 解析、主源超时后备用源成功和双源具体错误聚合。
 - `npm.cmd run verify:web-search` 新增目标一致性覆盖：安徽百科不能冒充全椒县天气；结构化天气数据必须包含地点、日期、温度、湿度等真实字段。
 - `npm.cmd run verify:agent-kernel`：通过模型目标漂移、搜索词条件丢失、指定生图工具却写 SVG、用户新增约束合并和最终目标验收回归。
 - 全椒县天气实网验证：`wttr.in 实时天气` 返回全椒县、安徽、坐标 `32.098, 118.258`、日期 `2026-07-28` 及完整气象字段；偏题网页未参与结果。
-- `npm.cmd run verify:package`：通过；包内版本为 `0.16.0`，入口、连接器适配器、命令外壳和三份 IMA 规则均可读取，交付文件/计划图标记、安装器、blockmap 与 `latest.yml` 完整。
+- `npm.cmd run verify:package`：通过；包内版本为 `0.17.0`，入口、连接器适配器、命令外壳和三份 IMA 规则均可读取，历史任务检索、任务回放、确定性压缩摘要等 9 个 P1 标记及安装器、blockmap、`latest.yml` 完整。
 - `npm.cmd run diagnose:web-search`：通过；Electron 实网使用 DuckDuckGo，首轮空结果自动重试后约 3.1 秒返回 8 条中文 AI 资讯。
 - `npm.cmd run verify:docx`：通过；生成的 Word 可重新解析正文。
 - 安装版 `npm.cmd run verify:foundation-ui`：通过；真实 Electron IPC 和诊断中心五项完整显示。
@@ -170,11 +178,11 @@ npm.cmd run verify:package
 
 ## 安装与发布资产
 
-- 安装包：`release\taiji-office-setup-0.16.0.exe`
-- Blockmap：`release\taiji-office-setup-0.16.0.exe.blockmap`
+- 安装包：`release\taiji-office-setup-0.17.0.exe`
+- Blockmap：`release\taiji-office-setup-0.17.0.exe.blockmap`
 - 更新清单：`release\latest.yml`
-- 包内版本：`0.16.0`。
-- 安装包大小：`173856621` 字节；SHA-256：`46945B1137BF68BC9A4FB1070BD1FE41492E93A53F151AD704AF884B0A3E8ECE`。
+- 包内版本：`0.17.0`。
+- 安装包大小：`173860265` 字节；SHA-256：`7860D80D4D3F523556359281FFC4D1573A0D3827D7006B0D89ABC376B53D259C`。
 - 最终文件大小和 SHA-256 以 `npm.cmd run publish:release` 的成功输出及 GitHub Release digest 为准；发布脚本会逐项比对本地与远端，不再把易过期的单次构建摘要固化在交接文档中。
 - 解包版受控启动 8 秒保持运行，未出现启动即崩溃。
 - 安装目录只保留 `太极 AI 办公会所.exe` 和对应卸载程序，没有旧产品可执行文件残留。
@@ -197,11 +205,11 @@ npm.cmd run verify:package
 
 ## 下一步
 
-1. 在用户真实配置上验收五个场景：新建员工后助手立即找到、团队任务异常退出后恢复、损坏 Skill 修复、连接器真实连接证据、一次自动更新与回滚。
-2. 完成一次隔离目录的真实跨版本自动更新与回滚演练并记录证据。
-3. 给升级日志增加用户可导出的通俗诊断报告。
-4. 在用户真实模型上构造一次“超时后恢复”、一次“工具参数错误后换路线”和一次“团队审查退回”任务，重点核对 `submit_review`、责任步骤、修订节点、文件事件和最终交付一致。
-5. 为控制器增加可选的模型候选路线，在主模型连续失败后自动切换已验证备用模型，而不是只有原模型重试与真实停机交接。
+1. 用户安装 `v0.17.0` 后，在团队右侧任务栏搜索一个旧任务，打开回放并确认返回列表、折叠摘要、事件时间线和面板拖拽正常。
+2. 发起一个与旧任务相似的新任务，确认上下文记录“相似历史任务”，但当前要求和验收标准没有被旧任务替换。
+3. 用真实长任务验收模型辅助摘要；模型不可用时任务必须继续使用确定性摘要，不能因此失败或暂停。
+4. 下一版本把上下文与 Runner 事件迁入独立追加式事件账本，为真正后台 Worker、动态组队和并发执行建立唯一事实源。
+5. 完成一次隔离目录的真实跨版本自动更新与回滚演练并记录证据。
 6. 按用户新反馈继续优化，但同层问题必须同步检查助手、员工私聊和团队三条路径。
 
 每次完成后先升级版本并更新本文件，提交到干净的 `main`，然后运行 `npm.cmd run publish:release` 一次完成预检、回归、打包、推送、Release 上传和远端哈希校验。

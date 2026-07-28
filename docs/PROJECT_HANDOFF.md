@@ -1,7 +1,7 @@
 # 项目交接手册
 
 > 最后整理：2026-07-28
-> 当前源码版本：`v0.16.0`
+> 当前源码版本：`v0.17.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 
@@ -19,7 +19,7 @@
 4. 员工不能只口头承诺“已完成”。需要文件的任务必须通过工具写入真实工作区；界面需展示可观察的任务状态、工具调用和最终交付物。
 5. 助理、员工单聊、团队聊天的附件能力必须保持一致：选择文件、粘贴、拖拽、真实落盘、错误提示和工具可读取性不能只修其中一个入口。
 6. 交付物只登记真实文件，并分为最终交付、工作文件、参考资料；绝不能把聊天摘要、工具日志、附件占位或重复记录冒充产物。
-7. 每次功能发布必须：升级版本、构建 Windows 安装包、计算 SHA-256、提交并推送 `main`、创建 GitHub Release 并上传安装包和 blockmap。
+7. 每次功能交付必须：升级版本、构建 Windows 安装包、计算 SHA-256、提交并推送 `main`；用户安装验收通过后，才创建 GitHub Release 并上传安装包和 blockmap。
 8. 面向用户的最终回答必须先说清楚成功、失败或进行中；原始工具名、命令、参数、退出码和日志只放在折叠执行过程中，不能在消息正文重复展示。
 9. 工具审批和命令沙盒必须同时覆盖助手、员工私聊和团队聊天。审批被拒绝时必须返回“未执行”的真实结果，不能把取消、权限不足或沙盒拦截描述成完成。
 10. 所有执行入口必须先通过 `taskDecisionKernel` 还原真实目标、首选路线和完成标准，再由 `taskFidelity` 固定不可丢失条件，最后通过统一 `ExecutionController` 观察结果、分类失败、决定重试或换路线并重新验收；不得重新引入按回复文案、关键词猜测或“工具返回内容就算成功”的分支。
@@ -63,6 +63,8 @@
 | `src/engine/agentGuardrails.mjs` | 最新消息分类、实时搜索识别与查询清洗、文字控制、反馈挂起、工具语义去重和资源读取上限。 |
 | `src/engine/teamDiscussion.ts` | 计划步骤执行、员工发言、工具回调、审查与交接。 |
 | `src/engine/executionEvidence.mjs` | 文件交付与审查结论的版本化客户端证据协议。 |
+| `src/engine/taskContext.mjs` | 任务上下文 v2、确定性压缩、模型摘要边界与上下文提示。 |
+| `src/engine/taskHistory.mjs` | 跨会话历史检索、只读提示和任务事件回放。 |
 | `src/engine/tools.ts` | `write_file`、`read_file`、`list_files`、`search_skills`、`read_skill`、`run_command` 和连接器工具。 |
 | `src/components/chat/AssistantChat.tsx` | 驴狗蛋助手聊天与运行中引导。 |
 | `src/components/chat/DmChatApp.tsx` | 员工单聊与失败重试。 |
@@ -137,13 +139,13 @@
 
 ## 7. 开发、测试与发布
 
-开发过程中可以单独运行对应回归。正式交付只使用一个入口：
+开发过程中可以单独运行对应回归。先构建安装包并推送源码，用户安装验收通过后再使用发布入口：
 
 ```powershell
 npm.cmd run publish:release
 ```
 
-该命令要求当前位于干净的 `main` 分支，版本与文档已经提交。它会自动运行核心回归、稳定 Windows 打包、推送 `main`、创建或更新同版本 Release，上传三个更新资产，并核对远端提交、大小和 SHA-256。不要再使用临时发布脚本或裸 `gh release` 命令。
+该命令要求当前位于干净的 `main` 分支，版本与文档已经提交，并且用户已经明确验收当前安装包。它会自动运行核心回归、稳定 Windows 打包、推送 `main`、创建或更新同版本 Release，上传三个更新资产，并核对远端提交、大小和 SHA-256。不要在用户验收前运行，也不要使用临时发布脚本或裸 `gh release` 命令。
 
 发布检查清单：
 
@@ -151,8 +153,8 @@ npm.cmd run publish:release
 2. `npm.cmd run build` 必须通过；`npm.cmd run lint` 的新增警告必须为零；`git diff --check` 必须通过。
 3. 构建安装包并记录绝对路径、文件大小和 SHA-256。
 4. `git add`、`git commit`，保持工作区干净。
-5. 运行 `npm.cmd run publish:release`；脚本自动完成推送、Release 和三个发布资产上传。
-6. 以命令最后输出的远端提交、Release URL、安装包路径和 SHA-256 为发布凭据。
+5. 提交并推送源码，让用户安装本地构建包验收。
+6. 用户确认通过后运行 `npm.cmd run publish:release`，以远端提交、Release URL、安装包路径和 SHA-256 为发布凭据。
 
 本机若残留失效的全局 Git 代理，可对同步或推送命令临时追加 `-c http.proxy= -c https.proxy=` 直连 GitHub。不要把 GitHub Token、代理凭据或 API Key 写进代码、文档和提交记录。
 

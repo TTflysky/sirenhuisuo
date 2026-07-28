@@ -1,7 +1,7 @@
 {
   "name": "hermes-office-pro",
   "private": true,
-  "version": "0.16.0",
+  "version": "0.17.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -30,6 +30,7 @@
     "verify:task-plan": "node scripts/verify-task-plan.mjs",
     "verify:task-runner": "node scripts/verify-task-runner.mjs",
     "verify:task-context": "node scripts/verify-task-context.mjs",
+    "verify:task-history": "node scripts/verify-task-history.mjs",
     "verify:task-runtime-store": "node scripts/verify-task-runtime-store.cjs",
     "verify:foundation-ui": "node scripts/verify-foundation-e2e.mjs",
     "dist:win": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1",

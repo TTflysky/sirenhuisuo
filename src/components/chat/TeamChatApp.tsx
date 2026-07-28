@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { PauseCircleOutlined, PlayCircleOutlined, RobotOutlined, StopOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, HistoryOutlined, PauseCircleOutlined, PlayCircleOutlined, RobotOutlined, SearchOutlined, StopOutlined } from '@ant-design/icons';
 import type { Team, Employee, TaskRun } from '../../types';
 import { useStore } from '../../store';
 import { type Attachment } from '../../data/hermesClient';
@@ -16,6 +16,7 @@ import ExecutionPolicyControl from './ExecutionPolicyControl';
 import type { SkillReference } from '../../types';
 import { fileToAttachment, attachmentsFromClipboard, formatFileSize, persistAttachments } from '../../utils/attachments';
 import { useFileDrop } from '../../hooks/useFileDrop';
+import { buildTaskReplay, searchTaskRunHistory } from '../../engine/taskHistory.mjs';
 
 interface Props {
   teamId: string;
@@ -60,6 +61,8 @@ export default function TeamChatApp({ teamId }: Props) {
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(320);
   const [showTaskList, setShowTaskList] = useState(false);
   const [showRenameTeam, setShowRenameTeam] = useState(false);
+  const [taskHistoryQuery, setTaskHistoryQuery] = useState('');
+  const [replayTaskId, setReplayTaskId] = useState<string | null>(null);
   const [expandedExecutionIds, setExpandedExecutionIds] = useState<Set<string>>(() => new Set());
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [skillRefs, setSkillRefs] = useState<SkillReference[]>([]);
@@ -100,6 +103,18 @@ export default function TeamChatApp({ teamId }: Props) {
   const jumpMessages = (team?.chatMessages ?? []).filter((message) => message.kind !== 'execution').slice(-24);
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
   const [progressNow, setProgressNow] = useState(Date.now());
+  const historyMatches = useMemo(() => taskHistoryQuery.trim()
+    ? searchTaskRunHistory(state.taskRuns, taskHistoryQuery, { teams: state.teams, limit: 12 })
+    : [], [taskHistoryQuery, state.taskRuns, state.teams]);
+  const replayRun = replayTaskId ? state.taskRuns.find((run) => run.id === replayTaskId) : undefined;
+  const taskReplay = useMemo(() => buildTaskReplay(replayRun), [replayRun]);
+  const replayTimeline = useMemo(() => {
+    if (!taskReplay) return [];
+    return [
+      ...taskReplay.events.map((event) => ({ id: event.id, ts: event.ts, type: event.type, detail: event.summary, source: '上下文', verified: event.verified })),
+      ...taskReplay.runnerEvents.map((event) => ({ id: `runner-${event.id}`, ts: event.ts, type: event.type, detail: event.detail, source: 'Runner', verified: /succeeded|passed|completed/u.test(event.type) })),
+    ].sort((a, b) => a.ts - b.ts);
+  }, [taskReplay]);
 
   const teamMembers = (team?.memberIds ?? [])
     .map((id) => state.employees.find((e) => e.id === id))
@@ -324,6 +339,7 @@ export default function TeamChatApp({ teamId }: Props) {
         })}
         {run.handoff && <div className="task-run-handoff"><strong>当前交接</strong><p>{run.handoff.blocked}</p>{run.handoff.completed.length > 0 && <p>已完成：{run.handoff.completed.join('、')}</p>}<p>下一步：{run.handoff.nextAction}</p></div>}
         <div className="task-run-actions">
+          <button className="btn btn-sm" onClick={() => setReplayTaskId(run.id)} title="只读回放任务"><HistoryOutlined />回放</button>
           {active && <button className="btn btn-sm" onClick={() => pauseTaskRun(run.id)}><PauseCircleOutlined />暂停</button>}
           {(run.status === 'paused' || run.status === 'failed') && <button className="btn btn-sm btn-primary" onClick={() => resumeTaskRun(run.id)}><PlayCircleOutlined />继续执行</button>}
           {(active || run.status === 'paused' || run.status === 'failed') && <button className="btn btn-sm btn-danger" onClick={() => stopTaskRun(run.id)}><StopOutlined />停止</button>}
@@ -679,11 +695,26 @@ export default function TeamChatApp({ teamId }: Props) {
               <button type="button" className="chat-jump-bottom" title="跳到最新消息" onClick={() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })}>↓</button>
             </nav>
             {showTaskList && <><div className="workspace-resize-handle" onPointerDown={startPanelResize} title="拖动调整任务面板宽度" /><aside className="team-task-sidebar" style={{ width: workspacePanelWidth, minWidth: workspacePanelWidth }} aria-label="任务列表">
-              <div className="team-task-sidebar-head"><strong>快速导航</strong><span>{taskRuns.length} 个任务</span><button type="button" className="team-task-clear" title="清理聊天中的旧执行过程" onClick={() => clearTeamExecution(teamId)}>清理过程</button><button type="button" className="task-run-close" title="收起任务列表" onClick={() => setShowTaskList(false)}>×</button></div>
+              <div className="team-task-sidebar-head"><strong>{taskReplay ? '任务回放' : '快速导航'}</strong><span>{taskReplay ? '只读' : `${taskRuns.length} 个任务`}</span>{!taskReplay && <button type="button" className="team-task-clear" title="清理聊天中的旧执行过程" onClick={() => clearTeamExecution(teamId)}>清理过程</button>}<button type="button" className="task-run-close" title="收起任务列表" onClick={() => setShowTaskList(false)}>×</button></div>
+              {!taskReplay && <label className="task-history-search"><SearchOutlined /><input value={taskHistoryQuery} onChange={(event) => setTaskHistoryQuery(event.target.value)} placeholder="历史任务检索" aria-label="历史任务检索" />{taskHistoryQuery && <button type="button" onClick={() => setTaskHistoryQuery('')} title="清空搜索">×</button>}</label>}
               <div className="team-task-sidebar-body">
-                {activeTaskRuns.length > 0 && <div className="team-task-section"><div className="team-task-section-title">进行中与待处理</div>{activeTaskRuns.map(renderTaskRunCard)}</div>}
-                {completedTaskRuns.length > 0 && <div className="team-task-section completed"><div className="team-task-section-title">已完成</div>{completedTaskRuns.map(renderTaskRunCard)}</div>}
-                {taskRuns.length === 0 && <div className="team-task-empty">暂无任务</div>}
+                {taskReplay ? <div className="task-replay">
+                  <button type="button" className="task-replay-back" onClick={() => setReplayTaskId(null)}><ArrowLeftOutlined />返回任务列表</button>
+                  <div className="task-replay-heading"><span>{state.teams.find((item) => item.id === taskReplay.teamId)?.name ?? taskReplay.teamId}</span><strong>{taskReplay.title}</strong><small>{new Date(taskReplay.updatedAt).toLocaleString('zh-CN')} · {taskReplay.status}</small></div>
+                  <div className="task-replay-goal"><strong>原目标</strong><p>{taskReplay.goal}</p></div>
+                  <details className="task-replay-section"><summary>确定性压缩摘要</summary><p>{taskReplay.summary.narrative || '暂无摘要'}</p>{taskReplay.summary.modelNarrative && <p className="task-replay-model-summary">模型辅助：{taskReplay.summary.modelNarrative}</p>}</details>
+                  <details className="task-replay-section"><summary>已验证事实 {taskReplay.summary.verifiedFacts.length}</summary>{taskReplay.summary.verifiedFacts.map((item, index) => <p key={`${index}-${item.slice(0, 24)}`}>{item}</p>)}</details>
+                  <details className="task-replay-section"><summary>交付文件 {taskReplay.summary.artifactPaths.length}</summary>{taskReplay.summary.artifactPaths.map((item) => <p key={item}>{item}</p>)}</details>
+                  <div className="task-replay-timeline"><strong>任务回放</strong>{replayTimeline.map((event) => <div key={`${event.source}-${event.id}`} className={event.verified ? 'is-verified' : ''}><time>{new Date(event.ts).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</time><span>{event.source} · {event.type}</span><p>{event.detail}</p></div>)}</div>
+                </div> : taskHistoryQuery.trim() ? <div className="task-history-results">
+                  <div className="team-task-section-title">跨会话结果 · {historyMatches.length}</div>
+                  {historyMatches.map((match) => <button type="button" key={match.taskId} className="task-history-result" onClick={() => setReplayTaskId(match.taskId)}><span>{match.teamName} · {match.status}</span><strong>{match.title}</strong><p>{match.summary || match.goal}</p><small>已验证 {match.verifiedFacts.length} · 文件 {match.artifactPaths.length} · {new Date(match.updatedAt).toLocaleDateString('zh-CN')}</small></button>)}
+                  {historyMatches.length === 0 && <div className="team-task-empty">没有匹配的历史任务</div>}
+                </div> : <>
+                  {activeTaskRuns.length > 0 && <div className="team-task-section"><div className="team-task-section-title">进行中与待处理</div>{activeTaskRuns.map(renderTaskRunCard)}</div>}
+                  {completedTaskRuns.length > 0 && <div className="team-task-section completed"><div className="team-task-section-title">已完成</div>{completedTaskRuns.map(renderTaskRunCard)}</div>}
+                  {taskRuns.length === 0 && <div className="team-task-empty">暂无任务</div>}
+                </>}
               </div>
             </aside></>}
           </div>
