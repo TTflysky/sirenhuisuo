@@ -4,6 +4,7 @@ import { createTaskContract, createPlan } from '../engine/taskPlan.mjs';
 import type { TaskPlanStep as FormalTaskPlanStep } from '../engine/taskPlan.mjs';
 import { createTaskRunner, restoreTaskRunner } from '../engine/taskRunner.mjs';
 import { appendTaskContextEvent, buildTaskContextPrompt, createTaskContext, restoreTaskContext, type TaskContextEventInput } from '../engine/taskContext.mjs';
+import { createContextBudget, createRecoveryCapsule, verifyRecoveryCapsule } from '../engine/taskContextRouter.mjs';
 import type { TaskLedgerEvent, TaskLedgerIntegrity, TaskWorkerCommand, TaskWorkerCommandResult, TaskWorkerStatusResult } from '../electron';
 
 const LS_TASK_RUNS = 'hermes_office_task_runs_v1';
@@ -77,7 +78,7 @@ function defaultRecoveryContext(run: TaskRun) {
     completedEvidence: (run.evidence ?? []).filter((item) => item.verified).map((item) => item.summary).slice(-12),
     unresolvedIssues: run.lastError ? [run.lastError.slice(0, 320)] : [],
     steeringMessages: [],
-    budget: { toolAttempts: 0, updatedAt: run.updatedAt || Date.now() },
+    budget: createContextBudget({ toolAttempts: 0, updatedAt: run.updatedAt || Date.now() }),
     controller: createExecutionController({
       goal: run.goal ?? run.request,
       acceptanceCriteria: run.acceptanceCriteria ?? ['完成用户目标', '产出可观察结果', '完成必要验证'],
@@ -118,6 +119,9 @@ function normalizeTaskRuns(runs: TaskRun[]): TaskRun[] {
       const staleExecution = (next.status === 'running' || next.status === 'queued')
         && sessionId !== 'browser-session'
         && next.executionSessionId !== sessionId;
+      next.recoveryCapsule = verifyRecoveryCapsule(next.recoveryCapsule)
+        ? next.recoveryCapsule
+        : createRecoveryCapsule(next, { reason: '旧任务上下文迁移' });
       if (!staleExecution) return next;
       recovered = true;
       const now = Date.now();
@@ -344,7 +348,7 @@ export function createTaskRun(team: Team, employees: Employee[], request: string
     maxRevisions: 2,
     recoveryContext: {
       summary: '任务已创建，正在完成启动前检查。', completedEvidence: [], unresolvedIssues: [], steeringMessages: [],
-      budget: { toolAttempts: 0, updatedAt: now },
+      budget: createContextBudget({ toolAttempts: 0, updatedAt: now }),
       controller: createExecutionController({
         goal: request,
         acceptanceCriteria: ['完成用户要求的工作', '留下可观察的结果或文件', '由执行者或审查步骤确认结果'],
@@ -353,7 +357,9 @@ export function createTaskRun(team: Team, employees: Employee[], request: string
     },
   };
   const { contract, plan: formalPlan } = formalPlanForRun(baseRun);
-  return { ...baseRun, contract, plan: formalPlan, runner: createTaskRunner(formalPlan, { traceId: id, createdAt: now }) };
+  const run = { ...baseRun, contract, plan: formalPlan, runner: createTaskRunner(formalPlan, { traceId: id, createdAt: now }) };
+  run.recoveryCapsule = createRecoveryCapsule(run, { reason: '任务创建' });
+  return run;
 }
 
 export function updateTaskRun(run: TaskRun, mutate: (current: TaskRun) => void): TaskRun {

@@ -5,7 +5,8 @@ const { ADAPTER_PROTOCOL_VERSION } = require('./executionAdapterProtocol.cjs');
 
 const NATIVE_ADAPTER_VERSION = 1;
 const MAX_TOOL_CALLS_PER_STEP = 36;
-const MAX_MODEL_ROUNDS_PER_STEP = 28;
+const MAX_MODEL_ROUNDS_PER_STEP = 36;
+const MODEL_ROUNDS_PER_STAGE = 12;
 const MAX_PREPARATION_STREAK = 4;
 const ACTIVE_JOB_STATES = new Set(['queued', 'running']);
 
@@ -146,7 +147,8 @@ function createNativeExecutionAdapter(options) {
         import(pathToFileURL(path.join(projectRoot, 'src/engine/taskFidelity.mjs')).href),
         import(pathToFileURL(path.join(projectRoot, 'src/engine/taskRunner.mjs')).href),
         import(pathToFileURL(path.join(projectRoot, 'src/engine/toolRegistry.mjs')).href),
-      ]).then(([fidelity, runner, toolRegistry]) => ({ fidelity, runner, toolRegistry }));
+        import(pathToFileURL(path.join(projectRoot, 'src/engine/taskContextRouter.mjs')).href),
+      ]).then(([fidelity, runner, toolRegistry, contextRouter]) => ({ fidelity, runner, toolRegistry, contextRouter }));
     }
     return engineModulesPromise;
   }
@@ -354,6 +356,7 @@ function createNativeExecutionAdapter(options) {
   }
 
   async function recordTool(job, run, step, member, name, args, result) {
+    const { contextRouter } = await loadEngineModules();
     const safeArgs = options.toolRuntime.redact(args);
     const safeResult = { ...result, output: String(options.toolRuntime.redact(result.output)) };
     const evidence = evidenceFromTool(safeResult, member, name);
@@ -366,11 +369,11 @@ function createNativeExecutionAdapter(options) {
       current.evidence = [...(current.evidence || []), ...evidence].slice(-30);
       next.evidence = [...(next.evidence || []), ...evidence].slice(-120);
       if (next.recoveryContext) {
-        next.recoveryContext.budget.toolAttempts = (next.recoveryContext.budget.toolAttempts || 0) + 1;
-        next.recoveryContext.budget.updatedAt = Date.now();
+        next.recoveryContext.budget = contextRouter.recordContextUsage(next.recoveryContext.budget, { toolAttempts: 1, progress: result.success === true });
         if (result.success) next.recoveryContext.completedEvidence = [...next.recoveryContext.completedEvidence, evidence.map((item) => item.summary).join('；')].slice(-30);
         else next.recoveryContext.unresolvedIssues = [...next.recoveryContext.unresolvedIssues, `${name}：${safeResult.output.slice(0, 320)}`].slice(-20);
       }
+      next.recoveryCapsule = contextRouter.createRecoveryCapsule(next, { reason: `工具 ${name} 执行后检查点` });
     }, `${member.name}原生调用 ${name}`);
     const report = `**${member.name}** 调用 **${name}**\n${JSON.stringify(safeArgs)}\n\n${result.success ? '成功' : '失败'}：${safeResult.output}`;
     await appendExecutionMessage(job, run, member, report, 'execution', { name, args: safeArgs, success: result.success });
@@ -378,9 +381,13 @@ function createNativeExecutionAdapter(options) {
   }
 
   async function executeStep(job, run, step, member) {
-    const { fidelity, toolRegistry } = await loadEngineModules();
+    const { fidelity, toolRegistry, contextRouter } = await loadEngineModules();
+    const stepRecoveryPrompt = contextRouter.buildRecoveryPrompt({
+      ...run,
+      steps: run.steps.filter((item) => item.status === 'completed' || item.id === step.id),
+    });
     const messages = [
-      { role: 'system', content: buildSystem(run, step, member, job) },
+      { role: 'system', content: `${buildSystem(run, step, member, job)}\n\n${stepRecoveryPrompt}` },
       buildUserTurn(run, step, job),
     ];
     const registry = toolRegistry.buildToolRegistry([...options.toolRuntime.definitions, ...(job.connectorTools || [])]);
@@ -401,8 +408,34 @@ function createNativeExecutionAdapter(options) {
     let review;
     let forceActionCount = 0;
     let appliedSteering = job.steering.length;
+    let liveBudget = contextRouter.createContextBudget(run.recoveryContext?.budget);
     for (let round = 0; round < MAX_MODEL_ROUNDS_PER_STEP; round += 1) {
       await assertCanContinue(job);
+      const currentPromptTokens = contextRouter.estimateTokens(messages.map((item) => item.content || item.tool_calls || '').join('\n'));
+      const budgetAssessment = contextRouter.assessContextBudget(liveBudget, { currentPromptTokens });
+      const stageBoundary = round > 0 && round % MODEL_ROUNDS_PER_STAGE === 0;
+      if ((budgetAssessment.action === 'compact' || budgetAssessment.action === 'checkpoint' || stageBoundary) && messages.length > 8) {
+        const compacted = contextRouter.compactMessageWindow(messages, { keepRecent: 10 });
+        messages.splice(0, messages.length, ...compacted.messages);
+        await updateRun(job.taskId, (next) => {
+          if (!next.recoveryContext) return;
+          const budget = contextRouter.createContextBudget(next.recoveryContext.budget);
+          budget.compactions += 1;
+          if (stageBoundary) budget.stage += 1;
+          budget.estimatedTokens = contextRouter.estimateTokens(messages.map((item) => item.content || '').join('\n'));
+          budget.updatedAt = Date.now();
+          next.recoveryContext.budget = budget;
+          liveBudget = budget;
+          next.recoveryContext.summary = `长任务已完成第 ${budget.stage - 1} 阶段压缩，保留原始目标、证据和未决问题后继续。`;
+          next.recoveryCapsule = contextRouter.createRecoveryCapsule(next, { reason: `上下文阶段 ${budget.stage} 压缩` });
+        }, '原生 Adapter 压缩长任务上下文');
+        if (stageBoundary) await options.store.createRecoveryPoint({ taskId: job.taskId, label: `自动阶段 ${Math.floor(round / MODEL_ROUNDS_PER_STAGE)} 恢复点` });
+        emit(job, 'context_compacted', { stepId: step.id, removedMessages: compacted.removed, round, reason: stageBoundary ? 'stage-boundary' : budgetAssessment.reason });
+      }
+      if (budgetAssessment.action === 'replan') {
+        messages.push({ role: 'system', content: '连续多轮没有新增可验证证据。立即停止当前重复路线，说明根因并选择本质不同的工具、来源或实现方法。' });
+        emit(job, 'route_replan_required', { stepId: step.id, reason: budgetAssessment.reason });
+      }
       if (job.steering.length > appliedSteering) {
         const updates = job.steering.slice(appliedSteering);
         messages.push({ role: 'system', content: `老板在执行中补充了要求。先结合原目标判断影响，再调整当前路线：\n${updates.join('\n')}` });
@@ -412,11 +445,20 @@ function createNativeExecutionAdapter(options) {
       const response = await callModel(job, member, messages, tools);
       const message = response.message;
       const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+      liveBudget = contextRouter.recordContextUsage({
+        ...liveBudget,
+        contextWindowTokens: Number(member.modelConfig?.contextWindowTokens) || liveBudget.contextWindowTokens,
+      }, {
+        promptTokens: Number(response.usage.prompt_tokens) || 0,
+          completionTokens: Number(response.usage.completion_tokens) || 0,
+          estimatedTokens: currentPromptTokens,
+          modelRounds: 1,
+          progress: toolCalls.length > 0,
+      });
       await updateRun(job.taskId, (next) => {
         if (!next.recoveryContext) return;
-        next.recoveryContext.budget.promptTokens = (next.recoveryContext.budget.promptTokens || 0) + (Number(response.usage.prompt_tokens) || 0);
-        next.recoveryContext.budget.contextWindowTokens = Number(member.modelConfig?.contextWindowTokens) || next.recoveryContext.budget.contextWindowTokens;
-        next.recoveryContext.budget.updatedAt = Date.now();
+        next.recoveryContext.budget = liveBudget;
+        next.recoveryCapsule = contextRouter.createRecoveryCapsule(next, { reason: '模型轮次用量检查点' });
       }, '记录原生模型上下文用量');
       if (toolCalls.length) {
         messages.push({ role: 'assistant', content: message.content || null, tool_calls: toolCalls });
@@ -455,29 +497,36 @@ function createNativeExecutionAdapter(options) {
       const latestRun = await readRun(job.taskId);
       const currentStep = latestRun.steps.find((item) => item.id === step.id);
       const hasFile = currentStep?.evidence?.some((item) => item.kind === 'file' && item.verified);
-      if (step.kind !== 'review' && !hasFile && forceActionCount < 2) {
+      if (step.kind !== 'review' && !hasFile) {
         forceActionCount += 1;
         messages.push({ role: 'assistant', content: finalContent || '当前步骤说明' });
-        messages.push({ role: 'system', content: '当前是交付步骤，但还没有经过磁盘校验的文件证据。下一步必须调用 write_file 形成可交接文件，然后再总结。' });
+        messages.push({ role: 'system', content: forceActionCount <= 2
+          ? '当前是交付步骤，但还没有经过磁盘校验的文件证据。下一步必须调用 write_file 形成可交接文件，然后再总结。'
+          : '仍然没有经过磁盘校验的文件证据，禁止宣布完成。立即改用可行的真实写入路线；若缺少外部条件，只能明确交接该唯一条件。' });
         continue;
       }
-      if (step.kind === 'review' && !review && forceActionCount < 2) {
+      if (step.kind === 'review' && !review) {
         forceActionCount += 1;
         messages.push({ role: 'assistant', content: finalContent || '审查说明' });
-        messages.push({ role: 'system', content: '审查步骤没有 submit_review 证据。必须先检查真实文件或运行结果，再调用 submit_review 提交 PASS 或 REJECT。' });
+        messages.push({ role: 'system', content: forceActionCount <= 2
+          ? '审查步骤没有 submit_review 证据。必须先检查真实文件或运行结果，再调用 submit_review 提交 PASS 或 REJECT。'
+          : '仍然没有结构化审查证据，禁止宣布完成。立即读取或运行真实产出并提交 PASS/REJECT；无法继续时只交接具体阻塞。' });
         continue;
       }
       const acceptance = fidelity.assessTaskCompletion(run.goal || run.request, finalContent, callLog);
-      if (!acceptance.passed && forceActionCount < 2) {
+      if (!acceptance.passed) {
         forceActionCount += 1;
         messages.push({ role: 'assistant', content: finalContent });
-        messages.push({ role: 'system', content: `原始目标验收未通过：${acceptance.issues.join('；')}。请换路线补齐真实证据，不得宣布完成。` });
+        messages.push({ role: 'system', content: forceActionCount <= 2
+          ? `原始目标验收未通过：${acceptance.issues.join('；')}。请换路线补齐真实证据，不得宣布完成。`
+          : `原始目标仍未验收：${acceptance.issues.join('；')}。必须改走本质不同的路线、补齐证据或明确唯一外部阻塞，禁止以普通文本结束。` });
         continue;
       }
       if (!finalContent) finalContent = '当前步骤已完成工具执行与真实结果验证。';
       return { content: finalContent, review, callLog, usageModel: response.model };
     }
-    throw new Error(`当前步骤达到 ${MAX_MODEL_ROUNDS_PER_STEP} 轮模型循环，仍未形成可验收结果`);
+    await options.store.createRecoveryPoint({ taskId: job.taskId, label: '模型轮次预算恢复点' }).catch(() => {});
+    throw new ExecutionControlSignal('checkpoint', `当前步骤经过 ${MAX_MODEL_ROUNDS_PER_STEP} 轮仍未形成可验收结果。系统已保存目标、证据、未决问题和当前步骤，没有判定失败；可从恢复点继续或更换模型后继续。`);
   }
 
   function formalStep(runId, step) {
@@ -701,6 +750,23 @@ function createNativeExecutionAdapter(options) {
               }
             }, '原生 Adapter 等待用户条件');
           } catch {}
+        } else if (error.kind === 'checkpoint') {
+          try {
+            const { contextRouter } = await loadEngineModules();
+            await updateRun(job.taskId, (run) => {
+              run.status = 'paused'; run.phase = 'blocked'; run.lastError = undefined;
+              run.steps.forEach((step) => { if (step.status === 'running') step.status = 'paused'; });
+              run.handoff = { ts: Date.now(), completed: run.steps.filter((item) => item.status === 'completed').map((item) => item.title), blocked: error.message,
+                nextAction: '点击继续会从当前未完成步骤恢复；也可以先更换模型或补充一条新要求。' };
+              if (run.recoveryContext) {
+                run.recoveryContext.summary = '执行预算达到阶段上限，任务已安全保存为可恢复状态，不是失败。';
+                run.recoveryContext.autoResume = false;
+                run.recoveryContext.interruptedAt = Date.now();
+                run.recoveryContext.interruptionReason = error.message;
+              }
+              run.recoveryCapsule = contextRouter.createRecoveryCapsule(run, { reason: '执行预算阶段交接' });
+            }, '原生 Adapter 达到预算后写入可恢复交接');
+          } catch {}
         }
       } else {
         job.state = 'failed';
@@ -756,18 +822,37 @@ function createNativeExecutionAdapter(options) {
     if (command.type === 'stop' || command.type === 'close') { job.control = command.type; job.abortController?.abort(); emit(job, 'control_received', { control: command.type }); }
   }
 
-  function steer(taskId, message) {
+  async function steer(taskId, message) {
     const job = jobs.get(String(taskId || ''));
     const value = text(message, 2000);
     if (!job || !ACTIVE_JOB_STATES.has(job.state)) return { ok: false, error: '任务当前没有由原生 Adapter 执行' };
     if (!value) return { ok: false, error: '插话内容不能为空' };
+    const { contextRouter } = await loadEngineModules();
+    const current = await readRun(job.taskId);
+    const routed = current ? contextRouter.routeTaskInput(current, value) : { route: contextRouter.classifyTaskInput(value, { status: job.state }) };
     job.steering.push(value);
     if (job.steering.length > 20) job.steering.splice(0, job.steering.length - 20);
-    if (job.state === 'running') {
+    job.steeringRoutes ||= [];
+    job.steeringRoutes.push(routed.route);
+    if (job.steeringRoutes.length > 20) job.steeringRoutes.splice(0, job.steeringRoutes.length - 20);
+    if (routed.run) {
+      await updateRun(job.taskId, (next) => {
+        next.context = routed.run.context;
+        next.recoveryContext = routed.run.recoveryContext;
+        next.recoveryCapsule = routed.run.recoveryCapsule;
+      }, `上下文路由：${routed.route.kind} -> ${routed.route.action}`);
+    }
+    if (routed.route.action === 'pause') {
+      job.control = 'pause';
+      job.abortController?.abort();
+    } else if (routed.route.action === 'stop') {
+      job.control = 'stop';
+      job.abortController?.abort();
+    } else if (job.state === 'running' && routed.route.shouldPreempt) {
       job.interruptReason = 'steer';
       job.abortController?.abort();
     }
-    emit(job, 'steering_received', { message: value });
+    emit(job, 'steering_received', { message: value, route: routed.route });
     return { ok: true, job: safeJob(job) };
   }
 

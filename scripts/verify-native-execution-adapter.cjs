@@ -108,11 +108,18 @@ async function main() {
     members: run.memberSnapshot.map((member) => ({ ...member, modelConfig: { apiHost: 'https://mock.invalid/v1', apiKey: 'NATIVE_TEST_SECRET', model: 'mock-model', contextWindowTokens: 64000 } })),
   });
   assert.equal(started.ok, true, started.error);
-  const completed = await waitFor(async () => {
+  let completed;
+  try {
+    completed = await waitFor(async () => {
+      const snapshot = await store.read();
+      const current = snapshot.runs.find((item) => item.id === run.id);
+      return current?.status === 'completed' ? current : null;
+    });
+  } catch (error) {
     const snapshot = await store.read();
-    const current = snapshot.runs.find((item) => item.id === run.id);
-    return current?.status === 'completed' ? current : null;
-  });
+    console.error(JSON.stringify({ status: adapter.status(run.id), run: snapshot.runs.find((item) => item.id === run.id), events: adapter.events(run.id).events }, null, 2));
+    throw error;
+  }
   assert.equal(writeExecutions, 1, '完全相同的 write_file 不应真实执行两次');
   assert(completed.evidence.some((item) => item.kind === 'file' && item.verified), '缺少文件证据');
   assert(completed.evidence.some((item) => item.kind === 'review' && item.verified), '缺少审查证据');
@@ -206,7 +213,7 @@ async function main() {
   const steeringRun = singleStepRun('native-steering', '生成可验证报告');
   await steeringAdapter.start({ taskId: steeringRun.id, run: steeringRun, members: queueMembers(steeringRun) });
   await waitFor(() => steeringFirstRequest);
-  const steeringResult = steeringAdapter.steer(steeringRun.id, '改为面向新手的说明，并保留报告文件。');
+  const steeringResult = await steeringAdapter.steer(steeringRun.id, '改为面向新手的说明，并保留报告文件。');
   assert.equal(steeringResult.ok, true);
   const steeredCompleted = await waitFor(async () => {
     const snapshot = await store.read();
@@ -216,17 +223,32 @@ async function main() {
   assert.equal(steeringAbortCount, 1, '插话必须取消正在进行的模型请求');
   assert(steeringAdapter.events(steeringRun.id).events.some((event) => event.type === 'steering_preempted'), '缺少插话抢占事件');
   assert.equal(steeredCompleted.status, 'completed', JSON.stringify({ status: steeredCompleted.status, lastError: steeredCompleted.lastError, handoff: steeredCompleted.handoff, events: steeringAdapter.events(steeringRun.id).events.map((event) => event.type) }));
+  assert.equal(steeredCompleted.recoveryCapsule?.recoveryVersion, 1, '插话没有写入长期恢复胶囊');
+  assert(steeredCompleted.context?.events?.some((event) => event.source === 'user' && /新手/u.test(event.summary)), '插话没有进入结构化任务上下文');
+
+  const budgetFetch = async () => modelResponse({ role: 'assistant', content: '仍在准备，没有真实交付文件。' }, { prompt_tokens: 20, completion_tokens: 8 });
+  const budgetAdapter = createNativeExecutionAdapter({ projectRoot: path.resolve(__dirname, '..'), store, worker, toolRuntime, sessionId: 'native-test-session', fetchImpl: budgetFetch });
+  const budgetRun = singleStepRun('native-budget-checkpoint', '生成并写入真实报告文件');
+  await budgetAdapter.start({ taskId: budgetRun.id, run: budgetRun, members: queueMembers(budgetRun) });
+  const budgetJob = await waitFor(() => budgetAdapter.status(budgetRun.id).job?.state === 'paused' ? budgetAdapter.status(budgetRun.id).job : null, 15000);
+  const budgetSnapshot = (await store.read()).runs.find((item) => item.id === budgetRun.id);
+  assert.equal(budgetSnapshot.status, 'paused', '达到轮次预算后应安全暂停而不是标记失败');
+  assert.match(budgetSnapshot.handoff.nextAction, /继续/u);
+  assert.equal(budgetSnapshot.recoveryCapsule?.recoveryVersion, 1);
+  assert(budgetAdapter.events(budgetRun.id).events.some((event) => event.type === 'context_compacted'), '长任务没有执行阶段压缩');
+  assert.equal((await store.listRecoveryPoints({ taskId: budgetRun.id })).recoveryPoints.length > 0, true, '长任务没有创建恢复点');
 
   adapter.stopAll();
   pauseAdapter.stopAll();
   queueAdapter.stopAll();
   waitingAdapter.stopAll();
   steeringAdapter.stopAll();
+  budgetAdapter.stopAll();
   worker.stop();
   await new Promise((resolve) => setTimeout(resolve, 100));
   await fs.rm(root, { recursive: true, force: true });
   console.log('native execution adapter verification passed');
-  console.log(JSON.stringify({ completed: completed.status, writeExecutions, messages: completed.executionMessages.length, paused: pausedJob.state, queued: queuedStatus.job.queuePosition, awaitingUser: waitingJob.state, steeringAbortCount, credentialsPersisted: false }, null, 2));
+  console.log(JSON.stringify({ completed: completed.status, writeExecutions, messages: completed.executionMessages.length, paused: pausedJob.state, queued: queuedStatus.job.queuePosition, awaitingUser: waitingJob.state, budgetCheckpoint: budgetJob.state, steeringAbortCount, credentialsPersisted: false }, null, 2));
 }
 
 main().catch((error) => {

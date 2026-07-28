@@ -215,9 +215,17 @@ export interface TaskRecoveryContext {
   unresolvedIssues: string[];
   steeringMessages: string[];
   budget: {
+    budgetVersion?: number;
     toolAttempts: number;
     promptTokens?: number;
+    completionTokens?: number;
+    estimatedTokens?: number;
     contextWindowTokens?: number;
+    reserveTokens?: number;
+    modelRounds?: number;
+    noProgressRounds?: number;
+    stage?: number;
+    compactions?: number;
     updatedAt: number;
   };
   interruptedAt?: number;
@@ -332,6 +340,8 @@ export interface TaskRun {
   evidence?: TaskEvidence[];
   handoff?: { ts: number; completed: string[]; blocked: string; nextAction: string };
   recoveryContext?: TaskRecoveryContext;
+  /** 可校验的长期任务恢复胶囊，只保存目标、结构化证据、未决问题和预算，不保存凭据。 */
+  recoveryCapsule?: import('./engine/taskContextRouter.mjs').TaskRecoveryCapsule;
   /** Versioned execution contract and durable step runner state. */
   contract?: TaskContract;
   plan?: TaskPlan;
