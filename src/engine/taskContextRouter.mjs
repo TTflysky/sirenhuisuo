@@ -126,15 +126,86 @@ function messageText(message) {
   try { return JSON.stringify(message?.content ?? ''); } catch { return ''; }
 }
 
+function toolCallIds(message) {
+  return Array.isArray(message?.tool_calls)
+    ? message.tool_calls.map((call) => String(call?.id || '')).filter(Boolean)
+    : [];
+}
+
+/**
+ * Build atomic message units before compaction. One assistant tool-call message
+ * and all immediately following matching tool results are always one unit.
+ */
+export function groupAtomicMessages(messages) {
+  const source = Array.isArray(messages) ? messages : [];
+  const units = [];
+  for (let index = 0; index < source.length;) {
+    const message = source[index];
+    const ids = toolCallIds(message);
+    if (message?.role !== 'assistant' || ids.length === 0) {
+      units.push({ start: index, end: index + 1, messages: [clone(message)], kind: message?.role === 'tool' ? 'orphan-tool' : 'message', complete: message?.role !== 'tool' });
+      index += 1;
+      continue;
+    }
+    const expected = new Set(ids);
+    const found = new Set();
+    let end = index + 1;
+    while (end < source.length && source[end]?.role === 'tool') {
+      const callId = String(source[end]?.tool_call_id || '');
+      if (!expected.has(callId)) break;
+      found.add(callId);
+      end += 1;
+    }
+    units.push({ start: index, end, messages: clone(source.slice(index, end)), kind: 'tool-group', complete: ids.every((id) => found.has(id)), toolCallIds: ids });
+    index = end;
+  }
+  return units;
+}
+
+export function validateToolMessageSequence(messages) {
+  const units = groupAtomicMessages(messages);
+  const orphanTools = units.filter((unit) => unit.kind === 'orphan-tool').map((unit) => unit.start);
+  const incompleteGroups = units.filter((unit) => unit.kind === 'tool-group' && !unit.complete).map((unit) => ({ start: unit.start, toolCallIds: unit.toolCallIds }));
+  return { valid: orphanTools.length === 0 && incompleteGroups.length === 0, orphanTools, incompleteGroups };
+}
+
+function summarizeAtomicUnit(unit) {
+  if (unit.kind !== 'tool-group') return unit.messages.map((message) => `${message.role}：${text(messageText(message), 260)}`);
+  const assistant = unit.messages[0];
+  const calls = Array.isArray(assistant.tool_calls) ? assistant.tool_calls : [];
+  const results = new Map(unit.messages.slice(1).map((message) => [String(message.tool_call_id || ''), text(messageText(message), 260)]));
+  return calls.map((call) => {
+    const id = String(call?.id || '');
+    const name = text(call?.function?.name || 'unknown_tool', 100);
+    const result = results.get(id);
+    return `工具证据：${name}（${result ? `已有结果：${result}` : '结果尚未返回'}）`;
+  });
+}
+
 export function compactMessageWindow(messages, options = {}) {
   const source = Array.isArray(messages) ? messages : [];
   if (source.length <= 8) return { messages: clone(source), removed: 0, summary: '' };
-  const system = source.filter((message) => message.role === 'system').slice(0, 1);
-  const tail = source.slice(-Math.max(6, Number(options.keepRecent) || 10));
-  const removed = source.slice(system.length, Math.max(system.length, source.length - tail.length));
-  const facts = removed.slice(-24).map((message) => `${message.role}：${text(messageText(message), 260)}`).filter((item) => item.length > 3);
+  const units = groupAtomicMessages(source);
+  const firstSystemEnd = source[0]?.role === 'system' ? 1 : 0;
+  const requestedTailStart = Math.max(firstSystemEnd, source.length - Math.max(6, Number(options.keepRecent) || 10));
+  const boundaryUnit = units.find((unit) => unit.start < requestedTailStart && unit.end > requestedTailStart)
+    || units.find((unit) => unit.start >= requestedTailStart);
+  let tailStart = boundaryUnit?.start ?? requestedTailStart;
+  // An unfinished call must remain with all messages after it. Moving the
+  // boundary backwards preserves the source sequence and never invents a tool result.
+  const unfinished = units.find((unit) => unit.kind === 'tool-group' && !unit.complete && unit.start < tailStart);
+  if (unfinished) tailStart = unfinished.start;
+  if (tailStart <= firstSystemEnd) return { messages: clone(source), removed: 0, summary: '', protectedToolGroups: units.filter((unit) => unit.kind === 'tool-group').length };
+  const removedUnits = units.filter((unit) => unit.start >= firstSystemEnd && unit.end <= tailStart);
+  const removed = source.slice(firstSystemEnd, tailStart);
+  const facts = removedUnits.slice(-24).flatMap(summarizeAtomicUnit).filter((item) => item.length > 3);
   const summary = `阶段压缩摘要（仅压缩对话，原始目标与结构化证据仍以任务账本为准）：\n${facts.map((item) => `- ${item}`).join('\n')}`.slice(0, 7000);
-  return { messages: [...system, { role: 'system', content: summary }, ...tail], removed: removed.length, summary };
+  const compacted = [
+    ...(firstSystemEnd ? [clone(source[0])] : []),
+    { role: 'system', content: summary },
+    ...clone(source.slice(tailStart)),
+  ];
+  return { messages: compacted, removed: removed.length, summary, protectedToolGroups: units.filter((unit) => unit.kind === 'tool-group' && unit.start >= tailStart).length };
 }
 
 export function createRecoveryCapsule(run, input = {}) {

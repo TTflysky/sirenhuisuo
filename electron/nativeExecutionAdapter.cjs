@@ -22,7 +22,7 @@ class ExecutionControlSignal extends Error {
   constructor(kind, message) { super(message || kind); this.name = 'ExecutionControlSignal'; this.kind = kind; }
 }
 
-function clone(value) { return JSON.parse(JSON.stringify(value)); }
+function clone(value) { return value === undefined ? undefined : JSON.parse(JSON.stringify(value)); }
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 function text(value, limit = 12000) { return String(value ?? '').trim().slice(0, limit); }
 function stable(value) {
@@ -439,12 +439,15 @@ function createNativeExecutionAdapter(options) {
 
   async function executeStep(job, run, step, member) {
     const { fidelity, toolRegistry, contextRouter } = await loadEngineModules();
+    const layeredMemory = options.memoryManager
+      ? await options.memoryManager.context({ query: run.goal || run.request, teamId: run.teamId, employeeId: member.id, limit: 16 }).catch(() => ({ context: '' }))
+      : { context: '' };
     const stepRecoveryPrompt = contextRouter.buildRecoveryPrompt({
       ...run,
       steps: run.steps.filter((item) => item.status === 'completed' || item.id === step.id),
     });
     const messages = [
-      { role: 'system', content: `${buildSystem(run, step, member, job)}\n\n${stepRecoveryPrompt}` },
+      { role: 'system', content: `${buildSystem(run, step, member, job)}${layeredMemory.context ? `\n\n## 太极分层热记忆\n${layeredMemory.context}\n\n以上记忆只作为可复用背景；与老板当前明确要求冲突时，以当前要求为准。` : ''}\n\n${stepRecoveryPrompt}` },
       buildUserTurn(run, step, job),
     ];
     const registry = toolRegistry.buildToolRegistry([...options.toolRuntime.definitions, ...(job.connectorTools || [])]);
@@ -499,12 +502,15 @@ function createNativeExecutionAdapter(options) {
         appliedSteering = job.steering.length;
       }
       job.modelRounds += 1;
-      const response = await callModel(job, member, messages, tools);
+      const modelMember = step.kind === 'review' && job.reviewModelConfig
+        ? { ...member, modelConfig: job.reviewModelConfig }
+        : member;
+      const response = await callModel(job, modelMember, messages, tools);
       const message = response.message;
       const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
       liveBudget = contextRouter.recordContextUsage({
         ...liveBudget,
-        contextWindowTokens: Number(member.modelConfig?.contextWindowTokens) || liveBudget.contextWindowTokens,
+        contextWindowTokens: Number(modelMember.modelConfig?.contextWindowTokens) || liveBudget.contextWindowTokens,
       }, {
         promptTokens: Number(response.usage.prompt_tokens) || 0,
           completionTokens: Number(response.usage.completion_tokens) || 0,
@@ -761,6 +767,13 @@ function createNativeExecutionAdapter(options) {
       if (next.recoveryContext) next.recoveryContext.summary = '任务已由主进程原生 Adapter 完成并通过验收。';
     }, '原生 Adapter 完成最终验收');
     await checkpoint(job, { kind: 'run_finished', finalStatus: 'completed', summary: '主进程原生 Adapter 已完成任务并通过验收' });
+    if (options.learningReviewQueue) {
+      const completedRun = await readRun(job.taskId);
+      void options.learningReviewQueue.enqueue(completedRun, {
+        reviewModelConfig: job.reviewModelConfig,
+        memoryWriteApproval: job.memoryWriteApproval,
+      }).then(() => emit(job, 'learning_review_queued', { taskId: job.taskId })).catch(() => {});
+    }
   }
 
   async function execute(job) {
@@ -861,6 +874,12 @@ function createNativeExecutionAdapter(options) {
         job.lastError = text(error?.message || error, 1200);
         try { await checkpoint(job, { kind: 'run_failed', summary: job.lastError }); } catch {}
         emit(job, 'job_failed', { error: job.lastError });
+        if (options.learningReviewQueue) {
+          void readRun(job.taskId).then((failedRun) => failedRun && options.learningReviewQueue.enqueue(failedRun, {
+            reviewModelConfig: job.reviewModelConfig,
+            memoryWriteApproval: job.memoryWriteApproval,
+          })).catch(() => {});
+        }
       }
       job.finishedAt = Date.now();
     } finally {
@@ -898,6 +917,8 @@ function createNativeExecutionAdapter(options) {
       jobId: `native-job-${taskId}-${crypto.randomUUID()}`,
       taskId, state: 'queued', createdAt: Date.now(), updatedAt: Date.now(),
       members, attachments: clone(input.attachments || []), extraSystemContext: text(input.extraSystemContext, 80000),
+      reviewModelConfig: clone(input.reviewModelConfig || undefined),
+      memoryWriteApproval: input.memoryWriteApproval !== false,
       executionPolicy: clone(input.executionPolicy || { sandboxEnabled: true, approvalMode: 'delegate', connectorApprovalMode: 'delegate' }),
       connectors: clone(input.connectors || []), connectorActions,
       connectorTools: clone(input.connectorTools || []), steering: [], events: [], eventSequence: 0, messageSequence: 0,

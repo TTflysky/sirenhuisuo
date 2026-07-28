@@ -12,6 +12,7 @@ const MAX_SKILL_BUNDLE_FILES = 160;
 const MAX_SKILL_BUNDLE_BYTES = 8 * 1024 * 1024;
 const MAX_SKILL_ARCHIVE_BYTES = 12 * 1024 * 1024;
 const MAX_SKILL_EXPANDED_BYTES = 16 * 1024 * 1024;
+const SKILL_DRAFT_SCHEMA = 1;
 
 function uniqueRoots(projectRoot) {
   const userProfile = process.env.USERPROFILE || process.env.HOME || '';
@@ -104,9 +105,11 @@ async function scanSkills(projectRoot) {
           let health = 'ready';
           let healthMessage;
           let sourceUrl;
+          let origin = root === userSkillsRoot ? 'manual' : 'system';
           try {
             const metadata = JSON.parse(await fs.readFile(path.join(path.dirname(real), '.taiji-skill.json'), 'utf8'));
             sourceUrl = metadata.requestedSourceUrl || metadata.sourceUrl;
+            if (metadata.origin === 'auto') origin = 'auto';
             if (metadata.installMode === 'single-file') {
               health = 'limited';
               healthMessage = '此技能仅安装了 SKILL.md；如原作者依赖脚本或参考资料，请从完整目录重新安装。';
@@ -138,6 +141,7 @@ async function scanSkills(projectRoot) {
             quarantined: health === 'broken',
             requirements,
             sourceUrl,
+            origin,
             _path: real,
           });
         } catch {}
@@ -431,7 +435,14 @@ async function replaceSkillDirectoryAtomically(targetDir, stageDir) {
   const target = path.resolve(targetDir);
   const stage = path.resolve(stageDir);
   const skillsRoot = path.dirname(target);
-  if (path.dirname(stage) !== skillsRoot || target === stage) throw new Error('技能暂存目录不安全');
+  const [realSkillsRoot, realStageRoot] = await Promise.all([
+    fs.realpath(skillsRoot),
+    fs.realpath(path.dirname(stage)),
+  ]);
+  const sameRoot = process.platform === 'win32'
+    ? realSkillsRoot.toLocaleLowerCase() === realStageRoot.toLocaleLowerCase()
+    : realSkillsRoot === realStageRoot;
+  if (!sameRoot || target === stage) throw new Error('技能暂存目录不安全');
   try {
     await validateStagedSkill(stage);
   } catch (error) {
@@ -589,8 +600,146 @@ async function repairSkill(projectRoot, id) {
   const found = (await scanSkills(projectRoot)).find((item) => item.id === id);
   if (!found) throw new Error('技能不存在或已移除');
   if (found.scope !== 'mine') throw new Error('内置技能随客户端更新修复，不能单独覆盖');
+  if (found.origin === 'auto') throw new Error('自动 Skill 只能通过复盘草案的精确补丁更新，不能从虚拟来源重装');
   if (!found.sourceUrl) throw new Error('这个旧技能没有记录来源地址，请从原地址重新安装');
   return installSkill(projectRoot, { sourceUrl: found.sourceUrl, name: found.name });
 }
 
-module.exports = { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill, inspectSkillSource, repairSkill, validateZipArchive, validateStagedSkill, replaceSkillDirectoryAtomically, MAX_BODY_BYTES };
+function skillDraftRoot() {
+  const userProfile = process.env.USERPROFILE || process.env.HOME || '';
+  if (!userProfile) throw new Error('无法定位当前用户目录');
+  return path.resolve(userProfile, '.workbuddy', 'skill-drafts');
+}
+
+function countExact(source, needle) {
+  if (!needle) return 0;
+  let count = 0;
+  let cursor = 0;
+  while ((cursor = source.indexOf(needle, cursor)) >= 0) { count += 1; cursor += needle.length; }
+  return count;
+}
+
+function skillDraftManifest(input) {
+  const name = String(input?.name || '').trim().slice(0, 80);
+  const description = String(input?.description || '').trim().slice(0, 300);
+  const instructions = String(input?.content || '').trim().slice(0, MAX_BODY_BYTES);
+  if (!name || !instructions) throw new Error('Skill 草案缺少名称或操作说明');
+  if (/^---\s*\r?\n[\s\S]*?\r?\n---\s*(?:\r?\n|$)/u.test(instructions)) return instructions;
+  return `---\nname: ${name.replace(/[\r\n:]/gu, ' ')}\ndescription: ${(description || '太极任务复盘生成的待审核 Skill').replace(/[\r\n]/gu, ' ')}\nversion: 0.1.0\norigin: auto\n---\n\n# ${name}\n\n${instructions}\n`;
+}
+
+async function createSkillDraft(projectRoot, input) {
+  const action = input?.action === 'patch' ? 'patch' : 'create';
+  const name = String(input?.name || input?.skillName || '').trim().slice(0, 80);
+  if (!name) throw new Error('Skill 草案缺少名称');
+  const draftRoot = skillDraftRoot();
+  await fs.mkdir(draftRoot, { recursive: true });
+  const draftId = `skill-draft-${Date.now()}-${crypto.randomBytes(5).toString('hex')}`;
+  const draftDir = path.join(draftRoot, draftId);
+  await fs.mkdir(draftDir, { recursive: true });
+  const proposal = {
+    schema: SKILL_DRAFT_SCHEMA,
+    id: draftId,
+    status: 'pending',
+    action,
+    name,
+    description: String(input?.description || '').trim().slice(0, 300),
+    content: action === 'create' ? skillDraftManifest(input) : undefined,
+    targetSkillName: action === 'patch' ? String(input?.targetSkillName || name).trim().slice(0, 80) : undefined,
+    oldString: action === 'patch' ? String(input?.oldString || '').slice(0, 12000) : undefined,
+    newString: action === 'patch' ? String(input?.newString || '').slice(0, 12000) : undefined,
+    reason: String(input?.reason || '任务复盘发现可复用流程').trim().slice(0, 800),
+    taskId: String(input?.taskId || '').trim().slice(0, 180) || undefined,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+  if (action === 'patch' && (!proposal.oldString || !proposal.newString)) throw new Error('Skill 补丁草案缺少精确旧文本或新文本');
+  await fs.writeFile(path.join(draftDir, 'proposal.json'), `${JSON.stringify(proposal, null, 2)}\n`, 'utf8');
+  if (proposal.content) await fs.writeFile(path.join(draftDir, 'SKILL.md'), proposal.content, 'utf8');
+  return { ok: true, draft: proposal };
+}
+
+async function listSkillDrafts() {
+  const draftRoot = skillDraftRoot();
+  const drafts = [];
+  let directories = [];
+  try { directories = await fs.readdir(draftRoot, { withFileTypes: true }); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+  for (const directory of directories) {
+    if (!directory.isDirectory() || !directory.name.startsWith('skill-draft-')) continue;
+    try {
+      const proposal = JSON.parse(await fs.readFile(path.join(draftRoot, directory.name, 'proposal.json'), 'utf8'));
+      if (proposal?.schema === SKILL_DRAFT_SCHEMA) drafts.push(proposal);
+    } catch {}
+  }
+  return drafts.sort((a, b) => b.createdAt - a.createdAt);
+}
+
+async function reviewSkillDraft(projectRoot, draftId, decision, note = '') {
+  const draftRoot = skillDraftRoot();
+  const safeId = String(draftId || '');
+  if (!/^skill-draft-[a-z0-9-]+$/iu.test(safeId)) throw new Error('Skill 草案 ID 无效');
+  const draftDir = path.resolve(draftRoot, safeId);
+  if (path.dirname(draftDir) !== draftRoot) throw new Error('Skill 草案路径不安全');
+  const proposalPath = path.join(draftDir, 'proposal.json');
+  const proposal = JSON.parse(await fs.readFile(proposalPath, 'utf8'));
+  if (proposal.status !== 'pending') throw new Error('这条 Skill 草案已经处理');
+  proposal.status = decision === 'approve' ? 'approved' : 'rejected';
+  proposal.reviewNote = String(note || '').trim().slice(0, 500) || undefined;
+  proposal.updatedAt = Date.now();
+  if (decision !== 'approve') {
+    await fs.writeFile(proposalPath, `${JSON.stringify(proposal, null, 2)}\n`, 'utf8');
+    return { ok: true, action: 'rejected', draft: proposal };
+  }
+
+  const userProfile = process.env.USERPROFILE || process.env.HOME || '';
+  const skillsRoot = path.resolve(userProfile, '.workbuddy', 'skills');
+  const slug = skillDirectoryName(proposal.name);
+  if (!slug) throw new Error('无法生成安全的自动 Skill 目录名');
+  if (proposal.action === 'create') {
+    const targetDir = path.resolve(skillsRoot, slug);
+    const existing = (await scanSkills(projectRoot)).find((item) => item.name.toLocaleLowerCase() === proposal.name.toLocaleLowerCase());
+    if (existing) throw new Error('同名 Skill 已存在，自动草案不能覆盖现有 Skill');
+    const stageDir = await createSkillStage(skillsRoot, slug);
+    const content = skillDraftManifest(proposal);
+    try {
+      await fs.writeFile(path.join(stageDir, 'SKILL.md'), content, 'utf8');
+      await fs.writeFile(path.join(stageDir, '.taiji-skill.json'), JSON.stringify({
+        schema: 1, installMode: 'single-file', origin: 'auto', sourceUrl: `taiji-review:${proposal.taskId || proposal.id}`,
+        requestedSourceUrl: `taiji-review:${proposal.taskId || proposal.id}`, contentHash: crypto.createHash('sha256').update(content).digest('hex'),
+        files: 1, installedAt: new Date().toISOString(), approvedDraftId: proposal.id,
+      }, null, 2), 'utf8');
+      await replaceSkillDirectoryAtomically(targetDir, stageDir);
+    } catch (error) {
+      await fs.rm(stageDir, { recursive: true, force: true }).catch(() => {});
+      throw error;
+    }
+  } else {
+    const target = (await scanSkills(projectRoot)).find((item) => item.name.toLocaleLowerCase() === String(proposal.targetSkillName).toLocaleLowerCase());
+    if (!target) throw new Error('要更新的自动 Skill 不存在');
+    if (target.scope !== 'mine' || target.origin !== 'auto') throw new Error('只允许更新由太极复盘生成的自动 Skill；内置和手动安装 Skill 不会被后台修改');
+    const targetDir = path.dirname(target._path);
+    const source = await fs.readFile(target._path, 'utf8');
+    const matches = countExact(source, proposal.oldString);
+    if (matches !== 1) throw new Error(`精确补丁要求旧文本恰好匹配一次，当前匹配 ${matches} 次`);
+    const updated = source.replace(proposal.oldString, proposal.newString);
+    const stageDir = await createSkillStage(skillsRoot, path.basename(targetDir));
+    try {
+      await fs.cp(targetDir, stageDir, { recursive: true, errorOnExist: false, force: false });
+      await fs.writeFile(path.join(stageDir, 'SKILL.md'), updated, 'utf8');
+      const metadataPath = path.join(stageDir, '.taiji-skill.json');
+      const metadata = JSON.parse(await fs.readFile(metadataPath, 'utf8'));
+      metadata.contentHash = crypto.createHash('sha256').update(updated).digest('hex');
+      metadata.updatedAt = new Date().toISOString();
+      metadata.approvedDraftId = proposal.id;
+      await fs.writeFile(metadataPath, JSON.stringify(metadata, null, 2), 'utf8');
+      await replaceSkillDirectoryAtomically(targetDir, stageDir);
+    } catch (error) {
+      await fs.rm(stageDir, { recursive: true, force: true }).catch(() => {});
+      throw error;
+    }
+  }
+  await fs.writeFile(proposalPath, `${JSON.stringify(proposal, null, 2)}\n`, 'utf8');
+  return { ok: true, action: proposal.action === 'create' ? 'created' : 'patched', draft: proposal };
+}
+
+module.exports = { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill, inspectSkillSource, repairSkill, createSkillDraft, listSkillDrafts, reviewSkillDraft, validateZipArchive, validateStagedSkill, replaceSkillDirectoryAtomically, MAX_BODY_BYTES };

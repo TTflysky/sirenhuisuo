@@ -55,6 +55,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   skillsInstall: (input) => ipcRenderer.invoke('skills:install', input),
   skillsInspectSource: (sourceUrl) => ipcRenderer.invoke('skills:inspectSource', sourceUrl),
   skillsRepair: (id) => ipcRenderer.invoke('skills:repair', id),
+  skillDrafts: () => ipcRenderer.invoke('skills:drafts'),
+  reviewSkillDraft: (input) => ipcRenderer.invoke('skills:reviewDraft', input),
+  memoryList: (input) => ipcRenderer.invoke('memory:list', input),
+  memoryContext: (input) => ipcRenderer.invoke('memory:context', input),
+  memoryUpsert: (input) => ipcRenderer.invoke('memory:upsert', input),
+  memoryRemove: (input) => ipcRenderer.invoke('memory:remove', input),
+  memoryReviewProposal: (input) => ipcRenderer.invoke('memory:reviewProposal', input),
+  memoryImportLegacy: (input) => ipcRenderer.invoke('memory:importLegacy', input),
+  learningReviewStatus: (input) => ipcRenderer.invoke('learning-review:status', input),
+  learningReviewProcess: (input) => ipcRenderer.invoke('learning-review:process', input),
+  learningReviewRetry: (input) => ipcRenderer.invoke('learning-review:retry', input),
   openExternal: (url) => ipcRenderer.invoke('sys:openExternal', url),
 
   // 打开原生聊天窗口（真实桌面窗口，可自由拖动）

@@ -29,6 +29,7 @@ import {
   getToolReport,
   isToolResultSuccessful,
 } from '../../data/assistantPresentation';
+import { buildLayeredMemoryContext } from '../../data/layeredMemory';
 
 interface Props {
   empId: string;
@@ -392,10 +393,11 @@ export default function DmChatApp({ empId }: Props) {
     const history = historyOverride ?? msgs.slice(-8).map((m): ChatTurn => ({ role: m.roleId === 'human' ? 'user' : 'assistant', content: m.content }));
     const thoughtChain: ThoughtChainStep[] = [];
     const showThoughtChain = loadSettings().showThoughtChain !== false;
+    const layeredMemoryContext = await buildLayeredMemoryContext({ query: enriched, employeeId: empId, limit: 16 });
     const r = await runAgentLoop({
       turns: [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content: enriched }],
       tools: getRegisteredTools(), scene: 'dm', label: emp.name, modelConfig: getEmployeeModel(emp),
-      extraSystemContext: [emp.soul, skillContext].filter(Boolean).join('\n\n'), scope: `dm:${empId}`, attachments: imageAtts,
+      extraSystemContext: [emp.soul, layeredMemoryContext, skillContext].filter(Boolean).join('\n\n'), scope: `dm:${empId}`, attachments: imageAtts,
       workspaceId,
       shouldStop: executionControl.shouldStop,
       waitIfPaused: executionControl.waitIfPaused,

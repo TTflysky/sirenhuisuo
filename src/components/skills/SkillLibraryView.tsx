@@ -2,9 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { DeleteOutlined, DownloadOutlined, ExportOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import type { Skill } from '../../types';
 import { deleteSkill, inspectSkillSource, installSkill, listSkills, readSkill, repairSkill } from '../../data/skills';
-import type { SkillSourceInspection } from '../../electron';
+import type { SkillDraft, SkillSourceInspection } from '../../electron';
 
-type SkillTab = 'built-in' | 'mine' | 'market';
+type SkillTab = 'built-in' | 'mine' | 'drafts' | 'market';
 
 const SKILL_MARKETS = [
   {
@@ -58,11 +58,17 @@ export default function SkillLibraryView() {
   const [installing, setInstalling] = useState(false);
   const [inspection, setInspection] = useState<SkillSourceInspection | null>(null);
   const [repairing, setRepairing] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<SkillDraft[]>([]);
+  const [reviewingDraft, setReviewingDraft] = useState<string | null>(null);
 
   const refresh = async () => {
     setLoading(true);
     setError('');
-    try { setSkills(await listSkills()); }
+    try {
+      const [installed, draftResult] = await Promise.all([listSkills(), window.electronAPI?.skillDrafts?.()]);
+      setSkills(installed);
+      if (draftResult?.ok) setDrafts(draftResult.drafts ?? []);
+    }
     catch (e) { setError(e instanceof Error ? e.message : '技能扫描失败'); }
     finally { setLoading(false); }
   };
@@ -71,7 +77,7 @@ export default function SkillLibraryView() {
   const builtInCount = skills.filter((skill) => skill.scope !== 'mine').length;
   const mineCount = skills.filter((skill) => skill.scope === 'mine').length;
   const visibleSkills = useMemo(() => {
-    if (tab === 'market') return [];
+    if (tab === 'market' || tab === 'drafts') return [];
     const scoped = skills.filter((skill) => tab === 'mine' ? skill.scope === 'mine' : skill.scope !== 'mine');
     const needle = query.trim().toLowerCase();
     return needle ? scoped.filter((skill) => `${skill.name} ${skill.description} ${skill.source}`.toLowerCase().includes(needle)) : scoped;
@@ -136,6 +142,18 @@ export default function SkillLibraryView() {
     else if (!window.electronAPI) window.open(url, '_blank', 'noopener,noreferrer');
   };
 
+  const reviewDraft = async (draft: SkillDraft, decision: 'approve' | 'reject') => {
+    setReviewingDraft(draft.id);
+    setError('');
+    try {
+      const result = await window.electronAPI?.reviewSkillDraft?.({ draftId: draft.id, decision });
+      if (!result?.ok) throw new Error(result?.error || 'Skill 草案审核失败');
+      setNotice(decision === 'approve' ? `${draft.name} 已通过校验并安装` : `${draft.name} 草案已拒绝`);
+      await refresh();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Skill 草案审核失败'); }
+    finally { setReviewingDraft(null); }
+  };
+
   return (
     <div className="skill-library-view">
       <header className="skill-library-page-head">
@@ -151,6 +169,7 @@ export default function SkillLibraryView() {
       <nav className="skill-library-tabs" aria-label="技能分类">
         <button className={tab === 'built-in' ? 'active' : ''} onClick={() => setTab('built-in')}>内置 Skill <span>{builtInCount}</span></button>
         <button className={tab === 'mine' ? 'active' : ''} onClick={() => setTab('mine')}>我的 Skill <span>{mineCount}</span></button>
+        <button className={tab === 'drafts' ? 'active' : ''} onClick={() => setTab('drafts')}>复盘草案 <span>{drafts.filter((draft) => draft.status === 'pending').length}</span></button>
         <button className={tab === 'market' ? 'active' : ''} onClick={() => setTab('market')}>Skill 商城</button>
       </nav>
 
@@ -185,6 +204,19 @@ export default function SkillLibraryView() {
               <button onClick={() => void openMarket(market.url)}>打开 {market.name} <ExportOutlined /></button>
             </article>
           ))}
+        </div>
+      ) : tab === 'drafts' ? (
+        <div className="skill-grid">
+          {drafts.filter((draft) => draft.status === 'pending').length === 0 && <div className="skill-library-empty">暂无待审核草案。太极只会在任务复盘发现稳定、可复用流程时创建草案。</div>}
+          {drafts.filter((draft) => draft.status === 'pending').map((draft) => <article className="skill-grid-card skill-grid-card--open" key={draft.id}>
+            <div className="skill-grid-card-main">
+              <div className="skill-grid-card-icon">A</div>
+              <div className="skill-grid-card-name">{draft.name}</div>
+              <div className="skill-grid-card-desc">{draft.reason || draft.description || '任务复盘生成的待审核 Skill'}</div>
+              <div className="skill-grid-card-meta">{draft.action === 'create' ? '新建草案' : `精确更新 ${draft.targetSkillName}`} · {draft.taskId || '任务复盘'}</div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}><button className="btn btn-sm btn-primary" disabled={reviewingDraft === draft.id} onClick={() => void reviewDraft(draft, 'approve')}>批准并校验</button><button className="btn btn-sm" disabled={reviewingDraft === draft.id} onClick={() => void reviewDraft(draft, 'reject')}>拒绝</button></div>
+            </div>
+          </article>)}
         </div>
       ) : (
         <>

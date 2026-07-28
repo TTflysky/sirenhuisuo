@@ -6,7 +6,7 @@ const { exec, execFile } = require('child_process');
 const officeParser = require('officeparser');
 const { AlignmentType, Document, HeadingLevel, Packer, Paragraph, TextRun } = require('docx');
 const { initAutoUpdater } = require('./autoUpdate.cjs');
-const { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill, inspectSkillSource, repairSkill } = require('./skills.cjs');
+const { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill, inspectSkillSource, repairSkill, createSkillDraft, listSkillDrafts, reviewSkillDraft } = require('./skills.cjs');
 const { testObsidianVault, searchObsidianVault, readObsidianNote, fetchKnowledgeUrl, searchWeb } = require('./knowledge.cjs');
 const { version: APP_VERSION } = require('../package.json');
 const { sanitizeInjectedEnv, redactInjectedValues } = require('./secretSafety.cjs');
@@ -18,8 +18,11 @@ const { createNativeToolRuntime } = require('./nativeToolRuntime.cjs');
 const { createNativeExecutionAdapter } = require('./nativeExecutionAdapter.cjs');
 const { createWorktreeManager } = require('./worktreeManager.cjs');
 const { createEcosystemHealth } = require('./ecosystemHealth.cjs');
+const { createMemoryManager } = require('./memoryManager.cjs');
+const { createLearningReviewQueue } = require('./learningReviewQueue.cjs');
 // Isolate automated Electron verification from a user's real local data.
 if (process.env.TAIJI_TEST_USER_DATA) app.setPath('userData', path.resolve(process.env.TAIJI_TEST_USER_DATA));
+if (process.env.TAIJI_TEST_USER_DATA || process.env.TAIJI_DISABLE_HARDWARE_ACCELERATION === '1') app.disableHardwareAcceleration();
 if (process.env.TAIJI_TEST_DEBUG_PORT) app.commandLine.appendSwitch('remote-debugging-port', String(process.env.TAIJI_TEST_DEBUG_PORT));
 const log = require('electron-log');
 const APP_TITLE = `太极 AI 办公会所 v${APP_VERSION}`;
@@ -35,7 +38,14 @@ const worktreeManager = createWorktreeManager({
   workspaceRoot: WORKSPACE,
   stateRoot: path.join(app.getPath('userData'), 'task-runtime', 'git-worktrees'),
 });
+const PROJECT_ROOT = path.resolve(__dirname, '..');
 const taskRuntimeStore = createTaskRuntimeStore(path.join(app.getPath('userData'), 'task-runtime'));
+const memoryManager = createMemoryManager(path.join(app.getPath('userData'), 'taiji-memory'));
+const learningReviewQueue = createLearningReviewQueue(path.join(app.getPath('userData'), 'task-runtime'), {
+  memoryManager,
+  fetchImpl: (url, options) => net.fetch(url, options),
+  createSkillDraft: (input) => createSkillDraft(PROJECT_ROOT, input),
+});
 const taskWorker = createTaskWorker({
   rootDir: path.join(app.getPath('userData'), 'task-runtime'),
   store: taskRuntimeStore,
@@ -46,7 +56,6 @@ const taskWorker = createTaskWorker({
     }
   },
 });
-const PROJECT_ROOT = path.resolve(__dirname, '..');
 const nativeToolRuntime = createNativeToolRuntime({
   workspaceRoot: WORKSPACE,
   projectRoot: PROJECT_ROOT,
@@ -73,6 +82,8 @@ const ecosystemHealth = createEcosystemHealth({
   toolRuntime: nativeToolRuntime,
   worktreeManager,
   listSkills,
+  memoryManager,
+  learningReviewQueue,
 });
 const nativeExecutionAdapter = createNativeExecutionAdapter({
   projectRoot: PROJECT_ROOT,
@@ -80,6 +91,8 @@ const nativeExecutionAdapter = createNativeExecutionAdapter({
   worker: taskWorker,
   toolRuntime: nativeToolRuntime,
   worktreeManager,
+  memoryManager,
+  learningReviewQueue,
   sessionId: APP_SESSION_ID,
   fetchImpl: (url, options) => net.fetch(url, options),
   onChanged(event) {
@@ -1008,12 +1021,33 @@ function createWindow() {
     nativeExecutionAdapter.handleControl(command, result);
     return result;
   });
+  ipcMain.handle('skills:drafts', async () => {
+    try { return { ok: true, drafts: await listSkillDrafts() }; } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('skills:reviewDraft', async (_event, input) => {
+    try { return await reviewSkillDraft(PROJECT_ROOT, input?.draftId, input?.decision, input?.note); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
   ipcMain.handle('task-worker:status', async () => taskWorker.status());
   ipcMain.handle('task-worker:commands', async (_event, options) => taskWorker.readCommands(options));
   ipcMain.handle('task-execution:start', async (_event, input) => nativeExecutionAdapter.start(input));
   ipcMain.handle('task-execution:status', async (_event, taskId) => nativeExecutionAdapter.status(taskId));
   ipcMain.handle('task-execution:events', async (_event, input) => nativeExecutionAdapter.events(input?.taskId, input?.afterSequence));
   ipcMain.handle('task-execution:steer', async (_event, input) => nativeExecutionAdapter.steer(input?.taskId, input?.message));
+  ipcMain.handle('memory:list', async (_event, input) => memoryManager.list(input));
+  ipcMain.handle('memory:context', async (_event, input) => memoryManager.context(input));
+  ipcMain.handle('memory:upsert', async (_event, input) => {
+    try { return await memoryManager.upsert(input, { replaceExact: input?.replaceExact }); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('memory:remove', async (_event, input) => memoryManager.remove(input?.entryId, { reason: input?.reason }));
+  ipcMain.handle('memory:reviewProposal', async (_event, input) => {
+    try { return await memoryManager.reviewProposal(input?.proposalId, input?.decision, { reviewedBy: 'user', note: input?.note }); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('memory:importLegacy', async (_event, input) => {
+    try { return await memoryManager.importLegacy(input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('learning-review:status', async (_event, input) => learningReviewQueue.status(input));
+  ipcMain.handle('learning-review:process', async (_event, input) => learningReviewQueue.process(input));
+  ipcMain.handle('learning-review:retry', async (_event, input) => learningReviewQueue.retry(input?.itemId, input));
   ipcMain.handle('task-delegation:create', async (_event, input) => nativeExecutionAdapter.delegate(input?.taskId, input));
   ipcMain.handle('task-delegation:status', async (_event, taskId) => nativeExecutionAdapter.delegationStatus(taskId));
   ipcMain.handle('worktree:inspect', async (_event, sourceRepo) => worktreeManager.inspectRepository(sourceRepo));

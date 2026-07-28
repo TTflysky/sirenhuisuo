@@ -1,12 +1,12 @@
 # 太极项目当前交接
 
 > 更新时间：2026-07-29
-> 当前版本：`v0.28.0`
+> 当前版本：`v0.29.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
-> Release：`v0.23.0` 至 `v0.28.0` 已完成连续源码升级，最终由 `v0.28.0` 一次性统一发布
+> Release：`v0.29.0` 为本轮分层记忆、异步复盘与学习闭环大版本
 
-`v0.28.0` 已形成统一生态闭环：主进程集中检查版本身份、任务账本、后台 Worker、工具注册、Skill、物理工作区和 Git Worktree；设置诊断中心新增任务内核与恢复项，升级完成前也会执行同一套运行健康校验。
+`v0.29.0` 在现有架构上补齐双重记忆和学习闭环：团队共享经验与员工个人经验同时参与执行，真实验收路线自动沉淀，模型推断进入审批，重复流程只生成隔离 Skill 草案；没有替换现有任务内核、人格、员工、团队或聊天数据。
 
 ## 办公室端直接开始
 
@@ -27,6 +27,10 @@ npm.cmd run verify:agent-kernel
 npm.cmd run verify:execution-controller
 npm.cmd run verify:steering-e2e
 npm.cmd run verify:connector-adapters
+npm.cmd run verify:layered-memory
+npm.cmd run verify:learning-review
+npm.cmd run verify:context-tool-pairs
+npm.cmd run verify:skill-drafts
 npm.cmd run verify:native-execution
 npm.cmd run verify:package
 ```
@@ -190,10 +194,10 @@ npm.cmd run verify:package
 
 ## 安装与发布资产
 
-- 安装包：`release\taiji-office-setup-0.28.0.exe`
-- Blockmap：`release\taiji-office-setup-0.28.0.exe.blockmap`
+- 安装包：`release\taiji-office-setup-0.29.0.exe`
+- Blockmap：`release\taiji-office-setup-0.29.0.exe.blockmap`
 - 更新清单：`release\latest.yml`
-- 包内版本和三项资产将在 `publish:release` 内自动核对为 `0.28.0`，任一不一致都会停止上传。
+- 包内版本和三项资产将在 `publish:release` 内自动核对为 `0.29.0`，任一不一致都会停止上传。
 - 最终文件大小和 SHA-256 以 `npm.cmd run publish:release` 的成功输出及 GitHub Release digest 为准；发布脚本会逐项比对本地与远端，不再把易过期的单次构建摘要固化在交接文档中。
 - 解包版受控启动 8 秒保持运行，未出现启动即崩溃。
 - 安装目录只保留 `太极 AI 办公会所.exe` 和对应卸载程序，没有旧产品可执行文件残留。
@@ -204,6 +208,7 @@ npm.cmd run verify:package
 2. 源码开发版 Electron 运行时已从本机缓存恢复，并补齐 `path.txt` 定位文件；无窗口的 Electron 实网诊断可正常运行。带界面的端到端测试仍应先启动对应测试服务。
 3. 安装包没有代码签名证书，Windows SmartScreen 仍可能提示风险。
 4. 主前端 bundle 仍超过 500 KB，后续可做按模块懒加载，但不要与任务内核改动混在同一版本。
+5. 本机 Electron GPU 子进程以 `-1073741515` 退出；`--in-process-gpu` 可初始加载，但 CDP 或高压力渲染仍会终止。因此 `verify:memory-ui`、`verify:office-scroll` 和 `verify:team-window-layout` 需在显卡环境正常的机器补跑，普通浏览器的 1280x720 与 720x720 设置页布局已验证无横向溢出。
 
 ## 踩过的坑
 
@@ -216,7 +221,8 @@ npm.cmd run verify:package
 
 ## 下一步
 
-1. 在 GitHub Release 下载并覆盖安装 `v0.28.0`，统一验收 `v0.23.0` 至 `v0.28.0` 的连续升级结果。
-2. 验收发现的问题按同层级入口统一修复，不再恢复逐个截图、逐个小版本的发布节奏。
+1. 从 GitHub Release 下载并覆盖安装 `v0.29.0`，验收设置中的四层记忆、建议审批、复盘重试和技能库“复盘草案”。
+2. 用真实团队任务验证：共享团队经验只进入同团队，员工经验只进入对应员工，客户端重启后复盘状态保持不倒退。
+3. 验收发现的问题按同层级入口统一修复，不再恢复逐个截图、逐个小版本的发布节奏。
 
 每次完成后先升级版本并更新本文件，提交到干净的 `main`，然后运行 `npm.cmd run publish:release` 一次完成预检、回归、打包、推送、Release 上传和远端哈希校验。

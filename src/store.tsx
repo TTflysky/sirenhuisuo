@@ -44,6 +44,7 @@ import { applyModelTaskSummary, shouldModelSummarizeTaskContext } from './engine
 import { buildTaskHistoryPrompt, searchTaskRunHistory } from './engine/taskHistory.mjs';
 import { CONNECTOR_PRESETS, loadConnectors } from './data/connectors';
 import { getConnectorTools } from './engine/connectorTools';
+import { buildLayeredMemoryContext } from './data/layeredMemory';
 
 // ===== Action =====
 type Action =
@@ -846,10 +847,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     Promise.resolve().then(async () => {
       await claimWorkerLease();
       markRunExecuting();
+      const layeredMemoryContext = await buildLayeredMemoryContext({ query: opts?.userText || opts?.task?.title || '', teamId, limit: 18 });
       return runTeamDiscussion(
       team,
       stateRef.current.employees,
-      { ...(opts ?? {}), initialExecutionState: liveRun?.recoveryContext?.controller },
+      { ...(opts ?? {}), extraSystemContext: [opts?.extraSystemContext, layeredMemoryContext].filter(Boolean).join('\n\n'), initialExecutionState: liveRun?.recoveryContext?.controller },
       {
         onExecutionState(controller, emp, stepId) {
           latestExecutionState = controller;
@@ -1383,7 +1385,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     try {
       const assistantModel = client.getAssistantModel();
       const configuredPrompt = localStorage.getItem('hermes_office_assistant_system_prompt')?.trim();
-      const userContext = client.buildUserContext();
+      const layeredMemoryContext = await buildLayeredMemoryContext({ query: content, teamId: team.id, limit: 16 });
+      const userContext = [client.buildUserContext(), layeredMemoryContext].filter(Boolean).join('\n\n');
       const availableSkills = await listSkills().catch(() => []);
       const skillRoster = availableSkills.slice(0, 80).map((skill) => `${skill.name}${skill.description ? `：${skill.description.slice(0, 80)}` : ''}`).join('\n');
       const turns: client.ChatTurn[] = [
@@ -1443,6 +1446,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       attachments,
       extraSystemContext,
       executionPolicy: client.getExecutionPolicy(),
+      reviewModelConfig: client.getReviewModel(),
+      memoryWriteApproval: client.loadSettings().memoryWriteApproval !== false,
       connectors,
       connectorTools: getConnectorTools(),
     });
@@ -1500,6 +1505,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const run = createTaskRun(team, current.employees, request, plan, sourceMessageId, skillRefs);
     const historyMatches = searchTaskRunHistory(current.taskRuns, request, { teams: current.teams, limit: 4 });
     const historyContext = buildTaskHistoryPrompt(historyMatches);
+    const layeredMemoryContext = await buildLayeredMemoryContext({ query: request, teamId, limit: 18 });
     run.skillEvidence = skillBundle.evidence;
     appendTaskRunContext(run, {
       type: skillRefs.length ? 'decision' : 'progress', source: 'system',
@@ -1561,7 +1567,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return;
     }
     dispatch({ type: 'CREATE_TASK_RUN', run });
-    const extraSystemContext = [skillContext, historyContext, taskRunContextPrompt(run)].filter(Boolean).join('\n\n');
+    const extraSystemContext = [layeredMemoryContext, skillContext, historyContext, taskRunContextPrompt(run)].filter(Boolean).join('\n\n');
     const nativeResult = await startNativeTaskExecution(run, extraSystemContext, attachments);
     if (nativeResult) {
       if (!nativeResult.ok) {
@@ -1643,7 +1649,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
       dispatch({ type: 'UPDATE_TASK_RUN', run: resumedWithSkills });
       const workerPendingSteps = resumedWithSkills.steps.filter((step) => pendingStepIds.has(step.id));
-      const extraSystemContext = [skillBundle.context, taskRunContextPrompt(resumedWithSkills)].filter(Boolean).join('\n\n');
+      const layeredMemoryContext = await buildLayeredMemoryContext({ query: workerRun.goal || workerRun.request, teamId: workerRun.teamId, limit: 18 });
+      const extraSystemContext = [layeredMemoryContext, skillBundle.context, taskRunContextPrompt(resumedWithSkills)].filter(Boolean).join('\n\n');
       const nativeResult = await startNativeTaskExecution(resumedWithSkills, extraSystemContext);
       if (!nativeResult) {
         enqueueDiscussion(workerRun.teamId, { userText: workerRun.request, triggerMessageId: workerRun.sourceMessageId, discussionId: workerRun.id, forcedMemberIds: pending, runSteps: workerPendingSteps, maxRounds: workerPendingSteps.length, runId, workspaceId: workerRun.workspaceId, extraSystemContext }, 50);

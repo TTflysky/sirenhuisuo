@@ -2,7 +2,7 @@ const fs = require('fs/promises');
 const path = require('path');
 const { pathToFileURL } = require('url');
 
-const ECOSYSTEM_HEALTH_VERSION = 1;
+const ECOSYSTEM_HEALTH_VERSION = 2;
 
 function result(id, title, status, summary, detail, critical = false) {
   return { id, title, status, summary, detail, critical };
@@ -62,6 +62,38 @@ function createEcosystemHealth(options) {
     } catch (error) { return result('skills', '安装内置 Skill', 'blocked', '无法扫描安装 Skill', error?.message || String(error), true); }
   }
 
+  async function memoryCheck() {
+    try {
+      const snapshot = await options.memoryManager.list({ includeAudit: true });
+      if (!snapshot?.ok) return result('memory', '分层记忆事实源', 'blocked', '记忆事实源不可用', snapshot?.error || '无法读取分层记忆', true);
+      const entries = snapshot.entries || [];
+      const pending = (snapshot.proposals || []).filter((item) => item.status === 'pending');
+      const scopes = new Set(entries.map((item) => item.scope));
+      return result('memory', '分层记忆事实源', pending.length ? 'warning' : 'ready',
+        `${entries.length} 条记忆，${scopes.size}/4 个层级有内容${pending.length ? `，${pending.length} 条待审核` : ''}`,
+        pending.length ? '组织、团队、员工和用户记忆可读取；独立审查提出的新判断仍在等待用户批准。' : '校验和、原子写入、脱敏、去重和可读 Markdown 投影均可用。', true);
+    } catch (error) { return result('memory', '分层记忆事实源', 'blocked', '无法检查分层记忆', error?.message || String(error), true); }
+  }
+
+  async function learningReviewCheck() {
+    try {
+      const status = await options.learningReviewQueue.status();
+      if (!status?.ok) return result('learning-review', '任务复盘队列', 'warning', '复盘队列当前不可用', status?.error || '无法读取复盘队列', false);
+      const counts = status.counts || {};
+      const failed = Number(counts.failed) || 0;
+      const waiting = Number(counts.waiting_model) || 0;
+      const active = (Number(counts.queued) || 0) + (Number(counts.processing) || 0);
+      const state = failed || waiting ? 'warning' : 'ready';
+      const summary = `${Number(counts.completed) || 0} 项已完成${active ? `，${active} 项处理中` : ''}${waiting ? `，${waiting} 项等待审查模型` : ''}${failed ? `，${failed} 项失败` : ''}`;
+      const detail = failed
+        ? '失败复盘不会改变原任务结果，可在记忆页查看原因并单独重试。'
+        : waiting
+          ? '确定性的已验收经验已经保留；配置独立审查模型后可继续提炼推断性经验。'
+          : '复盘持久化、重启恢复和旁路执行均正常，不会阻塞主任务。';
+      return result('learning-review', '任务复盘队列', state, summary, detail, false);
+    } catch (error) { return result('learning-review', '任务复盘队列', 'warning', '无法检查复盘队列', error?.message || String(error), false); }
+  }
+
   async function workspaceCheck() {
     const probeDir = path.join(workspaceRoot, 'diagnostics', 'ecosystem-health');
     const probe = path.join(probeDir, `probe-${process.pid}.txt`);
@@ -83,8 +115,8 @@ function createEcosystemHealth(options) {
   }
 
   async function run(input = {}) {
-    const settled = await Promise.allSettled([identityCheck(), taskStoreCheck(), workerCheck(), toolCheck(), skillCheck(), workspaceCheck(), worktreeCheck()]);
-    const ids = ['identity', 'task-store', 'worker', 'tools', 'skills', 'workspace', 'worktree'];
+    const settled = await Promise.allSettled([identityCheck(), taskStoreCheck(), workerCheck(), toolCheck(), skillCheck(), memoryCheck(), learningReviewCheck(), workspaceCheck(), worktreeCheck()]);
+    const ids = ['identity', 'task-store', 'worker', 'tools', 'skills', 'memory', 'learning-review', 'workspace', 'worktree'];
     const checks = settled.map((item, index) => item.status === 'fulfilled' ? item.value : result(ids[index], ids[index], 'blocked', '检查过程异常', item.reason?.message || String(item.reason), true));
     const blocked = checks.filter((item) => item.status === 'blocked');
     const warning = checks.filter((item) => item.status === 'warning');

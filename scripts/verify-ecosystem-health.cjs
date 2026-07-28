@@ -19,16 +19,18 @@ const { NATIVE_TOOL_DEFINITIONS } = require('../electron/nativeToolRuntime.cjs')
       toolRuntime: { definitions: NATIVE_TOOL_DEFINITIONS },
       worktreeManager: { health: async () => ({ ok: true, version: 'git version test', active: 0, worktreesRoot: path.join(root, 'worktrees') }) },
       listSkills: async () => [{ id: 'health-check', name: '健康检查', health: 'ready' }],
+      memoryManager: { list: async () => ({ ok: true, entries: [{ scope: 'organization' }], proposals: [], audit: [] }) },
+      learningReviewQueue: { status: async () => ({ ok: true, counts: { queued: 0, processing: 0, waiting_model: 0, completed: 2, failed: 0 } }) },
     };
 
     const healthy = await createEcosystemHealth(baseOptions).run({ mode: 'release' });
     assert.equal(healthy.healthVersion, ECOSYSTEM_HEALTH_VERSION);
     assert.equal(healthy.mode, 'release');
-    assert.equal(healthy.checks.length, 7);
+    assert.equal(healthy.checks.length, 9);
     assert.equal(healthy.ok, true);
     assert.equal(healthy.canRelease, true);
     assert.equal(healthy.status, 'ready');
-    assert.deepEqual(healthy.checks.map((item) => item.id), ['identity', 'task-store', 'worker', 'tools', 'skills', 'workspace', 'worktree']);
+    assert.deepEqual(healthy.checks.map((item) => item.id), ['identity', 'task-store', 'worker', 'tools', 'skills', 'memory', 'learning-review', 'workspace', 'worktree']);
 
     const degraded = await createEcosystemHealth({
       ...baseOptions,

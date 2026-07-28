@@ -87,13 +87,24 @@ function assertValidChain(events) {
     const query = await store.read({ teamId: 'team-test', status: 'running', query: '任务 one', limit: 10 });
     assert.deepEqual(query.runs.map((run) => run.id), ['one']);
     assert.equal(query.page.total, 1);
+    const evidenceRun = makeRun('evidence-search', {
+      status: 'failed',
+      updatedAt: 250,
+      lastError: 'Word 文件格式校验失败',
+      steps: [{ id: 'format-check', title: '检查交付文件', assignment: '验证文档可打开', status: 'failed', events: [{ detail: 'officeparser 无法读取正文' }], evidence: [{ summary: '合同草案.docx 未通过打开验证' }] }],
+    });
+    await store.write([updatedOne, makeRun('two'), evidenceRun]);
+    const evidenceQuery = await store.read({ query: '合同草案', limit: 10 });
+    assert.deepEqual(evidenceQuery.runs.map((run) => run.id), ['evidence-search']);
+    const errorQuery = await store.read({ query: 'officeparser', limit: 10 });
+    assert.deepEqual(errorQuery.runs.map((run) => run.id), ['evidence-search']);
     const audit = await store.audit({ taskId: 'one', afterSequence: 1, limit: 20 });
     assert.equal(audit.runs, undefined);
     assert.ok(audit.events.every((event) => event.taskId === 'one' && event.sequence > 1));
 
     const removed = await store.write([updatedOne]);
-    assert.equal(removed.eventsAppended, 1);
-    assert.equal(removed.events[0].type, 'task_removed');
+    assert.equal(removed.eventsAppended, 2);
+    assert.ok(removed.events.every((event) => event.type === 'task_removed'));
 
     await Promise.all([
       store.write([makeRun('three')]),

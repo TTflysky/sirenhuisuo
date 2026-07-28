@@ -33,6 +33,7 @@ import {
   isToolResultSuccessful,
   simplifyLegacyAssistantContent,
 } from '../../data/assistantPresentation';
+import { buildLayeredMemoryContext } from '../../data/layeredMemory';
 import {
   CopyOutlined,
   DeleteOutlined,
@@ -327,6 +328,7 @@ export default function AssistantChat() {
 ${employeeDirectory}
 
 以上名单来自客户端当前状态，每次对话都会重新读取。用户提到某位员工时，先按姓名核对这里的真实名单；名单中存在就不得回答“没有这名员工”。需要调度多人任务时，先明确将由哪些现有员工承担。`;
+      const layeredMemoryContext = await buildLayeredMemoryContext({ query: enriched, limit: 16 });
 
       const r = await runAgentLoop({
         turns: [
@@ -340,7 +342,7 @@ ${employeeDirectory}
         scope: 'assistant',
         workspaceId,
         attachments: imageAtts,
-        extraSystemContext: [organizationContext, skillContext].filter(Boolean).join('\n\n'),
+        extraSystemContext: [organizationContext, layeredMemoryContext, skillContext].filter(Boolean).join('\n\n'),
         shouldStop: executionControl.shouldStop,
         waitIfPaused: executionControl.waitIfPaused,
         consumeSteeringMessages: () => steeringMessagesRef.current.splice(0),

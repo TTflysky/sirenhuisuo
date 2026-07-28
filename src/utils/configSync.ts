@@ -2,6 +2,7 @@ import type { Employee, Team } from '../types';
 import { APP_VERSION } from '../appVersion';
 import type { UserMemoryItem } from '../data/hermesClient';
 import type { TaskLearning } from '../engine/taskLearningMemory';
+import type { LayeredMemoryEntry } from '../electron';
 
 export interface SyncProfile {
   schemaVersion?: number;
@@ -13,6 +14,7 @@ export interface SyncProfile {
   userProfile?: string;
   userMemory?: UserMemoryItem[];
   taskLearnings?: TaskLearning[];
+  layeredMemory?: LayeredMemoryEntry[];
 }
 
 const SECRET_KEY = /(?:api.?key|password|passwd|token|secret|credential|authorization|client.?secret)/iu;
@@ -49,11 +51,13 @@ function parseStorage<T>(key: string, fallback: T): T {
   }
 }
 
-export function createSyncProfile(): SyncProfile {
+export async function createSyncProfile(): Promise<SyncProfile> {
   const settings = parseStorage<Record<string, unknown>>('hermes_office_settings', {});
   const connectors = parseStorage<unknown[]>('hermes_office_connectors', []);
+  const layeredResult = await window.electronAPI?.memoryList?.().catch(() => undefined);
+  const layeredMemory = layeredResult?.ok ? layeredResult.entries ?? [] : parseStorage<LayeredMemoryEntry[]>('hermes_office_layered_memory_v1', []);
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     settings: redactLocalSecrets(settings) as Record<string, unknown>,
     employees: parseStorage<Employee[]>('hermes_office_employees', []),
     teams: parseStorage<SyncProfile['teams']>('hermes_office_teams', []),
@@ -62,6 +66,7 @@ export function createSyncProfile(): SyncProfile {
     userProfile: localStorage.getItem('hermes_office_user_profile') ?? '',
     userMemory: parseStorage<UserMemoryItem[]>('hermes_office_user_memory', []),
     taskLearnings: parseStorage<TaskLearning[]>('hermes_office_task_learning_memory_v1', []),
+    layeredMemory,
   };
 }
 
@@ -91,6 +96,7 @@ export function applySyncProfile(input: unknown): { employees: number; teams: nu
   if (Array.isArray(profile.taskLearnings)) {
     localStorage.setItem('hermes_office_task_learning_memory_v1', JSON.stringify(profile.taskLearnings));
   }
+  if (Array.isArray(profile.layeredMemory)) localStorage.setItem('hermes_office_layered_memory_v1', JSON.stringify(profile.layeredMemory));
 
   const modelLibrary = Array.isArray(settings.modelLibrary) ? settings.modelLibrary : [];
   return {

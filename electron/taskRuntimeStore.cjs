@@ -99,10 +99,37 @@ function eventHash(event) {
 }
 
 function searchableRun(run) {
-  return [run.id, run.teamId, run.title, run.request, run.goal, run.workspaceId]
+  const steps = Array.isArray(run.steps) ? run.steps : [];
+  const evidence = Array.isArray(run.evidence) ? run.evidence : [];
+  const executionMessages = Array.isArray(run.executionMessages) ? run.executionMessages : [];
+  const context = run.context || {};
+  const contextSummary = context.summary || {};
+  return [
+    run.id, run.teamId, run.title, run.request, run.goal, run.workspaceId, run.lastError,
+    ...(run.acceptanceCriteria || []),
+    ...(run.memberSnapshot || []).flatMap((member) => [member.name, member.title]),
+    ...steps.flatMap((step) => [
+      step.title, step.assignment, step.lastError, step.reviewReason,
+      ...(step.events || []).map((event) => event.detail),
+      ...(step.evidence || []).map((item) => item.summary),
+    ]),
+    ...evidence.map((item) => item.summary),
+    ...(run.verification || []).flatMap((item) => [item.label, item.detail]),
+    ...(run.preflight || []).flatMap((item) => [item.label, item.detail]),
+    ...(run.skillRefs || []).flatMap((item) => [item.name, item.description]),
+    ...(run.skillEvidence || []).flatMap((item) => [item.skillName, item.skillId, item.toolName, item.detail, item.reason]),
+    run.handoff?.blocked, run.handoff?.nextAction, ...(run.handoff?.completed || []),
+    run.recoveryContext?.summary, run.recoveryContext?.waitingFor, run.recoveryContext?.interruptionReason,
+    ...(run.recoveryContext?.completedEvidence || []), ...(run.recoveryContext?.unresolvedIssues || []),
+    contextSummary.narrative, contextSummary.modelNarrative,
+    ...(contextSummary.verifiedFacts || []), ...(contextSummary.artifactPaths || []), ...(contextSummary.blockers || []),
+    ...(context.events || []).map((event) => event.summary),
+    ...(run.runner?.events || []).map((event) => event.detail),
+    ...executionMessages.map((message) => message.content),
+  ]
     .map((value) => String(value ?? '').toLocaleLowerCase())
     .join('\n')
-    .slice(0, 12000);
+    .slice(0, 60000);
 }
 
 function taskIndexEntry(run) {

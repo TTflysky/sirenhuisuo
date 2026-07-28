@@ -11,6 +11,8 @@ export function createContextBudget(input?: Partial<ContextBudgetSnapshot>): Con
 export function recordContextUsage(snapshot: unknown, usage?: { promptTokens?: number; completionTokens?: number; estimatedTokens?: number; toolAttempts?: number; modelRounds?: number; progress?: boolean }): ContextBudgetSnapshot;
 export function assessContextBudget(snapshot: unknown, options?: { currentPromptTokens?: number }): ContextBudgetSnapshot & { currentTokens: number; usableTokens: number; ratio: number; action: 'continue' | 'compact' | 'checkpoint' | 'replan'; reason: string };
 export function compactMessageWindow(messages: unknown[], options?: { keepRecent?: number }): { messages: unknown[]; removed: number; summary: string };
+export function groupAtomicMessages(messages: unknown[]): Array<{ start: number; end: number; messages: unknown[]; kind: string; complete: boolean; toolCallIds?: string[] }>;
+export function validateToolMessageSequence(messages: unknown[]): { valid: boolean; orphanTools: number[]; incompleteGroups: Array<{ start: number; toolCallIds?: string[] }> };
 export function createRecoveryCapsule(run: Partial<TaskRun>, input?: { reason?: string; createdAt?: number }): TaskRecoveryCapsule;
 export function verifyRecoveryCapsule(capsule: unknown): boolean;
 export function routeTaskInput(run: TaskRun, message: string, input?: { createdAt?: number }): { route: TaskInputRoute; run: TaskRun };

@@ -46,12 +46,32 @@ export function searchTaskRunHistory(runs, query, options = {}) {
         .filter((item) => item.score > 0)
         .sort((a, b) => b.score - a.score || b.event.ts - a.event.ts)
         .slice(0, 5);
+      const stepText = (run.steps || []).flatMap((step) => [
+        step.title, step.assignment, step.lastError, step.reviewReason,
+        ...(step.events || []).map((event) => event.detail),
+        ...(step.evidence || []).map((item) => item.summary),
+      ]).join('\n');
+      const evidenceText = [
+        ...(run.evidence || []).map((item) => item.summary),
+        ...(run.verification || []).flatMap((item) => [item.label, item.detail]),
+        ...(run.preflight || []).flatMap((item) => [item.label, item.detail]),
+        ...(run.runner?.events || []).map((event) => event.detail),
+        ...(run.executionMessages || []).map((message) => message.content),
+      ].join('\n');
+      const recoveryText = [
+        run.lastError, run.handoff?.blocked, run.handoff?.nextAction,
+        ...(run.handoff?.completed || []), run.recoveryContext?.summary,
+        ...(run.recoveryContext?.completedEvidence || []), ...(run.recoveryContext?.unresolvedIssues || []),
+      ].join('\n');
       const score = fieldScore(`${run.title}\n${run.goal ?? run.request}`, terms, 6)
         + fieldScore(context.summary.narrative, terms, 4)
         + fieldScore(context.summary.modelNarrative, terms, 2)
         + fieldScore(context.summary.verifiedFacts.join('\n'), terms, 4)
         + fieldScore(context.summary.artifactPaths.join('\n'), terms, 5)
         + fieldScore(context.summary.blockers.join('\n'), terms, 2)
+        + fieldScore(stepText, terms, 3)
+        + fieldScore(evidenceText, terms, 4)
+        + fieldScore(recoveryText, terms, 3)
         + eventMatches.reduce((total, item) => total + item.score, 0);
       return {
         taskId: run.id,

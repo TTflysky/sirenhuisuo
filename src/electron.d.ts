@@ -138,6 +138,8 @@ export interface NativeExecutionStartInput {
   executionPolicy?: import('./data/hermesClient').ExecutionPolicy;
   connectors?: unknown[];
   connectorTools?: unknown[];
+  reviewModelConfig?: import('./types').ModelConfig;
+  memoryWriteApproval?: boolean;
 }
 export interface NativeExecutionResult {
   ok: boolean;
@@ -212,7 +214,7 @@ export interface WorktreeResult {
   error?: string;
 }
 export interface EcosystemHealthCheck {
-  id: 'identity' | 'task-store' | 'worker' | 'tools' | 'skills' | 'workspace' | 'worktree';
+  id: 'identity' | 'task-store' | 'worker' | 'tools' | 'skills' | 'memory' | 'learning-review' | 'workspace' | 'worktree';
   title: string;
   status: 'ready' | 'warning' | 'blocked';
   summary: string;
@@ -309,6 +311,31 @@ export interface SkillSourceInspection {
   requirements: NonNullable<import('./types').Skill['requirements']>;
 }
 export interface SkillInspectResult { ok: boolean; inspection?: SkillSourceInspection; error?: string; }
+export interface SkillDraft {
+  id: string; status: 'pending' | 'approved' | 'rejected'; action: 'create' | 'patch'; name: string;
+  description?: string; targetSkillName?: string; reason?: string; taskId?: string; createdAt: number; updatedAt: number;
+}
+export interface LayeredMemoryEntry {
+  id: string; scope: 'organization' | 'team' | 'employee' | 'user'; scopeId: string;
+  category: 'identity' | 'preference' | 'constraint' | 'workflow' | 'decision' | 'project' | 'lesson';
+  content: string; source: string; sourceType: 'manual' | 'legacy' | 'task-review' | 'review-model'; taskId?: string; employeeId?: string;
+  evidence: string[]; importance: number; confidence: number; createdAt: number; updatedAt: number;
+}
+export interface MemoryProposal {
+  id: string; status: 'pending' | 'approved' | 'rejected'; taskId?: string; summary: string;
+  update: Partial<LayeredMemoryEntry> & { replaceExact?: string }; source: string; createdAt: number; updatedAt: number; warnings?: string[];
+}
+export interface LayeredMemoryResult {
+  ok: boolean; entries?: LayeredMemoryEntry[]; proposals?: MemoryProposal[]; context?: string;
+  audit?: Array<Record<string, unknown>>; limits?: Record<string, number>;
+  usage?: Record<string, { current: number; max: number; percent: number }>;
+  action?: string; error?: string;
+}
+export interface LearningReviewItem {
+  id: string; taskId: string; teamId: string; status: 'queued' | 'processing' | 'waiting_model' | 'completed' | 'failed';
+  attempts: number; lastError?: string; createdAt: number; updatedAt: number;
+  result?: { verifiedMemories: number; memoryProposalIds: string[]; skillDraftIds: string[] };
+}
 
 export interface UpdateStatus {
   status: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
@@ -366,6 +393,17 @@ declare global {
     skillsInstall: (input: { sourceUrl: string; name?: string }) => Promise<SkillInstallResult>;
     skillsInspectSource: (sourceUrl: string) => Promise<SkillInspectResult>;
     skillsRepair: (id: string) => Promise<SkillInstallResult>;
+    skillDrafts: () => Promise<{ ok: boolean; drafts?: SkillDraft[]; error?: string }>;
+    reviewSkillDraft: (input: { draftId: string; decision: 'approve' | 'reject'; note?: string }) => Promise<{ ok: boolean; action?: string; draft?: SkillDraft; error?: string }>;
+    memoryList: (input?: { scope?: LayeredMemoryEntry['scope']; scopeId?: string; proposalStatus?: MemoryProposal['status']; includeAudit?: boolean }) => Promise<LayeredMemoryResult>;
+    memoryContext: (input?: { query?: string; teamId?: string; employeeId?: string; limit?: number }) => Promise<LayeredMemoryResult>;
+    memoryUpsert: (input: Partial<LayeredMemoryEntry> & { content: string; replaceExact?: string }) => Promise<LayeredMemoryResult>;
+    memoryRemove: (input: { entryId: string; reason?: string }) => Promise<LayeredMemoryResult>;
+    memoryReviewProposal: (input: { proposalId: string; decision: 'approve' | 'reject'; note?: string }) => Promise<LayeredMemoryResult>;
+    memoryImportLegacy: (input: { importId?: string; userProfile?: string; userMemory?: unknown[]; taskLearnings?: unknown[]; layeredMemory?: LayeredMemoryEntry[] }) => Promise<{ ok: boolean; imported?: number; unchanged?: boolean; error?: string }>;
+    learningReviewStatus: (input?: { taskId?: string }) => Promise<{ ok: boolean; processing?: boolean; items?: LearningReviewItem[]; counts?: Record<string, number>; error?: string }>;
+    learningReviewProcess: (input?: { reviewModelConfig?: import('./types').ModelConfig; memoryWriteApproval?: boolean }) => Promise<{ ok: boolean; processed?: number; processing?: boolean; error?: string }>;
+    learningReviewRetry: (input: { itemId: string; reviewModelConfig?: import('./types').ModelConfig; memoryWriteApproval?: boolean }) => Promise<{ ok: boolean; processed?: number; error?: string }>;
     openExternal: (url: string) => Promise<{ ok: boolean; error?: string }>;
 
     // 自主代理工作区文件系统（沙箱到 userData/workspace）

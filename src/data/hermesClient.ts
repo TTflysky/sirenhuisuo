@@ -122,6 +122,9 @@ export interface AppSettings {
   modelLibrary?: ModelEntry[];  // 所有已配置的模型列表
   activeModelId?: string;       // 当前全局使用的模型 ID（对应 modelLibrary 中的 entry.id）
   assistantModelId?: string;    // 助理机器人使用的模型 ID
+  reviewModelId?: string;       // 独立任务复盘/责任审查模型，不设置时不自动调用复盘模型
+  memoryWriteApproval?: boolean; // 独立审查模型提出的记忆更新是否需要人工审核（默认 true）
+  skillsWriteApproval?: boolean; // 自动 Skill 草案是否需要审核（固定默认 true）
   showThoughtChain?: boolean;   // 助理是否显示思维链（默认 true）
   followUpMode?: 'queue' | 'steer'; // 运行中收到新消息：排队或引导当前执行
   /** 命令是否限制在客户端工作区。默认开启。 */
@@ -235,6 +238,15 @@ export function getAssistantModel(): ModelConfig {
   // 模型库启用后，旧字段通常为空。助理未单独指定模型时必须继承当前激活模型，
   // 否则会误判为“未配置 API”并持续返回本地兜底文案。
   return getActiveModel();
+}
+
+/** 获取独立审查模型。未显式选择时返回 undefined，避免执行模型默认自审。 */
+export function getReviewModel(): ModelConfig | undefined {
+  const settings = loadSettings();
+  if (!settings.reviewModelId || !settings.modelLibrary?.length) return undefined;
+  const model = settings.modelLibrary.find((item) => item.id === settings.reviewModelId);
+  if (!model) return undefined;
+  return { provider: model.provider, apiHost: model.apiHost, apiKey: model.apiKey, model: model.model, contextWindowTokens: model.contextWindowTokens };
 }
 
 /** 员工是否启用了独立模型。旧版数据没有开关字段时兼容已有 modelConfig。 */

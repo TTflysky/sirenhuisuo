@@ -30,6 +30,10 @@ function historicalRun({ id, teamId, title, goal, status = 'completed', ts = 100
 const report = historicalRun({ id: 'report-1', teamId: 'finance', title: '季度财务报表', goal: '生成季度财务报表 Excel', artifact: '季度报表.xlsx' });
 const script = historicalRun({ id: 'script-1', teamId: 'dev', title: '自动备份脚本', goal: '编写自动备份 PowerShell 脚本', artifact: 'backup.ps1', ts: 2000 });
 const running = historicalRun({ id: 'running-1', teamId: 'finance', title: '实时财务报表', goal: '处理财务报表', status: 'running', ts: 3000 });
+const evidenceOnly = {
+  ...historicalRun({ id: 'evidence-1', teamId: 'dev', title: '文档交付', goal: '处理客户资料', status: 'failed', ts: 4000 }),
+  steps: [{ id: 'verify-docx', title: '验收文件', assignment: '确认文件可打开', status: 'failed', events: [{ detail: '合同模板.docx 格式校验失败' }], evidence: [] }],
+};
 const teams = [{ id: 'finance', name: '财务组' }, { id: 'dev', name: '开发组' }];
 
 const matches = searchTaskRunHistory([script, running, report], '重新制作财务报表 Excel', { teams, limit: 5 });
@@ -37,6 +41,8 @@ assert.equal(matches.length, 1);
 assert.equal(matches[0].taskId, 'report-1');
 assert.equal(matches[0].teamName, '财务组');
 assert.deepEqual(matches[0].artifactPaths, ['季度报表.xlsx']);
+const evidenceMatches = searchTaskRunHistory([report, evidenceOnly], '合同模板为什么打不开', { teams, limit: 5 });
+assert.equal(evidenceMatches[0].taskId, 'evidence-1');
 
 const prompt = buildTaskHistoryPrompt(matches);
 assert.match(prompt, /跨会话只读参考/u);

@@ -1,7 +1,7 @@
 # 项目交接手册
 
 > 最后整理：2026-07-29
-> 当前源码版本：`v0.28.0`
+> 当前源码版本：`v0.29.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 
@@ -25,6 +25,7 @@
 10. 所有执行入口必须先通过 `taskDecisionKernel` 还原真实目标、首选路线和完成标准，再由 `taskFidelity` 固定不可丢失条件，最后通过统一 `ExecutionController` 观察结果、分类失败、决定重试或换路线并重新验收；不得重新引入按回复文案、关键词猜测或“工具返回内容就算成功”的分支。
 11. 所有动态连接器 Action 必须经过 `ConnectorProtocol`；输入、权限、dry-run、真实调用、输出验证、脱敏和幂等不可在单个连接器中自行绕过，UI 只认客户端协议证据。
 12. 文件与审查必须产生 `ToolExecutionEvidence`；审查退回必须扩展正式 TaskPlan/Runner 并绑定责任步骤，不能重新退化为解析聊天文案或只改界面步骤。
+13. 分层记忆的 JSON 状态是唯一事实源，Markdown 只是可重建投影；真实验收经验可自动沉淀，模型推断必须先审批，任何后台复盘都不得改写内置或手动安装的 Skill。
 
 ## 2. 当前已交付的能力
 
@@ -43,7 +44,8 @@
 - 图片可作为视觉输入，文本/代码可直接读取；Excel、Word、PowerPoint、PDF、OpenDocument、RTF、EPUB 通过 `officeparser` 提取文本；其他二进制也会真实保存，并向模型返回可操作路径和明确说明。
 - 产出物按聊天 scope 隔离，显示路径、类型、大小、时间，可直接打开真实磁盘文件。
 - 项目编排：助理可生成待批准项目草案，按职责/专长/在线状态从全体员工匹配成员；批准后创建隔离项目团队并复用顺序任务运行器。
-- 人格、用户画像、长期记忆和任务经验分层；长期记忆具备准入筛选、分类、去重、冲突替换、相关度排序和容量淘汰，任务经验只保存真实执行的路线与验收结果。
+- 人格、用户画像、长期记忆和任务经验分层；组织、团队、员工、用户四层结构化记忆支持容量、脱敏、去重、精确替换、审批和审计，团队共享经验与员工个人经验会同时进入任务上下文。
+- 任务终态异步复盘不阻塞前台交付；真实验收路线直接沉淀，模型建议进入审批，重复稳定流程进入隔离 Skill 草案，批准后才安装。
 - 驴狗蛋助手、员工私聊和团队执行支持运行中“排队 / 引导”，员工工作状态在所有窗口通过 Store 广播同步。
 - 驴狗蛋助手伴随窗是主窗口的 owned window，保持同一窗口层级但不跨应用永久置顶。
 
@@ -82,13 +84,15 @@
 | `electron/connectorAdapters.cjs` | 内置外部服务原生适配器；IMA 固定只读验证、阶段诊断、重试和脱敏结果。 |
 | `electron/commandShell.cjs` | Windows PowerShell 命令包装并正确传播原生进程退出码。 |
 | `electron/taskRuntimeStore.cjs` | 追加式任务事件账本、SHA-256 哈希链、旧快照迁移、损坏尾部隔离和任务投影重建。JSONL 是事实源，JSON 快照只是缓存；渲染写入不能覆盖 Worker 权威检查点。 |
+| `electron/memoryManager.cjs` | 组织、团队、员工、用户四层记忆事实源：校验、原子写入、损坏隔离、容量、脱敏、去重、审批、审计和 Markdown 投影。 |
+| `electron/learningReviewQueue.cjs` | 持久化异步任务复盘：重启恢复、真实经验沉淀、审查模型建议、记忆审批和 Skill 草案生成。 |
 | `electron/taskWorker.cjs` | 主进程 Worker 控制平面：命令日志、租约、心跳、检查点、暂停/恢复/停止、跨会话过期恢复和命令幂等。 |
 | `electron/executionAdapterProtocol.cjs` | Execution Adapter v1 协议：校验严格递增检查点，并把步骤开始/完成/失败与任务最终状态应用到主进程权威投影。 |
 | `electron/nativeExecutionAdapter.cjs` | Electron 主进程团队执行循环：模型调用、工具编排、目标验收、审查退回、运行中插话和后台生命周期。 |
 | `electron/nativeToolRuntime.cjs` | 主进程工具运行时：工作区文件、命令、联网、Skill、Connector、知识库与结构化证据，持久化前统一脱敏。 |
 | `electron/ecosystemHealth.cjs` | 生态健康协议 v1：统一检查版本身份、任务账本、Worker、工具、Skill、工作区与 Git Worktree，并作为升级验收门禁。 |
 | `electron/preload.cjs` | 受限的 `window.electronAPI` 桥接。新增 IPC 必须同步更新此文件和 `src/electron.d.ts`。 |
-| `electron/skills.cjs` | 扫描 `%USERPROFILE%/.workbuddy/skills`、项目 `skills/` 和 `.workbuddy/skills`。 |
+| `electron/skills.cjs` | 扫描用户与项目 Skill，负责健康检查、原子安装，以及隔离复盘草案的批准、安装和受限精确更新。 |
 | `electron/autoUpdate.cjs` | 通过 GitHub Releases 检查并下载更新；后台检查失败只写诊断日志，不冒充模型网络故障。 |
 | `electron/releaseDownload.cjs` | 回滚安装包断点续传、无数据超时、大小与 SHA-256 校验、临时文件原子落盘。 |
 | `scripts/build-windows.ps1` | 恢复 Electron 缓存并固定用便携 Node 20 打包；临时目录位于项目缓存，完成后自动验收 ASAR 与发布文件。 |
@@ -136,6 +140,7 @@
 - 完善用户数据导出/导入，支持迁移员工、团队、设置和必要工作区文件，而不是依赖手工复制。
 - 验证 GitHub Release 的安装器、`.blockmap` 和 `latest.yml` 都已上传，并用已安装旧版验证热更新提示与下载。
 - 给关键逻辑补自动化测试：模型继承/独立配置、任务退回、附件落盘、Office 读取、产出物过滤、跨窗口同步。
+- 在显卡驱动稳定的 Windows 机器补跑设置记忆页、办公室 999 工位和团队窗口的真实 Electron 压力回归。
 
 ### P2：工程债务
 

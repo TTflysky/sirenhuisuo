@@ -5,7 +5,7 @@ import { diagnoseModel } from './modelDiagnostics';
 import { getToolRegistrySnapshot } from '../engine/toolCatalog';
 
 export type DiagnosticStatus = 'ready' | 'warning' | 'blocked';
-export type DiagnosticArea = 'model' | 'connector' | 'skill' | 'tool' | 'runtime' | 'workspace' | 'permission';
+export type DiagnosticArea = 'model' | 'connector' | 'skill' | 'tool' | 'runtime' | 'memory' | 'workspace' | 'permission';
 
 export interface SystemDiagnosticItem {
   id: string;
@@ -15,7 +15,7 @@ export interface SystemDiagnosticItem {
   summary: string;
   detail: string;
   action: string;
-  settingsTab?: 'model' | 'knowledge' | 'workspace' | 'automation';
+  settingsTab?: 'model' | 'knowledge' | 'workspace' | 'memory' | 'automation';
 }
 
 export interface SystemDiagnosticReport {
@@ -160,6 +160,49 @@ async function diagnoseTaskRuntime(): Promise<SystemDiagnosticItem> {
   }
 }
 
+async function diagnoseMemoryLearning(): Promise<SystemDiagnosticItem> {
+  const api = window.electronAPI;
+  if (!api?.memoryList || !api.learningReviewStatus) {
+    return {
+      id: 'memory', area: 'memory', title: '记忆与任务复盘', status: 'blocked',
+      summary: '当前客户端没有分层记忆接口',
+      detail: '无法读取组织、团队、员工、用户记忆和持久化复盘队列。',
+      action: '确认客户端已经更新到当前版本后重新检查。', settingsTab: 'memory',
+    };
+  }
+  try {
+    const [memory, reviews] = await Promise.all([
+      api.memoryList({ includeAudit: true }),
+      api.learningReviewStatus(),
+    ]);
+    if (!memory.ok || !reviews.ok) throw new Error(memory.error || reviews.error || '记忆或复盘状态读取失败');
+    const entries = memory.entries ?? [];
+    const pending = (memory.proposals ?? []).filter((item) => item.status === 'pending').length;
+    const failed = reviews.counts?.failed ?? 0;
+    const waiting = reviews.counts?.waiting_model ?? 0;
+    const active = (reviews.counts?.queued ?? 0) + (reviews.counts?.processing ?? 0);
+    const status: DiagnosticStatus = pending || failed || waiting ? 'warning' : 'ready';
+    const detail = [
+      pending ? `${pending} 条独立判断等待批准` : '',
+      waiting ? `${waiting} 项等待独立审查模型` : '',
+      failed ? `${failed} 项复盘失败，可单独重试` : '',
+      active ? `${active} 项正在排队或处理` : '',
+    ].filter(Boolean).join('；') || '分层事实源、审批队列、复盘恢复和 Markdown 投影均正常。';
+    return {
+      id: 'memory', area: 'memory', title: '记忆与任务复盘', status,
+      summary: `${entries.length} 条分层记忆，${reviews.counts?.completed ?? 0} 项复盘已完成`,
+      detail,
+      action: status === 'ready' ? '记忆与复盘闭环可用。' : '打开记忆页处理待审核、待配置或失败项目。',
+      settingsTab: 'memory',
+    };
+  } catch (error) {
+    return {
+      id: 'memory', area: 'memory', title: '记忆与任务复盘', status: 'blocked', summary: '记忆事实源读取失败',
+      detail: error instanceof Error ? error.message : String(error), action: '重新启动客户端后再检查；仍失败时查看被隔离的损坏数据。', settingsTab: 'memory',
+    };
+  }
+}
+
 async function diagnoseWorkspace(): Promise<SystemDiagnosticItem> {
   const api = window.electronAPI;
   if (!api?.fsInitWorkspace || !api.fsWrite || !api.fsRead) {
@@ -202,10 +245,10 @@ async function diagnosePermission(): Promise<SystemDiagnosticItem> {
 
 export async function runSystemDiagnostics(): Promise<SystemDiagnosticReport> {
   const settled = await Promise.allSettled([
-    diagnoseActiveModel(), diagnoseConnectors(), diagnoseSkills(), diagnoseToolRegistry(), diagnoseTaskRuntime(), diagnoseWorkspace(), diagnosePermission(),
+    diagnoseActiveModel(), diagnoseConnectors(), diagnoseSkills(), diagnoseToolRegistry(), diagnoseTaskRuntime(), diagnoseMemoryLearning(), diagnoseWorkspace(), diagnosePermission(),
   ]);
-  const names = ['AI 模型', '连接器与知识库', 'Skill 健康', '工具注册中心', '任务内核与恢复', '任务工作区', '安全与审批'];
-  const areas: DiagnosticArea[] = ['model', 'connector', 'skill', 'tool', 'runtime', 'workspace', 'permission'];
+  const names = ['AI 模型', '连接器与知识库', 'Skill 健康', '工具注册中心', '任务内核与恢复', '记忆与任务复盘', '任务工作区', '安全与审批'];
+  const areas: DiagnosticArea[] = ['model', 'connector', 'skill', 'tool', 'runtime', 'memory', 'workspace', 'permission'];
   const items = settled.map((result, index): SystemDiagnosticItem => result.status === 'fulfilled' ? result.value : {
     id: areas[index], area: areas[index], title: names[index], status: 'blocked', summary: '检查过程出错',
     detail: result.reason instanceof Error ? result.reason.message : String(result.reason), action: '处理提示后重新检查。',

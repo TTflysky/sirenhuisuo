@@ -14,8 +14,10 @@ import {
   loadUserProfile, saveUserProfile,
   loadUserMemory, saveUserMemory, organizeUserMemory, upsertUserMemory,
   USER_MEMORY_CATEGORY_LABELS, type UserMemoryCategory, type UserMemoryItem,
+  getReviewModel,
 } from '../../data/hermesClient';
 import type { ModelConfig } from '../../types';
+import type { LayeredMemoryEntry, MemoryProposal, LearningReviewItem } from '../../electron';
 import { useStore } from '../../store';
 import { KnowledgeConnectorManager } from '../sidebar/ConnectorPanel';
 import { DEFAULT_ASSISTANT_PROMPT, getAssistantPrompt, saveAssistantPrompt } from './AssistantSettingsModal';
@@ -28,6 +30,7 @@ import { APP_VERSION } from '../../appVersion';
 import DiagnosticsTab from './DiagnosticsTab';
 import { APP_BRAND_NAME, APP_PRODUCT_NAME } from '../../brand';
 import { loadTaskLearnings, saveTaskLearnings, type TaskLearning } from '../../engine/taskLearningMemory';
+import { loadLayeredMemorySnapshot } from '../../data/layeredMemory';
 
 type Tab = 'diagnostics' | 'model' | 'profile' | 'appearance' | 'knowledge' | 'workspace' | 'memory' | 'persona' | 'automation' | 'backup';
 
@@ -167,11 +170,11 @@ function PersonaTab() {
 
 function AutomationTab() {
   const [settings, setSettings] = useState(() => loadSettings());
-  const change = (key: 'autoDiscuss' | 'autoPilot', value: boolean) => { const next = { ...loadSettings(), [key]: value }; saveSettings(next); setSettings(next); };
+  const change = (key: 'autoDiscuss' | 'autoPilot' | 'memoryWriteApproval', value: boolean) => { const next = { ...loadSettings(), [key]: value }; saveSettings(next); setSettings(next); };
   const changeFollowUp = (followUpMode: 'queue' | 'steer') => { const next = { ...loadSettings(), followUpMode }; saveSettings(next); setSettings(next); };
   const policy = getExecutionPolicy(settings);
   const changePolicy = (update: Parameters<typeof saveExecutionPolicy>[0]) => setSettings(saveExecutionPolicy(update));
-  return <div className="settings-content-page"><header><h2>执行策略</h2><span>团队讨论、自主办公、工具审批与运行中跟进</span></header><div className="settings-field"><label>跟进行为</label><Segmented block value={settings.followUpMode ?? 'steer'} options={[{ label: '排队', value: 'queue' }, { label: '引导', value: 'steer' }]} onChange={(value) => changeFollowUp(value as 'queue' | 'steer')} /><small>引导会在当前模型或工具的安全边界先回答新消息，再结合上下文调整计划；暂停中的任务回答后仍保持暂停。排队则在当前任务结束后单独处理。</small></div><div className="settings-switch-row"><div><strong>文件与命令沙盒</strong><small>{policy.sandboxEnabled ? '已开启：文件和命令只能使用客户端工作区。' : '已关闭：命令可访问沙盒外的本机路径，请仅在确认任务来源时使用。'}</small></div><Switch checked={policy.sandboxEnabled} onChange={(sandboxEnabled) => changePolicy({ sandboxEnabled })} /></div><div className="settings-field"><label>命令执行审批</label><Segmented block value={policy.approvalMode} options={APPROVAL_MODE_OPTIONS.map(({ value, label }) => ({ value, label }))} onChange={(approvalMode) => changePolicy({ approvalMode: approvalMode as typeof policy.approvalMode })} /><small>{APPROVAL_MODE_OPTIONS.find((option) => option.value === policy.approvalMode)?.description}</small></div><div className="settings-field"><label>连接器与外部授权审批</label><Segmented block value={policy.connectorApprovalMode} options={APPROVAL_MODE_OPTIONS.map(({ value, label }) => ({ value, label }))} onChange={(connectorApprovalMode) => changePolicy({ connectorApprovalMode: connectorApprovalMode as typeof policy.connectorApprovalMode })} /><small>连接测试、知识库和外部服务使用独立审批档位。密码、验证码、付费、删除和对外发送始终需要你单独确认。</small></div><div className="settings-switch-row"><div><strong>敏感信息保护</strong><small>API Key、Token、密码和验证码会从工具报告中隐藏；禁止把明文凭据写进命令。</small></div><Tag color="green">始终开启</Tag></div><div className="settings-switch-row"><div><strong>自动讨论</strong><small>收到任务后自动组织团队讨论</small></div><Switch checked={settings.autoDiscuss ?? false} onChange={(value) => change('autoDiscuss', value)} /></div><div className="settings-switch-row"><div><strong>自主办公</strong><small>确认项目后自动推进执行流程</small></div><Switch checked={settings.autoPilot ?? false} onChange={(value) => change('autoPilot', value)} /></div></div>;
+  return <div className="settings-content-page"><header><h2>执行策略</h2><span>团队讨论、自主办公、工具审批与运行中跟进</span></header><div className="settings-field"><label>跟进行为</label><Segmented block value={settings.followUpMode ?? 'steer'} options={[{ label: '排队', value: 'queue' }, { label: '引导', value: 'steer' }]} onChange={(value) => changeFollowUp(value as 'queue' | 'steer')} /><small>引导会在当前模型或工具的安全边界先回答新消息，再结合上下文调整计划；暂停中的任务回答后仍保持暂停。排队则在当前任务结束后单独处理。</small></div><div className="settings-switch-row"><div><strong>文件与命令沙盒</strong><small>{policy.sandboxEnabled ? '已开启：文件和命令只能使用客户端工作区。' : '已关闭：命令可访问沙盒外的本机路径，请仅在确认任务来源时使用。'}</small></div><Switch checked={policy.sandboxEnabled} onChange={(sandboxEnabled) => changePolicy({ sandboxEnabled })} /></div><div className="settings-field"><label>命令执行审批</label><Segmented block value={policy.approvalMode} options={APPROVAL_MODE_OPTIONS.map(({ value, label }) => ({ value, label }))} onChange={(approvalMode) => changePolicy({ approvalMode: approvalMode as typeof policy.approvalMode })} /><small>{APPROVAL_MODE_OPTIONS.find((option) => option.value === policy.approvalMode)?.description}</small></div><div className="settings-field"><label>连接器与外部授权审批</label><Segmented block value={policy.connectorApprovalMode} options={APPROVAL_MODE_OPTIONS.map(({ value, label }) => ({ value, label }))} onChange={(connectorApprovalMode) => changePolicy({ connectorApprovalMode: connectorApprovalMode as typeof policy.connectorApprovalMode })} /><small>连接测试、知识库和外部服务使用独立审批档位。密码、验证码、付费、删除和对外发送始终需要你单独确认。</small></div><div className="settings-switch-row"><div><strong>敏感信息保护</strong><small>API Key、Token、密码和验证码会从工具报告中隐藏；禁止把明文凭据写进命令。</small></div><Tag color="green">始终开启</Tag></div><div className="settings-switch-row"><div><strong>记忆建议审核</strong><small>开启后，独立审查模型提出的新判断需要你批准；真实任务中已验收的工具路线仍会自动沉淀。</small></div><Switch checked={settings.memoryWriteApproval !== false} onChange={(value) => change('memoryWriteApproval', value)} /></div><div className="settings-switch-row"><div><strong>自动 Skill 保护</strong><small>复盘只能创建隔离草案；批准后才能安装，且不能后台修改内置或手动 Skill。</small></div><Tag color="green">始终审核</Tag></div><div className="settings-switch-row"><div><strong>自动讨论</strong><small>收到任务后自动组织团队讨论</small></div><Switch checked={settings.autoDiscuss ?? false} onChange={(value) => change('autoDiscuss', value)} /></div><div className="settings-switch-row"><div><strong>自主办公</strong><small>确认项目后自动推进执行流程</small></div><Switch checked={settings.autoPilot ?? false} onChange={(value) => change('autoPilot', value)} /></div></div>;
 }
 
 function BackupTab() {
@@ -180,8 +183,8 @@ function BackupTab() {
   const [upgrade, setUpgrade] = useState<UpgradeJournal | null>(null);
   const [rollingBack, setRollingBack] = useState(false);
   useEffect(() => { void window.electronAPI?.getUpgradeStatus?.().then((result) => { if (result.ok) setUpgrade(result.journal ?? null); }); }, []);
-  const exportProfile = () => {
-    const profile = createSyncProfile();
+  const exportProfile = async () => {
+    const profile = await createSyncProfile();
     const blob = new Blob([JSON.stringify(profile, null, 2)], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
@@ -213,7 +216,7 @@ function BackupTab() {
       message.success(`旧安装包已校验，配置已恢复，正在启动 v${backup.fromVersion} 安装包`);
     } catch (error) { message.error(error instanceof Error ? error.message : String(error)); setRollingBack(false); }
   };
-  return <div className="settings-content-page"><header><h2>备份迁移</h2><span>工作区备份、配置同步、升级验证与本机回滚</span></header><div className="settings-action-list"><div><div><strong>导出工作区</strong><small>任务文件和产出物 ZIP</small></div><Button onClick={() => void window.electronAPI?.fsExportZip?.()}>导出</Button></div><div><div><strong>导出同步配置</strong><small>员工、团队、模型、连接器、人格、画像、长期记忆和任务经验；不含本机密钥</small></div><Button onClick={exportProfile}>导出</Button></div><div><div><strong>导入同步配置</strong><small>恢复完整办公室配置与智能体记忆；API Key 仍需在本机填写</small></div><Button onClick={() => fileRef.current?.click()}>导入</Button><input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={(event) => void importProfile(event)} /></div>{upgrade && <div><div><strong>最近一次升级</strong><small>v{upgrade.fromVersion} → v{upgrade.toVersion} · {upgrade.status === 'validated' ? '数据验证通过' : upgrade.status === 'validation-failed' ? '数据验证失败，可回滚' : upgrade.status === 'rollback-prepared' ? '旧安装包已校验' : upgrade.status === 'rolling-back' ? '正在回滚' : '已创建更新前备份'}</small></div><Button danger disabled={rollingBack || upgrade.status === 'rolling-back'} onClick={() => void rollback()}>{rollingBack ? '准备回滚中' : `回滚到 v${upgrade.fromVersion}`}</Button></div>}</div></div>;
+  return <div className="settings-content-page"><header><h2>备份迁移</h2><span>工作区备份、配置同步、升级验证与本机回滚</span></header><div className="settings-action-list"><div><div><strong>导出工作区</strong><small>任务文件和产出物 ZIP</small></div><Button onClick={() => void window.electronAPI?.fsExportZip?.()}>导出</Button></div><div><div><strong>导出同步配置</strong><small>员工、团队、模型、连接器、人格、画像、分层记忆和任务经验；不含本机密钥</small></div><Button onClick={() => void exportProfile()}>导出</Button></div><div><div><strong>导入同步配置</strong><small>恢复完整办公室配置与智能体记忆；API Key 仍需在本机填写</small></div><Button onClick={() => fileRef.current?.click()}>导入</Button><input ref={fileRef} type="file" accept="application/json,.json" hidden onChange={(event) => void importProfile(event)} /></div>{upgrade && <div><div><strong>最近一次升级</strong><small>v{upgrade.fromVersion} → v{upgrade.toVersion} · {upgrade.status === 'validated' ? '数据验证通过' : upgrade.status === 'validation-failed' ? '数据验证失败，可回滚' : upgrade.status === 'rollback-prepared' ? '旧安装包已校验' : upgrade.status === 'rolling-back' ? '正在回滚' : '已创建更新前备份'}</small></div><Button danger disabled={rollingBack || upgrade.status === 'rolling-back'} onClick={() => void rollback()}>{rollingBack ? '准备回滚中' : `回滚到 v${upgrade.fromVersion}`}</Button></div>}</div></div>;
 }
 
 // ===== 模型库标签 =====
@@ -240,6 +243,7 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
   const library = settings.modelLibrary ?? [];
   const activeId = settings.activeModelId;
   const assistantId = settings.assistantModelId;
+  const reviewId = settings.reviewModelId;
 
   const startAdd = () => {
     setEditingId('__new__');
@@ -341,6 +345,7 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
     if (s.assistantModelId === id) {
       s.assistantModelId = undefined;
     }
+    if (s.reviewModelId === id) s.reviewModelId = undefined;
     saveSettings(s);
     setSettings({ ...s });
     message.success('已删除');
@@ -375,6 +380,14 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
     saveSettings(s);
     setSettings({ ...s });
     message.success('已设为助理模型');
+  };
+
+  const handleSetReview = (id?: string) => {
+    const s = loadSettings();
+    s.reviewModelId = id;
+    saveSettings(s);
+    setSettings({ ...s });
+    message.success(id ? '已设为独立审查模型' : '已关闭模型复盘；确定性任务经验仍会保留');
   };
 
   const handleTest = async (entry: ModelEntry) => {
@@ -443,6 +456,7 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
                 {entry.label}
                 {entry.id === activeId && <Tag color="blue" style={{ fontSize: 10, margin: 0, lineHeight: '18px' }}>全局</Tag>}
                 {entry.id === assistantId && <Tag color="purple" style={{ fontSize: 10, margin: 0, lineHeight: '18px' }}>助理</Tag>}
+                {entry.id === reviewId && <Tag color="cyan" style={{ fontSize: 10, margin: 0, lineHeight: '18px' }}>审查</Tag>}
               </div>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {entry.model ?? '未设置模型名'} · {getProvider(entry.provider).label}
@@ -474,7 +488,7 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
 
       {/* 设置为默认/助理 */}
       {library.length > 0 && (
-        <Space style={{ marginBottom: 16 }}>
+        <Space wrap style={{ marginBottom: 16 }}>
           <span style={{ fontSize: 12, fontWeight: 500 }}>全局默认：</span>
           <Select
             size="small"
@@ -493,6 +507,14 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
               { value: '__none__', label: '跟随全局' },
               ...library.map(m => ({ value: m.id, label: m.label })),
             ]}
+          />
+          <span style={{ fontSize: 12, fontWeight: 500, marginLeft: 8 }}>独立审查：</span>
+          <Select
+            size="small"
+            value={reviewId ?? '__none__'}
+            onChange={(value) => handleSetReview(value === '__none__' ? undefined : value)}
+            style={{ width: 180 }}
+            options={[{ value: '__none__', label: '不调用模型复盘' }, ...library.map((model) => ({ value: model.id, label: model.label }))]}
           />
         </Space>
       )}
@@ -651,9 +673,89 @@ function ProfileTab() {
 // ===== 长期记忆标签 =====
 function MemoryTab() {
   const { modal, message } = App.useApp();
+  const { state } = useStore();
   const [items, setItems] = useState<UserMemoryItem[]>(() => loadUserMemory());
   const [taskLearnings, setTaskLearnings] = useState<TaskLearning[]>(() => loadTaskLearnings());
   const [newText, setNewText] = useState('');
+  const [layeredEntries, setLayeredEntries] = useState<LayeredMemoryEntry[]>([]);
+  const [memoryProposals, setMemoryProposals] = useState<MemoryProposal[]>([]);
+  const [layeredUsage, setLayeredUsage] = useState<Record<string, { current: number; max: number; percent: number }>>({});
+  const [learningReviews, setLearningReviews] = useState<LearningReviewItem[]>([]);
+  const [layeredScope, setLayeredScope] = useState<LayeredMemoryEntry['scope']>('organization');
+  const [layeredScopeId, setLayeredScopeId] = useState('default');
+  const [layeredText, setLayeredText] = useState('');
+  const [refreshingLayered, setRefreshingLayered] = useState(false);
+
+  const refreshLayered = async () => {
+    setRefreshingLayered(true);
+    try {
+      const [snapshot, reviews] = await Promise.all([
+        loadLayeredMemorySnapshot(),
+        window.electronAPI?.learningReviewStatus?.(),
+      ]);
+      setLayeredEntries(snapshot.entries);
+      setMemoryProposals(snapshot.proposals);
+      setLayeredUsage(snapshot.usage);
+      setLearningReviews(reviews?.ok ? reviews.items ?? [] : []);
+    } finally { setRefreshingLayered(false); }
+  };
+
+  useEffect(() => { void refreshLayered(); }, []);
+
+  useEffect(() => {
+    if (layeredScope === 'team' && !state.teams.some((team) => team.id === layeredScopeId)) setLayeredScopeId(state.teams[0]?.id ?? 'default');
+    if (layeredScope === 'employee' && !state.employees.some((employee) => employee.id === layeredScopeId)) setLayeredScopeId(state.employees[0]?.id ?? 'default');
+    if (layeredScope === 'organization' || layeredScope === 'user') setLayeredScopeId('default');
+  }, [layeredScope, layeredScopeId, state.employees, state.teams]);
+
+  const visibleLayeredEntries = layeredEntries.filter((entry) => entry.scope === layeredScope
+    && ((layeredScope === 'organization' || layeredScope === 'user') || entry.scopeId === layeredScopeId));
+  const pendingProposals = memoryProposals.filter((proposal) => proposal.status === 'pending');
+  const selectedUsage = layeredUsage[`${layeredScope}:${layeredScopeId}`] ?? { current: 0, max: 0, percent: 0 };
+
+  const addLayeredMemory = async () => {
+    const content = layeredText.trim();
+    if (!content) return;
+    const result = await window.electronAPI?.memoryUpsert?.({
+      scope: layeredScope, scopeId: layeredScopeId, employeeId: layeredScope === 'employee' ? layeredScopeId : undefined,
+      category: layeredScope === 'user' ? 'preference' : 'lesson', content, source: '手动添加', sourceType: 'manual', importance: 5, confidence: 1,
+    });
+    if (!result?.ok) { message.error(result?.error || '分层记忆添加失败'); return; }
+    setLayeredText('');
+    message.success(result.action === 'ignored' ? '已有相同记忆' : '分层记忆已保存');
+    await refreshLayered();
+  };
+
+  const removeLayeredMemory = async (entryId: string) => {
+    const result = await window.electronAPI?.memoryRemove?.({ entryId, reason: '用户在记忆中心删除' });
+    if (!result?.ok) { message.error(result?.error || '删除失败'); return; }
+    await refreshLayered();
+  };
+
+  const reviewMemoryProposal = async (proposalId: string, decision: 'approve' | 'reject') => {
+    const result = await window.electronAPI?.memoryReviewProposal?.({ proposalId, decision });
+    if (!result?.ok) { message.error(result?.error || '审核失败'); return; }
+    message.success(decision === 'approve' ? '记忆建议已批准并写入' : '记忆建议已拒绝');
+    await refreshLayered();
+  };
+
+  const processLearningReviews = async () => {
+    const reviewModelConfig = getReviewModel();
+    if (!reviewModelConfig) { message.warning('请先在“模型”页选择独立审查模型'); return; }
+    const result = await window.electronAPI?.learningReviewProcess?.({ reviewModelConfig, memoryWriteApproval: loadSettings().memoryWriteApproval !== false });
+    if (!result?.ok) { message.error(result?.error || '任务复盘启动失败'); return; }
+    message.success(`复盘队列已处理 ${result.processed ?? 0} 项`);
+    await refreshLayered();
+  };
+
+  const retryLearningReview = async (itemId: string) => {
+    const reviewModelConfig = getReviewModel();
+    if (!reviewModelConfig) { message.warning('请先在“模型”页选择独立审查模型'); return; }
+    const result = await window.electronAPI?.learningReviewRetry?.({ itemId, reviewModelConfig, memoryWriteApproval: loadSettings().memoryWriteApproval !== false });
+    if (!result?.ok) { message.error(result?.error || '复盘重试失败'); return; }
+    message.success('已重新处理这项复盘');
+    await refreshLayered();
+  };
 
   const handleAdd = () => {
     const t = newText.trim();
@@ -707,9 +809,39 @@ function MemoryTab() {
   };
 
   return (
-    <div>
+    <div className="settings-content-page memory-settings-page">
+      <header><h2>记忆与学习</h2><span>管理团队共享经验、员工独立经验和任务复盘</span></header>
+      <div className="memory-status-strip" aria-label="记忆与复盘状态">
+        <div><strong>{layeredEntries.length}</strong><span>分层记忆</span></div>
+        <div><strong>{pendingProposals.length}</strong><span>待审核建议</span></div>
+        <div><strong>{learningReviews.filter((item) => item.status === 'queued' || item.status === 'processing').length}</strong><span>正在复盘</span></div>
+        <div><strong>{learningReviews.filter((item) => item.status === 'failed' || item.status === 'waiting_model').length}</strong><span>需要处理</span></div>
+      </div>
+      <section className="settings-memory-section settings-memory-layered">
+        <div className="settings-memory-section-head">
+          <div><h3>分层记忆</h3><p>团队共享经验供全队复用；员工个人经验只提供给对应员工。组织与用户层负责跨团队规则和使用偏好。</p></div>
+          <Button size="small" loading={refreshingLayered} onClick={() => void refreshLayered()}>刷新</Button>
+        </div>
+        <Segmented block value={layeredScope} options={[{ label: `组织 ${layeredEntries.filter((entry) => entry.scope === 'organization').length}`, value: 'organization' }, { label: `团队 ${layeredEntries.filter((entry) => entry.scope === 'team').length}`, value: 'team' }, { label: `员工 ${layeredEntries.filter((entry) => entry.scope === 'employee').length}`, value: 'employee' }, { label: `用户 ${layeredEntries.filter((entry) => entry.scope === 'user').length}`, value: 'user' }]} onChange={(value) => setLayeredScope(value as LayeredMemoryEntry['scope'])} />
+        {layeredScope === 'team' && <Select style={{ width: '100%', marginTop: 8 }} value={layeredScopeId} options={state.teams.map((team) => ({ value: team.id, label: team.name }))} onChange={setLayeredScopeId} placeholder="选择团队" />}
+        {layeredScope === 'employee' && <Select showSearch optionFilterProp="label" style={{ width: '100%', marginTop: 8 }} value={layeredScopeId} options={state.employees.map((employee) => ({ value: employee.id, label: `${employee.name} · ${employee.title}` }))} onChange={setLayeredScopeId} placeholder="选择员工" />}
+        <div className={`memory-capacity${selectedUsage.percent >= 80 ? ' is-warning' : ''}`}><div><span>当前层容量</span><small>{selectedUsage.current} / {selectedUsage.max || '未读取'} 字符</small></div><div><i style={{ width: `${Math.min(100, selectedUsage.percent)}%` }} /></div></div>
+        <Space.Compact style={{ width: '100%', marginTop: 8 }}><Input value={layeredText} onChange={(event) => setLayeredText(event.target.value)} onPressEnter={() => void addLayeredMemory()} placeholder="手动添加一条可长期复用的原子事实" /><Button type="primary" disabled={!layeredText.trim()} onClick={() => void addLayeredMemory()}>添加</Button></Space.Compact>
+        <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8, marginTop: 10 }}>
+          {visibleLayeredEntries.length === 0 && <div style={{ padding: 18, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>这个记忆层还没有内容。</div>}
+          {visibleLayeredEntries.map((entry, index) => <div key={entry.id} style={{ display: 'flex', gap: 8, padding: '9px 11px', borderBottom: index < visibleLayeredEntries.length - 1 ? '1px solid var(--border-light)' : 'none' }}><div style={{ flex: 1, minWidth: 0 }}><div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 3 }}><Tag>{entry.category}</Tag><Tag>{entry.sourceType === 'task-review' ? '已验收任务' : entry.sourceType === 'review-model' ? '独立审查' : entry.sourceType === 'legacy' ? '旧版迁移' : '手动'}</Tag><Tag color={entry.confidence >= 0.9 ? 'green' : 'default'}>可信度 {Math.round(entry.confidence * 100)}%</Tag></div><div style={{ fontSize: 12, color: 'var(--text)' }}>{entry.content}</div><small style={{ color: 'var(--text-muted)' }}>{entry.source} · {new Date(entry.updatedAt).toLocaleString('zh-CN')}</small></div><Button size="small" type="text" danger icon={<DeleteOutlined />} title="删除这条记忆" aria-label="删除这条记忆" onClick={() => void removeLayeredMemory(entry.id)} /></div>)}
+        </div>
+      </section>
+
+      {(pendingProposals.length > 0 || learningReviews.some((item) => item.status !== 'completed')) && <section className="settings-memory-section memory-review-section">
+        <div className="settings-memory-section-head"><div><h3>复盘与审核</h3><p>已验收路线会直接沉淀；独立模型提出的新判断必须经过审核。复盘失败不影响原任务结果。</p></div><Button size="small" onClick={() => void processLearningReviews()}>处理全部</Button></div>
+        {learningReviews.filter((item) => item.status !== 'completed').slice(-8).map((item) => <div className="memory-review-row" key={item.id}><div><Tag color={item.status === 'failed' ? 'red' : item.status === 'waiting_model' ? 'orange' : 'blue'}>{item.status === 'waiting_model' ? '等待审查模型' : item.status === 'failed' ? '复盘失败' : item.status === 'processing' ? '复盘中' : '待复盘'}</Tag><span>{item.taskId}</span>{item.lastError && <small>{item.lastError}</small>}</div>{(item.status === 'failed' || item.status === 'waiting_model') && <Button size="small" onClick={() => void retryLearningReview(item.id)}>重试</Button>}</div>)}
+        {pendingProposals.map((proposal) => <div className="memory-proposal-row" key={proposal.id}><div><strong>{proposal.summary}</strong><p>{proposal.update.content}</p><small>{proposal.update.scope === 'employee' ? '员工记忆' : proposal.update.scope === 'team' ? '团队记忆' : proposal.update.scope === 'user' ? '用户记忆' : '组织记忆'}</small></div><Space><Button size="small" type="primary" onClick={() => void reviewMemoryProposal(proposal.id, 'approve')}>批准</Button><Button size="small" onClick={() => void reviewMemoryProposal(proposal.id, 'reject')}>拒绝</Button></Space></div>)}
+      </section>}
+
+      <section className="settings-memory-section memory-legacy-section">
       <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>
-        长期记忆
+        旧版长期记忆（兼容）
         <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 8 }}>
           共 {items.length} 条
         </span>
@@ -778,8 +910,9 @@ function MemoryTab() {
           </Button>
         </div>
       )}
+      </section>
 
-      <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
+      <section className="settings-memory-section memory-legacy-section">
         <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>
           任务经验
           <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 8 }}>
@@ -831,7 +964,7 @@ function MemoryTab() {
             </Button>
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }

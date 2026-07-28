@@ -91,6 +91,8 @@ export interface Skill {
     missingFiles: string[];
   };
   sourceUrl?: string;
+  /** system=随客户端内置，manual=用户安装，auto=经复盘草案批准后生成。 */
+  origin?: 'system' | 'manual' | 'auto';
 }
 export interface SkillReference { id: string; name: string; }
 export interface SkillUsageEvidence {

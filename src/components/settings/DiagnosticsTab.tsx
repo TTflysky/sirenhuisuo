@@ -21,7 +21,7 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
 
   return <div className="settings-content-page diagnostics-page">
     <header className="diagnostics-header">
-      <div><h2>诊断中心</h2><span>一次检查模型、连接器、Skill、工具、任务内核、工作区和权限</span></div>
+      <div><h2>诊断中心</h2><span>一次检查模型、连接器、Skill、任务内核、记忆复盘、工作区和权限</span></div>
       <Button icon={<ReloadOutlined />} onClick={() => void run()} disabled={running}>重新检查</Button>
     </header>
     {running && !report && <div className="diagnostics-loading"><Spin /><span>正在逐项做真实检查…</span></div>}
