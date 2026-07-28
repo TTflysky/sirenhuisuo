@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { ArrowLeftOutlined, HistoryOutlined, PauseCircleOutlined, PlayCircleOutlined, RobotOutlined, SearchOutlined, StopOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, EditOutlined, HistoryOutlined, PauseCircleOutlined, PlayCircleOutlined, RobotOutlined, SearchOutlined, StopOutlined, UserAddOutlined } from '@ant-design/icons';
 import type { Team, Employee, TaskRun } from '../../types';
 import { useStore } from '../../store';
 import { type Attachment } from '../../data/hermesClient';
@@ -8,6 +8,7 @@ import { loadOutputsByScope, type OutputRecord } from '../../data/outputs';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
 import ChatMessageText from './ChatMessageText';
 import RenameTeamModal from '../sidebar/RenameTeamModal';
+import ManageTeamMembersModal from '../sidebar/ManageTeamMembersModal';
 import { copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
 import SkillMentionInput, { resolveSkillContext } from '../skills/SkillMentionInput';
@@ -63,6 +64,7 @@ export default function TeamChatApp({ teamId }: Props) {
   const [workspacePanelWidth, setWorkspacePanelWidth] = useState(320);
   const [showTaskList, setShowTaskList] = useState(false);
   const [showRenameTeam, setShowRenameTeam] = useState(false);
+  const [showManageMembers, setShowManageMembers] = useState(false);
   const [taskHistoryQuery, setTaskHistoryQuery] = useState('');
   const [replayTaskId, setReplayTaskId] = useState<string | null>(null);
   const [replayLedgerEvents, setReplayLedgerEvents] = useState<TaskLedgerEvent[]>([]);
@@ -347,7 +349,7 @@ export default function TeamChatApp({ teamId }: Props) {
         })} onContextMenu={(event) => {
           event.preventDefault(); setExpandedRunIds((previous) => { const next = new Set(previous); if (next.has(run.id)) next.delete(run.id); else next.add(run.id); return next; });
         }}>
-          <span className="task-run-state">{run.status === 'running' ? '执行中' : run.status === 'queued' ? '排队中' : run.status === 'paused' ? '已暂停' : run.status === 'stopped' ? '已停止' : run.status === 'failed' ? '待恢复' : '已完成'}</span>
+          <span className="task-run-state">{run.status === 'running' ? '执行中' : run.status === 'queued' ? '排队中' : run.status === 'awaiting_user' ? '等待你处理' : run.status === 'paused' ? '已暂停' : run.status === 'stopped' ? '已停止' : run.status === 'failed' ? '待恢复' : '已完成'}</span>
           <strong>{run.title}</strong><span>{completed}/{run.steps.length}</span><span className="task-run-toggle">{expanded ? '收起' : '详情'}</span>
         </button>
         <button type="button" className="task-run-close" title="关闭并从任务列表移除" onClick={() => closeTaskRun(run.id)}>×</button>
@@ -385,8 +387,8 @@ export default function TeamChatApp({ teamId }: Props) {
         <div className="task-run-actions">
           <button className="btn btn-sm" onClick={() => setReplayTaskId(run.id)} title="只读回放任务"><HistoryOutlined />回放</button>
           {active && <button className="btn btn-sm" onClick={() => pauseTaskRun(run.id)}><PauseCircleOutlined />暂停</button>}
-          {(run.status === 'paused' || run.status === 'failed') && <button className="btn btn-sm btn-primary" onClick={() => resumeTaskRun(run.id)}><PlayCircleOutlined />继续执行</button>}
-          {(active || run.status === 'paused' || run.status === 'failed') && <button className="btn btn-sm btn-danger" onClick={() => stopTaskRun(run.id)}><StopOutlined />停止</button>}
+          {(run.status === 'paused' || run.status === 'failed' || run.status === 'awaiting_user') && <button className="btn btn-sm btn-primary" onClick={() => resumeTaskRun(run.id)}><PlayCircleOutlined />继续执行</button>}
+          {(active || run.status === 'paused' || run.status === 'failed' || run.status === 'awaiting_user') && <button className="btn btn-sm btn-danger" onClick={() => stopTaskRun(run.id)}><StopOutlined />停止</button>}
         </div>
       </div>}
     </section>;
@@ -413,16 +415,24 @@ export default function TeamChatApp({ teamId }: Props) {
       <div className="chat-layout">
         <div className="chat-main">
           <div className="team-chat-body">
-            <aside className="team-member-sidebar" aria-label="团队成员列表">
+            <aside className="team-member-sidebar" aria-label="团队成员列表" tabIndex={0}>
               <div className="team-member-sidebar-head">
                 <span>{team.icon ?? '👥'}</span>
                 <strong title={team.name}>{team.name}</strong>
-                <button type="button" onClick={() => {
-                  if (!window.electronAPI?.openTool) { setShowRenameTeam(true); return; }
-                  void window.electronAPI.openTool({ type: 'rename-team', refId: team.id }).then((result) => {
-                    if (!result.ok) setShowRenameTeam(true);
-                  });
-                }} title="重命名团队" aria-label="重命名团队">✎</button>
+                <span className="team-member-sidebar-actions">
+                  <button type="button" onClick={() => {
+                    if (!window.electronAPI?.openTool) { setShowManageMembers(true); return; }
+                    void window.electronAPI.openTool({ type: 'manage-team-members', refId: team.id }).then((result) => {
+                      if (!result.ok) setShowManageMembers(true);
+                    });
+                  }} title="添加团队成员" aria-label="添加团队成员"><UserAddOutlined /></button>
+                  <button type="button" onClick={() => {
+                    if (!window.electronAPI?.openTool) { setShowRenameTeam(true); return; }
+                    void window.electronAPI.openTool({ type: 'rename-team', refId: team.id }).then((result) => {
+                      if (!result.ok) setShowRenameTeam(true);
+                    });
+                  }} title="重命名团队" aria-label="重命名团队"><EditOutlined /></button>
+                </span>
               </div>
               <button key={supervisorMention.id} className="team-member-item team-supervisor-item" onClick={() => insertMention(supervisorMention)} title={`@${supervisorMention.name}`}><SupervisorAvatar size={34} /><span className="team-member-info"><strong>{supervisorMention.name}</strong><small>{supervisorMention.title}</small><small className="is-working">随时可联系</small></span></button>
               {teamMembers.map((emp) => <button key={emp.id} className="team-member-item" onClick={() => insertMention(emp)} title={`@${emp.name}`}><span className="team-member-avatar"><AgentAvatar employee={emp} size={34} /><span className={`team-member-status ${!emp.isOnline ? 'offline' : emp.isWorking ? 'working' : 'idle'}`} /></span><span className="team-member-info"><strong>{emp.name}</strong><small style={{ color: emp.statusColor }}>{emp.title}</small><small className={emp.isWorking ? 'is-working' : ''}>{emp.isWorking ? '工作中' : emp.isOnline ? '在线' : '离线'}</small></span></button>)}
@@ -774,6 +784,7 @@ export default function TeamChatApp({ teamId }: Props) {
         )}
       </div>
       {showRenameTeam && <RenameTeamModal teamId={team.id} currentName={team.name} onClose={() => setShowRenameTeam(false)} />}
+      {showManageMembers && <ManageTeamMembersModal teamId={team.id} onClose={() => setShowManageMembers(false)} />}
     </div>
   );
 }

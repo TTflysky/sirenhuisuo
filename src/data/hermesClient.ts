@@ -1,5 +1,5 @@
 import type { Employee, Team, ChatMessage, AppState, AgentStatus, ModelConfig } from '../types';
-import { MAX_STATIONS } from '../types';
+import { repairEmployeeStations } from './officeStations';
 import { seedEmployees } from './defaultEmployees';
 import { seedTeams } from './defaultTeams';
 import type { OutputScope } from './outputs';
@@ -2012,7 +2012,9 @@ export function fetchInitial(): AppState {
   }
   const distinctColors = ensureDistinctEmployeeColors(employees);
   employees = distinctColors.employees;
-  if (distinctColors.changed) saveEmployees(employees);
+  const repairedStations = repairEmployeeStations(employees);
+  employees = repairedStations.employees;
+  if (distinctColors.changed || repairedStations.changed) saveEmployees(employees);
 
   // Teams (不含 chatMessages)
   let teams: Team[] = [];
@@ -2150,13 +2152,7 @@ export function replaceChat(id: string, msgs: ChatMessage[]): void {
 }
 
 // ===== 工具：找空闲工位 =====
-export function findFreeStation(employees: Employee[]): number {
-  const occupied = new Set(employees.map((e) => e.stationIndex).filter((i) => i >= 0));
-  for (let i = 0; i < MAX_STATIONS; i++) {
-    if (!occupied.has(i)) return i;
-  }
-  return employees.length % MAX_STATIONS;
-}
+export { findFreeStation } from './officeStations';
 
 // ===== 私聊（DM）消息持久化：按员工 id 存 =====
 const LS_DM_PREFIX = 'hermes_office_dm_';

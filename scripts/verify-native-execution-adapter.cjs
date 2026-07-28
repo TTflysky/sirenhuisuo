@@ -36,6 +36,13 @@ function runFixture(id, goal = '生成一份真实报告') {
   };
 }
 
+function singleStepRun(id, goal = '生成一份真实报告') {
+  const run = runFixture(id, goal);
+  run.memberSnapshot = [run.memberSnapshot[0]];
+  run.steps = [run.steps[0]];
+  return run;
+}
+
 function modelResponse(message, usage = {}) {
   return new Response(JSON.stringify({ choices: [{ message }], usage, model: 'mock-model' }), { status: 200, headers: { 'content-type': 'application/json' } });
 }
@@ -138,12 +145,88 @@ async function main() {
   const pausedSnapshot = await store.read();
   assert.equal(pausedSnapshot.runs.find((item) => item.id === pausedRun.id).status, 'paused');
 
+  let queueFirstStarted = false;
+  let queueSecondStarted = false;
+  const queuedFetch = async (_url, options) => {
+    const system = String(JSON.parse(options.body).messages?.[0]?.content || '');
+    if (system.includes('队列任务一')) {
+      queueFirstStarted = true;
+      return new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true }));
+    }
+    queueSecondStarted = true;
+    return new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true }));
+  };
+  const queueAdapter = createNativeExecutionAdapter({ projectRoot: path.resolve(__dirname, '..'), store, worker, toolRuntime, sessionId: 'native-test-session', fetchImpl: queuedFetch });
+  const queueFirst = singleStepRun('native-queue-first', '队列任务一');
+  const queueSecond = singleStepRun('native-queue-second', '队列任务二');
+  const queueMembers = (run) => run.memberSnapshot.map((member) => ({ ...member, modelConfig: { apiHost: 'https://mock.invalid/v1', model: 'mock-model' } }));
+  await queueAdapter.start({ taskId: queueFirst.id, run: queueFirst, members: queueMembers(queueFirst) });
+  await waitFor(() => queueFirstStarted);
+  await queueAdapter.start({ taskId: queueSecond.id, run: queueSecond, members: queueMembers(queueSecond) });
+  const queuedStatus = queueAdapter.status(queueSecond.id);
+  assert.equal(queuedStatus.job.state, 'queued');
+  assert.equal(queuedStatus.job.queuePosition, 1);
+  assert.equal(queuedStatus.queue.total, 1);
+  const pauseQueued = await worker.dispatch({ taskId: queueFirst.id, type: 'pause', requestedBy: 'test' });
+  queueAdapter.handleControl({ taskId: queueFirst.id, type: 'pause' }, pauseQueued);
+  await waitFor(() => queueSecondStarted);
+  const stopQueued = await worker.dispatch({ taskId: queueSecond.id, type: 'stop', requestedBy: 'test' });
+  queueAdapter.handleControl({ taskId: queueSecond.id, type: 'stop' }, stopQueued);
+
+  const waitingToolRuntime = {
+    ...toolRuntime,
+    async execute(name, args, context) {
+      if (name === 'write_file') return { name, success: false, awaitingUser: true, output: '需要先在设置中完成外部服务授权。' };
+      return toolRuntime.execute(name, args, context);
+    },
+  };
+  const waitingFetch = async () => modelResponse({ role: 'assistant', content: null, tool_calls: [{ id: 'wait-write', type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: 'report.md', content: '真实内容', category: 'final' }) } }] });
+  const waitingAdapter = createNativeExecutionAdapter({ projectRoot: path.resolve(__dirname, '..'), store, worker, toolRuntime: waitingToolRuntime, sessionId: 'native-test-session', fetchImpl: waitingFetch });
+  const waitingRun = singleStepRun('native-awaiting-user', '等待用户授权');
+  await waitingAdapter.start({ taskId: waitingRun.id, run: waitingRun, members: queueMembers(waitingRun) });
+  const waitingJob = await waitFor(() => waitingAdapter.status(waitingRun.id).job?.state === 'awaiting_user' ? waitingAdapter.status(waitingRun.id).job : null);
+  assert.equal(waitingJob.state, 'awaiting_user');
+  const waitingSnapshot = (await store.read()).runs.find((item) => item.id === waitingRun.id);
+  assert.equal(waitingSnapshot.status, 'awaiting_user');
+  assert.match(waitingSnapshot.recoveryContext.waitingFor, /授权/u);
+
+  let steeringFirstRequest = false;
+  let steeringAbortCount = 0;
+  let steeringCalls = 0;
+  const steeringFetch = async (_url, options) => {
+    steeringCalls += 1;
+    if (steeringCalls === 1) {
+      steeringFirstRequest = true;
+      return new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => { steeringAbortCount += 1; reject(new Error('aborted')); }, { once: true }));
+    }
+    if (steeringCalls === 2) return modelResponse({ role: 'assistant', content: null, tool_calls: [{ id: 'steer-write', type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: 'report.md', content: '按新要求生成', category: 'final' }) } }] });
+    return modelResponse({ role: 'assistant', content: '已按最新要求生成并验证真实报告。' });
+  };
+  const steeringAdapter = createNativeExecutionAdapter({ projectRoot: path.resolve(__dirname, '..'), store, worker, toolRuntime, sessionId: 'native-test-session', fetchImpl: steeringFetch });
+  const steeringRun = singleStepRun('native-steering', '生成可验证报告');
+  await steeringAdapter.start({ taskId: steeringRun.id, run: steeringRun, members: queueMembers(steeringRun) });
+  await waitFor(() => steeringFirstRequest);
+  const steeringResult = steeringAdapter.steer(steeringRun.id, '改为面向新手的说明，并保留报告文件。');
+  assert.equal(steeringResult.ok, true);
+  const steeredCompleted = await waitFor(async () => {
+    const snapshot = await store.read();
+    const current = snapshot.runs.find((item) => item.id === steeringRun.id);
+    return current && !['queued', 'running'].includes(current.status) ? current : null;
+  });
+  assert.equal(steeringAbortCount, 1, '插话必须取消正在进行的模型请求');
+  assert(steeringAdapter.events(steeringRun.id).events.some((event) => event.type === 'steering_preempted'), '缺少插话抢占事件');
+  assert.equal(steeredCompleted.status, 'completed', JSON.stringify({ status: steeredCompleted.status, lastError: steeredCompleted.lastError, handoff: steeredCompleted.handoff, events: steeringAdapter.events(steeringRun.id).events.map((event) => event.type) }));
+
   adapter.stopAll();
   pauseAdapter.stopAll();
+  queueAdapter.stopAll();
+  waitingAdapter.stopAll();
+  steeringAdapter.stopAll();
   worker.stop();
+  await new Promise((resolve) => setTimeout(resolve, 100));
   await fs.rm(root, { recursive: true, force: true });
   console.log('native execution adapter verification passed');
-  console.log(JSON.stringify({ completed: completed.status, writeExecutions, messages: completed.executionMessages.length, paused: pausedJob.state, credentialsPersisted: false }, null, 2));
+  console.log(JSON.stringify({ completed: completed.status, writeExecutions, messages: completed.executionMessages.length, paused: pausedJob.state, queued: queuedStatus.job.queuePosition, awaitingUser: waitingJob.state, steeringAbortCount, credentialsPersisted: false }, null, 2));
 }
 
 main().catch((error) => {

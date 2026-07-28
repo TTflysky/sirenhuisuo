@@ -1,9 +1,11 @@
 import { useState } from 'react';
+import { UserAddOutlined } from '@ant-design/icons';
 import { Dropdown, Modal, App } from 'antd';
 import type { MenuProps } from 'antd';
 import type { Team } from '../../types';
 import { useStore } from '../../store';
 import RenameTeamModal from './RenameTeamModal';
+import ManageTeamMembersModal from './ManageTeamMembersModal';
 
 interface Props {
   onTeamClick: (teamId: string) => void;
@@ -16,6 +18,7 @@ export default function TeamList({ onTeamClick, onNewTeam, collapsed = false, on
   const { state, dispatch } = useStore();
   const { message } = App.useApp();
   const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [memberTeamId, setMemberTeamId] = useState<string | null>(null);
 
   const activeTeams = state.teams.filter((t) => !t.archived);
   const archivedTeams = state.teams.filter((t) => t.archived);
@@ -41,6 +44,13 @@ export default function TeamList({ onTeamClick, onNewTeam, collapsed = false, on
     });
   };
 
+  const handleManageMembers = (team: Team) => {
+    if (!window.electronAPI?.openTool) { setMemberTeamId(team.id); return; }
+    void window.electronAPI.openTool({ type: 'manage-team-members', refId: team.id }).then((result) => {
+      if (!result.ok) setMemberTeamId(team.id);
+    });
+  };
+
   const handleArchive = (team: Team) => {
     dispatch({ type: 'UPDATE_TEAM', id: team.id, partial: { archived: true } });
     message.success(`${team.name} 已归档`);
@@ -52,6 +62,7 @@ export default function TeamList({ onTeamClick, onNewTeam, collapsed = false, on
   };
 
   const buildMenuItems = (team: Team): MenuProps['items'] => [
+    { key: 'members', icon: <UserAddOutlined />, label: '添加成员', onClick: () => handleManageMembers(team) },
     { key: 'rename', label: '✏️ 重命名', onClick: () => handleRename(team) },
     ...(team.archived
       ? [{ key: 'unarchive', label: '📂 取消归档', onClick: () => handleUnarchive(team) }]
@@ -112,6 +123,7 @@ export default function TeamList({ onTeamClick, onNewTeam, collapsed = false, on
           onClose={() => setRenamingId(null)}
         />
       )}
+      {memberTeamId && <ManageTeamMembersModal teamId={memberTeamId} onClose={() => setMemberTeamId(null)} />}
     </>
   );
 }

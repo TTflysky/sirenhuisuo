@@ -95,7 +95,7 @@ function normalizeTaskRuns(runs: TaskRun[]): TaskRun[] {
       const next: TaskRun = addFormalExecutionState({
         ...run,
         workspaceId: run.workspaceId ?? `legacy/team_${run.teamId}`,
-        phase: run.phase ?? (run.status === 'completed' ? 'completed' : run.status === 'failed' ? 'blocked' : run.status === 'running' ? 'executing' : 'preflight'),
+        phase: run.phase ?? (run.status === 'completed' ? 'completed' : run.status === 'awaiting_user' ? 'awaiting_user' : run.status === 'failed' ? 'blocked' : run.status === 'running' ? 'executing' : 'preflight'),
         goal: run.goal ?? run.request,
         acceptanceCriteria: run.acceptanceCriteria ?? ['完成用户目标', '产出可观察结果', '完成必要验证'],
         preflight: run.preflight ?? [{ label: '确认任务目标', status: 'passed' }, { label: '检查成员与模型', status: 'pending' }, { label: '确认验收方式', status: 'pending' }],
@@ -121,6 +121,31 @@ function normalizeTaskRuns(runs: TaskRun[]): TaskRun[] {
       if (!staleExecution) return next;
       recovered = true;
       const now = Date.now();
+      const restartableNativeRun = next.worker?.adapter === 'main-native-execution-adapter' || next.recoveryContext?.autoResume === true;
+      if (restartableNativeRun) {
+        next.status = 'queued';
+        next.phase = 'preflight';
+        next.updatedAt = now;
+        if (next.runner) next.runner = restoreTaskRunner(next.runner) ?? next.runner;
+        next.steps = next.steps.map((step) => step.status === 'running' || step.status === 'paused'
+          ? { ...step, status: 'queued', events: [...step.events, { ts: now, type: 'status', detail: '客户端重新启动，已回到后台待执行队列' }] }
+          : step);
+        next.recoveryContext = {
+          ...(next.recoveryContext ?? defaultRecoveryContext(next)),
+          summary: '客户端已重新启动，任务会在本机模型配置可用后自动从未完成步骤继续。',
+          interruptedAt: now,
+          interruptionReason: '客户端进程已重新启动',
+          autoResume: true,
+          waitingFor: undefined,
+        };
+        next.handoff = {
+          ts: now,
+          completed: next.steps.filter((step) => step.status === 'completed').map((step) => step.title),
+          blocked: '任务已恢复到后台队列，正在等待安全地重新注入本机模型配置。',
+          nextAction: '无需重新布置任务；模型配置可用后会自动继续。',
+        };
+        return next;
+      }
       next.status = 'paused';
       next.phase = 'blocked';
       next.updatedAt = now;

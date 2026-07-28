@@ -1,12 +1,12 @@
 # 太极项目当前交接
 
 > 更新时间：2026-07-28
-> 当前版本：`v0.21.0`
+> 当前版本：`v0.22.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
-> Release：`v0.21.0` 已完成构建并正式发布
+> Release：`v0.22.0` 已完成构建并正式发布
 
-`v0.21.0` 已把 Electron 团队任务的模型与工具循环迁入主进程原生 Execution Adapter。团队窗口关闭后任务继续运行，重新打开后从 TaskRun 投影恢复工具记录、员工回复、步骤和证据；API Key 与连接器凭据只存在当前 Job 内存，不进入账本或 GitHub。浏览器开发环境继续保留旧渲染执行器作为兼容回退。
+`v0.22.0` 已把主进程原生 Job 扩展为串行后台任务队列。任务在客户端重启后回到队列并从本机重新注入模型配置；插话会抢占当前请求并按新约束续跑；缺少账号、授权或配置时进入独立“等待你处理”状态。办公室预设 999 个工位且超过后继续扩展，团队成员管理与所有员工滚动区域同步补齐。API Key 与连接器凭据仍只存在当前 Job 内存，不进入账本或 GitHub。
 
 ## 办公室端直接开始
 
@@ -172,7 +172,7 @@ npm.cmd run verify:package
 - `npm.cmd run verify:task-worker`：通过；覆盖命令幂等、租约、心跳、暂停/恢复、跨会话过期回收、停止、关闭和损坏命令尾部隔离。
 - `npm.cmd run verify:task-worker` 新增 Adapter 覆盖：步骤开始/完成检查点、重复序号拒绝，以及旧渲染快照不能覆盖主进程权威检查点。
 - `npm.cmd run verify:native-execution`：通过；无界面订阅时完成工作与审查步骤，重复写入只执行一次，暂停可中断模型，凭据未进入任务投影。
-- `npm.cmd run verify:package`：通过；包内版本为 `0.21.0`，任务账本、Worker、原生 Adapter、工具运行时和所需 Engine 模块可读取，安装器、blockmap 和 `latest.yml` 版本一致。
+- `npm.cmd run verify:package`：通过；包内版本为 `0.22.0`，任务账本、Worker、原生 Adapter、工具运行时和所需 Engine 模块可读取，安装器、blockmap 和 `latest.yml` 版本一致。
 - 打包客户端普通隔离启动连续存活 12 秒；已修复 Electron 33 Windows 下巡检计时器 `unref()` 导致的 `0x80000003` 原生异常。
 - `npm.cmd run verify:foundation-ui`：通过；真实 Electron IPC 覆盖工作区、Worker 控制、诊断中心、记忆页、敏感信息脱敏和旧任务恢复。
 - `npm.cmd run diagnose:web-search`：通过；Electron 实网使用 DuckDuckGo，首轮空结果自动重试后约 3.1 秒返回 8 条中文 AI 资讯。
@@ -185,10 +185,10 @@ npm.cmd run verify:package
 
 ## 安装与发布资产
 
-- 安装包：`release\taiji-office-setup-0.21.0.exe`
-- Blockmap：`release\taiji-office-setup-0.21.0.exe.blockmap`
+- 安装包：`release\taiji-office-setup-0.22.0.exe`
+- Blockmap：`release\taiji-office-setup-0.22.0.exe.blockmap`
 - 更新清单：`release\latest.yml`
-- 包内版本：`0.21.0`。
+- 包内版本：`0.22.0`。
 - 最终文件大小和 SHA-256 以 `npm.cmd run publish:release` 的成功输出及 GitHub Release digest 为准；发布脚本会逐项比对本地与远端，不再把易过期的单次构建摘要固化在交接文档中。
 - 解包版受控启动 8 秒保持运行，未出现启动即崩溃。
 - 安装目录只保留 `太极 AI 办公会所.exe` 和对应卸载程序，没有旧产品可执行文件残留。
@@ -211,8 +211,7 @@ npm.cmd run verify:package
 
 ## 下一步
 
-1. `v0.22.0` 把主进程 Job 扩展为跨启动后台任务队列，补自动恢复、等待用户、插话抢占和窗口状态总览。
-2. `v0.23.0` 建立统一工具注册中心，把静态工具、Connector 和 Skill 适配器纳入同一发现、预检与协议边界。
-3. 后续严格按既定 `v0.24.0` 至 `v0.28.0` 顺序完成 SQLite、上下文路由、动态委派、Git Worktree 和生态闭环。
+1. `v0.23.0` 建立统一工具注册中心，把静态工具、Connector 和 Skill 适配器纳入同一发现、预检与协议边界。
+2. 后续严格按既定 `v0.24.0` 至 `v0.28.0` 顺序完成任务数据库、上下文路由、动态委派、Git Worktree 和生态闭环。
 
 每次完成后先升级版本并更新本文件，提交到干净的 `main`，然后运行 `npm.cmd run publish:release` 一次完成预检、回归、打包、推送、Release 上传和远端哈希校验。

@@ -273,7 +273,7 @@ function createTaskWorker(options) {
         return;
       }
       if (command.type === 'resume') {
-        if (!['paused', 'failed'].includes(run.status)) throw new Error(`任务状态 ${run.status} 不能恢复`);
+        if (!['paused', 'failed', 'awaiting_user'].includes(run.status)) throw new Error(`任务状态 ${run.status} 不能恢复`);
         run.status = 'queued';
         run.phase = 'preflight';
         run.lastError = undefined;
@@ -284,6 +284,8 @@ function createTaskWorker(options) {
           run.recoveryContext.summary = 'Worker 已接收继续命令，等待执行适配器领取任务。';
           run.recoveryContext.interruptedAt = undefined;
           run.recoveryContext.interruptionReason = undefined;
+          run.recoveryContext.waitingFor = undefined;
+          run.recoveryContext.autoResume = true;
         }
         return;
       }
@@ -337,27 +339,30 @@ function createTaskWorker(options) {
       const foreignSession = run.worker.ownerSessionId && run.worker.ownerSessionId !== sessionId;
       const expired = Number(run.worker.expiresAt) <= now;
       if (!foreignSession && !expired) continue;
+      const nativeAdapter = run.worker?.adapter === 'main-native-execution-adapter';
       const result = await store.updateTask(run.id, (next) => {
         if (!isActiveLease(next.worker)) return;
-        next.status = 'paused';
-        next.phase = 'blocked';
+        next.status = nativeAdapter ? 'queued' : 'paused';
+        next.phase = nativeAdapter ? 'preflight' : 'blocked';
         next.steps.forEach((step) => {
           if (step.status === 'running' || step.status === 'queued') {
-            step.status = 'paused';
-            step.events.push({ ts: now, type: 'error', detail: 'Worker 租约失效，步骤已安全暂停' });
+            step.status = nativeAdapter ? 'queued' : 'paused';
+            step.events.push({ ts: now, type: 'error', detail: nativeAdapter ? '客户端重启，后台任务已回到待执行队列' : 'Worker 租约失效，步骤已安全暂停' });
           }
         });
         next.worker = { ...next.worker, state: 'expired', expiredAt: now, expiresAt: undefined };
         if (next.recoveryContext) {
-          next.recoveryContext.summary = '后台 Worker 租约已失效，任务已安全暂停。';
+          next.recoveryContext.summary = nativeAdapter ? '客户端重启后，后台任务已保留进度并自动回到待执行队列。' : '后台 Worker 租约已失效，任务已安全暂停。';
           next.recoveryContext.interruptedAt = now;
           next.recoveryContext.interruptionReason = foreignSession ? '客户端进程已更换' : 'Worker 心跳超时';
+          next.recoveryContext.autoResume = nativeAdapter;
+          next.recoveryContext.waitingFor = undefined;
         }
         next.handoff = {
           ts: now,
           completed: next.steps.filter((step) => step.status === 'completed').map((step) => step.title),
-          blocked: '后台 Worker 执行租约失效，任务没有继续跳步。',
-          nextAction: '检查模型和工作区后点击“继续执行”。',
+          blocked: nativeAdapter ? '客户端已重启，后台任务正在等待重新注入本机模型配置。' : '后台 Worker 执行租约失效，任务没有继续跳步。',
+          nextAction: nativeAdapter ? '客户端会在模型配置可用后自动从未完成步骤继续。' : '检查模型和工作区后点击“继续执行”。',
         };
       }, { source: 'task-worker', sessionId, detail: foreignSession ? 'Worker 检测到旧执行会话并安全回收' : 'Worker 心跳超时并安全回收' });
       if (result.ok && !result.unchanged) {

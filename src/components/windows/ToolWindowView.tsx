@@ -6,6 +6,7 @@ import AddEmployeeModal from '../sidebar/AddEmployeeModal';
 import CreateTeamModal from '../sidebar/CreateTeamModal';
 import EditEmployeeModal from '../sidebar/EditEmployeeModal';
 import RenameTeamModal from '../sidebar/RenameTeamModal';
+import ManageTeamMembersModal from '../sidebar/ManageTeamMembersModal';
 import ConnectorConfigModal from '../sidebar/ConnectorConfigModal';
 import AssistantSettingsModal from '../settings/AssistantSettingsModal';
 import { BUS_CHANNELS, sendBus } from '../../ipcBus';
@@ -18,6 +19,7 @@ const TITLES: Record<string, string> = {
   'edit-employee': '编辑员工',
   'create-team': '新建团队',
   'rename-team': '重命名团队',
+  'manage-team-members': '添加团队成员',
   'connector-config': '配置连接器',
   'assistant-settings': '助手设置',
 };
@@ -44,6 +46,7 @@ export default function ToolWindowView({ hash }: Props) {
     if (type === 'create-team') return <CreateTeamModal onClose={close} />;
     if (type === 'edit-employee') return employee ? <EditEmployeeModal employee={employee} onClose={close} /> : <WindowError text="没有找到这名员工，可能已经被删除。" />;
     if (type === 'rename-team') return team ? <RenameTeamModal teamId={team.id} currentName={team.name} onClose={close} /> : <WindowError text="没有找到这个团队，可能已经被删除。" />;
+    if (type === 'manage-team-members') return team ? <ManageTeamMembersModal teamId={team.id} onClose={close} /> : <WindowError text="没有找到这个团队，可能已经被删除。" />;
     if (type === 'connector-config') {
       if (payload === undefined) return <div className="tool-window-loading">正在读取连接器配置…</div>;
       if (!payload) return <WindowError text="没有读取到连接器配置，请关闭后重新打开。" />;

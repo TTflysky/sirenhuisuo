@@ -24,6 +24,7 @@ import { useStore } from '../../store';
 import { BUS_CHANNELS, onBus, sendBus } from '../../ipcBus';
 import { getDirectExecutionControl, isExplicitPauseSteering, isExplicitResumeSteering, shouldHoldTaskForFeedback } from '../../engine/agentGuardrails.mjs';
 import { executionControllerStatus } from '../../engine/executionController.mjs';
+import { isTeamMemberAdditionRequest, resolveMentionedEmployees, resolveTargetTeam } from '../../engine/teamMembership';
 import {
   BEGINNER_RESPONSE_GUIDE,
   getToolActivity,
@@ -80,7 +81,7 @@ function saveHistory(msgs: ChatMessage[]): void {
 }
 
 export default function AssistantChat() {
-  const { state, createProjectDraft } = useStore();
+  const { state, createProjectDraft, addTeamMembers } = useStore();
   const [msgs, setMsgs] = useState<ChatMessage[]>(() => loadHistory());
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -173,6 +174,43 @@ export default function AssistantChat() {
         content: display, mentions: [], timestamp: Date.now(), kind: 'text', skillRefs: refs,
         attachments: atts,
       });
+    }
+
+    if (isTeamMemberAdditionRequest(enriched)) {
+      const mentionedEmployees = resolveMentionedEmployees(enriched, state.employees);
+      const targetTeam = resolveTargetTeam(enriched, state.teams, msgs.slice(-12).map((message) => message.content));
+      if (!targetTeam) {
+        push({
+          id: `h-${Date.now()}-team-unclear`, authorId: 'assistant', roleId: 'custom',
+          content: '我已经找到你要补充团队成员的意思，但当前有多个团队，无法可靠判断要改哪一个。请告诉我团队名称，我会直接添加，不会让你去别处重复操作。',
+          mentions: [], timestamp: Date.now(), kind: 'text',
+        });
+        return;
+      }
+      if (!mentionedEmployees.length) {
+        push({
+          id: `h-${Date.now()}-employee-unclear`, authorId: 'assistant', roleId: 'custom',
+          content: `我已确认要修改「${targetTeam.name}」，但这句话里没有匹配到办公室中的真实员工姓名。请直接说姓名，或在团队成员栏点“添加成员”选择。`,
+          mentions: [], timestamp: Date.now(), kind: 'text',
+        });
+        return;
+      }
+      const additions = mentionedEmployees.filter((employee) => !targetTeam.memberIds.includes(employee.id));
+      const added = addTeamMembers(targetTeam.id, additions.map((employee) => employee.id));
+      const alreadyPresent = mentionedEmployees.filter((employee) => targetTeam.memberIds.includes(employee.id));
+      push({
+        id: `h-${Date.now()}-members-updated`, authorId: 'assistant', roleId: 'custom',
+        content: added.length
+          ? `已处理好：${added.map((employee) => employee.name).join('、')} 已加入「${targetTeam.name}」，团队窗口和成员名单会立即同步。${alreadyPresent.length ? `${alreadyPresent.map((employee) => employee.name).join('、')} 原本就在团队中。` : ''}`
+          : `${alreadyPresent.map((employee) => employee.name).join('、')} 已经在「${targetTeam.name}」中，名单没有重复添加。`,
+        mentions: mentionedEmployees.map((employee) => employee.id), timestamp: Date.now(), kind: 'text',
+      });
+      if (busy && added.length) {
+        steeringMessagesRef.current.push(`团队名单已真实更新：${added.map((employee) => `${employee.name}（${employee.title}）`).join('、')} 已加入「${targetTeam.name}」。后续判断和分工必须使用更新后的名单。`);
+        executionControl.interruptForSteering();
+        setStatus('团队名单已更新，正在让当前任务采用新成员信息…');
+      }
+      return;
     }
 
     if (busy) {

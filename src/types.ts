@@ -27,7 +27,7 @@ export interface Employee {
   avatarKind: 'preset' | 'custom';
   statusColor: string;   // 角色色
   avatarFrame?: AvatarFrameConfig;
-  stationIndex: number;  // 0..MAX_STATIONS-1
+  stationIndex: number;  // 非负整数为办公室工位；负数表示不在主办公室落座
   prompt?: string;       // 个性提示词（人设/说话风格），用于私聊回应
   soul?: string;         // 核心人格文件（soul.md），深度人设描述
   currentTeamId?: string;
@@ -193,10 +193,10 @@ export interface AvatarFrameConfig {
 }
 
 // ===== 可恢复任务运行（v0.4 调度内核） =====
-export type TaskRunStatus = 'queued' | 'running' | 'paused' | 'stopped' | 'failed' | 'completed';
+export type TaskRunStatus = 'queued' | 'running' | 'awaiting_user' | 'paused' | 'stopped' | 'failed' | 'completed';
 export type TaskStepStatus = 'queued' | 'running' | 'paused' | 'stopped' | 'failed' | 'completed';
 export type TaskStepKind = 'work' | 'review' | 'revision';
-export type TaskRunPhase = 'preflight' | 'executing' | 'verifying' | 'blocked' | 'completed';
+export type TaskRunPhase = 'preflight' | 'executing' | 'verifying' | 'awaiting_user' | 'blocked' | 'completed';
 export type TaskEvidenceKind = 'file' | 'run' | 'connection' | 'review' | 'human' | 'progress';
 export type TaskEvidence = {
   ts: number;
@@ -222,6 +222,10 @@ export interface TaskRecoveryContext {
   };
   interruptedAt?: number;
   interruptionReason?: string;
+  /** Restart-safe hint only. Model credentials are deliberately never persisted. */
+  autoResume?: boolean;
+  /** Plain-language condition that must be supplied before this task can continue. */
+  waitingFor?: string;
   /** 统一执行控制器的可恢复快照，不包含工具原始参数或凭据。 */
   controller?: ExecutionControllerSnapshot;
 }
@@ -308,6 +312,8 @@ export interface TaskRun {
   title: string;
   request: string;
   status: TaskRunStatus;
+  /** Position in the main-process background queue while the task is waiting. */
+  queuePosition?: number;
   createdAt: number;
   updatedAt: number;
   memberSnapshot: TaskRunMemberSnapshot[];
@@ -336,8 +342,6 @@ export interface TaskRun {
 }
 
 // ===== 应用状态 =====
-export const MAX_STATIONS = 12;
-
 export interface AgentStatus {
   backendOnline: boolean;
   demoRunning: boolean;

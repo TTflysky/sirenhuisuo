@@ -1,5 +1,5 @@
 import type { Employee } from '../../types';
-import { MAX_STATIONS } from '../../types';
+import { getOfficeStationCount, repairEmployeeStations } from '../../data/officeStations';
 import Workstation from './Workstation';
 
 interface Props {
@@ -13,18 +13,20 @@ interface Props {
  * 每个工位一块桌面，员工形象清晰可见。
  */
 export default function OfficeView({ employees, isWorking, onStationClick }: Props) {
-  // 工位→员工映射
+  // Keep old data with wrapped station indices visible before persistence migration finishes.
+  const repairedEmployees = repairEmployeeStations(employees).employees;
   const stationMap = new Map<number, Employee>();
-  for (const emp of employees) {
-    if (emp.stationIndex >= 0 && emp.stationIndex < MAX_STATIONS) {
+  for (const emp of repairedEmployees) {
+    if (emp.stationIndex >= 0) {
       stationMap.set(emp.stationIndex, emp);
     }
   }
 
   const stations = [];
+  const stationCount = getOfficeStationCount(repairedEmployees);
   const onlineCount = employees.filter((employee) => employee.isOnline).length;
   const workingCount = employees.filter((employee) => employee.isOnline && (employee.isWorking || isWorking(employee))).length;
-  for (let i = 0; i < MAX_STATIONS; i++) {
+  for (let i = 0; i < stationCount; i++) {
     const emp = stationMap.get(i);
     stations.push(
       <Workstation
@@ -51,8 +53,8 @@ export default function OfficeView({ employees, isWorking, onStationClick }: Pro
           <div className={workingCount ? 'is-active' : ''}><strong>{workingCount}</strong><span>工作中</span></div>
         </div>
       </header>
-      <div className="office-container">
-        <div className="office-grid">
+      <div className="office-container" role="region" aria-label={`办公室工位，共 ${stationCount} 个位置`} tabIndex={0}>
+        <div className="office-grid" data-station-count={stationCount}>
           {stations}
         </div>
       </div>

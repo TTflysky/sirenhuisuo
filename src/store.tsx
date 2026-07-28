@@ -28,6 +28,7 @@ import { PROACTIVE_SCRIPT } from './engine/proactiveScript';
 import { runTeamDiscussion } from './engine/teamDiscussion';
 import { evaluateDiscussionTrigger } from './engine/discussionTrigger';
 import { findFreeStation } from './data/hermesClient';
+import { isTeamMemberAdditionRequest, resolveMentionedEmployees } from './engine/teamMembership';
 import { sendBus, onBus, BUS_CHANNELS } from './ipcBus';
 import { appendTaskRunContext, createTaskRun, formalPlanStepForRun, getExecutionSessionId, hydrateTaskRunsFromMainStore, saveTaskRuns, sendTaskWorkerCommand, taskRunContextPrompt, updateTaskRun } from './data/taskRuns';
 import { buildTaskPlan, matchProjectMembers, matchTeamMembers } from './engine/taskMatcher';
@@ -291,6 +292,7 @@ interface StoreCtx {
   resetDemo: () => void;
   addEmployee: (name: string, title: string, role: OpcRoleId, avatar: string, avatarKind: 'preset' | 'custom', statusColor?: string, prompt?: string, avatarFrame?: import('./types').AvatarFrameConfig) => void;
   createTeam: (name: string, icon: string, memberIds: string[]) => void;
+  addTeamMembers: (teamId: string, memberIds: string[]) => Employee[];
   createProjectDraft: (input: { title: string; request: string; steps?: string[]; expectedOutputs?: string[] }) => void;
   approveProject: (projectId: string) => void;
   archiveProject: (projectId: string) => void;
@@ -524,6 +526,35 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const addTeamMembers = (teamId: string, memberIds: string[]): Employee[] => {
+    const current = stateRef.current;
+    const team = current.teams.find((item) => item.id === teamId);
+    if (!team) return [];
+    const existingIds = new Set(team.memberIds);
+    const added = [...new Set(memberIds)]
+      .map((id) => current.employees.find((employee) => employee.id === id))
+      .filter((employee): employee is Employee => !!employee && !existingIds.has(employee.id));
+    if (!added.length) return [];
+
+    const nextMemberIds = [...new Set([...team.memberIds, ...added.map((employee) => employee.id)])];
+    dispatch({ type: 'UPDATE_TEAM', id: teamId, partial: { memberIds: nextMemberIds } });
+    added.forEach((employee) => dispatch({ type: 'UPDATE_EMPLOYEE', id: employee.id, partial: { currentTeamId: teamId } }));
+    dispatch({
+      type: 'APPEND_CHAT',
+      teamId,
+      msgs: [{
+        id: `msg-members-added-${Date.now()}`,
+        authorId: 'assistant',
+        roleId: 'custom',
+        content: `已将 ${added.map((employee) => employee.name).join('、')} 加入「${team.name}」。成员列表已同步，后续可以直接 @姓名 分配工作。`,
+        mentions: added.map((employee) => employee.id),
+        timestamp: Date.now(),
+        kind: 'text',
+      }],
+    });
+    return added;
+  };
+
   const createProjectDraft = (input: { title: string; request: string; steps?: string[]; expectedOutputs?: string[] }) => {
     const now = Date.now();
     const project: Project = {
@@ -642,6 +673,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const pausedRunIdsRef = React.useRef(new Set<string>());
   const stoppedRunIdsRef = React.useRef(new Set<string>());
   const taskSummaryAttemptsRef = React.useRef(new Set<string>());
+  const autoResumeAttemptRef = React.useRef(new Map<string, string>());
 
   useEffect(() => {
     const terminalStatuses = new Set(['completed', 'paused', 'failed', 'stopped']);
@@ -1416,6 +1448,47 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     });
   };
 
+  // A native task that was only interrupted by an app restart returns to the
+  // queue. Credentials are re-read from this device's current model settings,
+  // never from the persisted task record.
+  useEffect(() => {
+    if (!window.electronAPI?.taskExecutionStart) return;
+    for (const run of state.taskRuns) {
+      if (run.status !== 'queued' || !run.recoveryContext?.autoResume) continue;
+      const members = run.memberSnapshot
+        .map((member) => state.employees.find((employee) => employee.id === member.id))
+        .filter((employee): employee is Employee => !!employee);
+      const signature = members.map((employee) => {
+        const config = client.getEmployeeModel(employee);
+        return `${employee.id}:${config.apiHost ?? ''}:${config.model ?? ''}`;
+      }).join('|');
+      if (autoResumeAttemptRef.current.get(run.id) === signature) continue;
+      autoResumeAttemptRef.current.set(run.id, signature);
+      if (members.length !== run.memberSnapshot.length || members.some((employee) => !client.resolveApiBase(client.getEmployeeModel(employee)))) {
+        dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
+          if (!next.recoveryContext) return;
+          next.recoveryContext.summary = '任务已在后台队列中恢复，但还缺少本机模型配置，配置完成后会自动继续。';
+          next.recoveryContext.waitingFor = '为任务成员配置可用模型';
+        }) });
+        continue;
+      }
+      void startNativeTaskExecution(run, taskRunContextPrompt(run)).then((result) => {
+        if (!result?.ok) {
+          autoResumeAttemptRef.current.delete(run.id);
+          return;
+        }
+        const latest = stateRef.current.taskRuns.find((item) => item.id === run.id);
+        if (!latest) return;
+        dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(latest, (next) => {
+          if (!next.recoveryContext) return;
+          next.recoveryContext.summary = '后台任务已恢复，正在从未完成步骤继续执行。';
+          next.recoveryContext.autoResume = false;
+          next.recoveryContext.waitingFor = undefined;
+        }) });
+      });
+    }
+  }, [state.taskRuns, state.employees, dispatch]);
+
   const startTaskRun = async (teamId: string, request: string, employeeIds: string[], sourceMessageId?: string, attachments?: import('./data/hermesClient').Attachment[], explicitSkillRefs: import('./types').SkillReference[] = []) => {
     const current = stateRef.current;
     const team = current.teams.find((item) => item.id === teamId);
@@ -1528,7 +1601,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     stoppedRunIdsRef.current.delete(runId);
     const run = stateRef.current.taskRuns.find((item) => item.id === runId);
     if (!run) return;
-    const pendingSteps = run.steps.filter((step) => step.status === 'paused' || step.status === 'failed' || step.status === 'queued');
+    const pendingSteps = run.status === 'awaiting_user'
+      ? run.steps.filter((step) => step.status !== 'completed' && step.status !== 'stopped')
+      : run.steps.filter((step) => step.status === 'paused' || step.status === 'failed' || step.status === 'queued');
     const pending = pendingSteps.map((step) => step.employeeId);
     const pendingStepIds = new Set(pendingSteps.map((step) => step.id));
     if (!pendingSteps.length) return;
@@ -1648,6 +1723,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         });
         return;
       }
+      if (isTeamMemberAdditionRequest(content)) {
+        const mentionedEmployees = resolveMentionedEmployees(content, current.employees);
+        const newMembers = mentionedEmployees.filter((employee) => !team.memberIds.includes(employee.id));
+        if (newMembers.length) {
+          addTeamMembers(team.id, newMembers.map((employee) => employee.id));
+        } else {
+          const alreadyMembers = mentionedEmployees.filter((employee) => team.memberIds.includes(employee.id));
+          dispatch({
+            type: 'APPEND_CHAT', teamId,
+            msgs: [{
+              id: `msg-member-add-help-${Date.now()}`, authorId: 'assistant', roleId: 'custom',
+              content: alreadyMembers.length
+                ? `${alreadyMembers.map((employee) => employee.name).join('、')} 已经在「${team.name}」中，不需要重复添加。`
+                : '我知道你要补充团队成员，但没有识别到明确的员工姓名。请直接说“把员工姓名加入团队”，或点成员栏顶部的添加按钮选择。',
+              mentions: alreadyMembers.map((employee) => employee.id), timestamp: Date.now(), kind: 'text',
+            }],
+          });
+        }
+        return;
+      }
       if (isTeamControlRequest(content)) {
         const pauseRequested = /(?:暂停|停止|先停|停下|别做|不要继续).{0,12}(?:工作|任务|手上|当前|执行)|(?:工作|任务).{0,8}(?:暂停|停止)/u.test(content);
         const reportRequested = /(?:模型|配置|状态|报数|报个数|数数|在线情况)/u.test(content);
@@ -1762,6 +1857,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         resetDemo,
         addEmployee,
         createTeam,
+        addTeamMembers,
         createProjectDraft,
         approveProject,
         archiveProject,

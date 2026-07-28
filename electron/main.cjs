@@ -239,7 +239,7 @@ async function executeWorkspaceCommand(payload) {
 const chatWindows = new Map();
 const toolWindows = new Map();
 const toolWindowPayloads = new Map();
-const TOOL_WINDOW_TYPES = new Set(['add-employee', 'edit-employee', 'create-team', 'rename-team', 'connector-config', 'assistant-settings']);
+const TOOL_WINDOW_TYPES = new Set(['add-employee', 'edit-employee', 'create-team', 'rename-team', 'manage-team-members', 'connector-config', 'assistant-settings']);
 const CHAT_WINDOW_WIDTH = 560;
 const CHAT_WINDOW_HEIGHT = 700;
 const CHAT_WINDOW_MIN_WIDTH = 420;
@@ -386,7 +386,7 @@ function normalizeToolWindowOptions(opts) {
   const type = typeof opts?.type === 'string' ? opts.type : '';
   if (!TOOL_WINDOW_TYPES.has(type)) return null;
   const refId = typeof opts?.refId === 'string' ? opts.refId.trim() : '';
-  if (['edit-employee', 'rename-team'].includes(type) && !refId) return null;
+  if (['edit-employee', 'rename-team', 'manage-team-members'].includes(type) && !refId) return null;
   return { type, refId, payload: opts?.payload ?? null, key: `${type}:${refId || 'new'}` };
 }
 
@@ -396,6 +396,7 @@ function getToolWindowSpec(type) {
   if (type === 'assistant-settings') return { width: 660, height: 760, minWidth: 560, minHeight: 560, title: `${APP_TITLE} · 助手设置` };
   if (type === 'create-team') return { width: 520, height: 620, minWidth: 440, minHeight: 460, title: `${APP_TITLE} · 新建团队` };
   if (type === 'rename-team') return { width: 420, height: 260, minWidth: 360, minHeight: 220, title: `${APP_TITLE} · 重命名团队` };
+  if (type === 'manage-team-members') return { width: 560, height: 680, minWidth: 460, minHeight: 520, title: `${APP_TITLE} · 添加团队成员` };
   return { width: 560, height: 760, minWidth: 460, minHeight: 560, title: `${APP_TITLE} · 添加员工` };
 }
 

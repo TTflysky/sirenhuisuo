@@ -113,6 +113,8 @@ export interface NativeExecutionJob {
   jobId: string;
   taskId: string;
   state: NativeExecutionJobState;
+  queuePosition?: number;
+  waitingFor?: string;
   startedAt?: number;
   updatedAt: number;
   finishedAt?: number;
@@ -133,7 +135,14 @@ export interface NativeExecutionStartInput {
   connectors?: unknown[];
   connectorTools?: unknown[];
 }
-export interface NativeExecutionResult { ok: boolean; job?: NativeExecutionJob; jobs?: NativeExecutionJob[]; idempotencyHit?: boolean; error?: string; }
+export interface NativeExecutionResult {
+  ok: boolean;
+  job?: NativeExecutionJob;
+  jobs?: NativeExecutionJob[];
+  queue?: { activeTaskId?: string; queuedTaskIds: string[]; total: number };
+  idempotencyHit?: boolean;
+  error?: string;
+}
 export interface NativeExecutionEvent {
   protocolVersion: number;
   sequence: number;
@@ -170,7 +179,7 @@ export type ChatWindowType = 'dm-chat' | 'team-chat' | 'assistant-chat';
 export interface OpenChatOptions { type: ChatWindowType; refId: string; }
 export interface OpenChatResult { ok: boolean; reused?: boolean; error?: string; }
 export interface ChatLockOptions extends OpenChatOptions { locked?: boolean; }
-export type ToolWindowType = 'add-employee' | 'edit-employee' | 'create-team' | 'rename-team' | 'connector-config' | 'assistant-settings';
+export type ToolWindowType = 'add-employee' | 'edit-employee' | 'create-team' | 'rename-team' | 'manage-team-members' | 'connector-config' | 'assistant-settings';
 export interface OpenToolOptions { type: ToolWindowType; refId?: string; payload?: unknown; }
 export interface OpenToolResult { ok: boolean; reused?: boolean; error?: string; }
 

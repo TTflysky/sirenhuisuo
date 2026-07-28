@@ -51,6 +51,8 @@ function safeJob(job) {
     jobId: job.jobId,
     taskId: job.taskId,
     state: job.state,
+    queuePosition: job.queuePosition,
+    waitingFor: job.waitingFor,
     startedAt: job.startedAt,
     updatedAt: job.updatedAt,
     finishedAt: job.finishedAt,
@@ -65,9 +67,58 @@ function safeJob(job) {
 
 function createNativeExecutionAdapter(options) {
   const jobs = new Map();
+  const queue = [];
+  let drainingQueue = false;
+  let activeJob;
   const projectRoot = path.resolve(options.projectRoot);
   const retryDelays = options.retryDelays ?? [0, 1000, 3000, 6000, 10000];
   let engineModulesPromise;
+
+  function refreshQueuePositions() {
+    queue.forEach((job, index) => { job.queuePosition = index + 1; });
+  }
+
+  function enqueueJob(job, reason = 'queued') {
+    if (job.state === 'completed' || job.state === 'failed' || job.state === 'stopped') return;
+    if (!queue.includes(job)) queue.push(job);
+    job.state = 'queued';
+    refreshQueuePositions();
+    void updateRun(job.taskId, (run) => {
+      if (run.status !== 'queued') return;
+      run.status = 'queued';
+      run.phase = 'preflight';
+      run.queuePosition = job.queuePosition;
+      if (run.recoveryContext) {
+        run.recoveryContext.summary = `任务正在后台队列中等待执行，前面还有 ${Math.max(0, (job.queuePosition || 1) - 1)} 项任务。`;
+        run.recoveryContext.autoResume = true;
+      }
+    }, '原生 Adapter 更新后台排队位置').catch(() => {});
+    emit(job, 'job_queued', { reason, queuePosition: job.queuePosition });
+    void drainQueue();
+  }
+
+  async function drainQueue() {
+    if (drainingQueue) return;
+    drainingQueue = true;
+    try {
+      while (queue.length) {
+        const job = queue.shift();
+        refreshQueuePositions();
+        if (!job || job.state !== 'queued') continue;
+        job.queuePosition = undefined;
+        activeJob = job;
+        try { await execute(job); }
+        finally { activeJob = undefined; }
+        if (job.requeueAfterExecution) {
+          job.requeueAfterExecution = false;
+          enqueueJob(job, 'steering-preempted');
+        }
+      }
+    } finally {
+      drainingQueue = false;
+      if (queue.length) void drainQueue();
+    }
+  }
 
   function emit(job, type, detail = {}) {
     job.updatedAt = Date.now();
@@ -164,8 +215,9 @@ function createNativeExecutionAdapter(options) {
   }
 
   async function claim(job) {
+    job.claimSequence = (job.claimSequence || 0) + 1;
     const result = await options.worker.dispatch({
-      commandId: `native-claim-${job.jobId}`,
+      commandId: `native-claim-${job.jobId}-${job.claimSequence}`,
       taskId: job.taskId,
       type: 'claim',
       requestedBy: 'main-native-execution-adapter',
@@ -257,6 +309,9 @@ function createNativeExecutionAdapter(options) {
         if (!message) throw new Error('模型没有返回可用消息');
         return { message, usage: data.usage || {}, model: data.model || modelName(config) };
       } catch (error) {
+        if (job.interruptReason === 'steer') {
+          throw new ExecutionControlSignal('steer', '已收到新的要求，正在根据最新内容调整当前步骤。');
+        }
         if (job.control) throw new ExecutionControlSignal(job.control, error?.message);
         lastError = error;
         emit(job, 'model_retry', { stepId: job.currentStepId, attempt: attempt + 1, maxAttempts: retryDelays.length, error: text(error?.message || error, 500) });
@@ -429,6 +484,7 @@ function createNativeExecutionAdapter(options) {
     await updateRun(job.taskId, (next) => {
       next.executionSessionId = options.sessionId;
       next.phase = 'executing';
+      next.queuePosition = undefined;
       next.lastError = undefined;
       if (next.runner) {
         try { next.runner = runner.beginTaskStep(next.runner, step.id); } catch {}
@@ -592,12 +648,44 @@ function createNativeExecutionAdapter(options) {
         job.state = error.kind === 'stop' || error.kind === 'close' ? 'stopped' : error.kind === 'awaiting_user' ? 'awaiting_user' : 'paused';
         job.lastError = error.message;
         emit(job, 'job_controlled', { control: error.kind, error: error.message });
-        if (error.kind === 'awaiting_user') {
+        if (error.kind === 'steer') {
+          job.state = 'queued';
+          job.requeueAfterExecution = true;
+          job.interruptReason = undefined;
           try {
             await updateRun(job.taskId, (run) => {
-              run.status = 'failed'; run.phase = 'blocked'; run.lastError = error.message;
+              run.status = 'queued';
+              run.phase = 'executing';
+              run.lastError = undefined;
+              run.steps.forEach((step) => {
+                if (step.status === 'running') {
+                  step.status = 'queued';
+                  step.events.push({ ts: Date.now(), type: 'status', detail: '收到用户插话，正在按最新要求重新执行当前步骤' });
+                }
+              });
+              if (run.recoveryContext) {
+                run.recoveryContext.summary = '已收到新的要求，正在合并原目标与最新约束后继续执行。';
+                run.recoveryContext.steeringMessages = [...(run.recoveryContext.steeringMessages || []), ...job.steering].slice(-20);
+                run.recoveryContext.autoResume = true;
+                run.recoveryContext.waitingFor = undefined;
+              }
+            }, '原生 Adapter 收到插话后抢占并重新排队');
+          } catch {}
+          emit(job, 'steering_preempted', { message: error.message });
+        } else if (error.kind === 'awaiting_user') {
+          job.waitingFor = error.message;
+          try {
+            await updateRun(job.taskId, (run) => {
+              run.status = 'awaiting_user'; run.phase = 'awaiting_user'; run.lastError = undefined;
               run.handoff = { ts: Date.now(), completed: run.steps.filter((item) => item.status === 'completed').map((item) => item.title), blocked: error.message,
                 nextAction: '完成提示中唯一的授权或配置后点击继续，已完成步骤不会重做。' };
+              if (run.recoveryContext) {
+                run.recoveryContext.summary = '任务需要你补充一项授权、配置或业务选择，收到后会从当前步骤继续。';
+                run.recoveryContext.waitingFor = error.message;
+                run.recoveryContext.autoResume = false;
+                run.recoveryContext.interruptedAt = Date.now();
+                run.recoveryContext.interruptionReason = error.message;
+              }
             }, '原生 Adapter 等待用户条件');
           } catch {}
         }
@@ -641,9 +729,10 @@ function createNativeExecutionAdapter(options) {
       connectors: clone(input.connectors || []), connectorActions,
       connectorTools: clone(input.connectorTools || []), steering: [], events: [], eventSequence: 0, messageSequence: 0,
       checkpointSequence: 0, modelRounds: 0, toolCalls: 0,
+      claimSequence: 0,
     };
     jobs.set(taskId, job);
-    void execute(job);
+    enqueueJob(job, 'submitted');
     return { ok: true, job: safeJob(job) };
   }
 
@@ -661,6 +750,10 @@ function createNativeExecutionAdapter(options) {
     if (!value) return { ok: false, error: '插话内容不能为空' };
     job.steering.push(value);
     if (job.steering.length > 20) job.steering.splice(0, job.steering.length - 20);
+    if (job.state === 'running') {
+      job.interruptReason = 'steer';
+      job.abortController?.abort();
+    }
     emit(job, 'steering_received', { message: value });
     return { ok: true, job: safeJob(job) };
   }
@@ -668,9 +761,9 @@ function createNativeExecutionAdapter(options) {
   function status(taskId) {
     if (taskId) {
       const job = jobs.get(String(taskId));
-      return { ok: true, job: job ? safeJob(job) : undefined };
+      return { ok: true, job: job ? safeJob(job) : undefined, queue: { activeTaskId: activeJob?.taskId, queuedTaskIds: queue.map((item) => item.taskId), total: queue.length } };
     }
-    return { ok: true, jobs: [...jobs.values()].map(safeJob) };
+    return { ok: true, jobs: [...jobs.values()].map(safeJob), queue: { activeTaskId: activeJob?.taskId, queuedTaskIds: queue.map((item) => item.taskId), total: queue.length } };
   }
 
   function events(taskId, afterSequence = 0) {

@@ -111,29 +111,57 @@ function assertJournalChain(records) {
 
     const claimedAgain = await workerA.dispatch({ commandId: 'claim-2', taskId: 'worker-task', type: 'claim' });
     assert.equal(claimedAgain.run.worker.ownerSessionId, 'session-a');
+
+    const nativeRestartRun = makeRun();
+    nativeRestartRun.id = 'native-restart-task';
+    nativeRestartRun.title = 'Native restart recovery';
+    const beforeNative = await store.read();
+    await store.write([...beforeNative.runs, nativeRestartRun], { source: 'test' });
+    const nativeClaim = await workerA.dispatch({ commandId: 'claim-native-restart', taskId: nativeRestartRun.id, type: 'claim', payload: { adapter: 'main-native-execution-adapter' } });
+    assert.equal(nativeClaim.ok, true);
     workerA.stop();
 
     const workerB = createTaskWorker({ rootDir: root, store, sessionId: 'session-b', leaseMs: 60_000, sweepMs: 60_000 });
     const restarted = await workerB.start();
-    assert.deepEqual(restarted.recoveredTasks, ['worker-task']);
-    const recoveredRun = (await store.read()).runs[0];
+    assert.deepEqual(new Set(restarted.recoveredTasks), new Set(['worker-task', nativeRestartRun.id]));
+    const recoveredSnapshot = await store.read();
+    const recoveredRun = recoveredSnapshot.runs.find((run) => run.id === 'worker-task');
     assert.equal(recoveredRun.status, 'paused');
     assert.equal(recoveredRun.worker.state, 'expired');
     assert.match(recoveredRun.recoveryContext.interruptionReason, /客户端进程已更换/u);
+    const recoveredNativeRun = recoveredSnapshot.runs.find((run) => run.id === nativeRestartRun.id);
+    assert.equal(recoveredNativeRun.status, 'queued');
+    assert.equal(recoveredNativeRun.recoveryContext.autoResume, true);
+
+    await store.updateTask(nativeRestartRun.id, (run) => {
+      run.status = 'awaiting_user';
+      run.phase = 'awaiting_user';
+      run.recoveryContext.waitingFor = '完成授权';
+    }, { source: 'test' });
+    const resumedAwaiting = await workerB.dispatch({ commandId: 'resume-awaiting', taskId: nativeRestartRun.id, type: 'resume' });
+    assert.equal(resumedAwaiting.ok, true);
+    assert.equal(resumedAwaiting.run.status, 'queued');
+    assert.equal(resumedAwaiting.run.recoveryContext.waitingFor, undefined);
+    const stoppedNative = await workerB.dispatch({ commandId: 'stop-native', taskId: nativeRestartRun.id, type: 'stop' });
+    assert.equal(stoppedNative.run.status, 'stopped');
 
     const stopped = await workerB.dispatch({ commandId: 'stop-1', taskId: 'worker-task', type: 'stop' });
     assert.equal(stopped.run.status, 'stopped');
     assert.equal(stopped.run.worker.state, 'stopped');
 
-    const commands = await workerB.readCommands({ taskId: 'worker-task' });
+    const commands = await workerB.readCommands();
     assert.equal(commands.ok, true);
     assert.equal(commands.protocolVersion, WORKER_PROTOCOL_VERSION);
     assertJournalChain(commands.records);
-    assert.ok(commands.records.some((record) => record.type === 'command_submitted'));
-    assert.ok(commands.records.some((record) => record.type === 'command_completed'));
+    const taskCommands = await workerB.readCommands({ taskId: 'worker-task' });
+    assert.ok(taskCommands.records.every((record) => record.taskId === 'worker-task'));
+    assert.ok(taskCommands.records.some((record) => record.type === 'command_submitted'));
+    assert.ok(taskCommands.records.some((record) => record.type === 'command_completed'));
 
     const closed = await workerB.dispatch({ commandId: 'close-1', taskId: 'worker-task', type: 'close' });
     assert.equal(closed.ok, true);
+    const closedNative = await workerB.dispatch({ commandId: 'close-native', taskId: nativeRestartRun.id, type: 'close' });
+    assert.equal(closedNative.ok, true);
     assert.equal((await store.read()).runs.length, 0);
     workerB.stop();
 

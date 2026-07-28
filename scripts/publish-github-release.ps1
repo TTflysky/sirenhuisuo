@@ -1,5 +1,6 @@
 param(
-  [switch]$SkipTests
+  [switch]$SkipTests,
+  [switch]$SkipBuild
 )
 
 $ErrorActionPreference = 'Stop'
@@ -89,7 +90,11 @@ if (-not $SkipTests) {
     'verify:foundation',
     'verify:connector-adapters',
     'verify:connector-protocol',
+    'verify:task-runtime-store',
+    'verify:task-worker',
     'verify:native-execution',
+    'verify:office-layout',
+    'verify:team-membership',
     'verify:skill-atomic',
     'verify:update-download',
     'verify:web-search',
@@ -100,7 +105,9 @@ if (-not $SkipTests) {
   }
 }
 
-Invoke-CheckedCommand npm.cmd @('run', 'dist:win')
+if (-not $SkipBuild) {
+  Invoke-CheckedCommand npm.cmd @('run', 'dist:win')
+}
 
 $installerName = "taiji-office-setup-$version.exe"
 $assetPaths = @(
@@ -135,7 +142,13 @@ foreach ($assetPath in $assetPaths) {
   }
 }
 
-Invoke-CheckedCommand git @('push', 'origin', $branch)
+# Office and home machines may alternate between a live local proxy and direct
+# access. Try the configured route first, then fall back to a direct connection.
+& git push origin $branch
+if ($LASTEXITCODE -ne 0) {
+  Write-Warning 'Git push through the configured network failed; retrying without Git proxy settings...'
+  Invoke-CheckedCommand git @('-c', 'http.proxy=', '-c', 'https.proxy=', 'push', 'origin', $branch)
+}
 
 $token = Get-TaijiGitHubToken
 if (-not $token) {
