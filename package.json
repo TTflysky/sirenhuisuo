@@ -1,7 +1,7 @@
 {
   "name": "hermes-office-pro",
   "private": true,
-  "version": "0.14.0",
+  "version": "0.15.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -17,6 +17,7 @@
     "verify:assistant-background": "node scripts/verify-assistant-background.mjs",
     "verify:agent-kernel": "node scripts/verify-agent-kernel.mjs",
     "verify:connector-adapters": "node scripts/verify-connector-adapters.cjs",
+    "verify:connector-protocol": "node scripts/verify-connector-protocol.mjs",
     "verify:execution-controller": "node scripts/verify-execution-controller.mjs",
     "verify:package": "node scripts/verify-packaged-app.cjs",
     "verify:skill-atomic": "node scripts/verify-skill-atomic.cjs",

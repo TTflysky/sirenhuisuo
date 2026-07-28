@@ -1,12 +1,12 @@
 # 太极项目当前交接
 
 > 更新时间：2026-07-28
-> 当前版本：`v0.12.0`
+> 当前版本：`v0.15.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
-> Release：[v0.12.0](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.12.0)
+> Release：[v0.15.0](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.15.0)
 
-`v0.12.0` 开始落地专业执行架构：新增版本化 `TaskContract` 和 `TaskPlan` 基础层，固定目标、依赖、输出、重试、幂等、补偿和审批字段，并在进入 Runner 前校验非法计划。下一步是 SQLite 持久化和正式 Runner。`v0.11.1` 的目标一致性层保持不变。
+`v0.15.0` 已完成 P1 连接器执行协议：动态连接器统一经过输入校验、权限、dry-run、真实调用、输出校验、脱敏和幂等，并把客户端证据写入任务上下文和团队任务面板。下一步按差异矩阵推进结构化文件/验收事件，以及审查退回责任步骤的正式 Plan 图循环。
 
 ## 办公室端直接开始
 

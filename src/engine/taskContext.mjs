@@ -15,6 +15,15 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function eventData(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  try {
+    const serialized = JSON.stringify(value);
+    if (serialized.length > 5000) return undefined;
+    return JSON.parse(serialized);
+  } catch { return undefined; }
+}
+
 function eventId() {
   return `ctx-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -54,6 +63,7 @@ export function restoreTaskContext(snapshot, fallback = {}) {
       stepId: text(event?.stepId, 160) || undefined,
       summary: text(event?.summary, 900),
       verified: event?.verified === true,
+      data: eventData(event?.data),
     })).filter((event) => event.summary) : [],
     createdAt: Number.isFinite(snapshot.createdAt) ? snapshot.createdAt : base.createdAt,
     updatedAt: Number.isFinite(snapshot.updatedAt) ? snapshot.updatedAt : base.updatedAt,
@@ -72,6 +82,7 @@ export function appendTaskContextEvent(snapshot, input = {}) {
     stepId: text(input.stepId, 160) || undefined,
     summary,
     verified: input.verified === true,
+    data: eventData(input.data),
   };
   state.events = [...state.events, event].slice(-MAX_EVENTS);
   if (event.type === 'decision') state.decisions = [...state.decisions, summary].slice(-MAX_DECISIONS);

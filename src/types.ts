@@ -194,7 +194,14 @@ export type TaskStepStatus = 'queued' | 'running' | 'paused' | 'stopped' | 'fail
 export type TaskStepKind = 'work' | 'review' | 'revision';
 export type TaskRunPhase = 'preflight' | 'executing' | 'verifying' | 'blocked' | 'completed';
 export type TaskEvidenceKind = 'file' | 'run' | 'connection' | 'review' | 'human' | 'progress';
-export type TaskEvidence = { ts: number; source: 'tool' | 'member' | 'review' | 'system'; kind?: TaskEvidenceKind; summary: string; verified?: boolean };
+export type TaskEvidence = {
+  ts: number;
+  source: 'tool' | 'member' | 'review' | 'system';
+  kind?: TaskEvidenceKind;
+  summary: string;
+  verified?: boolean;
+  connectorProtocol?: import('./engine/connectorProtocol.mjs').ConnectorProtocolResult;
+};
 
 export interface TaskRecoveryContext {
   summary: string;

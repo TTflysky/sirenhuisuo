@@ -6,6 +6,7 @@ export interface TaskContextEventInput {
   stepId?: string;
   summary: string;
   verified?: boolean;
+  data?: Record<string, unknown>;
 }
 
 export interface TaskContextEvent extends Required<Pick<TaskContextEventInput, 'summary'>> {
@@ -15,6 +16,7 @@ export interface TaskContextEvent extends Required<Pick<TaskContextEventInput, '
   source: string;
   stepId?: string;
   verified: boolean;
+  data?: Record<string, unknown>;
 }
 
 export interface TaskContextSnapshot {

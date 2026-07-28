@@ -797,7 +797,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         onTaskAdvance(taskId, lane) {
           dispatch({ type: 'ADVANCE_TASK', teamId, taskId, lane });
         },
-        onToolCall(emp, toolName, toolArgs, result, stepId, success) {
+        onToolCall(emp, toolName, toolArgs, result, stepId, success, protocolEvidence) {
           // ⚠️ onToolCall 在工具执行前回调 arg=调用参数，执行后回调 arg=执行中。工具执行由 agentLoop 异步完成，结果在后续 onMessage 中体现。
           const toolMsg = `🔧 **${emp.name}** 调用工具 **\`${toolName}\`**(${toolArgs || ''})\n⟳ ${result}`;
           dispatch({
@@ -814,16 +814,35 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             if (step) {
               step.events.push({ ts: Date.now(), type: 'tool', detail: `${toolName} ${toolArgs}${result && result !== '🔄 执行中…' ? ` → ${result}` : ''}`.slice(0, 360) });
               if (result && result !== '🔄 执行中…') {
-                const verified = isToolResultSuccessful(result, success);
+                const verified = protocolEvidence
+                  ? protocolEvidence.ok && protocolEvidence.stage === 'completed'
+                  : isToolResultSuccessful(result, success);
                 const kind = toolName === 'write_file' ? 'file' as const
                   : toolName === 'run_command' ? 'run' as const
                     : /connector|obsidian|knowledge/iu.test(toolName) ? 'connection' as const : 'progress' as const;
-                const evidence = { ts: Date.now(), source: 'tool' as const, kind, summary: `${toolName}：${result}`.slice(0, 260), verified };
+                const evidenceSummary = protocolEvidence
+                  ? `${protocolEvidence.connectorLabel} · ${protocolEvidence.action}：${protocolEvidence.ok ? '客户端验证通过' : `失败于 ${protocolEvidence.stage}`} · ${protocolEvidence.latencyMs}ms${protocolEvidence.idempotencyHit ? ' · 幂等复用' : ''}`
+                  : `${toolName}：${result}`.slice(0, 260);
+                const evidence = { ts: Date.now(), source: 'tool' as const, kind, summary: evidenceSummary, verified, connectorProtocol: protocolEvidence };
                 step.evidence = [...(step.evidence ?? []), evidence].slice(-12);
                 run.evidence = [...(run.evidence ?? []), evidence].slice(-40);
                 appendTaskRunContext(run, {
                   type: verified ? 'progress' : 'error', source: 'tool', stepId,
-                  summary: `${toolName}：${result}`.slice(0, 420), verified,
+                  summary: evidenceSummary.slice(0, 420), verified,
+                  data: protocolEvidence ? {
+                    connectorProtocol: {
+                      protocolVersion: protocolEvidence.protocolVersion,
+                      connectorId: protocolEvidence.connectorId,
+                      connectorLabel: protocolEvidence.connectorLabel,
+                      action: protocolEvidence.action,
+                      stage: protocolEvidence.stage,
+                      ok: protocolEvidence.ok,
+                      latencyMs: protocolEvidence.latencyMs,
+                      idempotencyHit: protocolEvidence.idempotencyHit,
+                      error: protocolEvidence.error,
+                      events: protocolEvidence.events,
+                    },
+                  } : undefined,
                 });
                 if (run.recoveryContext) {
                   run.recoveryContext.budget.toolAttempts += 1;

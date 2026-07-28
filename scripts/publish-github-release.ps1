@@ -88,6 +88,7 @@ if (-not $SkipTests) {
     'verify:agent-kernel',
     'verify:foundation',
     'verify:connector-adapters',
+    'verify:connector-protocol',
     'verify:skill-atomic',
     'verify:update-download',
     'verify:web-search',

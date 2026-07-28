@@ -6,11 +6,12 @@ import { diagnoseModel } from '../diagnostics/modelDiagnostics';
 import { BEGINNER_RESPONSE_GUIDE, isToolResultSuccessful } from '../data/assistantPresentation';
 import { blockExecution, createExecutionController, observeExecutionResult, type ExecutionControllerSnapshot } from './executionController.mjs';
 import type { TaskPlan } from './taskPlan.mjs';
+import type { ConnectorProtocolResult } from './connectorProtocol.mjs';
 
 // ===== 讨论回调 =====
 export interface DiscussionHandlers {
   onMessage: (emp: Employee, content: string, mentions: string[], tokens?: number, discussionRound?: number, inReplyToMessageId?: string, stepId?: string, contextUsage?: ContextUsage) => void;
-  onToolCall: (emp: Employee, toolName: string, toolArgs: string, result: string, stepId?: string, success?: boolean) => void;
+  onToolCall: (emp: Employee, toolName: string, toolArgs: string, result: string, stepId?: string, success?: boolean, protocolEvidence?: ConnectorProtocolResult) => void;
   onTaskAdvance: (taskId: string, lane: TaskLane) => void;
   onStatus: (text: string) => void;
   onDone: () => void;
@@ -77,7 +78,7 @@ async function memberSpeak(
   employees: Employee[],
   contextMessages: ChatMessage[],
   extraInstruction: string,
-  onToolCall: (toolName: string, toolArgs: string, result: string, success?: boolean) => void,
+  onToolCall: (toolName: string, toolArgs: string, result: string, success?: boolean, protocolEvidence?: ConnectorProtocolResult) => void,
   attachments?: import('../data/hermesClient').Attachment[],
   skillContext = '',
   workspaceId?: string,
@@ -144,9 +145,9 @@ async function memberSpeak(
       onToolCall(name, args) {
         onToolCall(name, args, '');
       },
-      onToolResult(name, args, result, success) {
+      onToolResult(name, args, result, success, protocolEvidence) {
         if (name === 'write_file' && isToolResultSuccessful(result, success)) producedFile = true;
-        onToolCall(name, args, result, success);
+        onToolCall(name, args, result, success, protocolEvidence);
       },
       onModelRetry(_attempt, _maxAttempts, error) {
         onToolCall('model_summary', '', error, false);
@@ -282,9 +283,9 @@ export async function runTeamDiscussion(
         task
           ? `团队接到新任务「${task.title}」${task.description ? `：${task.description}` : ''}。如有必要，可调工具产出文件或用 web_search 查资料。`
           : `${assignment}\n老板的原始要求：\n「${opts.userText ?? ''}」${latestGuidance ? `\n\n老板运行中追加的最新指令（优先执行）：\n「${latestGuidance}」` : ''}`,
-        (toolName, toolArgs, result, success) => {
+        (toolName, toolArgs, result, success, protocolEvidence) => {
           const argsStr = toolArgs ? (toolArgs.length > 80 ? toolArgs.slice(0, 80) + '…' : toolArgs) : '';
-          handlers.onToolCall(emp, toolName, argsStr, result || '🔄 执行中…', step.id, success);
+          handlers.onToolCall(emp, toolName, argsStr, result || '🔄 执行中…', step.id, success, protocolEvidence);
         },
         // 所有被调度成员都能读取同一批用户图片，避免交接后丢失视觉上下文。
         opts.attachments,

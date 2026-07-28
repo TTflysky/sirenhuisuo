@@ -25,6 +25,7 @@ outputs
 !src/components/outputs/
 !src/components/outputs/**
 .edge-cdp/
+.tmp-e2e-*/
 *.local
 
 # Editor directories and files

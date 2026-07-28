@@ -58,11 +58,17 @@ async function connect(target) {
 
 async function loadStandaloneTypeScript(relativePath) {
   let source = await fs.readFile(relativePath, 'utf8');
-  if (source.includes("../engine/executionController.mjs")) {
-    const controllerSource = await fs.readFile('src/engine/executionController.mjs', 'utf8');
-    const controllerUrl = `data:text/javascript;base64,${Buffer.from(controllerSource).toString('base64')}`;
-    source = source.replaceAll('../engine/executionController.mjs', controllerUrl);
-  }
+  const dataUrl = (value) => `data:text/javascript;base64,${Buffer.from(value).toString('base64')}`;
+  const taskPlanSource = await fs.readFile('src/engine/taskPlan.mjs', 'utf8');
+  const taskPlanUrl = dataUrl(taskPlanSource);
+  const taskRunnerSource = (await fs.readFile('src/engine/taskRunner.mjs', 'utf8')).replaceAll('./taskPlan.mjs', taskPlanUrl);
+  const moduleUrls = new Map([
+    ['../engine/executionController.mjs', dataUrl(await fs.readFile('src/engine/executionController.mjs', 'utf8'))],
+    ['../engine/taskPlan.mjs', taskPlanUrl],
+    ['../engine/taskRunner.mjs', dataUrl(taskRunnerSource)],
+    ['../engine/taskContext.mjs', dataUrl(await fs.readFile('src/engine/taskContext.mjs', 'utf8'))],
+  ]);
+  for (const [specifier, url] of moduleUrls) source = source.replaceAll(specifier, url);
   const transpiled = ts.transpileModule(source, {
     compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext },
     fileName: relativePath,
@@ -143,7 +149,7 @@ try {
   assert.deepEqual(workspace.reads.map((item) => item.content), ['first-content', 'second-content', 'attachment-content']);
 
   const openSettings = await main.evaluate('window.electronAPI.openSettings()');
-  assert.equal(openSettings.ok, true, '无法打开诊断中心');
+  assert.equal(openSettings.ok, true, `无法打开诊断中心${openSettings.error ? `：${openSettings.error}` : ''}`);
   const settingsTarget = await waitFor(async () => (await listTargets()).find((target) => target.url.includes('#settings')), '设置窗口没有启动');
   settings = await connect(settingsTarget);
   const diagnostics = await waitFor(async () => {

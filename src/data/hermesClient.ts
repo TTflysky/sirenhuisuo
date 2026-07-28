@@ -3,6 +3,7 @@ import { MAX_STATIONS } from '../types';
 import { seedEmployees } from './defaultEmployees';
 import { seedTeams } from './defaultTeams';
 import type { OutputScope } from './outputs';
+import type { ConnectorProtocolResult } from '../engine/connectorProtocol.mjs';
 import { loadTaskRuns } from './taskRuns';
 import { redactToolArguments } from '../engine/securityBoundary';
 import { ensureDistinctEmployeeColors } from './employeeColors';
@@ -1159,7 +1160,7 @@ export interface AgentLoopOpts {
   scene: string;
   label: string;
   onToolCall?: (name: string, args: string) => void;
-  onToolResult?: (name: string, args: string, result: string, success?: boolean) => void;
+  onToolResult?: (name: string, args: string, result: string, success?: boolean, protocolEvidence?: ConnectorProtocolResult) => void;
   modelConfig?: ModelConfig;  // 可选员工独立模型配置
   extraSystemContext?: string; // 额外的系统上下文（如 soul.md）
   scope?: OutputScope;        // 产出物作用域
@@ -1341,7 +1342,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       });
       const useful = isUsefulToolOutcome(name, result.success, result.output, originalUserText);
       observeToolOutcome(name, argumentsText, result.output, useful, name === 'test_connector' ? 'connection' : 'progress');
-      onToolResult?.(name, argumentsText, result.output, useful);
+      onToolResult?.(name, argumentsText, result.output, useful, result.protocolEvidence);
       callLog.push({ name, args: argumentsText, result: result.output.slice(0, 1200), success: useful });
       toolResultCache.set(canonicalToolCallKey(name, argumentsText), { output: result.output.slice(0, 6000), success: useful });
       toolCallsThisPhase += 1;
@@ -1390,7 +1391,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     observeToolOutcome('web_search', searchArgs, searched.output, useful, 'research');
     requiredResearchSucceeded = useful;
     requiredResearchOutput = searched.output;
-    onToolResult?.('web_search', searchArgs, searched.output, useful);
+    onToolResult?.('web_search', searchArgs, searched.output, useful, searched.protocolEvidence);
     callLog.push({ name: 'web_search', args: searchArgs, result: searched.output.slice(0, 1200), success: useful });
     toolResultCache.set(canonicalToolCallKey('web_search', searchArgs), { output: searched.output.slice(0, 6000), success: useful });
     toolCallsThisPhase += 1;
@@ -1416,7 +1417,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         });
         const readUseful = isUsefulToolOutcome('read_web_page', read.success, read.output, originalUserText);
         observeToolOutcome('read_web_page', readArgs, read.output, readUseful, 'research');
-        onToolResult?.('read_web_page', readArgs, read.output, readUseful);
+        onToolResult?.('read_web_page', readArgs, read.output, readUseful, read.protocolEvidence);
         callLog.push({ name: 'read_web_page', args: readArgs, result: read.output.slice(0, 1200), success: readUseful });
         toolCallsThisPhase += 1;
         totalToolAttempts += 1;
@@ -1465,7 +1466,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       const useful = isUsefulToolOutcome(name, recovered.success, recovered.output, originalUserText);
       observeToolOutcome(name, argumentsText, recovered.output, useful, 'recovery');
       if (useful && !isPreparationOnlyTool(name)) successfulCalls.add(`${name}:${argumentsText}`);
-      onToolResult?.(name, argumentsText, recovered.output, useful);
+      onToolResult?.(name, argumentsText, recovered.output, useful, recovered.protocolEvidence);
       callLog.push({ name, args: argumentsText, result: recovered.output.slice(0, 1200), success: useful });
       toolCallsThisPhase += 1;
       if (toolCallsThisPhase >= maxToolCallsPerPhase) phaseToolBudgetReached = true;
@@ -1755,7 +1756,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         if (newEvidence && !isPreparationOnlyTool(tc.name)) successfulCalls.add(cacheKey);
         if (!newEvidence) iterationHadFailure = true;
         if (executed && cached === undefined) toolResultCache.set(cacheKey, { output: result.output.slice(0, 6000), success: resultSuccess });
-        if (executed) onToolResult?.(tc.name, redactToolArguments(effectiveArguments), result.output, resultSuccess);
+        if (executed) onToolResult?.(tc.name, redactToolArguments(effectiveArguments), result.output, resultSuccess, result.protocolEvidence);
         callLog.push({ name: tc.name, args: effectiveArguments, result: result.output.slice(0, 1200), success: resultSuccess });
 
         if (isPreparationOnlyTool(tc.name) && newEvidence) preparationOnlyStreak += 1;

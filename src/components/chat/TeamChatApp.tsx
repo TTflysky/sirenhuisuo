@@ -279,6 +279,7 @@ export default function TeamChatApp({ teamId }: Props) {
     const expanded = expandedRunIds.has(run.id);
     const completed = run.steps.filter((step) => step.status === 'completed').length;
     const active = run.status === 'running' || run.status === 'queued';
+    const connectorEvidence = (run.evidence ?? []).filter((item) => item.connectorProtocol).slice(-6);
     return <section key={run.id} className={`task-run-tray task-run-${run.status}`}>
       <div className="task-run-summary-row">
         <button type="button" className="task-run-summary" onClick={() => setExpandedRunIds((previous) => {
@@ -297,6 +298,11 @@ export default function TeamChatApp({ teamId }: Props) {
         {!!run.preflight?.length && <div className="task-run-preflight"><strong>前置检查</strong>{run.preflight.map((item) => <span key={item.label} className={`is-${item.status}`} title={item.detail}>{item.status === 'passed' ? '✓' : item.status === 'blocked' ? '!' : '·'} {item.label}</span>)}</div>}
         {!!run.skillRefs?.length && <div className="task-run-skills"><strong>Skills</strong>{run.skillRefs.map((skill) => <span key={skill.id}>{skill.name}</span>)}</div>}
         {!!run.skillEvidence?.length && <div className="task-run-skills task-run-skill-evidence"><strong>Skill 证据</strong>{run.skillEvidence.slice(-8).map((item, index) => <span key={`${item.ts}-${item.skillId ?? item.toolName}-${index}`} title={item.detail ?? item.reason}>{item.action === 'read-failed' ? '!' : item.action === 'read' || item.action === 'called' ? '✓' : '·'} {item.skillName ?? item.skillId ?? item.toolName ?? 'Skill'} · {item.action}</span>)}</div>}
+        {connectorEvidence.length > 0 && <div className="task-run-connector-evidence"><strong>连接器证据</strong>{connectorEvidence.map((item, index) => {
+          const protocol = item.connectorProtocol!;
+          const title = protocol.events.map((event) => `${event.ok ? '✓' : '!'} ${event.stage} · ${event.detail}`).join('\n');
+          return <span key={`${protocol.completedAt}-${protocol.connectorId}-${index}`} className={protocol.ok ? 'is-passed' : 'is-blocked'} title={title}>{protocol.ok ? '✓' : '!'} {protocol.connectorLabel} · {protocol.action} · {protocol.latencyMs}ms{protocol.idempotencyHit ? ' · 复用' : ''}</span>;
+        })}</div>}
         {run.recoveryContext && <div className="task-run-recovery">
           <div><strong>恢复摘要</strong><span>{run.recoveryContext.summary}</span></div>
           <div><strong>预算快照</strong><span>工具 {run.recoveryContext.budget.toolAttempts} 次{run.recoveryContext.budget.promptTokens !== undefined ? ` · 上下文 ${run.recoveryContext.budget.promptTokens.toLocaleString()}${run.recoveryContext.budget.contextWindowTokens ? ` / ${run.recoveryContext.budget.contextWindowTokens.toLocaleString()} tokens` : ' tokens'}` : ''}</span></div>

@@ -15,6 +15,7 @@
 import { addOutput, loadOutputs, contentTypeFromFilename, type OutputRecord, type OutputScope } from '../data/outputs';
 import { getExecutionPolicy, type ExecutionPolicy } from '../data/hermesClient';
 import { classifySensitiveAction, containsInlineSecret, redactToolArgsObject } from './securityBoundary';
+import type { ConnectorProtocolResult } from './connectorProtocol.mjs';
 
 // ===== Tool Schema（OpenAI function-calling 格式）=====
 export interface ToolDef {
@@ -229,6 +230,8 @@ export interface ToolResult {
   name: string;
   success: boolean;
   output: string;
+  /** Structured client evidence for connector calls. Never sourced from model text. */
+  protocolEvidence?: ConnectorProtocolResult;
 }
 
 // ===== Sandbox 检查 =====
@@ -903,18 +906,17 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
       default:
       // 连接器工具（以 connector_ 开头）
       if (name.startsWith('connector_')) {
-          if (!requestConnectorApproval(name, args)) {
+          const permissionGranted = requestConnectorApproval(name, args);
+          try {
+            const { executeConnectorTool } = await import('./connectorTools');
+            const result = await executeConnectorTool(name, args as Record<string, string>, { permissionGranted });
             return {
               toolCallId: id,
               name,
-              success: false,
-              output: '本次连接器操作没有获得批准，因此没有访问外部服务。请在聊天窗口确认审核，或在确认风险后调整审批方式。',
+              success: result.success,
+              output: result.output.slice(0, 6000),
+              protocolEvidence: result.protocol,
             };
-          }
-          try {
-            const { executeConnectorTool } = await import('./connectorTools');
-            const result = await executeConnectorTool(name, args as Record<string, string>);
-            return { toolCallId: id, name, success: result.success, output: result.output.slice(0, 6000) };
           } catch (e: any) {
             return { toolCallId: id, name, success: false, output: `连接器工具执行错误：${e?.message ?? '未知'}` };
           }

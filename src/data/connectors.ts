@@ -71,6 +71,10 @@ export interface ConnectorAction {
     }>;
     required?: string[];
   };
+  /** Permission and side-effect metadata consumed by the client execution protocol. */
+  permission?: 'read' | 'write' | 'admin';
+  sideEffect?: boolean;
+  outputSchema?: Record<string, unknown>;
   source?: 'preset-http' | 'mcp-discovered' | 'knowledge-local';
   mcpToolName?: string;
   local?: 'knowledge-fetch-url' | 'obsidian-search' | 'obsidian-read';
@@ -126,6 +130,8 @@ export const CONNECTOR_PRESETS: ConnectorPreset[] = [
       {
         name: 'read_knowledge_link',
         description: '读取已配置的网页知识库内容',
+        permission: 'read',
+        sideEffect: false,
         parameters: { type: 'object', properties: {}, required: [] },
         source: 'knowledge-local',
         local: 'knowledge-fetch-url',
@@ -141,6 +147,8 @@ export const CONNECTOR_PRESETS: ConnectorPreset[] = [
       {
         name: 'search_obsidian',
         description: '在 Obsidian Vault 中搜索相关笔记',
+        permission: 'read',
+        sideEffect: false,
         parameters: { type: 'object', properties: { query: { type: 'string', description: '搜索关键词' } }, required: ['query'] },
         source: 'knowledge-local',
         local: 'obsidian-search',
@@ -148,6 +156,8 @@ export const CONNECTOR_PRESETS: ConnectorPreset[] = [
       {
         name: 'read_obsidian_note',
         description: '读取 Obsidian Vault 中指定路径的笔记',
+        permission: 'read',
+        sideEffect: false,
         parameters: { type: 'object', properties: { path: { type: 'string', description: '搜索结果返回的笔记相对路径' } }, required: ['path'] },
         source: 'knowledge-local',
         local: 'obsidian-read',
@@ -184,6 +194,8 @@ export const CONNECTOR_PRESETS: ConnectorPreset[] = [
       {
         name: 'qmail_send',
         description: '通过 QQ 邮箱发送邮件',
+        permission: 'write',
+        sideEffect: true,
         parameters: {
           type: 'object',
           properties: {
@@ -203,6 +215,8 @@ export const CONNECTOR_PRESETS: ConnectorPreset[] = [
       {
         name: 'qmail_search',
         description: '搜索 QQ 邮箱中的邮件',
+        permission: 'read',
+        sideEffect: false,
         parameters: {
           type: 'object',
           properties: {
@@ -242,6 +256,8 @@ export const CONNECTOR_PRESETS: ConnectorPreset[] = [
       {
         name: 'github_search_repos',
         description: '搜索 GitHub 仓库',
+        permission: 'read',
+        sideEffect: false,
         parameters: {
           type: 'object',
           properties: {
@@ -269,6 +285,8 @@ export const CONNECTOR_PRESETS: ConnectorPreset[] = [
       {
         name: 'custom_get',
         description: '发送 GET 请求到自定义 API',
+        permission: 'read',
+        sideEffect: false,
         parameters: {
           type: 'object',
           properties: {
@@ -285,6 +303,8 @@ export const CONNECTOR_PRESETS: ConnectorPreset[] = [
       {
         name: 'custom_post',
         description: '发送 POST 请求到自定义 API',
+        permission: 'write',
+        sideEffect: true,
         parameters: {
           type: 'object',
           properties: {
@@ -565,9 +585,11 @@ export async function callConnectorApi(
 
   // 优先使用 Electron IPC（主进程可绕过 CORS）
   if (typeof window !== 'undefined' && (window as any).electronAPI?.connectorCall) {
-    return (window as any).electronAPI.connectorCall({
+    const result = await (window as any).electronAPI.connectorCall({
       url, method: opts.method, headers, body: opts.body, timeout: opts.timeout ?? 15000,
     });
+    if (!result?.ok || result.status === 0) throw new Error(result?.error ?? '连接器网络请求失败');
+    return { status: result.status, data: result.data ?? '' };
   }
 
   // 回退：浏览器 fetch（受 CORS 限制）
@@ -641,10 +663,10 @@ export async function executeConnectorAction(
       timeout: 20000,
     });
     if (res.status >= 400) {
-      return `API 返回错误 ${res.status}: ${res.data.slice(0, 2000)}`;
+      throw new Error(`API 返回错误 ${res.status}: ${res.data.slice(0, 2000)}`);
     }
     return res.data.slice(0, 8000);
   } catch (e: any) {
-    return `连接器调用失败: ${e?.message ?? '未知错误'}`;
+    throw new Error(`连接器调用失败: ${e?.message ?? '未知错误'}`);
   }
 }
