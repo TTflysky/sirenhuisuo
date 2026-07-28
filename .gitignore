@@ -17,6 +17,7 @@ release/builder-*.yml
 release/builder-*.yaml
 release/latest.yml
 artifacts/
+downloads/
 .electron-builder-cache
 .config-export-profile/
 config/private/

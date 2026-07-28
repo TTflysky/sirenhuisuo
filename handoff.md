@@ -1,12 +1,12 @@
 # 太极项目当前交接
 
 > 更新时间：2026-07-28
-> 当前版本：`v0.11.1`
+> 当前版本：`v0.12.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
-> Release：[v0.11.1](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.11.1)
+> Release：[v0.12.0](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.12.0)
 
-`v0.11.1` 在任务决策内核与 `ExecutionController` 之间新增目标一致性层。用户原始目标不可被模型缩写覆盖；时间、地点、主题、指定工具和交付格式会在工具调用前、证据返回后和最终交付前三次验收。联网搜索返回偏题网页时不能再宣布成功，天气优先使用结构化实时数据。开发电脑只运行 `npm.cmd run publish:release` 发布，接手电脑只运行 `npm.cmd run sync:project` 同步。
+`v0.12.0` 开始落地专业执行架构：新增版本化 `TaskContract` 和 `TaskPlan` 基础层，固定目标、依赖、输出、重试、幂等、补偿和审批字段，并在进入 Runner 前校验非法计划。下一步是 SQLite 持久化和正式 Runner。`v0.11.1` 的目标一致性层保持不变。
 
 ## 办公室端直接开始
 
