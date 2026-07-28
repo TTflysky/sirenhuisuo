@@ -109,6 +109,49 @@ if (-not $SkipBuild) {
   Invoke-CheckedCommand npm.cmd @('run', 'dist:win')
 }
 
+function Invoke-GitHubApi {
+  param(
+    [ValidateSet('GET', 'POST', 'PATCH', 'DELETE')]
+    [string]$Method,
+    [string]$Path,
+    [string]$Token,
+    [object]$Body = $null,
+    [string]$InFile = '',
+    [string]$ContentType = 'application/json',
+    [switch]$AllowNotFound
+  )
+
+  $uri = if ($Path -match '^https://') { $Path } else { "https://api.github.com$Path" }
+  $headers = @{
+    Authorization = "Bearer $Token"
+    Accept = 'application/vnd.github+json'
+    'X-GitHub-Api-Version' = '2022-11-28'
+    'User-Agent' = 'taiji-office-release'
+  }
+  $request = @{
+    Method = $Method
+    Uri = $uri
+    Headers = $headers
+    ErrorAction = 'Stop'
+  }
+  if ($InFile) {
+    $request.InFile = $InFile
+    $request.ContentType = $ContentType
+  } elseif ($null -ne $Body) {
+    $request.Body = $Body | ConvertTo-Json -Depth 20 -Compress
+    $request.ContentType = 'application/json; charset=utf-8'
+  }
+
+  try {
+    return Invoke-RestMethod @request
+  } catch {
+    $statusCode = 0
+    try { $statusCode = [int]$_.Exception.Response.StatusCode } catch {}
+    if ($AllowNotFound -and $statusCode -eq 404) { return $null }
+    throw
+  }
+}
+
 $installerName = "taiji-office-setup-$version.exe"
 $assetPaths = @(
   (Join-Path $projectRoot "release\$installerName"),
@@ -155,39 +198,52 @@ if (-not $token) {
   throw 'Git Credential Manager has no GitHub credential. Run one authenticated git push, then retry.'
 }
 
-$previousToken = $env:GH_TOKEN
-$notesPath = Join-Path ([IO.Path]::GetTempPath()) "taiji-release-$version-$([Guid]::NewGuid().ToString('N')).md"
 try {
-  $env:GH_TOKEN = $token
-  [IO.File]::WriteAllText($notesPath, (Get-ReleaseNotes $version), [Text.UTF8Encoding]::new($false))
-
-  $releaseListJson = & gh release list --repo $repoName --limit 100 --json tagName
-  if ($LASTEXITCODE -ne 0) { throw 'Unable to query existing GitHub Releases.' }
-  $releaseList = @($releaseListJson | ConvertFrom-Json)
-  $releaseExists = @($releaseList | Where-Object { $_.tagName -eq $tag }).Count -gt 0
-  if ($releaseExists) {
-    Invoke-CheckedCommand gh @('release', 'upload', $tag, $assetPaths[0], $assetPaths[1], $assetPaths[2], '--repo', $repoName, '--clobber')
-    Invoke-CheckedCommand gh @('release', 'edit', $tag, '--repo', $repoName, '--title', "Taiji Office $tag", '--notes-file', $notesPath)
+  $notes = Get-ReleaseNotes $version
+  $remoteRelease = Invoke-GitHubApi -Method GET -Path "/repos/$owner/$repository/releases/tags/$tag" -Token $token -AllowNotFound
+  if ($null -eq $remoteRelease) {
+    $remoteRelease = Invoke-GitHubApi -Method POST -Path "/repos/$owner/$repository/releases" -Token $token -Body @{
+      tag_name = $tag
+      target_commitish = $branch
+      name = "Taiji Office $tag"
+      body = $notes
+      draft = $false
+      prerelease = $false
+    }
   } else {
-    Invoke-CheckedCommand gh @('release', 'create', $tag, $assetPaths[0], $assetPaths[1], $assetPaths[2], '--repo', $repoName, '--target', $branch, '--title', "Taiji Office $tag", '--notes-file', $notesPath)
+    $remoteRelease = Invoke-GitHubApi -Method PATCH -Path "/repos/$owner/$repository/releases/$($remoteRelease.id)" -Token $token -Body @{
+      name = "Taiji Office $tag"
+      body = $notes
+      draft = $false
+      prerelease = $false
+    }
+  }
+
+  foreach ($assetName in $localAssets.Keys) {
+    $existingAsset = @($remoteRelease.assets | Where-Object { $_.name -eq $assetName } | Select-Object -First 1)
+    if ($existingAsset.Count -gt 0) {
+      Invoke-GitHubApi -Method DELETE -Path "/repos/$owner/$repository/releases/assets/$($existingAsset[0].id)" -Token $token | Out-Null
+    }
+    $localAsset = $localAssets[$assetName]
+    $encodedName = [Uri]::EscapeDataString($assetName)
+    $assetContentType = if ($assetName -eq 'latest.yml') { 'application/x-yaml' } else { 'application/octet-stream' }
+    Invoke-GitHubApi -Method POST -Path "https://uploads.github.com/repos/$owner/$repository/releases/$($remoteRelease.id)/assets?name=$encodedName" -Token $token -InFile $localAsset.Path -ContentType $assetContentType | Out-Null
   }
 
   $headSha = (& git rev-parse HEAD).Trim()
-  $remoteSha = (& gh api "repos/$owner/$repository/commits/$branch" --jq '.sha').Trim()
-  if ($LASTEXITCODE -ne 0 -or $remoteSha -ne $headSha) {
+  $remoteSha = [string](Invoke-GitHubApi -Method GET -Path "/repos/$owner/$repository/commits/$branch" -Token $token).sha
+  if ($remoteSha -ne $headSha) {
     throw "Remote $branch does not match local HEAD. Local: $headSha Remote: $remoteSha"
   }
 
-  $tagSha = (& gh api "repos/$owner/$repository/commits/$tag" --jq '.sha').Trim()
-  if ($LASTEXITCODE -ne 0 -or $tagSha -ne $headSha) {
+  $tagSha = [string](Invoke-GitHubApi -Method GET -Path "/repos/$owner/$repository/commits/$tag" -Token $token).sha
+  if ($tagSha -ne $headSha) {
     throw "Release tag $tag does not point to local HEAD. Local: $headSha Tag: $tagSha"
   }
 
-  $releaseJson = & gh release view $tag --repo $repoName --json url,targetCommitish,assets
-  if ($LASTEXITCODE -ne 0) { throw "Unable to verify GitHub Release $tag." }
-  $remoteRelease = $releaseJson | ConvertFrom-Json
-  if ([string]$remoteRelease.targetCommitish -ne $branch) {
-    throw "Release target is '$($remoteRelease.targetCommitish)', expected '$branch'."
+  $remoteRelease = Invoke-GitHubApi -Method GET -Path "/repos/$owner/$repository/releases/tags/$tag" -Token $token
+  if ([string]$remoteRelease.target_commitish -ne $branch) {
+    throw "Release target is '$($remoteRelease.target_commitish)', expected '$branch'."
   }
 
   foreach ($assetName in $localAssets.Keys) {
@@ -204,11 +260,10 @@ try {
   }
 
   Write-Host ''
-  Write-Host "Published and verified: $($remoteRelease.url)" -ForegroundColor Green
+  Write-Host "Published and verified: $($remoteRelease.html_url)" -ForegroundColor Green
   Write-Host "Commit: $headSha"
   Write-Host "Installer: $($assetPaths[0])"
   Write-Host "Installer SHA-256: $($localAssets[$installerName].Sha256.ToUpperInvariant())"
 } finally {
-  if ($null -eq $previousToken) { Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue } else { $env:GH_TOKEN = $previousToken }
-  if (Test-Path -LiteralPath $notesPath) { Remove-Item -LiteralPath $notesPath -Force }
+  $token = $null
 }
