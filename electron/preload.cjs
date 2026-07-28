@@ -8,6 +8,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   taskStoreRead: () => ipcRenderer.invoke('task-store:read'),
   taskStoreWrite: (runs, metadata) => ipcRenderer.invoke('task-store:write', runs, metadata),
   taskLedgerRead: (options) => ipcRenderer.invoke('task-ledger:read', options),
+  taskWorkerCommand: (command) => ipcRenderer.invoke('task-worker:command', command),
+  taskWorkerStatus: () => ipcRenderer.invoke('task-worker:status'),
+  taskWorkerCommands: (options) => ipcRenderer.invoke('task-worker:commands', options),
+  onTaskWorkerChanged: (callback) => {
+    const handler = (_event, data) => callback(data);
+    ipcRenderer.on('task-worker:changed', handler);
+    return () => ipcRenderer.removeListener('task-worker:changed', handler);
+  },
   getAssistantLock: () => ipcRenderer.invoke('win:getAssistantLock'),
   setAssistantLock: (locked) => ipcRenderer.invoke('win:setAssistantLock', locked),
   getChatLock: (opts) => ipcRenderer.invoke('win:getChatLock', opts),

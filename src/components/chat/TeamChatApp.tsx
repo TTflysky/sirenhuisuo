@@ -18,7 +18,7 @@ import { fileToAttachment, attachmentsFromClipboard, formatFileSize, persistAtta
 import { useFileDrop } from '../../hooks/useFileDrop';
 import { buildTaskReplay, searchTaskRunHistory } from '../../engine/taskHistory.mjs';
 import { getTaskLedgerEvents, getTaskLedgerIntegrity, readTaskLedger } from '../../data/taskRuns';
-import type { TaskLedgerEvent, TaskLedgerIntegrity } from '../../electron';
+import type { TaskLedgerEvent, TaskLedgerIntegrity, TaskWorkerCommandRecord } from '../../electron';
 
 interface Props {
   teamId: string;
@@ -66,6 +66,7 @@ export default function TeamChatApp({ teamId }: Props) {
   const [taskHistoryQuery, setTaskHistoryQuery] = useState('');
   const [replayTaskId, setReplayTaskId] = useState<string | null>(null);
   const [replayLedgerEvents, setReplayLedgerEvents] = useState<TaskLedgerEvent[]>([]);
+  const [replayWorkerCommands, setReplayWorkerCommands] = useState<TaskWorkerCommandRecord[]>([]);
   const [ledgerIntegrity, setLedgerIntegrity] = useState<TaskLedgerIntegrity | null>(() => getTaskLedgerIntegrity());
   const [expandedExecutionIds, setExpandedExecutionIds] = useState<Set<string>>(() => new Set());
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -134,6 +135,7 @@ export default function TeamChatApp({ teamId }: Props) {
   useEffect(() => {
     if (!replayTaskId) {
       setReplayLedgerEvents([]);
+      setReplayWorkerCommands([]);
       return;
     }
     let active = true;
@@ -145,6 +147,8 @@ export default function TeamChatApp({ teamId }: Props) {
         setReplayLedgerEvents(loaded);
         setLedgerIntegrity(getTaskLedgerIntegrity());
       }
+      const commandResult = await window.electronAPI?.taskWorkerCommands?.({ taskId: replayTaskId, limit: 80 });
+      if (active && commandResult?.ok) setReplayWorkerCommands(commandResult.records ?? []);
     };
     void refresh();
     const onUpdated = () => { void refresh(); };
@@ -352,6 +356,7 @@ export default function TeamChatApp({ teamId }: Props) {
       {expanded && <div className="task-run-details">
         <div className="task-run-goal"><strong>目标</strong><span>{run.goal ?? run.request}</span></div>
         {!!run.preflight?.length && <div className="task-run-preflight"><strong>前置检查</strong>{run.preflight.map((item) => <span key={item.label} className={`is-${item.status}`} title={item.detail}>{item.status === 'passed' ? '✓' : item.status === 'blocked' ? '!' : '·'} {item.label}</span>)}</div>}
+        {run.worker && <div className={`task-run-worker worker-${run.worker.state}`}><strong>后台 Worker</strong><span>{run.worker.state === 'running' ? '已领取执行租约' : run.worker.state === 'paused' ? '已暂停并保留租约记录' : run.worker.state === 'expired' ? '租约失效，已安全暂停' : run.worker.state === 'released' ? '执行租约已释放' : run.worker.state === 'stopped' ? '已停止' : '等待执行适配器领取'}</span><small>{run.worker.adapter ?? '未指定适配器'}{run.worker.heartbeatAt ? ` · 心跳 ${new Date(run.worker.heartbeatAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : ''}</small></div>}
         {!!run.skillRefs?.length && <div className="task-run-skills"><strong>Skills</strong>{run.skillRefs.map((skill) => <span key={skill.id}>{skill.name}</span>)}</div>}
         {!!run.skillEvidence?.length && <div className="task-run-skills task-run-skill-evidence"><strong>Skill 证据</strong>{run.skillEvidence.slice(-8).map((item, index) => <span key={`${item.ts}-${item.skillId ?? item.toolName}-${index}`} title={item.detail ?? item.reason}>{item.action === 'read-failed' ? '!' : item.action === 'read' || item.action === 'called' ? '✓' : '·'} {item.skillName ?? item.skillId ?? item.toolName ?? 'Skill'} · {item.action}</span>)}</div>}
         {connectorEvidence.length > 0 && <div className="task-run-connector-evidence"><strong>连接器证据</strong>{connectorEvidence.map((item, index) => {
@@ -744,6 +749,7 @@ export default function TeamChatApp({ teamId }: Props) {
                   <details className="task-replay-section"><summary>确定性压缩摘要</summary><p>{taskReplay.summary.narrative || '暂无摘要'}</p>{taskReplay.summary.modelNarrative && <p className="task-replay-model-summary">模型辅助：{taskReplay.summary.modelNarrative}</p>}</details>
                   <details className="task-replay-section"><summary>已验证事实 {taskReplay.summary.verifiedFacts.length}</summary>{taskReplay.summary.verifiedFacts.map((item, index) => <p key={`${index}-${item.slice(0, 24)}`}>{item}</p>)}</details>
                   <details className="task-replay-section"><summary>交付文件 {taskReplay.summary.artifactPaths.length}</summary>{taskReplay.summary.artifactPaths.map((item) => <p key={item}>{item}</p>)}</details>
+                  {replayWorkerCommands.length > 0 && <details className="task-replay-section task-worker-command-log"><summary>Worker 命令记录 {replayWorkerCommands.length}</summary>{replayWorkerCommands.map((record) => <p key={record.recordId}><time>#{record.sequence} · {new Date(record.occurredAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time><span>{record.commandType} · {record.type === 'command_submitted' ? '已入队' : record.result?.ok ? '已完成' : `失败：${record.result?.error ?? '未知原因'}`}</span></p>)}</details>}
                   <div className={`task-ledger-integrity${ledgerIntegrity?.recovered ? ' is-recovered' : ''}`}><strong>任务事件账本</strong><span>{ledgerIntegrity?.recovered ? '已恢复损坏尾部' : '账本完整'}</span><small>{taskReplay.ledgerEvents.length ? `${taskReplay.ledgerEvents.length} 条事件` : '兼容回放'}</small></div>
                   <div className="task-replay-timeline"><strong>任务回放</strong>{replayTimeline.map((event) => <div key={`${event.source}-${event.id}`} className={event.verified ? 'is-verified' : ''}><time>{new Date(event.ts).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</time><span>{event.sequence ? `#${event.sequence} · ` : ''}{event.source} · {event.type}</span>{event.transition && <small>状态：{event.transition}</small>}{event.domains.length > 0 && <small>变化域：{event.domains.join('、')}</small>}<p>{event.detail}</p></div>)}</div>
                 </div> : taskHistoryQuery.trim() ? <div className="task-history-results">

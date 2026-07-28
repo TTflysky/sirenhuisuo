@@ -264,6 +264,20 @@ export interface TaskRunStep {
   events: Array<{ ts: number; type: 'status' | 'tool' | 'result' | 'error'; detail: string }>;
 }
 
+export interface TaskWorkerLease {
+  protocolVersion: number;
+  state: 'idle' | 'leased' | 'running' | 'paused' | 'released' | 'expired' | 'stopped';
+  adapter?: string;
+  leaseId?: string;
+  ownerSessionId?: string;
+  acquiredAt?: number;
+  heartbeatAt?: number;
+  expiresAt?: number;
+  releasedAt?: number;
+  expiredAt?: number;
+  lastCommandId?: string;
+}
+
 export interface TaskRun {
   id: string;
   teamId: string;
@@ -271,6 +285,8 @@ export interface TaskRun {
   workspaceId?: string;
   /** 标识真正执行此任务的客户端进程，供重启恢复判断。 */
   executionSessionId?: string;
+  /** 主进程 Worker 持久租约。执行适配器必须在运行前领取并定期续租。 */
+  worker?: TaskWorkerLease;
   projectId?: string;
   title: string;
   request: string;

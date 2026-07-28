@@ -1,4 +1,4 @@
-# 太极 AI 办公会所 v0.18.0
+# 太极 AI 办公会所 v0.19.0
 
 > 面向 Windows 的多模型 AI 虚拟办公室。创建员工、组建团队，让不同模型按照职责协作完成真实任务。
 
@@ -6,7 +6,7 @@
 
 ## 项目状态
 
-- 当前版本：`0.18.0`
+- 当前版本：`0.19.0`
 - 发布分支：`main`
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 33、React 19、TypeScript 6、Ant Design 6、Vite 8
@@ -147,7 +147,7 @@
 
 ### 使用安装包
 
-`v0.18.0` 正在本地验收。最近已公开安装包可从 GitHub Releases 下载：
+`v0.19.0` 正在本地验收，暂未创建 GitHub Release。源码和交接资料以 `main` 为准；用户验收后再发布安装资产。
 
 - [直接下载 v0.15.0 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v0.15.0/taiji-office-setup-0.15.0.exe)
 - [查看 v0.15.0 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.15.0)
@@ -155,7 +155,7 @@
 本地构建的安装程序生成在：
 
 ```text
-release/taiji-office-setup-0.18.0.exe
+release/taiji-office-setup-0.19.0.exe
 ```
 
 可以直接覆盖安装旧版本。应用数据保存在用户目录，正常覆盖安装不会删除员工、团队、聊天和模型配置。
@@ -260,6 +260,13 @@ release/                 Windows 安装包输出目录
 - 删除应用前建议自行备份重要产出物。
 
 ## 最近版本
+
+### v0.19.0
+
+- 新增 Electron 主进程后台 Worker 控制平面：领取、心跳、释放、暂停、恢复、停止和关闭命令均追加到可校验的命令日志。
+- Worker 为任务写入 30 秒租约与心跳，应用重启或旧会话租约过期时安全暂停任务，避免同一任务在两个会话重复执行。
+- 团队执行开始前领取 Worker 租约，运行期间持续心跳；任务详情与回放可查看当前 Worker 状态和只读命令记录。
+- 当前模型和工具调用仍由既有团队执行器承担；下一阶段再将执行适配器迁到 Worker，避免在未完成迁移前承诺无窗口的模型执行。
 
 ### v0.18.0
 

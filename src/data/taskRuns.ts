@@ -4,7 +4,7 @@ import { createTaskContract, createPlan } from '../engine/taskPlan.mjs';
 import type { TaskPlanStep as FormalTaskPlanStep } from '../engine/taskPlan.mjs';
 import { createTaskRunner, restoreTaskRunner } from '../engine/taskRunner.mjs';
 import { appendTaskContextEvent, buildTaskContextPrompt, createTaskContext, restoreTaskContext, type TaskContextEventInput } from '../engine/taskContext.mjs';
-import type { TaskLedgerEvent, TaskLedgerIntegrity } from '../electron';
+import type { TaskLedgerEvent, TaskLedgerIntegrity, TaskWorkerCommand, TaskWorkerCommandResult, TaskWorkerStatusResult } from '../electron';
 
 const LS_TASK_RUNS = 'hermes_office_task_runs_v1';
 const MAX_RUNS = 120;
@@ -195,6 +195,25 @@ export async function readTaskLedger(taskId?: string, limit = 500): Promise<Task
     return result.events ?? [];
   } catch {
     return getTaskLedgerEvents(taskId);
+  }
+}
+
+export async function sendTaskWorkerCommand(command: TaskWorkerCommand): Promise<TaskWorkerCommandResult | null> {
+  try {
+    const sender = typeof window !== 'undefined' ? window.electronAPI?.taskWorkerCommand : undefined;
+    if (!sender) return null;
+    return await sender({ ...command, sessionId: command.sessionId ?? getExecutionSessionId(), requestedAt: command.requestedAt ?? Date.now() });
+  } catch (error) {
+    return { ok: false, taskId: command.taskId, type: command.type, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+export async function getTaskWorkerStatus(): Promise<TaskWorkerStatusResult | null> {
+  try {
+    const reader = typeof window !== 'undefined' ? window.electronAPI?.taskWorkerStatus : undefined;
+    return reader ? await reader() : null;
+  } catch {
+    return null;
   }
 }
 

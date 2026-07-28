@@ -17,6 +17,7 @@ const requiredFiles = [
   'electron/commandShell.cjs',
   'electron/connectorAdapters.cjs',
   'electron/taskRuntimeStore.cjs',
+  'electron/taskWorker.cjs',
   'skills\\ima-skill\\SKILL.md',
   'skills\\ima-skill\\knowledge-base\\SKILL.md',
   'skills\\ima-skill\\notes\\SKILL.md',
@@ -31,6 +32,10 @@ assert.ok(rendererBundle, 'Packaged renderer bundle was not found');
 const rendererSource = asar.extractFile(archive, rendererBundle.replace(/^\\/u, '')).toString('utf8');
 for (const marker of ['正在选择可验证动作', '正在对照最初目标重新验收', '模型请求已自动重试 5 次', '任务上下文快照', 'Skill 证据', '连接器证据', '客户端连接器证据', '交付文件事件', '计划图事件', '历史任务检索', '任务回放', '确定性压缩摘要', '任务事件账本', '账本完整', '已恢复损坏尾部']) {
   assert.match(rendererSource, new RegExp(marker), `ExecutionController marker missing from packaged renderer: ${marker}`);
+}
+
+for (const marker of ['后台 Worker', 'Worker 命令记录', '已领取执行租约']) {
+  assert.match(rendererSource, new RegExp(marker), `Worker marker missing from packaged renderer: ${marker}`);
 }
 
 const installer = path.join(root, 'release', `taiji-office-setup-${sourcePackage.version}.exe`);
@@ -49,6 +54,6 @@ console.log(JSON.stringify({
   version: packaged.version,
   requiredFiles: requiredFiles.length,
   executionControllerMarkers: 3,
-  p1Markers: 9,
+  p1Markers: 12,
   installerBytes: fs.statSync(installer).size,
 }, null, 2));

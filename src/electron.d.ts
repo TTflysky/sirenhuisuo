@@ -52,7 +52,7 @@ export interface TaskLedgerEvent {
   nextStatus?: string;
   domains: string[];
   detail: string;
-  payload: { snapshot?: import('./types').TaskRun; changes?: TaskLedgerChange[] };
+  payload: { snapshot?: import('./types').TaskRun; changes?: TaskLedgerChange[]; command?: { protocolVersion: number; commandId: string; type: TaskWorkerCommandType; requestedAt: number; requestedBy: string } };
   previousHash: string;
   hash: string;
 }
@@ -63,6 +63,49 @@ export interface TaskLedgerIntegrity {
   lastSequence: number;
   lastHash: string;
   eventCount: number;
+}
+export type TaskWorkerCommandType = 'claim' | 'heartbeat' | 'release' | 'pause' | 'resume' | 'stop' | 'close';
+export interface TaskWorkerCommand {
+  commandId?: string;
+  taskId: string;
+  type: TaskWorkerCommandType;
+  requestedAt?: number;
+  requestedBy?: string;
+  sessionId?: string;
+  payload?: Record<string, unknown>;
+}
+export interface TaskWorkerCommandResult {
+  ok: boolean;
+  taskId?: string;
+  commandId?: string;
+  type?: TaskWorkerCommandType;
+  run?: import('./types').TaskRun;
+  events?: TaskLedgerEvent[];
+  removed?: boolean;
+  idempotencyHit?: boolean;
+  error?: string;
+}
+export interface TaskWorkerStatusResult {
+  ok: boolean;
+  protocolVersion?: number;
+  sessionId?: string;
+  pendingCommands?: number;
+  activeRuns?: Array<{ taskId: string; status: string; worker: import('./types').TaskWorkerLease }>;
+  integrity?: { ok: boolean; recovered: boolean; corruptPath?: string; lastSequence: number; lastHash: string; recordCount: number };
+  error?: string;
+}
+export interface TaskWorkerCommandRecord {
+  recordVersion: number;
+  sequence: number;
+  recordId: string;
+  occurredAt: number;
+  type: 'command_submitted' | 'command_completed' | 'command_failed';
+  commandId: string;
+  taskId: string;
+  commandType: TaskWorkerCommandType;
+  result?: { ok: boolean; status?: string; leaseId?: string; removed?: boolean; error?: string };
+  previousHash: string;
+  hash: string;
 }
 export interface TaskStoreReadResult {
   ok: boolean;
@@ -125,6 +168,10 @@ declare global {
     taskStoreRead: () => Promise<TaskStoreReadResult>;
     taskStoreWrite: (runs: import('./types').TaskRun[], metadata?: { source?: string; sessionId?: string }) => Promise<TaskStoreWriteResult>;
     taskLedgerRead: (options?: { taskId?: string; limit?: number }) => Promise<TaskStoreReadResult>;
+    taskWorkerCommand: (command: TaskWorkerCommand) => Promise<TaskWorkerCommandResult>;
+    taskWorkerStatus: () => Promise<TaskWorkerStatusResult>;
+    taskWorkerCommands: (options?: { taskId?: string; limit?: number }) => Promise<{ ok: boolean; records?: TaskWorkerCommandRecord[]; integrity?: TaskWorkerStatusResult['integrity']; error?: string }>;
+    onTaskWorkerChanged: (callback: (event: unknown) => void) => () => void;
     getAssistantLock: () => Promise<{ locked: boolean }>;
     setAssistantLock: (locked: boolean) => Promise<{ locked: boolean }>;
     getChatLock: (opts: OpenChatOptions) => Promise<{ locked: boolean }>;

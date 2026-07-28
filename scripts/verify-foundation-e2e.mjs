@@ -45,7 +45,16 @@ async function connect(target) {
   const command = (method, params = {}) => {
     const id = ++sequence;
     socket.send(JSON.stringify({ id, method, params }));
-    return new Promise((resolve, reject) => pending.set(id, { resolve, reject }));
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        reject(new Error(`DevTools 调用超时：${method}`));
+      }, 15_000);
+      pending.set(id, {
+        resolve: (value) => { clearTimeout(timer); resolve(value); },
+        reject: (error) => { clearTimeout(timer); reject(error); },
+      });
+    });
   };
   const evaluate = async (expression) => {
     const result = await command('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
@@ -148,6 +157,32 @@ try {
   assert.equal(workspace.copied.ok, true, '附件无法复制到任务工作区');
   assert.deepEqual(workspace.reads.map((item) => item.content), ['first-content', 'second-content', 'attachment-content']);
 
+  const taskWorker = await main.evaluate(`(async () => {
+    const api = window.electronAPI;
+    const taskId = 'worker-ipc-' + Date.now();
+    const current = await api.taskStoreRead();
+    const run = {
+      id: taskId, teamId: 'diagnostics', title: 'Worker IPC 验证', request: '验证主进程 Worker',
+      status: 'queued', phase: 'preflight', createdAt: Date.now(), updatedAt: Date.now(), memberSnapshot: [],
+      steps: [{ id: taskId + '-step', employeeId: 'diagnostic', title: '验证', order: 1, kind: 'work', assignment: '验证 Worker', dependsOnStepIds: [], status: 'queued', attempts: 0, events: [] }],
+    };
+    const created = await api.taskStoreWrite([...(current.runs || []), run], { source: 'foundation-e2e' });
+    const claimed = await api.taskWorkerCommand({ taskId, type: 'claim', requestedBy: 'foundation-e2e', payload: { adapter: 'diagnostic' } });
+    const heartbeat = claimed.run?.worker?.leaseId
+      ? await api.taskWorkerCommand({ taskId, type: 'heartbeat', requestedBy: 'foundation-e2e', payload: { leaseId: claimed.run.worker.leaseId } })
+      : { ok: false };
+    const paused = await api.taskWorkerCommand({ taskId, type: 'pause', requestedBy: 'foundation-e2e' });
+    const commands = await api.taskWorkerCommands({ taskId, limit: 20 });
+    const closed = await api.taskWorkerCommand({ taskId, type: 'close', requestedBy: 'foundation-e2e' });
+    return { created, claimed, heartbeat, paused, commands, closed };
+  })()`);
+  assert.equal(taskWorker.created.ok, true, 'Worker IPC 测试任务无法写入账本');
+  assert.equal(taskWorker.claimed.ok, true, 'Worker 无法领取测试任务');
+  assert.equal(taskWorker.heartbeat.ok, true, 'Worker 心跳未被主进程接受');
+  assert.equal(taskWorker.paused.run?.worker?.state, 'paused', 'Worker 暂停命令未写入任务投影');
+  assert.ok((taskWorker.commands.records || []).some((record) => record.commandType === 'claim' && record.type === 'command_completed'), 'Worker 命令日志缺少领取完成记录');
+  assert.equal(taskWorker.closed.ok, true, 'Worker 无法关闭测试任务');
+
   const openSettings = await main.evaluate('window.electronAPI.openSettings()');
   assert.equal(openSettings.ok, true, `无法打开诊断中心${openSettings.error ? `：${openSettings.error}` : ''}`);
   const settingsTarget = await waitFor(async () => (await listTargets()).find((target) => target.url.includes('#settings')), '设置窗口没有启动');
@@ -190,7 +225,7 @@ try {
 
   const secret = await verifySecretRedaction();
   const recovery = await verifyStaleTaskRecovery();
-  console.log(JSON.stringify({ passed: true, workspace: workspace.reads.map((item) => item.content), diagnostics, memoryPage, secret, recovery }, null, 2));
+  console.log(JSON.stringify({ passed: true, workspace: workspace.reads.map((item) => item.content), taskWorker: { commands: taskWorker.commands.records.length, state: taskWorker.paused.run.worker.state }, diagnostics, memoryPage, secret, recovery }, null, 2));
 } finally {
   try { await settings?.evaluate('window.electronAPI.close()'); } catch {}
   settings?.socket.close();

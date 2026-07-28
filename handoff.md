@@ -1,12 +1,12 @@
 # 太极项目当前交接
 
 > 更新时间：2026-07-28
-> 当前版本：`v0.18.0`
+> 当前版本：`v0.19.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
-> Release：`v0.18.0` 本地验收中，暂未发布
+> Release：`v0.19.0` 本地验收中，暂未发布
 
-`v0.18.0` 已把任务运行状态迁入 Electron 主进程追加式事件账本。JSONL 账本是唯一事实源，JSON 快照只作投影缓存；事件具备序号、来源会话、状态迁移、变化域和 SHA-256 哈希链，损坏尾部会隔离恢复。下一步以该账本为边界拆出真正后台 Worker，暂不提前加入动态组队或并发。
+`v0.19.0` 在事件账本之上新增 Electron 主进程 Worker 控制平面。命令日志记录领取、心跳、释放、暂停、恢复、停止和关闭；任务租约在重启或会话失效时安全暂停，团队运行器开始前领取租约并持续心跳。模型与工具调用仍由渲染进程团队执行器作为首个适配器承接，下一阶段才迁入 Worker 执行边界。
 
 ## 办公室端直接开始
 
@@ -168,7 +168,10 @@ npm.cmd run verify:package
 - `npm.cmd run verify:web-search` 新增目标一致性覆盖：安徽百科不能冒充全椒县天气；结构化天气数据必须包含地点、日期、温度、湿度等真实字段。
 - `npm.cmd run verify:agent-kernel`：通过模型目标漂移、搜索词条件丢失、指定生图工具却写 SVG、用户新增约束合并和最终目标验收回归。
 - 全椒县天气实网验证：`wttr.in 实时天气` 返回全椒县、安徽、坐标 `32.098, 118.258`、日期 `2026-07-28` 及完整气象字段；偏题网页未参与结果。
-- `npm.cmd run verify:package`：通过；包内版本为 `0.18.0`，任务事件账本模块及“账本完整/损坏尾部恢复”标识可读取，安装器、blockmap 和 `latest.yml` 版本一致。
+- `npm.cmd run verify:task-worker`：通过；覆盖命令幂等、租约、心跳、暂停/恢复、跨会话过期回收、停止、关闭和损坏命令尾部隔离。
+- `npm.cmd run verify:package`：通过；包内版本为 `0.19.0`，任务账本、Worker 模块和 Worker 状态/命令记录标识可读取，安装器、blockmap 和 `latest.yml` 版本一致。
+- 打包客户端普通隔离启动连续存活 12 秒；已修复 Electron 33 Windows 下巡检计时器 `unref()` 导致的 `0x80000003` 原生异常。
+- `verify:foundation-ui` 的调试页面调用仍会等待超时，未把该项计为通过；Node 协议测试、包内检查和普通启动检查均已通过。
 - `npm.cmd run diagnose:web-search`：通过；Electron 实网使用 DuckDuckGo，首轮空结果自动重试后约 3.1 秒返回 8 条中文 AI 资讯。
 - `npm.cmd run verify:docx`：通过；生成的 Word 可重新解析正文。
 - 安装版 `npm.cmd run verify:foundation-ui`：通过；真实 Electron IPC 和诊断中心五项完整显示。
@@ -179,11 +182,11 @@ npm.cmd run verify:package
 
 ## 安装与发布资产
 
-- 安装包：`release\taiji-office-setup-0.18.0.exe`
-- Blockmap：`release\taiji-office-setup-0.18.0.exe.blockmap`
+- 安装包：`release\taiji-office-setup-0.19.0.exe`
+- Blockmap：`release\taiji-office-setup-0.19.0.exe.blockmap`
 - 更新清单：`release\latest.yml`
-- 包内版本：`0.18.0`。
-- 安装包大小：`173863607` 字节；SHA-256：`2AEAB81CD71550BB8C2A8CE2970E6E8FF5F14EF84237329C5E68E37DADC8AA13`。
+- 包内版本：`0.19.0`。
+- 安装包大小：`173871188` 字节；SHA-256：`6E06D1774FB831815AA4B060975418EBF71C23CC7665E34ADCB7E93BA8BB104C`。
 - 最终文件大小和 SHA-256 以 `npm.cmd run publish:release` 的成功输出及 GitHub Release digest 为准；发布脚本会逐项比对本地与远端，不再把易过期的单次构建摘要固化在交接文档中。
 - 解包版受控启动 8 秒保持运行，未出现启动即崩溃。
 - 安装目录只保留 `太极 AI 办公会所.exe` 和对应卸载程序，没有旧产品可执行文件残留。
@@ -206,7 +209,7 @@ npm.cmd run verify:package
 
 ## 下一步
 
-1. 用户安装 `v0.18.0` 后打开旧任务，确认 v0.17 快照自动迁移并显示“任务事件账本”和连续事件序号。
+1. 用户安装 `v0.19.0` 后打开旧任务，确认任务事件账本仍完整，并在任务详情中看到“后台 Worker”状态。
 2. 新建、推进、暂停并恢复一个团队任务，重启客户端后确认状态从账本恢复，回放显示来源、状态迁移和变化域。
 3. 下一版本让后台 Worker 直接消费和追加同一账本事件，窗口只负责命令与投影，不再持有执行生命周期。
 4. Worker 稳定后再实现动态组队和并发执行，避免多个执行者共享不可靠状态。

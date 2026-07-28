@@ -7,6 +7,7 @@ const LEDGER_VERSION = 1;
 const DEFAULT_MAX_RUNS = 120;
 const DEFAULT_MAX_RETURNED_EVENTS = 2000;
 function clone(value) {
+  if (value === undefined) return undefined;
   return JSON.parse(JSON.stringify(value));
 }
 
@@ -353,7 +354,8 @@ function createTaskRuntimeStore(rootDir, options = {}) {
           type: 'task_changed', taskId: next.id, teamId: next.teamId,
           source: metadata.source, sessionId: metadata.sessionId,
           previousStatus: current.status, nextStatus: next.status, domains,
-          detail: statusDetail(current.status, next.status, domains), payload: { changes },
+          detail: metadata.detail || statusDetail(current.status, next.status, domains),
+          payload: { changes, ...(metadata.command ? { command: clone(metadata.command) } : {}) },
         });
       }
       await appendEvents(appended);
@@ -373,7 +375,67 @@ function createTaskRuntimeStore(rootDir, options = {}) {
     return operation.catch((error) => ({ ok: false, error: `写入任务事件账本失败：${error?.message ?? String(error)}` }));
   }
 
-  return { checkpointPath, ledgerPath, filePath: checkpointPath, read, write };
+  function updateTask(taskId, updater, metadata = {}) {
+    if (typeof taskId !== 'string' || !taskId || typeof updater !== 'function') {
+      return Promise.resolve({ ok: false, error: '任务原子更新参数无效' });
+    }
+    const operation = writeQueue.then(async () => {
+      await initialize();
+      const current = projected.get(taskId);
+      if (!current) throw new Error(`找不到任务：${taskId}`);
+      const next = clone(current);
+      const returned = updater(next);
+      const candidate = returned === undefined ? next : returned;
+      if (!isTaskRun(candidate) || candidate.id !== taskId) throw new Error('任务原子更新产生无效投影');
+      candidate.updatedAt = Date.now();
+      const changes = collectChanges(current, candidate);
+      if (changes.length === 0) {
+        return { ok: true, unchanged: true, run: clone(current), events: [], integrity: { ...integrity } };
+      }
+      const domains = eventDomains(changes);
+      const event = createEvent({
+        type: 'task_changed', taskId, teamId: candidate.teamId,
+        source: metadata.source || 'task-worker', sessionId: metadata.sessionId,
+        previousStatus: current.status, nextStatus: candidate.status, domains,
+        detail: metadata.detail || statusDetail(current.status, candidate.status, domains),
+        payload: { changes, ...(metadata.command ? { command: clone(metadata.command) } : {}) },
+      }, { sequence: integrity.lastSequence, hash: integrity.lastHash });
+      const nextProjection = new Map([...projected].map(([id, run]) => [id, clone(run)]));
+      applyEvent(nextProjection, event);
+      await appendEvents([event]);
+      projected = nextProjection;
+      await writeCheckpoint();
+      return { ok: true, unchanged: false, run: clone(candidate), events: [clone(event)], integrity: { ...integrity } };
+    });
+    writeQueue = operation.then(() => undefined, () => undefined);
+    return operation.catch((error) => ({ ok: false, error: `更新任务事件账本失败：${error?.message ?? String(error)}` }));
+  }
+
+  function removeTask(taskId, metadata = {}) {
+    if (typeof taskId !== 'string' || !taskId) return Promise.resolve({ ok: false, error: '任务移除参数无效' });
+    const operation = writeQueue.then(async () => {
+      await initialize();
+      const current = projected.get(taskId);
+      if (!current) return { ok: true, unchanged: true, events: [], integrity: { ...integrity } };
+      const event = createEvent({
+        type: 'task_removed', taskId, teamId: current.teamId,
+        source: metadata.source || 'task-worker', sessionId: metadata.sessionId,
+        previousStatus: current.status, domains: ['task'],
+        detail: metadata.detail || `任务已从列表移除：${current.title || current.id}`,
+        payload: { ...(metadata.command ? { command: clone(metadata.command) } : {}) },
+      }, { sequence: integrity.lastSequence, hash: integrity.lastHash });
+      const nextProjection = new Map([...projected].map(([id, run]) => [id, clone(run)]));
+      applyEvent(nextProjection, event);
+      await appendEvents([event]);
+      projected = nextProjection;
+      await writeCheckpoint();
+      return { ok: true, unchanged: false, events: [clone(event)], integrity: { ...integrity } };
+    });
+    writeQueue = operation.then(() => undefined, () => undefined);
+    return operation.catch((error) => ({ ok: false, error: `移除任务事件账本失败：${error?.message ?? String(error)}` }));
+  }
+
+  return { checkpointPath, ledgerPath, filePath: checkpointPath, read, write, updateTask, removeTask };
 }
 
 module.exports = {

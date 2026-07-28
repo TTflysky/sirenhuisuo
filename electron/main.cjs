@@ -13,9 +13,11 @@ const { sanitizeInjectedEnv, redactInjectedValues } = require('./secretSafety.cj
 const { verifyConnectorAdapter } = require('./connectorAdapters.cjs');
 const { buildPowerShellCommand } = require('./commandShell.cjs');
 const { createTaskRuntimeStore } = require('./taskRuntimeStore.cjs');
-const log = require('electron-log');
+const { createTaskWorker } = require('./taskWorker.cjs');
 // Isolate automated Electron verification from a user's real local data.
 if (process.env.TAIJI_TEST_USER_DATA) app.setPath('userData', path.resolve(process.env.TAIJI_TEST_USER_DATA));
+if (process.env.TAIJI_TEST_DEBUG_PORT) app.commandLine.appendSwitch('remote-debugging-port', String(process.env.TAIJI_TEST_DEBUG_PORT));
+const log = require('electron-log');
 const APP_TITLE = `太极 AI 办公会所 v${APP_VERSION}`;
 const APP_SESSION_ID = `session-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 const WINDOW_PREFERENCES_PATH = path.join(app.getPath('userData'), 'window-preferences.json');
@@ -26,6 +28,16 @@ ipcMain.on('app:getSessionId', (event) => { event.returnValue = APP_SESSION_ID; 
 // ===== 自主代理工作区（沙箱目录，所有文件读写/命令执行都限制在此）=====
 const WORKSPACE = path.join(app.getPath('userData'), 'workspace');
 const taskRuntimeStore = createTaskRuntimeStore(path.join(app.getPath('userData'), 'task-runtime'));
+const taskWorker = createTaskWorker({
+  rootDir: path.join(app.getPath('userData'), 'task-runtime'),
+  store: taskRuntimeStore,
+  sessionId: APP_SESSION_ID,
+  onChanged(event) {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send('task-worker:changed', event);
+    }
+  },
+});
 const TEXT_FILE_EXTENSIONS = new Set([
   '.txt', '.md', '.markdown', '.json', '.jsonl', '.csv', '.tsv', '.yaml', '.yml',
   '.xml', '.log', '.js', '.jsx', '.ts', '.tsx', '.py', '.java', '.c', '.cpp', '.h',
@@ -858,6 +870,9 @@ function createWindow() {
   ipcMain.handle('task-store:read', async () => taskRuntimeStore.read());
   ipcMain.handle('task-store:write', async (_event, runs, metadata) => taskRuntimeStore.write(runs, metadata));
   ipcMain.handle('task-ledger:read', async (_event, options) => taskRuntimeStore.read(options));
+  ipcMain.handle('task-worker:command', async (_event, command) => taskWorker.dispatch(command));
+  ipcMain.handle('task-worker:status', async () => taskWorker.status());
+  ipcMain.handle('task-worker:commands', async (_event, options) => taskWorker.readCommands(options));
 
   ipcMain.handle('connector:verifyPreset', async (_event, input) => {
     const result = await verifyConnectorAdapter(input, { fetchImpl: (url, options) => net.fetch(url, options) });
@@ -1225,7 +1240,8 @@ function createWindow() {
   });
 }
 
-const hasSingleInstanceLock = app.requestSingleInstanceLock();
+// Isolated verification must not collide with an installed production client.
+const hasSingleInstanceLock = process.env.TAIJI_TEST_USER_DATA ? true : app.requestSingleInstanceLock();
 
 if (!hasSingleInstanceLock) {
   app.quit();
@@ -1234,7 +1250,9 @@ if (!hasSingleInstanceLock) {
     showMainWindow();
   });
 
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
+    try { await taskWorker.start(); }
+    catch (error) { log.error('[taskWorker] startup failed:', String(error?.message ?? error)); }
     createTray();
     createWindow();
     app.on('activate', () => {
@@ -1250,4 +1268,5 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  taskWorker.stop();
 });

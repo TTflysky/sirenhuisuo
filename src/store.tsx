@@ -29,7 +29,7 @@ import { runTeamDiscussion } from './engine/teamDiscussion';
 import { evaluateDiscussionTrigger } from './engine/discussionTrigger';
 import { findFreeStation } from './data/hermesClient';
 import { sendBus, onBus, BUS_CHANNELS } from './ipcBus';
-import { appendTaskRunContext, createTaskRun, formalPlanStepForRun, getExecutionSessionId, hydrateTaskRunsFromMainStore, saveTaskRuns, taskRunContextPrompt, updateTaskRun } from './data/taskRuns';
+import { appendTaskRunContext, createTaskRun, formalPlanStepForRun, getExecutionSessionId, hydrateTaskRunsFromMainStore, saveTaskRuns, sendTaskWorkerCommand, taskRunContextPrompt, updateTaskRun } from './data/taskRuns';
 import { buildTaskPlan, matchProjectMembers, matchTeamMembers } from './engine/taskMatcher';
 import { buildSkillContextWithEvidence, listSkills, matchSkills } from './data/skills';
 import { attachmentWorkspaceContext, copyAttachmentsToWorkspace, initializeTaskWorkspace } from './utils/attachments';
@@ -325,10 +325,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     void hydrateTaskRunsFromMainStore().then((runs) => {
       if (runs) dispatch({ type: 'HYDRATE_TASK_RUNS', runs });
     });
+    const unsubscribeWorker = window.electronAPI?.onTaskWorkerChanged?.(() => {
+      void hydrateTaskRunsFromMainStore().then((runs) => {
+        if (runs) dispatch({ type: 'HYDRATE_TASK_RUNS', runs });
+      });
+    });
     // 后端探测
     client.checkBackend().then((online) => {
       dispatch({ type: 'SET_STATUS', partial: { backendOnline: online } });
     });
+    return () => unsubscribeWorker?.();
   }, [dispatch]);
 
   const sendMessage = (
@@ -694,9 +700,37 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const updateRun = (mutate: (run: TaskRun) => void) => {
       if (!liveRun) return;
       liveRun = updateTaskRun(liveRun, mutate);
+      const projectedWorker = stateRef.current.taskRuns.find((item) => item.id === liveRun?.id)?.worker;
+      const protectedWorkerState = projectedWorker?.state === 'paused' || projectedWorker?.state === 'stopped' || projectedWorker?.state === 'expired' || projectedWorker?.state === 'released';
+      if (projectedWorker && (protectedWorkerState || (projectedWorker.heartbeatAt ?? 0) > (liveRun.worker?.heartbeatAt ?? 0))) {
+        liveRun.worker = projectedWorker;
+      }
       dispatch({ type: 'UPDATE_TASK_RUN', run: liveRun });
     };
-    updateRun((run) => {
+    let workerLeaseId: string | undefined;
+    let workerHeartbeatTimer: ReturnType<typeof setInterval> | undefined;
+    const claimWorkerLease = async () => {
+      if (!liveRun) return;
+      const claimed = await sendTaskWorkerCommand({
+        taskId: liveRun.id,
+        type: 'claim',
+        requestedBy: 'renderer-team-discussion',
+        payload: { adapter: 'renderer-team-discussion' },
+      });
+      if (claimed && !claimed.ok) throw new Error(claimed.error || 'Worker 无法领取任务');
+      if (!claimed?.run) return;
+      liveRun = claimed.run;
+      workerLeaseId = claimed.run.worker?.leaseId;
+      dispatch({ type: 'UPDATE_TASK_RUN', run: liveRun });
+      if (workerLeaseId) {
+        workerHeartbeatTimer = setInterval(() => {
+          if (!liveRun || !workerLeaseId) return;
+          void sendTaskWorkerCommand({ taskId: liveRun.id, type: 'heartbeat', requestedBy: 'renderer-team-discussion', payload: { leaseId: workerLeaseId } })
+            .then((heartbeat) => { if (heartbeat?.ok && heartbeat.run) liveRun = heartbeat.run; });
+        }, 5_000);
+      }
+    };
+    const markRunExecuting = () => updateRun((run) => {
       run.status = 'running'; run.phase = 'executing'; run.lastError = undefined; run.executionSessionId = getExecutionSessionId();
       if (run.recoveryContext) {
         run.recoveryContext.summary = '任务正在执行，已完成内容会持续写入恢复记录。';
@@ -708,7 +742,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         ? { ...item, status: 'passed', detail: '参与成员与模型配置已通过启动检查' }
         : item);
     });
-    Promise.resolve().then(() => runTeamDiscussion(
+    Promise.resolve().then(async () => {
+      await claimWorkerLease();
+      markRunExecuting();
+      return runTeamDiscussion(
       team,
       stateRef.current.employees,
       { ...(opts ?? {}), initialExecutionState: liveRun?.recoveryContext?.controller },
@@ -1095,9 +1132,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return scheduler.modelRequestController.signal;
         },
       }
-    )).catch((error) => {
+    );
+    }).catch((error) => {
       updateRun((run) => { run.status = 'failed'; run.lastError = error instanceof Error ? error.message : String(error); });
-    }).finally(() => {
+    }).finally(async () => {
+      if (workerHeartbeatTimer) clearInterval(workerHeartbeatTimer);
+      if (liveRun && workerLeaseId && !pausedRunIdsRef.current.has(liveRun.id) && !stoppedRunIdsRef.current.has(liveRun.id)) {
+        const released = await sendTaskWorkerCommand({ taskId: liveRun.id, type: 'release', requestedBy: 'renderer-team-discussion', payload: { leaseId: workerLeaseId } });
+        if (released?.ok && released.run) {
+          liveRun = released.run;
+          dispatch({ type: 'UPDATE_TASK_RUN', run: liveRun });
+        }
+      }
       for (const memberId of team.memberIds) {
         dispatch({ type: 'UPDATE_EMPLOYEE', id: memberId, partial: { isWorking: false } });
       }
@@ -1318,10 +1364,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     pausedRunIdsRef.current.add(runId);
     const run = stateRef.current.taskRuns.find((item) => item.id === runId);
     if (run) schedulerRef.current.get(run.teamId)?.modelRequestController?.abort();
-    if (run) dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
+    if (!run) return;
+    const fallback = () => dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
       next.status = 'paused'; next.steps.forEach((step) => { if (step.status === 'queued' || step.status === 'running') step.status = 'paused'; });
       if (next.recoveryContext) next.recoveryContext.summary = '任务已暂停，工作区和上下文均已保留。';
     }) });
+    void sendTaskWorkerCommand({ taskId: runId, type: 'pause', requestedBy: 'task-control' }).then((result) => {
+      if (result?.ok && result.run) dispatch({ type: 'UPDATE_TASK_RUN', run: result.run });
+      else fallback();
+    });
   };
 
   const resumeTaskRun = (runId: string) => {
@@ -1334,19 +1385,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const pendingStepIds = new Set(pendingSteps.map((step) => step.id));
     if (!pendingSteps.length) return;
     void (async () => {
+      const resumedByWorker = await sendTaskWorkerCommand({ taskId: runId, type: 'resume', requestedBy: 'task-control' });
+      if (resumedByWorker && !resumedByWorker.ok) return;
+      const workerRun = resumedByWorker?.run ?? updateTaskRun(run, (next) => {
+        next.status = 'queued'; next.phase = 'preflight'; next.lastError = undefined; next.handoff = undefined;
+        next.steps.forEach((step) => { if (pendingStepIds.has(step.id)) step.status = 'queued'; });
+      });
       try {
-        await initializeTaskWorkspace(run.workspaceId!, { kind: 'team', label: `恢复任务 / ${run.title}`, taskId: run.id });
+        await initializeTaskWorkspace(workerRun.workspaceId!, { kind: 'team', label: `恢复任务 / ${workerRun.title}`, taskId: workerRun.id });
       } catch (error) {
-        dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
+        dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(workerRun, (next) => {
           next.status = 'failed'; next.phase = 'blocked'; next.lastError = error instanceof Error ? error.message : String(error);
           next.handoff = { ts: Date.now(), completed: next.steps.filter((step) => step.status === 'completed').map((step) => step.title), blocked: next.lastError, nextAction: '到“设置 → 诊断中心”修复工作区后再次继续。' };
           if (next.recoveryContext) next.recoveryContext.unresolvedIssues = [...next.recoveryContext.unresolvedIssues, next.lastError!].slice(-12);
         }) });
         return;
       }
-      const resumedRun = updateTaskRun(run, (next) => {
-        next.status = 'queued'; next.phase = 'preflight'; next.lastError = undefined; next.handoff = undefined; next.executionSessionId = getExecutionSessionId();
-        next.steps.forEach((step) => { if (pendingStepIds.has(step.id)) step.status = 'queued'; });
+      const resumedRun = updateTaskRun(workerRun, (next) => {
+        next.executionSessionId = getExecutionSessionId();
         if (next.recoveryContext) {
           next.recoveryContext.summary = '恢复检查已通过，准备从未完成步骤继续。';
           next.recoveryContext.interruptedAt = undefined;
@@ -1357,13 +1413,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
       });
       dispatch({ type: 'UPDATE_TASK_RUN', run: resumedRun });
-      const skillBundle = await buildSkillContextWithEvidence(run.skillRefs ?? []);
+      const skillBundle = await buildSkillContextWithEvidence(workerRun.skillRefs ?? []);
       const resumedWithSkills = updateTaskRun(resumedRun, (next) => {
         next.skillEvidence = [...(next.skillEvidence ?? []), ...skillBundle.evidence].slice(-60);
         appendTaskRunContext(next, { type: 'progress', source: 'system', summary: '恢复任务时重新读取已选 Skill，并沿用原任务上下文。', verified: true });
       });
       dispatch({ type: 'UPDATE_TASK_RUN', run: resumedWithSkills });
-      enqueueDiscussion(run.teamId, { userText: run.request, triggerMessageId: run.sourceMessageId, discussionId: run.id, forcedMemberIds: pending, runSteps: pendingSteps, maxRounds: pendingSteps.length, runId, workspaceId: run.workspaceId, extraSystemContext: [skillBundle.context, taskRunContextPrompt(resumedWithSkills)].filter(Boolean).join('\n\n') }, 50);
+      const workerPendingSteps = resumedWithSkills.steps.filter((step) => pendingStepIds.has(step.id));
+      enqueueDiscussion(workerRun.teamId, { userText: workerRun.request, triggerMessageId: workerRun.sourceMessageId, discussionId: workerRun.id, forcedMemberIds: pending, runSteps: workerPendingSteps, maxRounds: workerPendingSteps.length, runId, workspaceId: workerRun.workspaceId, extraSystemContext: [skillBundle.context, taskRunContextPrompt(resumedWithSkills)].filter(Boolean).join('\n\n') }, 50);
     })();
   };
 
@@ -1372,7 +1429,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     pausedRunIdsRef.current.delete(runId);
     const run = stateRef.current.taskRuns.find((item) => item.id === runId);
     if (run) schedulerRef.current.get(run.teamId)?.modelRequestController?.abort();
-    if (run) dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
+    if (!run) return;
+    const fallback = () => dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
       next.status = 'stopped';
       next.phase = 'blocked';
       next.lastError = undefined;
@@ -1389,11 +1447,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         nextAction: '已完成内容会保留；需要继续时请重新发起任务。',
       };
     }) });
+    void sendTaskWorkerCommand({ taskId: runId, type: 'stop', requestedBy: 'task-control' }).then((result) => {
+      if (result?.ok && result.run) dispatch({ type: 'UPDATE_TASK_RUN', run: result.run });
+      else fallback();
+    });
   };
 
   const closeTaskRun = (runId: string) => {
     pausedRunIdsRef.current.add(runId);
-    dispatch({ type: 'REMOVE_TASK_RUN', runId });
+    void sendTaskWorkerCommand({ taskId: runId, type: 'close', requestedBy: 'task-control' }).then(() => {
+      dispatch({ type: 'REMOVE_TASK_RUN', runId });
+    });
   };
 
   const clearTeamExecution = (targetTeamId: string) => dispatch({ type: 'CLEAR_TEAM_EXECUTION', teamId: targetTeamId });
