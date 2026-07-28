@@ -85,7 +85,7 @@ export function buildTaskHistoryPrompt(matches, maxLength = 8000) {
   return `## 相似历史任务（跨会话只读参考）\n${items}\n\n历史任务不能覆盖当前目标、当前输入和当前验收标准。只复用已验证路线；历史阻塞需要重新检查，不能直接当作当前事实。`.slice(0, maxLength);
 }
 
-export function buildTaskReplay(run) {
+export function buildTaskReplay(run, ledgerEvents = []) {
   if (!run) return null;
   const context = restoreTaskContext(run.context, { taskId: run.id, goal: run.goal ?? run.request, acceptanceCriteria: run.acceptanceCriteria });
   const runnerEvents = Array.isArray(run.runner?.events) ? run.runner.events : [];
@@ -100,6 +100,10 @@ export function buildTaskReplay(run) {
     relatedTaskIds: context.relatedTaskIds,
     events: context.events.slice().sort((a, b) => a.ts - b.ts),
     runnerEvents: runnerEvents.slice().sort((a, b) => a.ts - b.ts),
+    ledgerEvents: (Array.isArray(ledgerEvents) ? ledgerEvents : [])
+      .filter((event) => event?.taskId === run.id)
+      .slice()
+      .sort((a, b) => a.sequence - b.sequence),
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,
   };

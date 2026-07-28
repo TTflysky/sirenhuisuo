@@ -1,12 +1,12 @@
 # 太极项目当前交接
 
 > 更新时间：2026-07-28
-> 当前版本：`v0.17.0`
+> 当前版本：`v0.18.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
-> Release：`v0.17.0` 本地验收中，暂未发布
+> Release：`v0.18.0` 本地验收中，暂未发布
 
-`v0.17.0` 已完成长任务上下文压缩、模型辅助摘要、跨会话历史检索和只读任务回放。新任务会参考相似旧任务的已验证事实与交付路径，但旧记录不能覆盖当前目标、输入或验收标准。下一步按差异矩阵推进独立事件账本与后台 Worker。
+`v0.18.0` 已把任务运行状态迁入 Electron 主进程追加式事件账本。JSONL 账本是唯一事实源，JSON 快照只作投影缓存；事件具备序号、来源会话、状态迁移、变化域和 SHA-256 哈希链，损坏尾部会隔离恢复。下一步以该账本为边界拆出真正后台 Worker，暂不提前加入动态组队或并发。
 
 ## 办公室端直接开始
 
@@ -161,13 +161,14 @@ npm.cmd run verify:package
 - `npm.cmd run verify:task-runner`：通过；覆盖审查退回责任步骤、动态追加修订/复审节点并最终完成。
 - `npm.cmd run verify:task-context`：通过；上下文 v1 自动迁移到 v2，最近 120 条事件、确定性压缩、模型摘要边界、交付路径和历史关联均通过。
 - `npm.cmd run verify:task-history`：通过；中文历史检索命中正确团队任务，运行中任务不参与旧经验注入，只读提示与上下文/Runner 回放顺序通过。
+- `npm.cmd run verify:task-runtime-store`：通过；覆盖旧快照迁移、并发首次读取、事件序号与哈希链、创建/更新/移除、重复写入去重、账本重建和损坏尾部隔离恢复。
 - `npm.cmd run verify:skill-atomic`：通过；无效包不触碰旧 Skill，成功替换不残留旧文件，哈希损坏被拦截，并真实验证根 Skill 可读取知识库与笔记子规则。
 - `npm.cmd run verify:update-download`：通过；模拟断线后 Range 续传、服务器忽略断点、等长损坏缓存和 SHA-256 拦截。
 - `npm.cmd run verify:web-search`：通过；覆盖 Bing XML 解析、主源超时后备用源成功和双源具体错误聚合。
 - `npm.cmd run verify:web-search` 新增目标一致性覆盖：安徽百科不能冒充全椒县天气；结构化天气数据必须包含地点、日期、温度、湿度等真实字段。
 - `npm.cmd run verify:agent-kernel`：通过模型目标漂移、搜索词条件丢失、指定生图工具却写 SVG、用户新增约束合并和最终目标验收回归。
 - 全椒县天气实网验证：`wttr.in 实时天气` 返回全椒县、安徽、坐标 `32.098, 118.258`、日期 `2026-07-28` 及完整气象字段；偏题网页未参与结果。
-- `npm.cmd run verify:package`：通过；包内版本为 `0.17.0`，入口、连接器适配器、命令外壳和三份 IMA 规则均可读取，历史任务检索、任务回放、确定性压缩摘要等 9 个 P1 标记及安装器、blockmap、`latest.yml` 完整。
+- `npm.cmd run verify:package`：通过；包内版本为 `0.18.0`，任务事件账本模块及“账本完整/损坏尾部恢复”标识可读取，安装器、blockmap 和 `latest.yml` 版本一致。
 - `npm.cmd run diagnose:web-search`：通过；Electron 实网使用 DuckDuckGo，首轮空结果自动重试后约 3.1 秒返回 8 条中文 AI 资讯。
 - `npm.cmd run verify:docx`：通过；生成的 Word 可重新解析正文。
 - 安装版 `npm.cmd run verify:foundation-ui`：通过；真实 Electron IPC 和诊断中心五项完整显示。
@@ -178,11 +179,11 @@ npm.cmd run verify:package
 
 ## 安装与发布资产
 
-- 安装包：`release\taiji-office-setup-0.17.0.exe`
-- Blockmap：`release\taiji-office-setup-0.17.0.exe.blockmap`
+- 安装包：`release\taiji-office-setup-0.18.0.exe`
+- Blockmap：`release\taiji-office-setup-0.18.0.exe.blockmap`
 - 更新清单：`release\latest.yml`
-- 包内版本：`0.17.0`。
-- 安装包大小：`173860265` 字节；SHA-256：`7860D80D4D3F523556359281FFC4D1573A0D3827D7006B0D89ABC376B53D259C`。
+- 包内版本：`0.18.0`。
+- 安装包大小：`173863607` 字节；SHA-256：`2AEAB81CD71550BB8C2A8CE2970E6E8FF5F14EF84237329C5E68E37DADC8AA13`。
 - 最终文件大小和 SHA-256 以 `npm.cmd run publish:release` 的成功输出及 GitHub Release digest 为准；发布脚本会逐项比对本地与远端，不再把易过期的单次构建摘要固化在交接文档中。
 - 解包版受控启动 8 秒保持运行，未出现启动即崩溃。
 - 安装目录只保留 `太极 AI 办公会所.exe` 和对应卸载程序，没有旧产品可执行文件残留。
@@ -205,10 +206,10 @@ npm.cmd run verify:package
 
 ## 下一步
 
-1. 用户安装 `v0.17.0` 后，在团队右侧任务栏搜索一个旧任务，打开回放并确认返回列表、折叠摘要、事件时间线和面板拖拽正常。
-2. 发起一个与旧任务相似的新任务，确认上下文记录“相似历史任务”，但当前要求和验收标准没有被旧任务替换。
-3. 用真实长任务验收模型辅助摘要；模型不可用时任务必须继续使用确定性摘要，不能因此失败或暂停。
-4. 下一版本把上下文与 Runner 事件迁入独立追加式事件账本，为真正后台 Worker、动态组队和并发执行建立唯一事实源。
+1. 用户安装 `v0.18.0` 后打开旧任务，确认 v0.17 快照自动迁移并显示“任务事件账本”和连续事件序号。
+2. 新建、推进、暂停并恢复一个团队任务，重启客户端后确认状态从账本恢复，回放显示来源、状态迁移和变化域。
+3. 下一版本让后台 Worker 直接消费和追加同一账本事件，窗口只负责命令与投影，不再持有执行生命周期。
+4. Worker 稳定后再实现动态组队和并发执行，避免多个执行者共享不可靠状态。
 5. 完成一次隔离目录的真实跨版本自动更新与回滚演练并记录证据。
 6. 按用户新反馈继续优化，但同层问题必须同步检查助手、员工私聊和团队三条路径。
 

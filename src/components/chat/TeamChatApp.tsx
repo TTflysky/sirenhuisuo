@@ -17,6 +17,8 @@ import type { SkillReference } from '../../types';
 import { fileToAttachment, attachmentsFromClipboard, formatFileSize, persistAttachments } from '../../utils/attachments';
 import { useFileDrop } from '../../hooks/useFileDrop';
 import { buildTaskReplay, searchTaskRunHistory } from '../../engine/taskHistory.mjs';
+import { getTaskLedgerEvents, getTaskLedgerIntegrity, readTaskLedger } from '../../data/taskRuns';
+import type { TaskLedgerEvent, TaskLedgerIntegrity } from '../../electron';
 
 interface Props {
   teamId: string;
@@ -63,6 +65,8 @@ export default function TeamChatApp({ teamId }: Props) {
   const [showRenameTeam, setShowRenameTeam] = useState(false);
   const [taskHistoryQuery, setTaskHistoryQuery] = useState('');
   const [replayTaskId, setReplayTaskId] = useState<string | null>(null);
+  const [replayLedgerEvents, setReplayLedgerEvents] = useState<TaskLedgerEvent[]>([]);
+  const [ledgerIntegrity, setLedgerIntegrity] = useState<TaskLedgerIntegrity | null>(() => getTaskLedgerIntegrity());
   const [expandedExecutionIds, setExpandedExecutionIds] = useState<Set<string>>(() => new Set());
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [skillRefs, setSkillRefs] = useState<SkillReference[]>([]);
@@ -107,14 +111,49 @@ export default function TeamChatApp({ teamId }: Props) {
     ? searchTaskRunHistory(state.taskRuns, taskHistoryQuery, { teams: state.teams, limit: 12 })
     : [], [taskHistoryQuery, state.taskRuns, state.teams]);
   const replayRun = replayTaskId ? state.taskRuns.find((run) => run.id === replayTaskId) : undefined;
-  const taskReplay = useMemo(() => buildTaskReplay(replayRun), [replayRun]);
+  const taskReplay = useMemo(() => buildTaskReplay(replayRun, replayLedgerEvents), [replayRun, replayLedgerEvents]);
   const replayTimeline = useMemo(() => {
     if (!taskReplay) return [];
+    if (taskReplay.ledgerEvents.length) return taskReplay.ledgerEvents.map((event) => ({
+      id: event.eventId,
+      ts: event.occurredAt,
+      type: event.type,
+      detail: event.detail,
+      source: event.source,
+      verified: true,
+      sequence: event.sequence,
+      transition: event.previousStatus !== event.nextStatus ? [event.previousStatus, event.nextStatus].filter(Boolean).join(' -> ') : '',
+      domains: event.domains,
+    }));
     return [
-      ...taskReplay.events.map((event) => ({ id: event.id, ts: event.ts, type: event.type, detail: event.summary, source: '上下文', verified: event.verified })),
-      ...taskReplay.runnerEvents.map((event) => ({ id: `runner-${event.id}`, ts: event.ts, type: event.type, detail: event.detail, source: 'Runner', verified: /succeeded|passed|completed/u.test(event.type) })),
+      ...taskReplay.events.map((event) => ({ id: event.id, ts: event.ts, type: event.type, detail: event.summary, source: '上下文', verified: event.verified, sequence: 0, transition: '', domains: [] as string[] })),
+      ...taskReplay.runnerEvents.map((event) => ({ id: `runner-${event.id}`, ts: event.ts, type: event.type, detail: event.detail, source: 'Runner', verified: /succeeded|passed|completed/u.test(event.type), sequence: 0, transition: '', domains: [] as string[] })),
     ].sort((a, b) => a.ts - b.ts);
   }, [taskReplay]);
+
+  useEffect(() => {
+    if (!replayTaskId) {
+      setReplayLedgerEvents([]);
+      return;
+    }
+    let active = true;
+    const refresh = async () => {
+      const cached = getTaskLedgerEvents(replayTaskId);
+      if (active && cached.length) setReplayLedgerEvents(cached);
+      const loaded = await readTaskLedger(replayTaskId, 800);
+      if (active) {
+        setReplayLedgerEvents(loaded);
+        setLedgerIntegrity(getTaskLedgerIntegrity());
+      }
+    };
+    void refresh();
+    const onUpdated = () => { void refresh(); };
+    window.addEventListener('task-ledger:updated', onUpdated);
+    return () => {
+      active = false;
+      window.removeEventListener('task-ledger:updated', onUpdated);
+    };
+  }, [replayTaskId]);
 
   const teamMembers = (team?.memberIds ?? [])
     .map((id) => state.employees.find((e) => e.id === id))
@@ -705,7 +744,8 @@ export default function TeamChatApp({ teamId }: Props) {
                   <details className="task-replay-section"><summary>确定性压缩摘要</summary><p>{taskReplay.summary.narrative || '暂无摘要'}</p>{taskReplay.summary.modelNarrative && <p className="task-replay-model-summary">模型辅助：{taskReplay.summary.modelNarrative}</p>}</details>
                   <details className="task-replay-section"><summary>已验证事实 {taskReplay.summary.verifiedFacts.length}</summary>{taskReplay.summary.verifiedFacts.map((item, index) => <p key={`${index}-${item.slice(0, 24)}`}>{item}</p>)}</details>
                   <details className="task-replay-section"><summary>交付文件 {taskReplay.summary.artifactPaths.length}</summary>{taskReplay.summary.artifactPaths.map((item) => <p key={item}>{item}</p>)}</details>
-                  <div className="task-replay-timeline"><strong>任务回放</strong>{replayTimeline.map((event) => <div key={`${event.source}-${event.id}`} className={event.verified ? 'is-verified' : ''}><time>{new Date(event.ts).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</time><span>{event.source} · {event.type}</span><p>{event.detail}</p></div>)}</div>
+                  <div className={`task-ledger-integrity${ledgerIntegrity?.recovered ? ' is-recovered' : ''}`}><strong>任务事件账本</strong><span>{ledgerIntegrity?.recovered ? '已恢复损坏尾部' : '账本完整'}</span><small>{taskReplay.ledgerEvents.length ? `${taskReplay.ledgerEvents.length} 条事件` : '兼容回放'}</small></div>
+                  <div className="task-replay-timeline"><strong>任务回放</strong>{replayTimeline.map((event) => <div key={`${event.source}-${event.id}`} className={event.verified ? 'is-verified' : ''}><time>{new Date(event.ts).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</time><span>{event.sequence ? `#${event.sequence} · ` : ''}{event.source} · {event.type}</span>{event.transition && <small>状态：{event.transition}</small>}{event.domains.length > 0 && <small>变化域：{event.domains.join('、')}</small>}<p>{event.detail}</p></div>)}</div>
                 </div> : taskHistoryQuery.trim() ? <div className="task-history-results">
                   <div className="team-task-section-title">跨会话结果 · {historyMatches.length}</div>
                   {historyMatches.map((match) => <button type="button" key={match.taskId} className="task-history-result" onClick={() => setReplayTaskId(match.taskId)}><span>{match.teamName} · {match.status}</span><strong>{match.title}</strong><p>{match.summary || match.goal}</p><small>已验证 {match.verifiedFacts.length} · 文件 {match.artifactPaths.length} · {new Date(match.updatedAt).toLocaleDateString('zh-CN')}</small></button>)}

@@ -4,9 +4,13 @@ import { createTaskContract, createPlan } from '../engine/taskPlan.mjs';
 import type { TaskPlanStep as FormalTaskPlanStep } from '../engine/taskPlan.mjs';
 import { createTaskRunner, restoreTaskRunner } from '../engine/taskRunner.mjs';
 import { appendTaskContextEvent, buildTaskContextPrompt, createTaskContext, restoreTaskContext, type TaskContextEventInput } from '../engine/taskContext.mjs';
+import type { TaskLedgerEvent, TaskLedgerIntegrity } from '../electron';
 
 const LS_TASK_RUNS = 'hermes_office_task_runs_v1';
 const MAX_RUNS = 120;
+const MAX_CACHED_LEDGER_EVENTS = 2000;
+let taskLedgerEvents: TaskLedgerEvent[] = [];
+let taskLedgerIntegrity: TaskLedgerIntegrity | null = null;
 const DEFAULT_ACCEPTANCE = ['完成用户要求的工作', '留下可观察的结果或文件', '由执行者或审查步骤确认结果'];
 
 export function formalPlanStepForRun(runId: string, step: TaskRunStep | TaskPlanStep): FormalTaskPlanStep {
@@ -154,8 +158,44 @@ function saveLocalTaskRuns(runs: TaskRun[]): TaskRun[] {
 function writeMainTaskRuns(runs: TaskRun[]): void {
   try {
     const writer = typeof window !== 'undefined' ? window.electronAPI?.taskStoreWrite : undefined;
-    if (writer) void writer(runs.slice(-MAX_RUNS)).catch(() => {});
+    if (writer) void writer(runs.slice(-MAX_RUNS), { source: 'renderer', sessionId: getExecutionSessionId() })
+      .then((result) => {
+        if (!result.ok) return;
+        mergeTaskLedgerState(result.events, result.integrity, true);
+      })
+      .catch(() => {});
   } catch {}
+}
+
+function mergeTaskLedgerState(events?: TaskLedgerEvent[], integrity?: TaskLedgerIntegrity, notify = false): void {
+  if (events?.length) {
+    const merged = new Map(taskLedgerEvents.map((event) => [event.eventId, event]));
+    for (const event of events) merged.set(event.eventId, event);
+    taskLedgerEvents = [...merged.values()].sort((a, b) => a.sequence - b.sequence).slice(-MAX_CACHED_LEDGER_EVENTS);
+  }
+  if (integrity) taskLedgerIntegrity = integrity;
+  if (notify && typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('task-ledger:updated'));
+}
+
+export function getTaskLedgerEvents(taskId?: string): TaskLedgerEvent[] {
+  return taskLedgerEvents.filter((event) => !taskId || event.taskId === taskId);
+}
+
+export function getTaskLedgerIntegrity(): TaskLedgerIntegrity | null {
+  return taskLedgerIntegrity;
+}
+
+export async function readTaskLedger(taskId?: string, limit = 500): Promise<TaskLedgerEvent[]> {
+  try {
+    const reader = typeof window !== 'undefined' ? window.electronAPI?.taskLedgerRead : undefined;
+    if (!reader) return getTaskLedgerEvents(taskId);
+    const result = await reader({ taskId, limit });
+    if (!result.ok) return getTaskLedgerEvents(taskId);
+    mergeTaskLedgerState(result.events, result.integrity);
+    return result.events ?? [];
+  } catch {
+    return getTaskLedgerEvents(taskId);
+  }
 }
 
 export function loadTaskRuns(): TaskRun[] {
@@ -177,6 +217,7 @@ export async function hydrateTaskRunsFromMainStore(): Promise<TaskRun[] | null> 
     if (!reader) return null;
     const result = await reader();
     if (!result.ok) return null;
+    mergeTaskLedgerState(result.events, result.integrity);
     if (result.exists) {
       const normalized = normalizeTaskRuns(result.runs ?? []);
       saveLocalTaskRuns(normalized);

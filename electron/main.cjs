@@ -856,7 +856,8 @@ function createWindow() {
     }
   });
   ipcMain.handle('task-store:read', async () => taskRuntimeStore.read());
-  ipcMain.handle('task-store:write', async (_event, runs) => taskRuntimeStore.write(runs));
+  ipcMain.handle('task-store:write', async (_event, runs, metadata) => taskRuntimeStore.write(runs, metadata));
+  ipcMain.handle('task-ledger:read', async (_event, options) => taskRuntimeStore.read(options));
 
   ipcMain.handle('connector:verifyPreset', async (_event, input) => {
     const result = await verifyConnectorAdapter(input, { fetchImpl: (url, options) => net.fetch(url, options) });

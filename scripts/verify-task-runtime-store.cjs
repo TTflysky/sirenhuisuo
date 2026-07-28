@@ -2,39 +2,135 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { createTaskRuntimeStore, SCHEMA_VERSION } = require('../electron/taskRuntimeStore.cjs');
+const { createTaskRuntimeStore, SCHEMA_VERSION, LEDGER_VERSION, eventHash } = require('../electron/taskRuntimeStore.cjs');
+
+function makeRun(id, overrides = {}) {
+  return {
+    id,
+    teamId: 'team-test',
+    title: `任务 ${id}`,
+    status: 'queued',
+    steps: [],
+    createdAt: 100,
+    updatedAt: 100,
+    ...overrides,
+  };
+}
+
+async function readLedger(filePath) {
+  const raw = await fs.readFile(filePath, 'utf8');
+  return raw.split(/\r?\n/u).filter(Boolean).map((line) => JSON.parse(line));
+}
+
+function assertValidChain(events) {
+  let previousHash = '';
+  events.forEach((event, index) => {
+    assert.equal(event.eventVersion, LEDGER_VERSION);
+    assert.equal(event.sequence, index + 1);
+    assert.equal(event.previousHash, previousHash);
+    assert.equal(event.hash, eventHash(event));
+    previousHash = event.hash;
+  });
+}
 
 (async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'taiji-task-runtime-'));
   try {
-    const store = createTaskRuntimeStore(root, { maxRuns: 2 });
+    const store = createTaskRuntimeStore(root, { maxRuns: 10 });
     const first = await store.read();
     assert.equal(first.ok, true);
     assert.equal(first.exists, false);
     assert.deepEqual(first.runs, []);
+    assert.deepEqual(first.events, []);
+    assert.equal(first.integrity.eventCount, 0);
 
-    const makeRun = (id) => ({ id, teamId: 'team-test', status: 'queued', steps: [] });
-    assert.equal((await store.write([makeRun('one'), makeRun('two'), makeRun('three')])).ok, true);
-    const limited = await store.read();
-    assert.equal(limited.schemaVersion, SCHEMA_VERSION);
-    assert.deepEqual(limited.runs.map((run) => run.id), ['two', 'three']);
+    const created = await store.write([makeRun('one'), makeRun('two')], { source: 'test', sessionId: 'session-1' });
+    assert.equal(created.ok, true);
+    assert.equal(created.eventsAppended, 2);
+    assert.deepEqual(created.events.map((event) => event.type), ['task_created', 'task_created']);
+    assert.equal(created.events[0].source, 'test');
+    assert.equal(created.events[0].sessionId, 'session-1');
+
+    const updatedOne = makeRun('one', {
+      status: 'running',
+      updatedAt: 200,
+      steps: [{ id: 'step-1', status: 'running' }],
+      recoveryContext: { summary: '执行中' },
+    });
+    const changed = await store.write([updatedOne, makeRun('two')]);
+    assert.equal(changed.eventsAppended, 1);
+    assert.equal(changed.events[0].type, 'task_changed');
+    assert.equal(changed.events[0].previousStatus, 'queued');
+    assert.equal(changed.events[0].nextStatus, 'running');
+    assert.deepEqual(changed.events[0].domains, ['recoveryContext', 'status', 'steps', 'updatedAt']);
+    assert.ok(changed.events[0].payload.changes.every((change) => Array.isArray(change.path)));
+
+    const duplicate = await store.write([updatedOne, makeRun('two')]);
+    assert.equal(duplicate.eventsAppended, 0);
+
+    const removed = await store.write([updatedOne]);
+    assert.equal(removed.eventsAppended, 1);
+    assert.equal(removed.events[0].type, 'task_removed');
 
     await Promise.all([
+      store.write([makeRun('three')]),
       store.write([makeRun('four')]),
-      store.write([makeRun('five')]),
     ]);
     const ordered = await store.read();
-    assert.deepEqual(ordered.runs.map((run) => run.id), ['five']);
+    assert.deepEqual(ordered.runs.map((run) => run.id), ['four']);
+    assert.equal(ordered.schemaVersion, SCHEMA_VERSION);
+    assert.equal(ordered.ledgerVersion, LEDGER_VERSION);
 
-    await fs.writeFile(store.filePath, '{broken json', 'utf8');
-    const rejected = await store.write([{}]);
-    assert.equal(rejected.ok, false);
-    const corrupted = await store.read();
-    assert.equal(corrupted.ok, false);
-    assert.equal(corrupted.exists, true);
-    assert.match(corrupted.error, /snapshot|JSON|invalid/i);
+    const events = await readLedger(store.ledgerPath);
+    assertValidChain(events);
+    assert.equal(ordered.integrity.lastSequence, events.length);
+    assert.equal(ordered.integrity.lastHash, events.at(-1).hash);
 
-    console.log(JSON.stringify({ passed: true, schemaVersion: SCHEMA_VERSION, retained: ordered.runs.map((run) => run.id) }));
+    await fs.writeFile(store.filePath, JSON.stringify({ schemaVersion: 2, runs: [makeRun('forged')] }), 'utf8');
+    const restarted = createTaskRuntimeStore(root, { maxRuns: 10 });
+    const rebuilt = await restarted.read();
+    assert.deepEqual(rebuilt.runs.map((run) => run.id), ['four']);
+
+    const filtered = await restarted.read({ taskId: 'one', limit: 2 });
+    assert.equal(filtered.events.length, 2);
+    assert.ok(filtered.events.every((event) => event.taskId === 'one'));
+
+    const tampered = { ...events.at(-1), detail: '被篡改的尾部' };
+    await fs.appendFile(store.ledgerPath, `${JSON.stringify(tampered)}\n${JSON.stringify({ bad: true })}\n`, 'utf8');
+    const recoveringStore = createTaskRuntimeStore(root, { maxRuns: 10 });
+    const recovered = await recoveringStore.read();
+    assert.equal(recovered.ok, true);
+    assert.equal(recovered.integrity.recovered, true);
+    assert.match(path.basename(recovered.integrity.corruptPath), /^task-events-corrupt-\d+\.jsonl$/u);
+    assert.deepEqual(recovered.runs.map((run) => run.id), ['four']);
+    assertValidChain(await readLedger(store.ledgerPath));
+    const corruptFiles = (await fs.readdir(root)).filter((name) => name.startsWith('task-events-corrupt-'));
+    assert.equal(corruptFiles.length, 1);
+
+    const invalid = await recoveringStore.write([{}]);
+    assert.equal(invalid.ok, false);
+
+    const migrationRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'taiji-task-migration-'));
+    try {
+      await fs.writeFile(path.join(migrationRoot, 'task-runs.json'), JSON.stringify({
+        schemaVersion: 1,
+        runs: [makeRun('legacy-one'), makeRun('legacy-two')],
+      }), 'utf8');
+      await fs.writeFile(path.join(migrationRoot, 'task-events.jsonl'), '', 'utf8');
+      const migrationStore = createTaskRuntimeStore(migrationRoot);
+      const [migrated, concurrentRead] = await Promise.all([migrationStore.read(), migrationStore.read()]);
+      assert.deepEqual(migrated.runs.map((run) => run.id), ['legacy-one', 'legacy-two']);
+      assert.deepEqual(migrated.events.map((event) => event.type), ['task_migrated', 'task_migrated']);
+      assert.equal(concurrentRead.events.length, 2);
+      assertValidChain(migrated.events);
+      const checkpoint = JSON.parse(await fs.readFile(migrationStore.filePath, 'utf8'));
+      assert.equal(checkpoint.schemaVersion, SCHEMA_VERSION);
+      assert.equal(checkpoint.lastSequence, 2);
+    } finally {
+      await fs.rm(migrationRoot, { recursive: true, force: true });
+    }
+
+    console.log(JSON.stringify({ passed: true, schemaVersion: SCHEMA_VERSION, ledgerVersion: LEDGER_VERSION, events: events.length }));
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }

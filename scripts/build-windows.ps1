@@ -70,8 +70,19 @@ if ($actualBuilderNodeVersion -ne "v$builderNodeVersion") { throw "Unexpected bu
 
 $builder = Join-Path $projectRoot 'node_modules\electron-builder\out\cli\cli.js'
 $publishMode = if ($Publish) { 'always' } else { 'never' }
-& $builderNodeExe $builder --win "--publish=$publishMode"
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+$builderExitCode = 1
+for ($attempt = 1; $attempt -le 3; $attempt += 1) {
+  & $builderNodeExe $builder --win "--publish=$publishMode"
+  $builderExitCode = $LASTEXITCODE
+  if ($builderExitCode -eq 0) { break }
+  if ($attempt -lt 3) {
+    Write-Warning "electron-builder attempt $attempt failed (exit $builderExitCode). Waiting for Windows file locks before retrying..."
+    Start-Sleep -Seconds (2 * $attempt)
+    Get-ChildItem -LiteralPath (Join-Path $projectRoot 'release') -Filter '*.nsis.7z' -ErrorAction SilentlyContinue |
+      Remove-Item -Force -ErrorAction SilentlyContinue
+  }
+}
+if ($builderExitCode -ne 0) { exit $builderExitCode }
 
 & $builderNodeExe (Join-Path $projectRoot 'scripts\verify-packaged-app.cjs')
 exit $LASTEXITCODE

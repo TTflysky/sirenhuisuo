@@ -1,7 +1,7 @@
 # 项目交接手册
 
 > 最后整理：2026-07-28
-> 当前源码版本：`v0.17.0`
+> 当前源码版本：`v0.18.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 
@@ -81,6 +81,7 @@
 | `electron/knowledge.cjs` | 网页正文读取、DuckDuckGo/Bing 双源搜索、超时重试、结果解析和错误聚合。 |
 | `electron/connectorAdapters.cjs` | 内置外部服务原生适配器；IMA 固定只读验证、阶段诊断、重试和脱敏结果。 |
 | `electron/commandShell.cjs` | Windows PowerShell 命令包装并正确传播原生进程退出码。 |
+| `electron/taskRuntimeStore.cjs` | 追加式任务事件账本、SHA-256 哈希链、旧快照迁移、损坏尾部隔离和任务投影重建。JSONL 是事实源，JSON 快照只是缓存。 |
 | `electron/preload.cjs` | 受限的 `window.electronAPI` 桥接。新增 IPC 必须同步更新此文件和 `src/electron.d.ts`。 |
 | `electron/skills.cjs` | 扫描 `%USERPROFILE%/.workbuddy/skills`、项目 `skills/` 和 `.workbuddy/skills`。 |
 | `electron/autoUpdate.cjs` | 通过 GitHub Releases 检查并下载更新；后台检查失败只写诊断日志，不冒充模型网络故障。 |
@@ -91,7 +92,8 @@
 
 以下内容是本机用户数据，**不要提交到 GitHub**：API Key、连接器凭据、员工和团队实际配置、聊天内容、长期记忆、任务运行记录、上传附件、工作区文件、安装包缓存。
 
-- 渲染进程数据：Chromium `localStorage`，键以 `hermes_office_` 开头。
+- 渲染进程配置、聊天与兼容缓存：Chromium `localStorage`，键以 `hermes_office_` 开头。
+- 任务运行事实源：`app.getPath('userData')/task-runtime/task-events.jsonl`；`task-runs.json` 是可从账本重建的投影缓存。两者都是本机用户数据，禁止提交 GitHub。
 - 真实工作区：Electron `app.getPath('userData')/workspace`；每个聊天 scope 下有独立目录。
 - 上传附件：`<scope>/uploads/<批次>/<原文件名>`。输入附件不会显示为最终产出物。
 - Skill：用户目录 `.workbuddy/skills` 或项目本地 Skill 目录。

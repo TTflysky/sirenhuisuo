@@ -33,14 +33,57 @@ export interface FsWriteResult { ok: boolean; path?: string; size?: number; erro
 export interface FsReadResult { ok: boolean; path?: string; content?: string; format?: string; size?: number; truncated?: boolean; warnings?: string[]; error?: string; }
 export interface FsListResult { ok: boolean; path?: string; items?: FsEntry[]; error?: string; }
 export interface FsZipResult { ok: boolean; path?: string; error?: string; }
+export interface TaskLedgerChange {
+  op: 'set' | 'remove';
+  path: string[];
+  value?: unknown;
+}
+export interface TaskLedgerEvent {
+  eventVersion: number;
+  eventId: string;
+  sequence: number;
+  occurredAt: number;
+  type: 'task_created' | 'task_changed' | 'task_removed' | 'task_migrated';
+  taskId: string;
+  teamId: string;
+  source: string;
+  sessionId?: string;
+  previousStatus?: string;
+  nextStatus?: string;
+  domains: string[];
+  detail: string;
+  payload: { snapshot?: import('./types').TaskRun; changes?: TaskLedgerChange[] };
+  previousHash: string;
+  hash: string;
+}
+export interface TaskLedgerIntegrity {
+  ok: boolean;
+  recovered: boolean;
+  corruptPath?: string;
+  lastSequence: number;
+  lastHash: string;
+  eventCount: number;
+}
 export interface TaskStoreReadResult {
   ok: boolean;
   exists?: boolean;
   schemaVersion?: number;
+  ledgerVersion?: number;
   runs?: import('./types').TaskRun[];
+  events?: TaskLedgerEvent[];
+  integrity?: TaskLedgerIntegrity;
   error?: string;
 }
-export interface TaskStoreWriteResult { ok: boolean; schemaVersion?: number; count?: number; error?: string; }
+export interface TaskStoreWriteResult {
+  ok: boolean;
+  schemaVersion?: number;
+  ledgerVersion?: number;
+  count?: number;
+  eventsAppended?: number;
+  events?: TaskLedgerEvent[];
+  integrity?: TaskLedgerIntegrity;
+  error?: string;
+}
 
 export type ChatWindowType = 'dm-chat' | 'team-chat' | 'assistant-chat';
 export interface OpenChatOptions { type: ChatWindowType; refId: string; }
@@ -80,7 +123,8 @@ declare global {
     close: () => void;
     getAppSessionId: () => string;
     taskStoreRead: () => Promise<TaskStoreReadResult>;
-    taskStoreWrite: (runs: import('./types').TaskRun[]) => Promise<TaskStoreWriteResult>;
+    taskStoreWrite: (runs: import('./types').TaskRun[], metadata?: { source?: string; sessionId?: string }) => Promise<TaskStoreWriteResult>;
+    taskLedgerRead: (options?: { taskId?: string; limit?: number }) => Promise<TaskStoreReadResult>;
     getAssistantLock: () => Promise<{ locked: boolean }>;
     setAssistantLock: (locked: boolean) => Promise<{ locked: boolean }>;
     getChatLock: (opts: OpenChatOptions) => Promise<{ locked: boolean }>;

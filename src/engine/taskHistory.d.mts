@@ -1,4 +1,5 @@
 import type { TaskContextEvent, TaskContextSummary } from './taskContext.mjs';
+import type { TaskLedgerEvent } from '../electron';
 
 export interface TaskHistoryMatch {
   taskId: string;
@@ -27,10 +28,11 @@ export interface TaskReplay {
   relatedTaskIds: string[];
   events: TaskContextEvent[];
   runnerEvents: Array<{ id: string; ts: number; type: string; stepId?: string; detail: string }>;
+  ledgerEvents: TaskLedgerEvent[];
   createdAt: number;
   updatedAt: number;
 }
 
 export function searchTaskRunHistory(runs: unknown[], query: string, options?: { excludeTaskId?: string; statuses?: string[]; teams?: Array<{ id: string; name: string }>; limit?: number }): TaskHistoryMatch[];
 export function buildTaskHistoryPrompt(matches: TaskHistoryMatch[], maxLength?: number): string;
-export function buildTaskReplay(run: unknown): TaskReplay | null;
+export function buildTaskReplay(run: unknown, ledgerEvents?: TaskLedgerEvent[]): TaskReplay | null;

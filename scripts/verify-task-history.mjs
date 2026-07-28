@@ -43,10 +43,28 @@ assert.match(prompt, /跨会话只读参考/u);
 assert.match(prompt, /不能覆盖当前目标/u);
 assert.match(prompt, /季度报表\.xlsx/u);
 
-const replay = buildTaskReplay(report);
+const ledgerEvents = [{
+  eventVersion: 1,
+  eventId: 'event-1',
+  sequence: 1,
+  occurredAt: report.updatedAt + 1,
+  type: 'task_created',
+  taskId: report.id,
+  teamId: report.teamId,
+  source: 'test',
+  nextStatus: 'completed',
+  domains: ['task'],
+  detail: '任务从事件账本创建',
+  payload: { snapshot: report },
+  previousHash: '',
+  hash: 'test-hash',
+}];
+const replay = buildTaskReplay(report, ledgerEvents);
 assert.equal(replay.taskId, 'report-1');
 assert.equal(replay.events.length, 2);
 assert.equal(replay.runnerEvents.length, 1);
+assert.equal(replay.ledgerEvents.length, 1);
+assert.equal(replay.ledgerEvents[0].sequence, 1);
 assert.ok(replay.events[0].ts < replay.events[1].ts);
 assert.deepEqual(replay.summary.artifactPaths, ['季度报表.xlsx']);
 
