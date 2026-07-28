@@ -1,12 +1,13 @@
 const crypto = require('crypto');
 const fs = require('fs/promises');
 const path = require('path');
+const { ADAPTER_PROTOCOL_VERSION, normalizeCheckpoint, applyCheckpoint } = require('./executionAdapterProtocol.cjs');
 
 const WORKER_PROTOCOL_VERSION = 1;
 const COMMAND_RECORD_VERSION = 1;
 const DEFAULT_LEASE_MS = 30_000;
 const DEFAULT_SWEEP_MS = 10_000;
-const COMMAND_TYPES = new Set(['claim', 'heartbeat', 'release', 'pause', 'resume', 'stop', 'close']);
+const COMMAND_TYPES = new Set(['claim', 'heartbeat', 'checkpoint', 'release', 'pause', 'resume', 'stop', 'close']);
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -203,6 +204,8 @@ function createTaskWorker(options) {
       const worker = run.worker ?? { protocolVersion: WORKER_PROTOCOL_VERSION, state: 'idle', adapter: 'renderer-team-discussion' };
       if (command.type === 'claim') {
         if (!['queued', 'running', 'paused'].includes(run.status)) throw new Error(`任务状态 ${run.status} 不能领取执行租约`);
+        const adapterProtocolVersion = Number(command.payload.adapterProtocolVersion) || ADAPTER_PROTOCOL_VERSION;
+        if (adapterProtocolVersion !== ADAPTER_PROTOCOL_VERSION) throw new Error(`不支持的执行适配器协议版本：${adapterProtocolVersion}`);
         if (isActiveLease(worker) && worker.ownerSessionId !== command.sessionId && Number(worker.expiresAt) > now) {
           throw new Error('任务已被另一个执行会话领取');
         }
@@ -214,6 +217,9 @@ function createTaskWorker(options) {
           protocolVersion: WORKER_PROTOCOL_VERSION,
           state: 'running',
           adapter: String(command.payload.adapter || 'renderer-team-discussion').slice(0, 80),
+          adapterProtocolVersion,
+          jobId: String(command.payload.jobId || `adapter-job-${command.taskId}`).slice(0, 160),
+          checkpointSequence: Number(worker.checkpointSequence) || 0,
           leaseId,
           ownerSessionId: command.sessionId,
           acquiredAt: now,
@@ -226,6 +232,21 @@ function createTaskWorker(options) {
           run.recoveryContext.interruptedAt = undefined;
           run.recoveryContext.interruptionReason = undefined;
         }
+        return;
+      }
+      if (command.type === 'checkpoint') {
+        if (!isActiveLease(worker) || worker.leaseId !== command.payload.leaseId) throw new Error('执行检查点租约不匹配');
+        const checkpoint = normalizeCheckpoint(command.payload.checkpoint, Number(worker.checkpointSequence) || 0, now);
+        applyCheckpoint(run, checkpoint);
+        run.worker = {
+          ...worker,
+          state: worker.state,
+          checkpointSequence: checkpoint.sequence,
+          lastCheckpoint: checkpoint,
+          heartbeatAt: now,
+          expiresAt: now + leaseMs,
+          lastCommandId: command.commandId,
+        };
         return;
       }
       if (command.type === 'heartbeat') {

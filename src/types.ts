@@ -268,6 +268,8 @@ export interface TaskWorkerLease {
   protocolVersion: number;
   state: 'idle' | 'leased' | 'running' | 'paused' | 'released' | 'expired' | 'stopped';
   adapter?: string;
+  adapterProtocolVersion?: number;
+  jobId?: string;
   leaseId?: string;
   ownerSessionId?: string;
   acquiredAt?: number;
@@ -276,6 +278,17 @@ export interface TaskWorkerLease {
   releasedAt?: number;
   expiredAt?: number;
   lastCommandId?: string;
+  checkpointSequence?: number;
+  lastCheckpoint?: {
+    protocolVersion: number;
+    checkpointId: string;
+    sequence: number;
+    kind: 'step_started' | 'step_completed' | 'step_failed' | 'run_failed' | 'run_finished';
+    stepId?: string;
+    occurredAt: number;
+    summary: string;
+    finalStatus?: string;
+  };
 }
 
 export interface TaskRun {

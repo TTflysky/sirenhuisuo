@@ -64,7 +64,7 @@ export interface TaskLedgerIntegrity {
   lastHash: string;
   eventCount: number;
 }
-export type TaskWorkerCommandType = 'claim' | 'heartbeat' | 'release' | 'pause' | 'resume' | 'stop' | 'close';
+export type TaskWorkerCommandType = 'claim' | 'heartbeat' | 'checkpoint' | 'release' | 'pause' | 'resume' | 'stop' | 'close';
 export interface TaskWorkerCommand {
   commandId?: string;
   taskId: string;

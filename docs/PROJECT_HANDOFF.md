@@ -1,7 +1,7 @@
 # 项目交接手册
 
 > 最后整理：2026-07-28
-> 当前源码版本：`v0.19.0`
+> 当前源码版本：`v0.20.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 
@@ -81,8 +81,9 @@
 | `electron/knowledge.cjs` | 网页正文读取、DuckDuckGo/Bing 双源搜索、超时重试、结果解析和错误聚合。 |
 | `electron/connectorAdapters.cjs` | 内置外部服务原生适配器；IMA 固定只读验证、阶段诊断、重试和脱敏结果。 |
 | `electron/commandShell.cjs` | Windows PowerShell 命令包装并正确传播原生进程退出码。 |
-| `electron/taskRuntimeStore.cjs` | 追加式任务事件账本、SHA-256 哈希链、旧快照迁移、损坏尾部隔离和任务投影重建。JSONL 是事实源，JSON 快照只是缓存。 |
-| `electron/taskWorker.cjs` | 主进程 Worker 控制平面：命令日志、租约、心跳、暂停/恢复/停止、跨会话过期恢复和命令幂等。模型与工具执行仍通过当前渲染进程适配器完成。 |
+| `electron/taskRuntimeStore.cjs` | 追加式任务事件账本、SHA-256 哈希链、旧快照迁移、损坏尾部隔离和任务投影重建。JSONL 是事实源，JSON 快照只是缓存；渲染写入不能覆盖 Worker 权威检查点。 |
+| `electron/taskWorker.cjs` | 主进程 Worker 控制平面：命令日志、租约、心跳、检查点、暂停/恢复/停止、跨会话过期恢复和命令幂等。模型与工具执行仍通过当前渲染进程 Adapter v1 完成。 |
+| `electron/executionAdapterProtocol.cjs` | Execution Adapter v1 协议：校验严格递增检查点，并把步骤开始/完成/失败与任务最终状态应用到主进程权威投影。 |
 | `electron/preload.cjs` | 受限的 `window.electronAPI` 桥接。新增 IPC 必须同步更新此文件和 `src/electron.d.ts`。 |
 | `electron/skills.cjs` | 扫描 `%USERPROFILE%/.workbuddy/skills`、项目 `skills/` 和 `.workbuddy/skills`。 |
 | `electron/autoUpdate.cjs` | 通过 GitHub Releases 检查并下载更新；后台检查失败只写诊断日志，不冒充模型网络故障。 |

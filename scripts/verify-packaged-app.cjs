@@ -18,6 +18,7 @@ const requiredFiles = [
   'electron/connectorAdapters.cjs',
   'electron/taskRuntimeStore.cjs',
   'electron/taskWorker.cjs',
+  'electron/executionAdapterProtocol.cjs',
   'skills\\ima-skill\\SKILL.md',
   'skills\\ima-skill\\knowledge-base\\SKILL.md',
   'skills\\ima-skill\\notes\\SKILL.md',

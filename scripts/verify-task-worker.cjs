@@ -45,12 +45,52 @@ function assertJournalChain(records) {
     const workerA = createTaskWorker({ rootDir: root, store, sessionId: 'session-a', leaseMs: 60_000, sweepMs: 60_000 });
     assert.equal((await workerA.start()).ok, true);
 
+    const unsupportedAdapter = await workerA.dispatch({ commandId: 'claim-unsupported', taskId: 'worker-task', type: 'claim', payload: { adapterProtocolVersion: 99 } });
+    assert.equal(unsupportedAdapter.ok, false);
+
     const claim = await workerA.dispatch({ commandId: 'claim-1', taskId: 'worker-task', type: 'claim', payload: { adapter: 'test-adapter' } });
     assert.equal(claim.ok, true, claim.error);
     assert.equal(claim.run.status, 'running');
     assert.equal(claim.run.worker.state, 'running');
     assert.equal(claim.run.worker.ownerSessionId, 'session-a');
     const leaseId = claim.run.worker.leaseId;
+
+    const startedStep = await workerA.dispatch({
+      commandId: 'checkpoint-1', taskId: 'worker-task', type: 'checkpoint',
+      payload: { leaseId, checkpoint: { checkpointId: 'cp-1', sequence: 1, kind: 'step_started', stepId: 'step-1', summary: '开始执行' } },
+    });
+    assert.equal(startedStep.ok, true, startedStep.error);
+    assert.equal(startedStep.run.steps[0].status, 'running');
+    assert.equal(startedStep.run.worker.checkpointSequence, 1);
+
+    const skippedSequence = await workerA.dispatch({
+      commandId: 'checkpoint-skipped', taskId: 'worker-task', type: 'checkpoint',
+      payload: { leaseId, checkpoint: { checkpointId: 'cp-skipped', sequence: 3, kind: 'step_completed', stepId: 'step-1' } },
+    });
+    assert.equal(skippedSequence.ok, false);
+
+    const duplicateSequence = await workerA.dispatch({
+      commandId: 'checkpoint-invalid', taskId: 'worker-task', type: 'checkpoint',
+      payload: { leaseId, checkpoint: { checkpointId: 'cp-invalid', sequence: 1, kind: 'step_completed', stepId: 'step-1' } },
+    });
+    assert.equal(duplicateSequence.ok, false);
+
+    const completedStep = await workerA.dispatch({
+      commandId: 'checkpoint-2', taskId: 'worker-task', type: 'checkpoint',
+      payload: { leaseId, checkpoint: { checkpointId: 'cp-2', sequence: 2, kind: 'step_completed', stepId: 'step-1', summary: '执行完成' } },
+    });
+    assert.equal(completedStep.ok, true, completedStep.error);
+    assert.equal(completedStep.run.steps[0].status, 'completed');
+
+    const staleRendererRun = makeRun();
+    staleRendererRun.status = 'running';
+    staleRendererRun.worker = startedStep.run.worker;
+    const staleWrite = await store.write([staleRendererRun], { source: 'renderer', sessionId: 'stale-renderer' });
+    assert.equal(staleWrite.ok, true);
+    const protectedProjection = (await store.read()).runs[0];
+    assert.equal(protectedProjection.worker.checkpointSequence, 2);
+    assert.equal(protectedProjection.worker.lastCheckpoint.checkpointId, 'cp-2');
+    assert.equal(protectedProjection.steps[0].status, 'completed');
 
     const duplicate = await workerA.dispatch({ commandId: 'claim-1', taskId: 'worker-task', type: 'claim' });
     assert.equal(duplicate.ok, true);
@@ -62,12 +102,12 @@ function assertJournalChain(records) {
 
     const paused = await workerA.dispatch({ commandId: 'pause-1', taskId: 'worker-task', type: 'pause' });
     assert.equal(paused.run.status, 'paused');
-    assert.equal(paused.run.steps[0].status, 'paused');
+    assert.equal(paused.run.steps[0].status, 'completed');
     assert.equal(paused.run.worker.state, 'paused');
 
     const resumed = await workerA.dispatch({ commandId: 'resume-1', taskId: 'worker-task', type: 'resume' });
     assert.equal(resumed.run.status, 'queued');
-    assert.equal(resumed.run.steps[0].status, 'queued');
+    assert.equal(resumed.run.steps[0].status, 'completed');
 
     const claimedAgain = await workerA.dispatch({ commandId: 'claim-2', taskId: 'worker-task', type: 'claim' });
     assert.equal(claimedAgain.run.worker.ownerSessionId, 'session-a');

@@ -1,5 +1,15 @@
 # 更新日志
 
+## v0.20.0 (2026-07-28)
+
+### Execution Adapter v1
+- 新增 `electron/executionAdapterProtocol.cjs`，定义版本化检查点协议：`step_started`、`step_completed`、`step_failed`、`run_failed` 和 `run_finished`。
+- 主进程 Worker 新增 `checkpoint` 命令，检查点必须持有匹配租约并严格递增；协议版本、步骤 ID 和最终状态在写入前统一校验。
+- 团队执行 Adapter 在普通步骤、审查结论、运行失败和最终验收处上报检查点；检查点串行落盘完成后才释放租约，避免任务收尾丢记录。
+- 主进程任务存储保护 Worker 权威字段和检查点对应状态，旧渲染快照不能回退已完成步骤、失败结论或暂停/停止状态。
+- 任务详情显示最新检查点编号与摘要；Worker 回归覆盖重复序号拒绝和旧快照竞态。
+- 本版本仍由渲染进程 Adapter v1 执行模型和工具调用。主进程已拥有稳定的任务生命周期与步骤检查点协议，后续原生 Adapter 可在不改变 UI 控制协议的情况下替换执行实现。
+
 ## v0.19.0 (2026-07-28)
 
 ### 主进程 Worker 控制平面

@@ -709,18 +709,60 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
     let workerLeaseId: string | undefined;
     let workerHeartbeatTimer: ReturnType<typeof setInterval> | undefined;
+    let adapterCheckpointSequence = 0;
+    let adapterCheckpointQueue = Promise.resolve();
+    let adapterCheckpointError: string | undefined;
+    const reportAdapterCheckpoint = (checkpoint: {
+      kind: 'step_started' | 'step_completed' | 'step_failed' | 'run_failed' | 'run_finished';
+      stepId?: string;
+      summary?: string;
+      finalStatus?: string;
+    }): Promise<void> => {
+      if (!liveRun || !workerLeaseId) return Promise.resolve();
+      const sequence = ++adapterCheckpointSequence;
+      const runId = liveRun.id;
+      const leaseId = workerLeaseId;
+      adapterCheckpointQueue = adapterCheckpointQueue.then(async () => {
+        const result = await sendTaskWorkerCommand({
+          commandId: `adapter-checkpoint-${runId}-${sequence}`,
+          taskId: runId,
+          type: 'checkpoint',
+          requestedBy: 'renderer-team-discussion-adapter',
+          payload: {
+            leaseId,
+            checkpoint: {
+              protocolVersion: 1,
+              checkpointId: `adapter-${runId}-${sequence}`,
+              sequence,
+              occurredAt: Date.now(),
+              ...checkpoint,
+            },
+          },
+        });
+        if (result && !result.ok) throw new Error(result.error || `执行检查点 #${sequence} 写入失败`);
+        if (result?.run?.worker && liveRun?.id === runId) {
+          liveRun.worker = result.run.worker;
+          dispatch({ type: 'UPDATE_TASK_RUN', run: liveRun });
+        }
+      }).catch((error) => {
+        adapterCheckpointError = error instanceof Error ? error.message : String(error);
+        console.error('[execution-adapter] checkpoint failed:', adapterCheckpointError);
+      });
+      return adapterCheckpointQueue;
+    };
     const claimWorkerLease = async () => {
       if (!liveRun) return;
       const claimed = await sendTaskWorkerCommand({
         taskId: liveRun.id,
         type: 'claim',
         requestedBy: 'renderer-team-discussion',
-        payload: { adapter: 'renderer-team-discussion' },
+        payload: { adapter: 'renderer-team-discussion', adapterProtocolVersion: 1, jobId: `team-job-${liveRun.id}` },
       });
       if (claimed && !claimed.ok) throw new Error(claimed.error || 'Worker 无法领取任务');
       if (!claimed?.run) return;
       liveRun = claimed.run;
       workerLeaseId = claimed.run.worker?.leaseId;
+      adapterCheckpointSequence = claimed.run.worker?.checkpointSequence ?? 0;
       dispatch({ type: 'UPDATE_TASK_RUN', run: liveRun });
       if (workerLeaseId) {
         workerHeartbeatTimer = setInterval(() => {
@@ -787,6 +829,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           };
           dispatch({ type: 'APPEND_CHAT', teamId, msgs: [msg] });
           dispatch({ type: 'UPDATE_EMPLOYEE', id: emp.id, partial: { isWorking: false } });
+          let reportedStepId: string | undefined;
+          let reportedStepStatus: 'completed' | 'failed' | undefined;
           updateRun((run) => {
             const step = run.steps.find((item) => item.id === stepId) ?? run.steps.find((item) => item.employeeId === emp.id && item.status === 'running');
             if (!step) return;
@@ -838,7 +882,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               type: step.status === 'failed' ? 'error' : 'progress', source: 'member', stepId,
               summary: `${emp.name}：${content.slice(0, 420)}`, verified: false,
             });
+            if (step.kind !== 'review' && (step.status === 'completed' || step.status === 'failed')) {
+              reportedStepId = step.id;
+              reportedStepStatus = step.status;
+            }
           });
+          if (reportedStepId && reportedStepStatus) {
+            void reportAdapterCheckpoint({
+              kind: reportedStepStatus === 'failed' ? 'step_failed' : 'step_completed',
+              stepId: reportedStepId,
+              summary: content.slice(0, 500),
+            });
+          }
         },
         onSteeringReply(emp, content, tokens, contextUsage, stepId) {
           dispatch({
@@ -979,6 +1034,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               run.recoveryContext.budget.updatedAt = Date.now();
             }
           });
+          void reportAdapterCheckpoint({ kind: 'step_started', stepId, summary: `${emp.name} 开始执行步骤` });
         },
         onStepAdded(step) {
           totalSteps += 1;
@@ -1014,6 +1070,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             }
             appendTaskRunContext(run, { type: approved ? 'resolved' : 'blocked', source: 'review', stepId, summary: evidence.summary, verified: approved });
           });
+          void reportAdapterCheckpoint({
+            kind: 'step_completed',
+            stepId,
+            summary: approved ? `审查通过：${reason ?? '符合验收要求'}` : `审查已完成并退回：${reason ?? '需要修改'}`,
+          });
         },
         onRunFailed(error) {
           updateRun((run) => {
@@ -1033,6 +1094,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             if (activeReview) { activeReview.status = 'failed'; activeReview.lastError = error; }
             appendTaskRunContext(run, { type: 'blocked', source: 'system', summary: error.slice(0, 420), verified: false });
           });
+          void reportAdapterCheckpoint({ kind: 'run_failed', summary: error.slice(0, 700) });
         },
         onDone() {
           // 清掉进度
@@ -1111,6 +1173,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               run.recoveryContext.budget.updatedAt = Date.now();
             }
           });
+          if (liveRun) void reportAdapterCheckpoint({
+            kind: 'run_finished',
+            finalStatus: liveRun.status,
+            summary: liveRun.status === 'completed' ? '执行适配器已完成并通过验收' : (liveRun.lastError || `任务状态：${liveRun.status}`),
+          });
         },
       }, {
         shouldStop: () => !!opts?.runId && (pausedRunIdsRef.current.has(opts.runId) || stoppedRunIdsRef.current.has(opts.runId)),
@@ -1137,6 +1204,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       updateRun((run) => { run.status = 'failed'; run.lastError = error instanceof Error ? error.message : String(error); });
     }).finally(async () => {
       if (workerHeartbeatTimer) clearInterval(workerHeartbeatTimer);
+      await adapterCheckpointQueue;
+      if (adapterCheckpointError) updateRun((run) => {
+        run.status = 'failed';
+        run.phase = 'blocked';
+        run.lastError = `后台执行检查点写入失败：${adapterCheckpointError}`;
+        run.handoff = {
+          ts: Date.now(),
+          completed: run.steps.filter((step) => step.status === 'completed').map((step) => step.title),
+          blocked: run.lastError,
+          nextAction: '保留当前窗口与工作区，检查任务账本后点击“继续执行”。',
+        };
+        appendTaskRunContext(run, { type: 'blocked', source: 'system', summary: run.lastError, verified: false });
+      });
       if (liveRun && workerLeaseId && !pausedRunIdsRef.current.has(liveRun.id) && !stoppedRunIdsRef.current.has(liveRun.id)) {
         const released = await sendTaskWorkerCommand({ taskId: liveRun.id, type: 'release', requestedBy: 'renderer-team-discussion', payload: { leaseId: workerLeaseId } });
         if (released?.ok && released.run) {

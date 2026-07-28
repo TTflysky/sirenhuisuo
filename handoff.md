@@ -1,12 +1,12 @@
 # 太极项目当前交接
 
 > 更新时间：2026-07-28
-> 当前版本：`v0.19.0`
+> 当前版本：`v0.20.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
-> Release：`v0.19.0` 本地验收中，暂未发布
+> Release：`v0.20.0` 已完成构建并正式发布
 
-`v0.19.0` 在事件账本之上新增 Electron 主进程 Worker 控制平面。命令日志记录领取、心跳、释放、暂停、恢复、停止和关闭；任务租约在重启或会话失效时安全暂停，团队运行器开始前领取租约并持续心跳。模型与工具调用仍由渲染进程团队执行器作为首个适配器承接，下一阶段才迁入 Worker 执行边界。
+`v0.20.0` 在 Worker 控制平面之上新增 Execution Adapter v1 检查点协议。团队执行器把步骤开始、完成、失败、审查结论和最终状态按严格递增序号写回主进程，旧渲染快照不能覆盖新检查点；任务面板显示最新检查点摘要。模型与工具调用仍由渲染进程 Adapter v1 承接，后续主进程原生 Adapter 可复用同一控制协议。
 
 ## 办公室端直接开始
 
@@ -169,9 +169,10 @@ npm.cmd run verify:package
 - `npm.cmd run verify:agent-kernel`：通过模型目标漂移、搜索词条件丢失、指定生图工具却写 SVG、用户新增约束合并和最终目标验收回归。
 - 全椒县天气实网验证：`wttr.in 实时天气` 返回全椒县、安徽、坐标 `32.098, 118.258`、日期 `2026-07-28` 及完整气象字段；偏题网页未参与结果。
 - `npm.cmd run verify:task-worker`：通过；覆盖命令幂等、租约、心跳、暂停/恢复、跨会话过期回收、停止、关闭和损坏命令尾部隔离。
-- `npm.cmd run verify:package`：通过；包内版本为 `0.19.0`，任务账本、Worker 模块和 Worker 状态/命令记录标识可读取，安装器、blockmap 和 `latest.yml` 版本一致。
+- `npm.cmd run verify:task-worker` 新增 Adapter 覆盖：步骤开始/完成检查点、重复序号拒绝，以及旧渲染快照不能覆盖主进程权威检查点。
+- `npm.cmd run verify:package`：通过；包内版本为 `0.20.0`，任务账本、Worker、Execution Adapter 协议和 UI 检查点标识可读取，安装器、blockmap 和 `latest.yml` 版本一致。
 - 打包客户端普通隔离启动连续存活 12 秒；已修复 Electron 33 Windows 下巡检计时器 `unref()` 导致的 `0x80000003` 原生异常。
-- `verify:foundation-ui` 的调试页面调用仍会等待超时，未把该项计为通过；Node 协议测试、包内检查和普通启动检查均已通过。
+- `npm.cmd run verify:foundation-ui`：通过；真实 Electron IPC 覆盖工作区、Worker 控制、诊断中心、记忆页、敏感信息脱敏和旧任务恢复。
 - `npm.cmd run diagnose:web-search`：通过；Electron 实网使用 DuckDuckGo，首轮空结果自动重试后约 3.1 秒返回 8 条中文 AI 资讯。
 - `npm.cmd run verify:docx`：通过；生成的 Word 可重新解析正文。
 - 安装版 `npm.cmd run verify:foundation-ui`：通过；真实 Electron IPC 和诊断中心五项完整显示。
@@ -182,11 +183,11 @@ npm.cmd run verify:package
 
 ## 安装与发布资产
 
-- 安装包：`release\taiji-office-setup-0.19.0.exe`
-- Blockmap：`release\taiji-office-setup-0.19.0.exe.blockmap`
+- 安装包：`release\taiji-office-setup-0.20.0.exe`
+- Blockmap：`release\taiji-office-setup-0.20.0.exe.blockmap`
 - 更新清单：`release\latest.yml`
-- 包内版本：`0.19.0`。
-- 安装包大小：`173871188` 字节；SHA-256：`6E06D1774FB831815AA4B060975418EBF71C23CC7665E34ADCB7E93BA8BB104C`。
+- 包内版本：`0.20.0`。
+- 安装包大小：`173873605` 字节；SHA-256：`C9486A91E6F229EFE1D29A290E4235F7C5B9C5BB5888FD1A55DBA10218C49F40`。
 - 最终文件大小和 SHA-256 以 `npm.cmd run publish:release` 的成功输出及 GitHub Release digest 为准；发布脚本会逐项比对本地与远端，不再把易过期的单次构建摘要固化在交接文档中。
 - 解包版受控启动 8 秒保持运行，未出现启动即崩溃。
 - 安装目录只保留 `太极 AI 办公会所.exe` 和对应卸载程序，没有旧产品可执行文件残留。
@@ -209,10 +210,10 @@ npm.cmd run verify:package
 
 ## 下一步
 
-1. 用户安装 `v0.19.0` 后打开旧任务，确认任务事件账本仍完整，并在任务详情中看到“后台 Worker”状态。
-2. 新建、推进、暂停并恢复一个团队任务，重启客户端后确认状态从账本恢复，回放显示来源、状态迁移和变化域。
-3. 下一版本让后台 Worker 直接消费和追加同一账本事件，窗口只负责命令与投影，不再持有执行生命周期。
-4. Worker 稳定后再实现动态组队和并发执行，避免多个执行者共享不可靠状态。
+1. 用户安装 `v0.20.0` 后新建团队任务，确认任务详情持续显示递增的 Adapter 检查点及步骤摘要。
+2. 暂停、恢复并重启一个执行中任务，确认检查点、已完成步骤和账本状态不会被旧窗口快照回退。
+3. 下一版本在 Adapter v1 协议不变的前提下，将模型与工具执行逐步迁入主进程，窗口最终只负责命令与投影。
+4. 主进程原生 Adapter 稳定后再实现动态组队和并发执行，避免多个执行者共享不可靠状态。
 5. 完成一次隔离目录的真实跨版本自动更新与回滚演练并记录证据。
 6. 按用户新反馈继续优化，但同层问题必须同步检查助手、员工私聊和团队三条路径。
 

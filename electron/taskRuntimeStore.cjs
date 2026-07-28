@@ -91,6 +91,44 @@ function statusDetail(previousStatus, nextStatus, domains) {
   return [status, changed].filter(Boolean).join('；') || '任务投影已更新';
 }
 
+function mergeWorkerAuthority(current, incoming, source) {
+  const next = clone(incoming);
+  if (source !== 'renderer' || !current?.worker) return next;
+  const currentSequence = Number(current.worker.checkpointSequence) || 0;
+  const incomingSequence = Number(next.worker?.checkpointSequence) || 0;
+  if (currentSequence < incomingSequence) return next;
+  next.worker = clone(current.worker);
+
+  const checkpoint = current.worker.lastCheckpoint;
+  if (checkpoint?.stepId) {
+    const currentStep = current.steps.find((step) => step.id === checkpoint.stepId);
+    const incomingStep = next.steps.find((step) => step.id === checkpoint.stepId);
+    if (currentStep && incomingStep) {
+      if (checkpoint.kind === 'step_completed' || checkpoint.kind === 'step_failed') {
+        Object.assign(incomingStep, clone(currentStep));
+      } else if (checkpoint.kind === 'step_started' && ['queued', 'paused'].includes(incomingStep.status)) {
+        incomingStep.status = currentStep.status;
+        incomingStep.startedAt = currentStep.startedAt;
+        incomingStep.attempts = currentStep.attempts;
+        incomingStep.events = clone(currentStep.events);
+      }
+    }
+  }
+  if (checkpoint?.kind === 'run_failed' || checkpoint?.kind === 'run_finished') {
+    next.status = current.status;
+    next.phase = current.phase;
+    next.lastError = current.lastError;
+  }
+  if (['paused', 'expired', 'stopped'].includes(current.worker.state)) {
+    next.status = current.status;
+    next.phase = current.phase;
+    next.lastError = current.lastError;
+    next.handoff = clone(current.handoff);
+    next.steps = clone(current.steps);
+  }
+  return next;
+}
+
 function createEvent(input, head) {
   const sequence = head.sequence + 1;
   const occurredAt = Number(input.occurredAt) || Date.now();
@@ -320,7 +358,8 @@ function createTaskRuntimeStore(rootDir, options = {}) {
     const nextRuns = runs.slice(-maxRuns).map(clone);
     const operation = writeQueue.then(async () => {
       await initialize();
-      const nextMap = new Map(nextRuns.map((run) => [run.id, run]));
+      const mergedRuns = nextRuns.map((run) => mergeWorkerAuthority(projected.get(run.id), run, metadata.source));
+      const nextMap = new Map(mergedRuns.map((run) => [run.id, run]));
       const nextProjection = new Map([...projected].map(([id, run]) => [id, clone(run)]));
       const appended = [];
       let head = { sequence: integrity.lastSequence, hash: integrity.lastHash };
@@ -337,7 +376,7 @@ function createTaskRuntimeStore(rootDir, options = {}) {
           domains: ['task'], detail: `任务已从列表移除：${current.title || current.id}`, payload: {},
         });
       }
-      for (const next of nextRuns) {
+      for (const next of mergedRuns) {
         const current = projected.get(next.id);
         if (!current) {
           add({
