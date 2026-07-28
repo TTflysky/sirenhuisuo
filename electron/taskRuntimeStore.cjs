@@ -2,8 +2,9 @@ const crypto = require('crypto');
 const fs = require('fs/promises');
 const path = require('path');
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const LEDGER_VERSION = 1;
+const RECOVERY_POINT_VERSION = 1;
 const DEFAULT_MAX_RUNS = 120;
 const DEFAULT_MAX_RETURNED_EVENTS = 2000;
 function clone(value) {
@@ -31,6 +32,22 @@ function stableValue(value) {
 
 function stableStringify(value) {
   return JSON.stringify(stableValue(value));
+}
+
+function digest(value) {
+  return crypto.createHash('sha256').update(stableStringify(value)).digest('hex');
+}
+
+function verifiedEnvelope(value) {
+  const payload = clone(value);
+  return { ...payload, checksum: digest(payload) };
+}
+
+function verifyEnvelope(value) {
+  if (!isObject(value) || typeof value.checksum !== 'string') return false;
+  const payload = { ...value };
+  delete payload.checksum;
+  return digest(payload) === value.checksum;
 }
 
 function equal(left, right) {
@@ -79,6 +96,36 @@ function eventHash(event) {
   const copy = { ...event };
   delete copy.hash;
   return crypto.createHash('sha256').update(stableStringify(copy)).digest('hex');
+}
+
+function searchableRun(run) {
+  return [run.id, run.teamId, run.title, run.request, run.goal, run.workspaceId]
+    .map((value) => String(value ?? '').toLocaleLowerCase())
+    .join('\n')
+    .slice(0, 12000);
+}
+
+function taskIndexEntry(run) {
+  return {
+    id: run.id,
+    teamId: run.teamId,
+    title: String(run.title || run.id).slice(0, 240),
+    status: run.status,
+    phase: run.phase,
+    workspaceId: run.workspaceId,
+    createdAt: Number(run.createdAt) || 0,
+    updatedAt: Number(run.updatedAt) || 0,
+    search: searchableRun(run),
+  };
+}
+
+function projectEvents(sourceEvents, sequence = Number.MAX_SAFE_INTEGER) {
+  const state = new Map();
+  for (const event of sourceEvents) {
+    if (event.sequence > sequence) break;
+    applyEvent(state, event);
+  }
+  return state;
 }
 
 function eventDomains(changes) {
@@ -196,12 +243,14 @@ function createTaskRuntimeStore(rootDir, options = {}) {
     ? options.maxReturnedEvents : DEFAULT_MAX_RETURNED_EVENTS;
   const checkpointPath = path.join(rootDir, 'task-runs.json');
   const ledgerPath = path.join(rootDir, 'task-events.jsonl');
+  const indexPath = path.join(rootDir, 'task-index.json');
+  const recoveryDir = path.join(rootDir, 'task-recovery-points');
   let writeQueue = Promise.resolve();
   let initialized = false;
   let initializationPromise;
   let projected = new Map();
   let events = [];
-  let integrity = { ok: true, recovered: false, lastSequence: 0, lastHash: '', eventCount: 0 };
+  let integrity = { ok: true, recovered: false, snapshotValid: true, indexValid: true, lastSequence: 0, lastHash: '', eventCount: 0 };
 
   async function readLegacyCheckpoint() {
     try {
@@ -258,15 +307,48 @@ function createTaskRuntimeStore(rootDir, options = {}) {
 
   async function writeCheckpoint() {
     const runs = [...projected.values()].slice(-maxRuns);
-    const payload = JSON.stringify({
+    const payload = verifiedEnvelope({
       schemaVersion: SCHEMA_VERSION,
       ledgerVersion: LEDGER_VERSION,
       updatedAt: Date.now(),
       lastSequence: integrity.lastSequence,
       lastHash: integrity.lastHash,
       runs,
-    }, null, 2);
-    await atomicWrite(checkpointPath, payload);
+    });
+    await atomicWrite(checkpointPath, JSON.stringify(payload, null, 2));
+    const indexPayload = verifiedEnvelope({
+      schemaVersion: SCHEMA_VERSION,
+      updatedAt: payload.updatedAt,
+      lastSequence: integrity.lastSequence,
+      lastHash: integrity.lastHash,
+      entries: runs.map(taskIndexEntry).sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id)),
+    });
+    await atomicWrite(indexPath, JSON.stringify(indexPayload, null, 2));
+    integrity.snapshotValid = true;
+    integrity.indexValid = true;
+  }
+
+  async function validateCachedProjection() {
+    try {
+      const checkpoint = JSON.parse(await fs.readFile(checkpointPath, 'utf8'));
+      integrity.snapshotValid = verifyEnvelope(checkpoint)
+        && checkpoint.schemaVersion === SCHEMA_VERSION
+        && checkpoint.lastSequence === integrity.lastSequence
+        && checkpoint.lastHash === integrity.lastHash;
+    } catch (error) {
+      integrity.snapshotValid = error?.code === 'ENOENT' ? events.length === 0 : false;
+    }
+    try {
+      const index = JSON.parse(await fs.readFile(indexPath, 'utf8'));
+      integrity.indexValid = verifyEnvelope(index)
+        && index.schemaVersion === SCHEMA_VERSION
+        && index.lastSequence === integrity.lastSequence
+        && index.lastHash === integrity.lastHash;
+    } catch (error) {
+      integrity.indexValid = error?.code === 'ENOENT' ? events.length === 0 : false;
+    }
+    integrity.snapshotRebuilt = !integrity.snapshotValid;
+    integrity.indexRebuilt = !integrity.indexValid;
   }
 
   async function appendEvents(nextEvents) {
@@ -304,6 +386,7 @@ function createTaskRuntimeStore(rootDir, options = {}) {
         lastHash: events.at(-1)?.hash ?? '',
         eventCount: events.length,
       };
+      await validateCachedProjection();
       await writeCheckpoint();
       initialized = true;
       return;
@@ -312,7 +395,7 @@ function createTaskRuntimeStore(rootDir, options = {}) {
     if (!legacy.ok) throw new Error(legacy.error);
     projected = new Map();
     events = [];
-    integrity = { ok: true, recovered: false, lastSequence: 0, lastHash: '', eventCount: 0 };
+    integrity = { ok: true, recovered: false, snapshotValid: true, indexValid: true, lastSequence: 0, lastHash: '', eventCount: 0 };
     const migrated = [];
     for (const run of legacy.runs) {
       const event = createEvent({
@@ -343,20 +426,167 @@ function createTaskRuntimeStore(rootDir, options = {}) {
     try {
       await initialize();
       const taskId = String(options.taskId || '');
+      const teamId = String(options.teamId || '');
+      const query = String(options.query || '').trim().toLocaleLowerCase();
+      const statuses = new Set((Array.isArray(options.statuses) ? options.statuses : options.status ? [options.status] : []).map(String));
+      const updatedAfter = Number(options.updatedAfter) || 0;
+      const updatedBefore = Number(options.updatedBefore) || Number.MAX_SAFE_INTEGER;
+      const cursor = Math.max(0, Number(options.cursor) || 0);
       const limit = Math.max(1, Math.min(maxReturnedEvents, Number(options.limit) || maxReturnedEvents));
-      const selectedEvents = events.filter((event) => !taskId || event.taskId === taskId).slice(-limit);
+      const allRuns = [...projected.values()].sort((left, right) => (Number(right.updatedAt) || 0) - (Number(left.updatedAt) || 0));
+      const filteredRuns = allRuns.filter((run) => (!taskId || run.id === taskId)
+        && (!teamId || run.teamId === teamId)
+        && (statuses.size === 0 || statuses.has(run.status))
+        && (Number(run.updatedAt) || 0) >= updatedAfter
+        && (Number(run.updatedAt) || 0) <= updatedBefore
+        && (!query || searchableRun(run).includes(query)));
+      const selectedEvents = events.filter((event) => (!taskId || event.taskId === taskId)
+        && (!teamId || event.teamId === teamId)
+        && (!options.afterSequence || event.sequence > Number(options.afterSequence))
+        && (!options.beforeSequence || event.sequence < Number(options.beforeSequence))).slice(-limit);
       return {
         ok: true,
         exists: events.length > 0 || projected.size > 0,
         schemaVersion: SCHEMA_VERSION,
         ledgerVersion: LEDGER_VERSION,
-        runs: [...projected.values()].slice(-maxRuns).map(clone),
+        runs: filteredRuns.slice(cursor, cursor + Math.min(maxRuns, limit)).map(clone),
+        page: { cursor, nextCursor: cursor + limit < filteredRuns.length ? cursor + limit : undefined, total: filteredRuns.length },
         events: selectedEvents.map(clone),
         integrity: { ...integrity },
       };
     } catch (error) {
       return { ok: false, exists: true, runs: [], events: [], error: `读取任务事件账本失败：${error?.message ?? String(error)}` };
     }
+  }
+
+  async function audit(options = {}) {
+    return read({ ...options, cursor: 0, limit: options.limit || 500 }).then((result) => ({
+      ...result,
+      runs: undefined,
+      page: {
+        cursor: Number(options.afterSequence) || 0,
+        nextCursor: result.events?.at(-1)?.sequence,
+        total: result.events?.length ?? 0,
+      },
+    }));
+  }
+
+  function rebuild(options = {}) {
+    const operation = writeQueue.then(async () => {
+      await initialize();
+      const sequence = Math.max(0, Math.min(integrity.lastSequence, Number(options.sequence) || integrity.lastSequence));
+      const state = projectEvents(events, sequence);
+      const taskId = String(options.taskId || '');
+      const runs = [...state.values()].filter((run) => !taskId || run.id === taskId).map(clone);
+      return {
+        ok: true,
+        sequence,
+        headHash: events.find((event) => event.sequence === sequence)?.hash ?? '',
+        runs,
+        checksum: digest({ sequence, runs }),
+      };
+    });
+    return operation.catch((error) => ({ ok: false, error: `重建任务投影失败：${error?.message ?? String(error)}` }));
+  }
+
+  function createRecoveryPoint(options = {}) {
+    const operation = writeQueue.then(async () => {
+      await initialize();
+      await fs.mkdir(recoveryDir, { recursive: true });
+      const taskId = String(options.taskId || '');
+      const runs = [...projected.values()].filter((run) => !taskId || run.id === taskId).map(clone);
+      if (taskId && runs.length === 0) throw new Error(`找不到任务：${taskId}`);
+      const createdAt = Date.now();
+      const recoveryPointId = `recovery-${createdAt}-${crypto.randomUUID().slice(0, 8)}`;
+      const envelope = verifiedEnvelope({
+        recoveryPointVersion: RECOVERY_POINT_VERSION,
+        recoveryPointId,
+        label: String(options.label || '手动恢复点').slice(0, 160),
+        taskId: taskId || undefined,
+        createdAt,
+        lastSequence: integrity.lastSequence,
+        lastHash: integrity.lastHash,
+        runs,
+      });
+      await atomicWrite(path.join(recoveryDir, `${recoveryPointId}.json`), JSON.stringify(envelope, null, 2));
+      return { ok: true, recoveryPoint: clone(envelope) };
+    });
+    writeQueue = operation.then(() => undefined, () => undefined);
+    return operation.catch((error) => ({ ok: false, error: `创建任务恢复点失败：${error?.message ?? String(error)}` }));
+  }
+
+  async function readRecoveryPoint(recoveryPointId) {
+    if (!/^recovery-\d+-[a-f0-9-]+$/iu.test(String(recoveryPointId || ''))) throw new Error('恢复点编号无效');
+    const point = JSON.parse(await fs.readFile(path.join(recoveryDir, `${recoveryPointId}.json`), 'utf8'));
+    if (point.recoveryPointVersion !== RECOVERY_POINT_VERSION || !verifyEnvelope(point) || !Array.isArray(point.runs) || !point.runs.every(isTaskRun)) {
+      throw new Error('恢复点校验失败，已拒绝使用');
+    }
+    return point;
+  }
+
+  function listRecoveryPoints(options = {}) {
+    const operation = writeQueue.then(async () => {
+      await initialize();
+      let names = [];
+      try { names = await fs.readdir(recoveryDir); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+      const points = [];
+      for (const name of names.filter((item) => item.endsWith('.json')).sort().reverse()) {
+        try {
+          const point = await readRecoveryPoint(name.slice(0, -5));
+          if (!options.taskId || point.taskId === options.taskId || point.runs.some((run) => run.id === options.taskId)) {
+            points.push({ recoveryPointId: point.recoveryPointId, label: point.label, taskId: point.taskId, createdAt: point.createdAt, lastSequence: point.lastSequence, runCount: point.runs.length, checksum: point.checksum });
+          }
+        } catch {}
+      }
+      return { ok: true, recoveryPoints: points.slice(0, Math.max(1, Math.min(200, Number(options.limit) || 50))) };
+    });
+    return operation.catch((error) => ({ ok: false, error: `读取任务恢复点失败：${error?.message ?? String(error)}` }));
+  }
+
+  function restoreRecoveryPoint(recoveryPointId, metadata = {}) {
+    const operation = writeQueue.then(async () => {
+      await initialize();
+      const point = await readRecoveryPoint(recoveryPointId);
+      const restoreIds = new Set(point.runs.map((run) => run.id));
+      const nextProjection = new Map([...projected].map(([id, run]) => [id, clone(run)]));
+      const appended = [];
+      let head = { sequence: integrity.lastSequence, hash: integrity.lastHash };
+      for (const snapshot of point.runs) {
+        const current = nextProjection.get(snapshot.id);
+        const changes = current ? collectChanges(current, snapshot) : [];
+        const event = createEvent({
+          type: current ? 'task_changed' : 'task_created', taskId: snapshot.id, teamId: snapshot.teamId,
+          source: metadata.source || 'task-recovery', sessionId: metadata.sessionId,
+          previousStatus: current?.status, nextStatus: snapshot.status,
+          domains: current ? eventDomains(changes) : ['task'],
+          detail: `已从恢复点 ${point.label} 恢复任务投影`,
+          payload: current ? { changes, recoveryPointId } : { snapshot, recoveryPointId },
+        }, head);
+        if (!current || changes.length > 0) {
+          appended.push(event);
+          applyEvent(nextProjection, event);
+          head = { sequence: event.sequence, hash: event.hash };
+        }
+      }
+      if (!point.taskId && metadata.replaceAll === true) {
+        for (const current of [...nextProjection.values()]) {
+          if (restoreIds.has(current.id)) continue;
+          const event = createEvent({
+            type: 'task_removed', taskId: current.id, teamId: current.teamId,
+            source: metadata.source || 'task-recovery', sessionId: metadata.sessionId,
+            previousStatus: current.status, domains: ['task'], detail: `全量恢复点不包含该任务，已移出当前投影`,
+            payload: { recoveryPointId },
+          }, head);
+          appended.push(event); applyEvent(nextProjection, event); head = { sequence: event.sequence, hash: event.hash };
+        }
+      }
+      await appendEvents(appended);
+      projected = nextProjection;
+      await writeCheckpoint();
+      return { ok: true, recoveryPointId, eventsAppended: appended.length, runs: [...projected.values()].map(clone), integrity: { ...integrity } };
+    });
+    writeQueue = operation.then(() => undefined, () => undefined);
+    return operation.catch((error) => ({ ok: false, error: `恢复任务失败：${error?.message ?? String(error)}` }));
   }
 
   function write(runs, metadata = {}) {
@@ -480,15 +710,19 @@ function createTaskRuntimeStore(rootDir, options = {}) {
     return operation.catch((error) => ({ ok: false, error: `移除任务事件账本失败：${error?.message ?? String(error)}` }));
   }
 
-  return { checkpointPath, ledgerPath, filePath: checkpointPath, read, write, updateTask, removeTask };
+  return { checkpointPath, ledgerPath, indexPath, recoveryDir, filePath: checkpointPath, read, audit, rebuild, write, updateTask, removeTask, createRecoveryPoint, listRecoveryPoints, restoreRecoveryPoint };
 }
 
 module.exports = {
   SCHEMA_VERSION,
   LEDGER_VERSION,
+  RECOVERY_POINT_VERSION,
   DEFAULT_MAX_RUNS,
   createTaskRuntimeStore,
   collectChanges,
   applyChanges,
   eventHash,
+  digest,
+  verifyEnvelope,
+  projectEvents,
 };

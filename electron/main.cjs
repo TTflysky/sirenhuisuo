@@ -978,8 +978,14 @@ function createWindow() {
     }
   });
   ipcMain.handle('task-store:read', async () => taskRuntimeStore.read());
+  ipcMain.handle('task-store:query', async (_event, options) => taskRuntimeStore.read(options));
   ipcMain.handle('task-store:write', async (_event, runs, metadata) => taskRuntimeStore.write(runs, metadata));
   ipcMain.handle('task-ledger:read', async (_event, options) => taskRuntimeStore.read(options));
+  ipcMain.handle('task-ledger:audit', async (_event, options) => taskRuntimeStore.audit(options));
+  ipcMain.handle('task-recovery:create', async (_event, options) => taskRuntimeStore.createRecoveryPoint(options));
+  ipcMain.handle('task-recovery:list', async (_event, options) => taskRuntimeStore.listRecoveryPoints(options));
+  ipcMain.handle('task-recovery:rebuild', async (_event, options) => taskRuntimeStore.rebuild(options));
+  ipcMain.handle('task-recovery:restore', async (_event, input) => taskRuntimeStore.restoreRecoveryPoint(input?.recoveryPointId, input?.metadata));
   ipcMain.handle('task-worker:command', async (_event, command) => {
     const result = await taskWorker.dispatch(command);
     nativeExecutionAdapter.handleControl(command, result);

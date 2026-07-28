@@ -59,6 +59,10 @@ export interface TaskLedgerEvent {
 export interface TaskLedgerIntegrity {
   ok: boolean;
   recovered: boolean;
+  snapshotValid?: boolean;
+  indexValid?: boolean;
+  snapshotRebuilt?: boolean;
+  indexRebuilt?: boolean;
   corruptPath?: string;
   lastSequence: number;
   lastHash: string;
@@ -160,7 +164,43 @@ export interface TaskStoreReadResult {
   schemaVersion?: number;
   ledgerVersion?: number;
   runs?: import('./types').TaskRun[];
+  page?: { cursor: number; nextCursor?: number; total: number };
   events?: TaskLedgerEvent[];
+  integrity?: TaskLedgerIntegrity;
+  error?: string;
+}
+export interface TaskStoreQueryOptions {
+  taskId?: string;
+  teamId?: string;
+  status?: string;
+  statuses?: string[];
+  query?: string;
+  updatedAfter?: number;
+  updatedBefore?: number;
+  afterSequence?: number;
+  beforeSequence?: number;
+  cursor?: number;
+  limit?: number;
+}
+export interface TaskRecoveryPointSummary {
+  recoveryPointId: string;
+  label: string;
+  taskId?: string;
+  createdAt: number;
+  lastSequence: number;
+  runCount: number;
+  checksum: string;
+}
+export interface TaskRecoveryResult {
+  ok: boolean;
+  recoveryPoint?: TaskRecoveryPointSummary & { runs?: import('./types').TaskRun[] };
+  recoveryPoints?: TaskRecoveryPointSummary[];
+  recoveryPointId?: string;
+  sequence?: number;
+  headHash?: string;
+  checksum?: string;
+  runs?: import('./types').TaskRun[];
+  eventsAppended?: number;
   integrity?: TaskLedgerIntegrity;
   error?: string;
 }
@@ -213,8 +253,14 @@ declare global {
     close: () => void;
     getAppSessionId: () => string;
     taskStoreRead: () => Promise<TaskStoreReadResult>;
+    taskStoreQuery: (options?: TaskStoreQueryOptions) => Promise<TaskStoreReadResult>;
     taskStoreWrite: (runs: import('./types').TaskRun[], metadata?: { source?: string; sessionId?: string }) => Promise<TaskStoreWriteResult>;
     taskLedgerRead: (options?: { taskId?: string; limit?: number }) => Promise<TaskStoreReadResult>;
+    taskLedgerAudit: (options?: TaskStoreQueryOptions) => Promise<TaskStoreReadResult>;
+    taskRecoveryCreate: (options?: { taskId?: string; label?: string }) => Promise<TaskRecoveryResult>;
+    taskRecoveryList: (options?: { taskId?: string; limit?: number }) => Promise<TaskRecoveryResult>;
+    taskRecoveryRebuild: (options?: { taskId?: string; sequence?: number }) => Promise<TaskRecoveryResult>;
+    taskRecoveryRestore: (input: { recoveryPointId: string; metadata?: { source?: string; sessionId?: string; replaceAll?: boolean } }) => Promise<TaskRecoveryResult>;
     taskWorkerCommand: (command: TaskWorkerCommand) => Promise<TaskWorkerCommandResult>;
     taskWorkerStatus: () => Promise<TaskWorkerStatusResult>;
     taskWorkerCommands: (options?: { taskId?: string; limit?: number }) => Promise<{ ok: boolean; records?: TaskWorkerCommandRecord[]; integrity?: TaskWorkerStatusResult['integrity']; error?: string }>;

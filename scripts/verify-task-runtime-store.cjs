@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { createTaskRuntimeStore, SCHEMA_VERSION, LEDGER_VERSION, eventHash } = require('../electron/taskRuntimeStore.cjs');
+const { createTaskRuntimeStore, SCHEMA_VERSION, LEDGER_VERSION, eventHash, verifyEnvelope } = require('../electron/taskRuntimeStore.cjs');
 
 function makeRun(id, overrides = {}) {
   return {
@@ -68,6 +68,29 @@ function assertValidChain(events) {
     const duplicate = await store.write([updatedOne, makeRun('two')]);
     assert.equal(duplicate.eventsAppended, 0);
 
+    const recovery = await store.createRecoveryPoint({ taskId: 'one', label: '运行中基线' });
+    assert.equal(recovery.ok, true);
+    assert.equal(verifyEnvelope(recovery.recoveryPoint), true);
+    assert.equal(recovery.recoveryPoint.runs.length, 1);
+    const recoveryList = await store.listRecoveryPoints({ taskId: 'one' });
+    assert.equal(recoveryList.recoveryPoints.length, 1);
+
+    const failed = await store.updateTask('one', (run) => { run.status = 'failed'; run.lastError = '模拟失败'; });
+    assert.equal(failed.ok, true);
+    const restoredPoint = await store.restoreRecoveryPoint(recovery.recoveryPoint.recoveryPointId, { source: 'test-recovery' });
+    assert.equal(restoredPoint.ok, true);
+    assert.equal(restoredPoint.runs.find((run) => run.id === 'one').status, 'running');
+    const rebuiltAtFailure = await store.rebuild({ taskId: 'one', sequence: failed.events[0].sequence });
+    assert.equal(rebuiltAtFailure.ok, true);
+    assert.equal(rebuiltAtFailure.runs[0].status, 'failed');
+
+    const query = await store.read({ teamId: 'team-test', status: 'running', query: '任务 one', limit: 10 });
+    assert.deepEqual(query.runs.map((run) => run.id), ['one']);
+    assert.equal(query.page.total, 1);
+    const audit = await store.audit({ taskId: 'one', afterSequence: 1, limit: 20 });
+    assert.equal(audit.runs, undefined);
+    assert.ok(audit.events.every((event) => event.taskId === 'one' && event.sequence > 1));
+
     const removed = await store.write([updatedOne]);
     assert.equal(removed.eventsAppended, 1);
     assert.equal(removed.events[0].type, 'task_removed');
@@ -85,11 +108,17 @@ function assertValidChain(events) {
     assertValidChain(events);
     assert.equal(ordered.integrity.lastSequence, events.length);
     assert.equal(ordered.integrity.lastHash, events.at(-1).hash);
+    const checkpointEnvelope = JSON.parse(await fs.readFile(store.filePath, 'utf8'));
+    const indexEnvelope = JSON.parse(await fs.readFile(store.indexPath, 'utf8'));
+    assert.equal(verifyEnvelope(checkpointEnvelope), true);
+    assert.equal(verifyEnvelope(indexEnvelope), true);
+    assert.equal(indexEnvelope.entries[0].id, 'four');
 
     await fs.writeFile(store.filePath, JSON.stringify({ schemaVersion: 2, runs: [makeRun('forged')] }), 'utf8');
     const restarted = createTaskRuntimeStore(root, { maxRuns: 10 });
     const rebuilt = await restarted.read();
     assert.deepEqual(rebuilt.runs.map((run) => run.id), ['four']);
+    assert.equal(rebuilt.integrity.snapshotRebuilt, true);
 
     const filtered = await restarted.read({ taskId: 'one', limit: 2 });
     assert.equal(filtered.events.length, 2);
