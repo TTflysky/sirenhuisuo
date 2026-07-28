@@ -1,12 +1,33 @@
 import type { Employee, SkillReference, TaskPlanStep, TaskRun, TaskRunMemberSnapshot, TaskRunStatus, TaskRunStep, Team } from '../types';
 import { createExecutionController } from '../engine/executionController.mjs';
 import { createTaskContract, createPlan } from '../engine/taskPlan.mjs';
+import type { TaskPlanStep as FormalTaskPlanStep } from '../engine/taskPlan.mjs';
 import { createTaskRunner, restoreTaskRunner } from '../engine/taskRunner.mjs';
 import { appendTaskContextEvent, buildTaskContextPrompt, createTaskContext, restoreTaskContext, type TaskContextEventInput } from '../engine/taskContext.mjs';
 
 const LS_TASK_RUNS = 'hermes_office_task_runs_v1';
 const MAX_RUNS = 120;
 const DEFAULT_ACCEPTANCE = ['完成用户要求的工作', '留下可观察的结果或文件', '由执行者或审查步骤确认结果'];
+
+export function formalPlanStepForRun(runId: string, step: TaskRunStep | TaskPlanStep): FormalTaskPlanStep {
+  const type = step.kind === 'review' ? 'review' : 'tool';
+  return {
+    stepId: step.id,
+    type,
+    connector: `team-member:${step.employeeId}`,
+    input: { assignment: step.assignment, employeeId: step.employeeId },
+    expectedOutputSchema: type === 'review'
+      ? { type: 'object', required: ['review'], properties: { review: { type: 'object' } } }
+      : { type: 'object' },
+    dependsOn: step.dependsOnStepIds,
+    retryPolicy: { maxRetries: 3, backoffMs: 1000, maxBackoffMs: 30000 },
+    idempotencyKey: type === 'review' ? '' : `run-${runId}-${step.id}`,
+    sideEffect: type !== 'review',
+    compensateStepId: '',
+    approvalRequired: false,
+    metadata: { legacyStepId: step.id, employeeId: step.employeeId, kind: step.kind, revisionOfStepId: step.revisionOfStepId },
+  };
+}
 
 function formalPlanForRun(run: Pick<TaskRun, 'id' | 'request' | 'goal' | 'steps'>) {
   const contract = createTaskContract({
@@ -21,17 +42,7 @@ function formalPlanForRun(run: Pick<TaskRun, 'id' | 'request' | 'goal' | 'steps'
   });
   const plan = createPlan({
     planId: `plan-${run.id}`, contract,
-    steps: run.steps.map((step) => ({
-      stepId: step.id,
-      type: step.kind === 'review' ? 'review' : 'tool',
-      connector: `team-member:${step.employeeId}`,
-      input: { assignment: step.assignment, employeeId: step.employeeId },
-      expectedOutputSchema: { type: 'object' },
-      dependsOn: step.dependsOnStepIds,
-      sideEffect: step.kind !== 'review',
-      idempotencyKey: `run-${run.id}-${step.id}`,
-      metadata: { legacyStepId: step.id, employeeId: step.employeeId, kind: step.kind },
-    })),
+    steps: run.steps.map((step) => formalPlanStepForRun(run.id, step)),
   });
   return { contract, plan };
 }

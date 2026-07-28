@@ -3,21 +3,22 @@ import { runAgentLoop, resolveApiBase, extractUserInsights, getEmployeeModel, ty
 import { TOOLS, executeTool } from './tools';
 import { getConnectorTools } from './connectorTools';
 import { diagnoseModel } from '../diagnostics/modelDiagnostics';
-import { BEGINNER_RESPONSE_GUIDE, isToolResultSuccessful } from '../data/assistantPresentation';
+import { BEGINNER_RESPONSE_GUIDE } from '../data/assistantPresentation';
 import { blockExecution, createExecutionController, observeExecutionResult, type ExecutionControllerSnapshot } from './executionController.mjs';
 import type { TaskPlan } from './taskPlan.mjs';
 import type { ConnectorProtocolResult } from './connectorProtocol.mjs';
+import type { ReviewSubmissionEvidence, ToolExecutionEvidence } from './executionEvidence.mjs';
 
 // ===== 讨论回调 =====
 export interface DiscussionHandlers {
   onMessage: (emp: Employee, content: string, mentions: string[], tokens?: number, discussionRound?: number, inReplyToMessageId?: string, stepId?: string, contextUsage?: ContextUsage) => void;
-  onToolCall: (emp: Employee, toolName: string, toolArgs: string, result: string, stepId?: string, success?: boolean, protocolEvidence?: ConnectorProtocolResult) => void;
+  onToolCall: (emp: Employee, toolName: string, toolArgs: string, result: string, stepId?: string, success?: boolean, protocolEvidence?: ConnectorProtocolResult, structuredEvidence?: ToolExecutionEvidence) => void;
   onTaskAdvance: (taskId: string, lane: TaskLane) => void;
   onStatus: (text: string) => void;
   onDone: () => void;
   onStepStart?: (stepId: string, emp: Employee) => void;
   onStepAdded?: (step: TaskPlanStep) => void;
-  onReviewDecision?: (stepId: string, approved: boolean, reason?: string, responsibleEmployeeId?: string) => void;
+  onReviewDecision?: (stepId: string, approved: boolean, reason?: string, responsibleEmployeeId?: string, responsibleStepId?: string, review?: ReviewSubmissionEvidence) => void;
   onRunFailed?: (error: string) => void;
   onSteeringReply?: (emp: Employee, content: string, tokens?: number, contextUsage?: ContextUsage, stepId?: string) => void;
   onExecutionState?: (state: ExecutionControllerSnapshot, emp?: Employee, stepId?: string) => void;
@@ -78,19 +79,20 @@ async function memberSpeak(
   employees: Employee[],
   contextMessages: ChatMessage[],
   extraInstruction: string,
-  onToolCall: (toolName: string, toolArgs: string, result: string, success?: boolean, protocolEvidence?: ConnectorProtocolResult) => void,
+  onToolCall: (toolName: string, toolArgs: string, result: string, success?: boolean, protocolEvidence?: ConnectorProtocolResult, structuredEvidence?: ToolExecutionEvidence) => void,
   attachments?: import('../data/hermesClient').Attachment[],
   skillContext = '',
   workspaceId?: string,
   shouldStop?: () => boolean,
   requireFileOutput = false,
+  requireReviewDecision = false,
   consumeSteeringMessages?: () => string[],
   getModelRequestSignal?: () => AbortSignal,
   onSteeringReply?: (content: string, tokens?: number, contextUsage?: ContextUsage) => void,
   initialExecutionState?: ExecutionControllerSnapshot,
   onExecutionState?: (state: ExecutionControllerSnapshot) => void,
   executionRouteScope?: string,
-): Promise<{ text: string; tokens?: number; contextUsage?: ContextUsage; failed?: boolean; producedFile?: boolean; executionState?: ExecutionControllerSnapshot }> {
+): Promise<{ text: string; tokens?: number; contextUsage?: ContextUsage; failed?: boolean; producedFile?: boolean; reviewDecision?: ReviewSubmissionEvidence; executionState?: ExecutionControllerSnapshot }> {
   const effectiveModel = getEmployeeModel(emp);
   if (!resolveApiBase(effectiveModel)) {
     return { text: `⚠️ ${emp.name} 未配置可用模型，当前步骤没有执行。请在设置中为该成员或全局激活模型填写 API 地址和密钥后点击继续执行。`, failed: true };
@@ -98,7 +100,7 @@ async function memberSpeak(
 
   const duty = ROLE_DUTY[emp.role] ?? ROLE_DUTY.custom;
   const persona = emp.prompt?.trim() || `你是「${emp.name}」，${emp.title}。`;
-  const system = `${persona}\n\n${duty}\n\n你正在团队群聊中协作。先判断任务是否需要专业 Skill：只有当 Skill 能明显提高质量或提供必要流程时，才调用 search_skills；比较候选后只读取最匹配的 Skill。没有合适 Skill 时直接使用通用能力和其他工具，不要为了留下调用记录而强行调用。若工具失败，说明失败原因并选择重试、替代工具或继续执行。${requireFileOutput ? '\n\n本步骤是交付步骤：在最终回复前必须调用 write_file 保存可交接的真实文件。没有成功写入文件就不算完成，禁止用“收到”“跟进”“已完成”代替产出。' : ''}\n\n完成后简短总结实际结果，注明已写入或读取的文件名，便于队友接续。\n\n${BEGINNER_RESPONSE_GUIDE}`;
+  const system = `${persona}\n\n${duty}\n\n你正在团队群聊中协作。先判断任务是否需要专业 Skill：只有当 Skill 能明显提高质量或提供必要流程时，才调用 search_skills；比较候选后只读取最匹配的 Skill。没有合适 Skill 时直接使用通用能力和其他工具，不要为了留下调用记录而强行调用。若工具失败，说明失败原因并选择重试、替代工具或继续执行。${requireFileOutput ? '\n\n本步骤是交付步骤：在最终回复前必须调用 write_file 保存可交接的真实文件。没有成功写入文件就不算完成，禁止用“收到”“跟进”“已完成”代替产出。' : ''}${requireReviewDecision ? '\n\n本步骤是正式审查：必须先用 list_files/read_file 或运行工具检查真实交付物，再调用 submit_review 提交 PASS 或 REJECT。聊天中的口头结论不进入任务状态；REJECT 时尽量填写责任步骤或责任员工。' : ''}\n\n完成后简短总结实际结果，注明已写入或读取的文件名，便于队友接续。\n\n${BEGINNER_RESPONSE_GUIDE}`;
 
   // 多模态：把图片附件拼到用户指令上
   const imageParts = (attachments ?? [])
@@ -110,6 +112,7 @@ async function memberSpeak(
 
   let handoffContext = '';
   let producedFile = false;
+  let reviewDecision: ReviewSubmissionEvidence | undefined;
   let latestExecutionState = initialExecutionState;
   try {
     if (/读取并继承|审查|修订/u.test(extraInstruction)) {
@@ -145,9 +148,10 @@ async function memberSpeak(
       onToolCall(name, args) {
         onToolCall(name, args, '');
       },
-      onToolResult(name, args, result, success, protocolEvidence) {
-        if (name === 'write_file' && isToolResultSuccessful(result, success)) producedFile = true;
-        onToolCall(name, args, result, success, protocolEvidence);
+      onToolResult(name, args, result, success, protocolEvidence, structuredEvidence) {
+        if (structuredEvidence?.artifacts?.some((artifact) => artifact.verified)) producedFile = true;
+        if (structuredEvidence?.review) reviewDecision = structuredEvidence.review;
+        onToolCall(name, args, result, success, protocolEvidence, structuredEvidence);
       },
       onModelRetry(_attempt, _maxAttempts, error) {
         onToolCall('model_summary', '', error, false);
@@ -175,7 +179,7 @@ async function memberSpeak(
       return { text: `⚠️ ${emp.name} 没有生成可交接文件，本步骤未完成。系统会保留上下文并要求补交实际产出。`, tokens: r.usage.totalTokens, contextUsage: r.contextUsage, failed: true, executionState: latestExecutionState };
     }
     const controllerBlocked = r.executionState.status === 'awaiting_user' || r.executionState.status === 'blocked' || r.executionState.status === 'stopped';
-    return { text: r.content, tokens: r.usage.totalTokens, contextUsage: r.contextUsage, producedFile, failed: controllerBlocked, executionState: r.executionState };
+    return { text: r.content, tokens: r.usage.totalTokens, contextUsage: r.contextUsage, producedFile, reviewDecision, failed: controllerBlocked, executionState: r.executionState };
   } catch (e: any) {
     const raw = e?.message ?? '模型错误';
     const reason = e?.name === 'AbortError' || /aborted|signal is aborted/iu.test(raw)
@@ -276,16 +280,20 @@ export async function runTeamDiscussion(
     let content = '';
     let tokens: number | undefined;
     let contextUsage: ContextUsage | undefined;
+    let reviewDecision: ReviewSubmissionEvidence | undefined;
 
     if (useAI) {
-      const assignment = `${step.assignment}\n\n执行规则：先判断是否需要专业 Skill；需要时自主搜索、比较并读取最合适的 Skill，不需要时直接推进。使用文件、搜索或命令工具完成实际工作，禁止只口头描述安排。`;
+      const reviewResponsibilityIndex = step.kind === 'review'
+        ? `\n\n可退回的责任步骤：\n${completedWorkSteps.map((item) => `- 步骤 ${item.id}；员工 ${item.employeeId}；${item.title}`).join('\n') || '- 暂无已完成工作步骤'}\nsubmit_review 退回时优先原样填写 responsibleStepId 和 responsibleEmployeeId。`
+        : '';
+      const assignment = `${step.assignment}${reviewResponsibilityIndex}\n\n执行规则：先判断是否需要专业 Skill；需要时自主搜索、比较并读取最合适的 Skill，不需要时直接推进。使用文件、搜索或命令工具完成实际工作，禁止只口头描述安排。`;
       const r = await memberSpeak(emp, team, employees, contextMessages,
         task
           ? `团队接到新任务「${task.title}」${task.description ? `：${task.description}` : ''}。如有必要，可调工具产出文件或用 web_search 查资料。`
           : `${assignment}\n老板的原始要求：\n「${opts.userText ?? ''}」${latestGuidance ? `\n\n老板运行中追加的最新指令（优先执行）：\n「${latestGuidance}」` : ''}`,
-        (toolName, toolArgs, result, success, protocolEvidence) => {
+        (toolName, toolArgs, result, success, protocolEvidence, structuredEvidence) => {
           const argsStr = toolArgs ? (toolArgs.length > 80 ? toolArgs.slice(0, 80) + '…' : toolArgs) : '';
-          handlers.onToolCall(emp, toolName, argsStr, result || '🔄 执行中…', step.id, success, protocolEvidence);
+          handlers.onToolCall(emp, toolName, argsStr, result || '🔄 执行中…', step.id, success, protocolEvidence, structuredEvidence);
         },
         // 所有被调度成员都能读取同一批用户图片，避免交接后丢失视觉上下文。
         opts.attachments,
@@ -293,6 +301,7 @@ export async function runTeamDiscussion(
         opts.workspaceId,
         control?.shouldStop,
         step.kind !== 'review',
+        step.kind === 'review',
         control?.consumeSteeringMessages,
         control?.getModelRequestSignal,
         (reply, replyTokens, replyContextUsage) => handlers.onSteeringReply?.(emp, reply, replyTokens, replyContextUsage, step.id),
@@ -307,6 +316,7 @@ export async function runTeamDiscussion(
       content = r.text;
       tokens = r.tokens;
       contextUsage = r.contextUsage;
+      reviewDecision = r.reviewDecision;
       if (r.failed) {
         const failureMentions = parseMentionIds(content, team, employees);
         round += 1;
@@ -333,15 +343,18 @@ export async function runTeamDiscussion(
 
     if (step.kind !== 'review') completedWorkSteps.push(step);
     if (step.kind === 'review') {
-      const rejected = /REVIEW_RESULT\s*:\s*REJECT|验收不通过|退回修改/iu.test(content);
-      const passed = !rejected && /REVIEW_RESULT\s*:\s*PASS|验收通过/iu.test(content);
-      const reason = content.match(/REASON\s*:\s*([^\n]+)/iu)?.[1]?.trim() ?? (passed ? '验收通过' : '审查未给出明确通过结论');
-      const responsibleName = content.match(/RESPONSIBLE\s*:\s*([^\n]+)/iu)?.[1]?.trim();
-      const responsibleEmployee = responsibleName ? employees.find((item) => responsibleName.includes(item.name)) : undefined;
-      const targetStep = [...completedWorkSteps].reverse().find((item) => item.employeeId === responsibleEmployee?.id)
+      const passed = reviewDecision?.decision === 'pass';
+      const reason = reviewDecision?.reason ?? '审查者没有调用 submit_review 提交结构化结论，不能视为验收通过';
+      const responsibleEmployee = reviewDecision?.responsibleEmployeeId
+        ? employees.find((item) => item.id === reviewDecision?.responsibleEmployeeId)
+        : undefined;
+      const targetStep = (reviewDecision?.responsibleStepId
+        ? completedWorkSteps.find((item) => item.id === reviewDecision?.responsibleStepId)
+        : undefined)
+        ?? [...completedWorkSteps].reverse().find((item) => item.employeeId === responsibleEmployee?.id)
         ?? [...completedWorkSteps].reverse().find((item) => item.kind !== 'review' && item.employeeId !== emp.id);
       const targetEmployeeId = responsibleEmployee?.id ?? targetStep?.employeeId;
-      handlers.onReviewDecision?.(step.id, passed, reason, targetEmployeeId);
+      handlers.onReviewDecision?.(step.id, passed, reason, targetEmployeeId, targetStep?.id, reviewDecision);
       if (!passed) {
         if (!targetEmployeeId || revisionCount >= maxRevisions) {
           runFailed = true;

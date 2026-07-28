@@ -1,7 +1,7 @@
 # 项目交接手册
 
 > 最后整理：2026-07-28
-> 当前源码版本：`v0.15.0`
+> 当前源码版本：`v0.16.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 
@@ -24,6 +24,7 @@
 9. 工具审批和命令沙盒必须同时覆盖助手、员工私聊和团队聊天。审批被拒绝时必须返回“未执行”的真实结果，不能把取消、权限不足或沙盒拦截描述成完成。
 10. 所有执行入口必须先通过 `taskDecisionKernel` 还原真实目标、首选路线和完成标准，再由 `taskFidelity` 固定不可丢失条件，最后通过统一 `ExecutionController` 观察结果、分类失败、决定重试或换路线并重新验收；不得重新引入按回复文案、关键词猜测或“工具返回内容就算成功”的分支。
 11. 所有动态连接器 Action 必须经过 `ConnectorProtocol`；输入、权限、dry-run、真实调用、输出验证、脱敏和幂等不可在单个连接器中自行绕过，UI 只认客户端协议证据。
+12. 文件与审查必须产生 `ToolExecutionEvidence`；审查退回必须扩展正式 TaskPlan/Runner 并绑定责任步骤，不能重新退化为解析聊天文案或只改界面步骤。
 
 ## 2. 当前已交付的能力
 
@@ -61,6 +62,7 @@
 | `src/engine/taskLearningMemory.ts` | 保存、归并和检索任务成功/失败经验；只提供路线参考，当前真实证据优先。 |
 | `src/engine/agentGuardrails.mjs` | 最新消息分类、实时搜索识别与查询清洗、文字控制、反馈挂起、工具语义去重和资源读取上限。 |
 | `src/engine/teamDiscussion.ts` | 计划步骤执行、员工发言、工具回调、审查与交接。 |
+| `src/engine/executionEvidence.mjs` | 文件交付与审查结论的版本化客户端证据协议。 |
 | `src/engine/tools.ts` | `write_file`、`read_file`、`list_files`、`search_skills`、`read_skill`、`run_command` 和连接器工具。 |
 | `src/components/chat/AssistantChat.tsx` | 驴狗蛋助手聊天与运行中引导。 |
 | `src/components/chat/DmChatApp.tsx` | 员工单聊与失败重试。 |

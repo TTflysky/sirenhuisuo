@@ -1,12 +1,12 @@
 # 太极项目当前交接
 
 > 更新时间：2026-07-28
-> 当前版本：`v0.15.0`
+> 当前版本：`v0.16.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
-> Release：[v0.15.0](https://github.com/TTflysky/sirenhuisuo/releases/tag/v0.15.0)
+> Release：`v0.16.0` 本地验收中，暂未发布
 
-`v0.15.0` 已完成 P1 连接器执行协议：动态连接器统一经过输入校验、权限、dry-run、真实调用、输出校验、脱敏和幂等，并把客户端证据写入任务上下文和团队任务面板。下一步按差异矩阵推进结构化文件/验收事件，以及审查退回责任步骤的正式 Plan 图循环。
+`v0.16.0` 已完成结构化文件/审查事件和正式修订 Plan 图：真实交付记录落盘与读回状态，审查者通过 `submit_review` 提交客户端结论，退回后将责任步骤、修订步骤和复审步骤写入 Runner。下一步按差异矩阵推进任务摘要压缩、跨会话检索与回放。
 
 ## 办公室端直接开始
 
@@ -118,6 +118,8 @@ npm.cmd run verify:package
 - `src/data/taskRuns.ts`
 - `src/engine/executionController.mjs`
 - `src/engine/executionController.d.mts`
+- `src/engine/executionEvidence.mjs`
+- `src/engine/executionEvidence.d.mts`
 - `src/data/hermesClient.ts`
 - `src/engine/teamDiscussion.ts`
 - `src/engine/securityBoundary.ts`
@@ -132,6 +134,7 @@ npm.cmd run verify:package
 - `src/brand.ts`
 - `scripts/verify-foundation.mjs`
 - `scripts/verify-execution-controller.mjs`
+- `scripts/verify-execution-evidence.mjs`
 - `scripts/verify-foundation-e2e.mjs`
 - `scripts/verify-skill-atomic.cjs`
 - `scripts/verify-update-download.cjs`
@@ -147,13 +150,16 @@ npm.cmd run verify:package
 - `npm.cmd run verify:agent-kernel`：通过；118 次重复 Skill 读取只执行 1 次。
 - `npm.cmd run verify:execution-controller`：通过；覆盖瞬时错误重试后换路线、参数错误、认证边界、替代路线恢复、无证据禁止完成、独立复核、快照恢复、插话转向和模型 5 次重试。
 - `npm.cmd run verify:connector-adapters`：通过；覆盖 IMA 原生成功、业务失败、畸形响应、三次网络重试、凭据不泄漏和 Windows 命令退出码传播。
+- `npm.cmd run verify:connector-protocol`：通过；覆盖六阶段协议、错误分类、脱敏和副作用幂等复用。
+- `npm.cmd run verify:execution-evidence`：通过；覆盖真实磁盘文件证据、仅渲染登记降级和结构化审查退回。
+- `npm.cmd run verify:task-runner`：通过；覆盖审查退回责任步骤、动态追加修订/复审节点并最终完成。
 - `npm.cmd run verify:skill-atomic`：通过；无效包不触碰旧 Skill，成功替换不残留旧文件，哈希损坏被拦截，并真实验证根 Skill 可读取知识库与笔记子规则。
 - `npm.cmd run verify:update-download`：通过；模拟断线后 Range 续传、服务器忽略断点、等长损坏缓存和 SHA-256 拦截。
 - `npm.cmd run verify:web-search`：通过；覆盖 Bing XML 解析、主源超时后备用源成功和双源具体错误聚合。
 - `npm.cmd run verify:web-search` 新增目标一致性覆盖：安徽百科不能冒充全椒县天气；结构化天气数据必须包含地点、日期、温度、湿度等真实字段。
 - `npm.cmd run verify:agent-kernel`：通过模型目标漂移、搜索词条件丢失、指定生图工具却写 SVG、用户新增约束合并和最终目标验收回归。
 - 全椒县天气实网验证：`wttr.in 实时天气` 返回全椒县、安徽、坐标 `32.098, 118.258`、日期 `2026-07-28` 及完整气象字段；偏题网页未参与结果。
-- `npm.cmd run verify:package`：通过；包内版本为 `0.11.1`，入口、连接器适配器、命令外壳和三份 IMA 规则均可读取，安装器、blockmap 与 `latest.yml` 完整。
+- `npm.cmd run verify:package`：通过；包内版本为 `0.16.0`，入口、连接器适配器、命令外壳和三份 IMA 规则均可读取，交付文件/计划图标记、安装器、blockmap 与 `latest.yml` 完整。
 - `npm.cmd run diagnose:web-search`：通过；Electron 实网使用 DuckDuckGo，首轮空结果自动重试后约 3.1 秒返回 8 条中文 AI 资讯。
 - `npm.cmd run verify:docx`：通过；生成的 Word 可重新解析正文。
 - 安装版 `npm.cmd run verify:foundation-ui`：通过；真实 Electron IPC 和诊断中心五项完整显示。
@@ -164,11 +170,11 @@ npm.cmd run verify:package
 
 ## 安装与发布资产
 
-- 安装包：`release\taiji-office-setup-0.11.1.exe`
-- Blockmap：`release\taiji-office-setup-0.11.1.exe.blockmap`
+- 安装包：`release\taiji-office-setup-0.16.0.exe`
+- Blockmap：`release\taiji-office-setup-0.16.0.exe.blockmap`
 - 更新清单：`release\latest.yml`
-- 包内版本：`0.11.1`。
-- 安装包大小：`173849131` 字节；SHA-256：`F2137901C9C2D0C6EF89AF30A30423F9429DD3E16B4E946D1E77D747289F302C`。
+- 包内版本：`0.16.0`。
+- 安装包大小：`173856621` 字节；SHA-256：`46945B1137BF68BC9A4FB1070BD1FE41492E93A53F151AD704AF884B0A3E8ECE`。
 - 最终文件大小和 SHA-256 以 `npm.cmd run publish:release` 的成功输出及 GitHub Release digest 为准；发布脚本会逐项比对本地与远端，不再把易过期的单次构建摘要固化在交接文档中。
 - 解包版受控启动 8 秒保持运行，未出现启动即崩溃。
 - 安装目录只保留 `太极 AI 办公会所.exe` 和对应卸载程序，没有旧产品可执行文件残留。
@@ -194,7 +200,7 @@ npm.cmd run verify:package
 1. 在用户真实配置上验收五个场景：新建员工后助手立即找到、团队任务异常退出后恢复、损坏 Skill 修复、连接器真实连接证据、一次自动更新与回滚。
 2. 完成一次隔离目录的真实跨版本自动更新与回滚演练并记录证据。
 3. 给升级日志增加用户可导出的通俗诊断报告。
-4. 在用户真实模型上构造一次“超时后恢复”、一次“工具参数错误后换路线”和一次“团队审查退回”任务，核对 UI 状态、任务快照和最终交付一致。
+4. 在用户真实模型上构造一次“超时后恢复”、一次“工具参数错误后换路线”和一次“团队审查退回”任务，重点核对 `submit_review`、责任步骤、修订节点、文件事件和最终交付一致。
 5. 为控制器增加可选的模型候选路线，在主模型连续失败后自动切换已验证备用模型，而不是只有原模型重试与真实停机交接。
 6. 按用户新反馈继续优化，但同层问题必须同步检查助手、员工私聊和团队三条路径。
 

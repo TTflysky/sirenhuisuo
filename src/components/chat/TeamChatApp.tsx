@@ -280,6 +280,8 @@ export default function TeamChatApp({ teamId }: Props) {
     const completed = run.steps.filter((step) => step.status === 'completed').length;
     const active = run.status === 'running' || run.status === 'queued';
     const connectorEvidence = (run.evidence ?? []).filter((item) => item.connectorProtocol).slice(-6);
+    const artifactEvidence = (run.evidence ?? []).filter((item) => item.artifact).slice(-10);
+    const planEvents = (run.runner?.events ?? []).filter((event) => ['plan_extended', 'review_passed', 'review_rejected'].includes(event.type)).slice(-8);
     return <section key={run.id} className={`task-run-tray task-run-${run.status}`}>
       <div className="task-run-summary-row">
         <button type="button" className="task-run-summary" onClick={() => setExpandedRunIds((previous) => {
@@ -303,6 +305,11 @@ export default function TeamChatApp({ teamId }: Props) {
           const title = protocol.events.map((event) => `${event.ok ? '✓' : '!'} ${event.stage} · ${event.detail}`).join('\n');
           return <span key={`${protocol.completedAt}-${protocol.connectorId}-${index}`} className={protocol.ok ? 'is-passed' : 'is-blocked'} title={title}>{protocol.ok ? '✓' : '!'} {protocol.connectorLabel} · {protocol.action} · {protocol.latencyMs}ms{protocol.idempotencyHit ? ' · 复用' : ''}</span>;
         })}</div>}
+        {artifactEvidence.length > 0 && <div className="task-run-artifact-evidence"><strong>交付文件事件</strong>{artifactEvidence.map((item, index) => {
+          const artifact = item.artifact!;
+          return <span key={`${artifact.recordedAt}-${artifact.path}-${index}`} className={artifact.verified ? 'is-passed' : 'is-blocked'} title={artifact.diskPath ?? artifact.path}>{artifact.verified ? '✓' : '!'} {artifact.filename} · {artifact.category === 'final' ? '最终交付' : artifact.category === 'reference' ? '参考资料' : '过程文件'} · {artifact.bytes ?? 0} B</span>;
+        })}</div>}
+        {planEvents.length > 0 && <div className="task-run-plan-events"><strong>计划图事件</strong>{planEvents.map((event) => <span key={event.id} className={event.type === 'review_rejected' ? 'is-blocked' : 'is-passed'} title={event.detail}>{event.type === 'plan_extended' ? '+' : event.type === 'review_rejected' ? '↩' : '✓'} {event.detail}</span>)}</div>}
         {run.recoveryContext && <div className="task-run-recovery">
           <div><strong>恢复摘要</strong><span>{run.recoveryContext.summary}</span></div>
           <div><strong>预算快照</strong><span>工具 {run.recoveryContext.budget.toolAttempts} 次{run.recoveryContext.budget.promptTokens !== undefined ? ` · 上下文 ${run.recoveryContext.budget.promptTokens.toLocaleString()}${run.recoveryContext.budget.contextWindowTokens ? ` / ${run.recoveryContext.budget.contextWindowTokens.toLocaleString()} tokens` : ' tokens'}` : ''}</span></div>
@@ -313,7 +320,7 @@ export default function TeamChatApp({ teamId }: Props) {
         {run.steps.map((step) => {
           const emp = state.employees.find((item) => item.id === step.employeeId);
           const model = run.memberSnapshot.find((item) => item.id === step.employeeId)?.model;
-          return <div key={step.id} className="task-run-step"><div><span className="task-step-order">{step.order}</span><strong>{emp?.name ?? step.title}</strong><span className={`task-step-kind kind-${step.kind}`}>{step.kind === 'review' ? '审查' : step.kind === 'revision' ? '修订' : '执行'}</span><span className={`task-step-status status-${step.status}`}>{step.status}</span><small>{model || '默认模型'} · 尝试 {step.attempts} 次</small></div><p className="task-step-assignment">{step.assignment}</p>{step.reviewDecision && <p className={`task-review-decision ${step.reviewDecision}`}>{step.reviewDecision === 'pass' ? '审查通过' : `退回：${step.reviewReason ?? '需要修改'}`}</p>}{step.lastError && <p className="task-step-error">{step.lastError}</p>}{step.events.slice(-4).map((event, index) => <p key={`${event.ts}-${index}`} className="task-step-event">{new Date(event.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} {event.detail}</p>)}</div>;
+          return <div key={step.id} className="task-run-step"><div><span className="task-step-order">{step.order}</span><strong>{emp?.name ?? step.title}</strong><span className={`task-step-kind kind-${step.kind}`}>{step.kind === 'review' ? '审查' : step.kind === 'revision' ? '修订' : '执行'}</span><span className={`task-step-status status-${step.status}`}>{step.status}</span><small>{model || '默认模型'} · 尝试 {step.attempts} 次</small></div><p className="task-step-assignment">{step.assignment}</p>{step.revisionOfStepId && <p className="task-step-responsibility">↩ 修订责任步骤：{run.steps.find((item) => item.id === step.revisionOfStepId)?.title ?? step.revisionOfStepId}</p>}{step.reviewDecision && <p className={`task-review-decision ${step.reviewDecision}`}>{step.reviewDecision === 'pass' ? '审查通过' : `退回：${step.reviewReason ?? '需要修改'}`}</p>}{step.lastError && <p className="task-step-error">{step.lastError}</p>}{step.events.slice(-4).map((event, index) => <p key={`${event.ts}-${index}`} className="task-step-event">{new Date(event.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} {event.detail}</p>)}</div>;
         })}
         {run.handoff && <div className="task-run-handoff"><strong>当前交接</strong><p>{run.handoff.blocked}</p>{run.handoff.completed.length > 0 && <p>已完成：{run.handoff.completed.join('、')}</p>}<p>下一步：{run.handoff.nextAction}</p></div>}
         <div className="task-run-actions">

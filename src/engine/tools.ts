@@ -9,6 +9,7 @@
  * - read_web_page: 直接读取用户或搜索结果中的说明页
  * - install_skill: 安装 Markdown、GitHub 目录或 ZIP 技能包
  * - inspect_connectors / prepare_connector / test_connector: 管理外部服务连接
+ * - submit_review: 提交结构化审查结论
  * - run_command  : 按当前审批策略执行，默认限沙箱工作区
  */
 
@@ -16,6 +17,9 @@ import { addOutput, loadOutputs, contentTypeFromFilename, type OutputRecord, typ
 import { getExecutionPolicy, type ExecutionPolicy } from '../data/hermesClient';
 import { classifySensitiveAction, containsInlineSecret, redactToolArgsObject } from './securityBoundary';
 import type { ConnectorProtocolResult } from './connectorProtocol.mjs';
+import { createFileArtifactEvidence, createReviewSubmissionEvidence, createToolExecutionEvidence } from './executionEvidence.mjs';
+import type { FileArtifactEvidence, ReviewSubmissionEvidence, ToolExecutionEvidence } from './executionEvidence.mjs';
+export type { FileArtifactEvidence, ReviewSubmissionEvidence, ToolExecutionEvidence } from './executionEvidence.mjs';
 
 // ===== Tool Schema（OpenAI function-calling 格式）=====
 export interface ToolDef {
@@ -191,6 +195,24 @@ export const TOOLS: ToolDef[] = [
   {
     type: 'function',
     function: {
+      name: 'submit_review',
+      description: '审查者提交机器可读的验收结论。团队审查步骤必须调用本工具，不能只在聊天中口头说通过或退回。REJECT 时应填写责任步骤或责任员工，系统会据此生成修订与复审步骤。',
+      parameters: {
+        type: 'object',
+        properties: {
+          decision: { type: 'string', enum: ['PASS', 'REJECT'], description: 'PASS=验收通过，REJECT=退回修改' },
+          reason: { type: 'string', description: '基于实际文件或运行结果得出的验收理由' },
+          responsibleStepId: { type: 'string', description: '退回时应负责修订的原步骤 ID，可选' },
+          responsibleEmployeeId: { type: 'string', description: '退回时应负责修订的员工 ID，可选' },
+          checkedArtifacts: { type: 'array', items: { type: 'string' }, description: '实际检查过的文件路径' },
+        },
+        required: ['decision', 'reason'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'run_command',
       description: `执行 Windows PowerShell 命令（仅 Electron 桌面版可用）。命令由 PowerShell 运行，不是 cmd 或 bash；最长 30 秒超时，输出上限 100KB。不要使用 bash heredoc（例如 python - <<'PY'）；多行脚本先用 write_file 保存，再运行脚本文件，短脚本使用 python -c。
 可用命令示例：
@@ -232,6 +254,8 @@ export interface ToolResult {
   output: string;
   /** Structured client evidence for connector calls. Never sourced from model text. */
   protocolEvidence?: ConnectorProtocolResult;
+  /** Structured evidence emitted by the client after a real file or review operation. */
+  structuredEvidence?: ToolExecutionEvidence;
 }
 
 // ===== Sandbox 检查 =====
@@ -338,12 +362,28 @@ async function workspaceFileVersions(scope: OutputScope, fsApi: any, workspaceId
   return versions;
 }
 
-async function syncWorkspaceFiles(scope: OutputScope, fsApi: any, before = new Map<string, WorkspaceFileVersion>(), workspaceId?: string): Promise<number> {
-  if (!fsApi?.fsList) return 0;
+function artifactEvidence(output: OutputRecord, verification: FileArtifactEvidence['verification'], verified: boolean): FileArtifactEvidence {
+  return createFileArtifactEvidence({
+    path: output.filename,
+    filename: output.filename.split('/').pop() || output.filename,
+    workspaceId: output.workspaceId ?? 'global',
+    diskPath: output.diskPath,
+    bytes: output.bytes,
+    contentType: output.contentType,
+    category: output.category ?? 'working',
+    persistence: output.diskPath ? 'disk' : 'renderer',
+    verification,
+    verified,
+    recordedAt: Date.now(),
+  });
+}
+
+async function syncWorkspaceFiles(scope: OutputScope, fsApi: any, before = new Map<string, WorkspaceFileVersion>(), workspaceId?: string): Promise<FileArtifactEvidence[]> {
+  if (!fsApi?.fsList) return [];
   const physicalWorkspace = workspacePath(scope, workspaceId);
   const listed = await fsApi.fsList(physicalWorkspace, true);
-  if (!listed?.ok || !Array.isArray(listed.items)) return 0;
-  let synced = 0;
+  if (!listed?.ok || !Array.isArray(listed.items)) return [];
+  const artifacts: FileArtifactEvidence[] = [];
   for (const item of listed.items) {
     if (item.type !== 'file') continue;
     const filename = String(item.name).replace(/\\/g, '/');
@@ -358,7 +398,7 @@ async function syncWorkspaceFiles(scope: OutputScope, fsApi: any, before = new M
       if (read?.ok && typeof read.content === 'string') content = read.content;
     }
     const root = String(listed.path ?? '').replace(/[\\/]+$/, '');
-    addOutput({
+    const output = addOutput({
       filename,
       kind: 'file',
       title: filename.split('/').pop() || filename,
@@ -370,9 +410,9 @@ async function syncWorkspaceFiles(scope: OutputScope, fsApi: any, before = new M
       diskPath: root ? `${root}/${filename}` : undefined,
       workspaceId: physicalWorkspace,
     });
-    synced += 1;
+    artifacts.push(artifactEvidence(output, 'write_ack', Boolean(output.diskPath)));
   }
-  return synced;
+  return artifacts;
 }
 
 export async function executeTool(call: ToolCall): Promise<ToolResult> {
@@ -389,6 +429,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         let diskInfo = '';
         let diskPath: string | undefined;
         let diskBytes: number | undefined;
+        let readBackVerified = false;
         if (fsApi?.fsWrite) {
           try {
             const isWordDocument = path.toLowerCase().endsWith('.docx');
@@ -401,6 +442,15 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
             if (r?.ok) {
               diskPath = r.path;
               diskBytes = Number(r.size) || undefined;
+              if (isWordDocument) {
+                readBackVerified = true;
+              } else if (fsApi.fsRead) {
+                const readBack = await fsApi.fsRead(`${physicalWorkspace}/${path}`);
+                if (!readBack?.ok || String(readBack.content ?? '') !== content) {
+                  return { toolCallId: id, name, success: false, output: `文件写入后重新读取不一致：${path}` };
+                }
+                readBackVerified = true;
+              }
               diskInfo = isWordDocument
                 ? `（已生成并重新读取校验有效的 Word 文档：${r.path}，${r.size} 字节）`
                 : `（已写入磁盘工作区：${r.path}，${r.size} 字节）`;
@@ -412,7 +462,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
           }
         }
         // 同一路径使用 upsert，只展示磁盘上最新的文件版本。
-        addOutput({
+        const output = addOutput({
           filename: path,
           kind: 'file',
           title: path.split('/').pop() || path,
@@ -428,6 +478,36 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         return {
           toolCallId: id, name, success: true,
           output: `文件已写入：${path}（${content.split('\n').length} 行，${content.length} 字符）${diskInfo}`,
+          structuredEvidence: createToolExecutionEvidence({
+            artifacts: [artifactEvidence(output, readBackVerified ? 'read_back' : diskPath ? 'write_ack' : 'registered_only', readBackVerified || Boolean(diskPath))],
+          }),
+        };
+      }
+
+      case 'submit_review': {
+        const decision = String(args.decision ?? '').trim().toUpperCase();
+        const reason = String(args.reason ?? '').trim().slice(0, 1200);
+        if (decision !== 'PASS' && decision !== 'REJECT') {
+          return { toolCallId: id, name, success: false, output: '审查结论必须是 PASS 或 REJECT。' };
+        }
+        if (!reason) return { toolCallId: id, name, success: false, output: '审查结论必须包含具体理由。' };
+        const checkedArtifacts = Array.isArray(args.checkedArtifacts)
+          ? args.checkedArtifacts.map((item) => String(item).trim()).filter(Boolean).slice(0, 20)
+          : [];
+        const review: ReviewSubmissionEvidence = createReviewSubmissionEvidence({
+          decision: decision === 'PASS' ? 'pass' : 'reject',
+          reason,
+          responsibleStepId: String(args.responsibleStepId ?? '').trim() || undefined,
+          responsibleEmployeeId: String(args.responsibleEmployeeId ?? '').trim() || undefined,
+          checkedArtifacts,
+          submittedAt: Date.now(),
+        });
+        return {
+          toolCallId: id,
+          name,
+          success: true,
+          output: decision === 'PASS' ? `结构化审查已提交：通过。${reason}` : `结构化审查已提交：退回修改。${reason}`,
+          structuredEvidence: createToolExecutionEvidence({ review }),
         };
       }
 
@@ -895,9 +975,15 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
             `目录：${cwd}`,
             `STDOUT：\n${(stdout || '(无)').slice(0, 3000)}`,
             stderr ? `\nSTDERR：\n${stderr.slice(0, 1000)}` : '',
-            syncedFiles > 0 ? `工作区文件已同步到产出物：${syncedFiles} 个` : '',
+            syncedFiles.length > 0 ? `工作区文件已同步到产出物：${syncedFiles.length} 个` : '',
           ].filter(Boolean).join('\n\n');
-          return { toolCallId: id, name, success, output: out };
+          return {
+            toolCallId: id,
+            name,
+            success,
+            output: out,
+            structuredEvidence: syncedFiles.length > 0 ? createToolExecutionEvidence({ artifacts: syncedFiles }) : undefined,
+          };
         } catch (e: any) {
           return { toolCallId: id, name, success: false, output: `命令执行异常：${e?.message ?? '未知错误'}` };
         }

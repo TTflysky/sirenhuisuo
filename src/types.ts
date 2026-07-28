@@ -201,6 +201,8 @@ export type TaskEvidence = {
   summary: string;
   verified?: boolean;
   connectorProtocol?: import('./engine/connectorProtocol.mjs').ConnectorProtocolResult;
+  artifact?: import('./engine/executionEvidence.mjs').FileArtifactEvidence;
+  review?: import('./engine/executionEvidence.mjs').ReviewSubmissionEvidence;
 };
 
 export interface TaskRecoveryContext {

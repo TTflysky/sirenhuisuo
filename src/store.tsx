@@ -29,7 +29,7 @@ import { runTeamDiscussion } from './engine/teamDiscussion';
 import { evaluateDiscussionTrigger } from './engine/discussionTrigger';
 import { findFreeStation } from './data/hermesClient';
 import { sendBus, onBus, BUS_CHANNELS } from './ipcBus';
-import { appendTaskRunContext, createTaskRun, getExecutionSessionId, hydrateTaskRunsFromMainStore, saveTaskRuns, taskRunContextPrompt, updateTaskRun } from './data/taskRuns';
+import { appendTaskRunContext, createTaskRun, formalPlanStepForRun, getExecutionSessionId, hydrateTaskRunsFromMainStore, saveTaskRuns, taskRunContextPrompt, updateTaskRun } from './data/taskRuns';
 import { buildTaskPlan, matchProjectMembers, matchTeamMembers } from './engine/taskMatcher';
 import { buildSkillContextWithEvidence, listSkills, matchSkills } from './data/skills';
 import { attachmentWorkspaceContext, copyAttachmentsToWorkspace, initializeTaskWorkspace } from './utils/attachments';
@@ -38,7 +38,7 @@ import { isToolResultSuccessful } from './data/assistantPresentation';
 import { getDirectExecutionControl, isConversationOnlyMessage, shouldHoldTaskForFeedback } from './engine/agentGuardrails.mjs';
 import { APP_PRODUCT_NAME } from './brand';
 import { applyExecutionSteering, executionControllerStatus, type ExecutionControllerSnapshot } from './engine/executionController.mjs';
-import { beginTaskStep, recordTaskStepResult } from './engine/taskRunner.mjs';
+import { appendTaskRunnerSteps, beginTaskStep, recordTaskReviewDecision, recordTaskStepResult } from './engine/taskRunner.mjs';
 
 // ===== Action =====
 type Action =
@@ -734,8 +734,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             const controllerFailed = latestExecutionState?.status === 'awaiting_user'
               || latestExecutionState?.status === 'blocked'
               || latestExecutionState?.status === 'stopped';
-            step.status = controllerFailed ? 'failed' : 'completed';
-            if (stepId && run.runner) {
+            const awaitingReviewDecision = step.kind === 'review' && !controllerFailed;
+            step.status = controllerFailed ? 'failed' : awaitingReviewDecision ? 'running' : 'completed';
+            if (stepId && run.runner && !awaitingReviewDecision) {
               run.runner = recordTaskStepResult(run.runner, {
                 stepId,
                 success: !controllerFailed,
@@ -743,7 +744,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 error: controllerFailed ? content : undefined,
               });
             }
-            step.completedAt = Date.now();
+            if (!awaitingReviewDecision) step.completedAt = Date.now();
             if (step.status === 'failed') {
               step.lastError = content;
               run.phase = 'blocked';
@@ -754,14 +755,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 nextAction: '检查提示中的账号、模型或外部条件后点击继续执行。',
               };
             } else {
-              const evidence = { ts: Date.now(), source: 'member' as const, summary: `${emp.name} 完成：${content.slice(0, 220)}`, verified: step.kind === 'review' };
+              const evidence = { ts: Date.now(), source: 'member' as const, summary: awaitingReviewDecision ? `${emp.name} 已返回审查说明，等待结构化结论` : `${emp.name} 完成：${content.slice(0, 220)}`, verified: false };
               step.evidence = [...(step.evidence ?? []), evidence].slice(-12);
               run.evidence = [...(run.evidence ?? []), evidence].slice(-40);
             }
             if (run.recoveryContext) {
               run.recoveryContext.summary = step.status === 'failed'
                 ? `${emp.name} 的步骤被阻塞，等待处理后恢复。`
-                : `${emp.name} 已完成“${step.title}”，继续执行后续步骤。`;
+                : awaitingReviewDecision ? `${emp.name} 已完成检查，正在提交结构化审查结论。` : `${emp.name} 已完成“${step.title}”，继续执行后续步骤。`;
               if (step.status === 'failed') {
                 run.recoveryContext.unresolvedIssues = [...run.recoveryContext.unresolvedIssues, content.slice(0, 320)].slice(-12);
               } else {
@@ -776,7 +777,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             step.events.push({ ts: Date.now(), type: step.status === 'failed' ? 'error' : 'result', detail: content.slice(0, 360) });
             appendTaskRunContext(run, {
               type: step.status === 'failed' ? 'error' : 'progress', source: 'member', stepId,
-              summary: `${emp.name}：${content.slice(0, 420)}`, verified: step.status !== 'failed' && step.kind === 'review',
+              summary: `${emp.name}：${content.slice(0, 420)}`, verified: false,
             });
           });
         },
@@ -797,7 +798,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         onTaskAdvance(taskId, lane) {
           dispatch({ type: 'ADVANCE_TASK', teamId, taskId, lane });
         },
-        onToolCall(emp, toolName, toolArgs, result, stepId, success, protocolEvidence) {
+        onToolCall(emp, toolName, toolArgs, result, stepId, success, protocolEvidence, structuredEvidence) {
           // ⚠️ onToolCall 在工具执行前回调 arg=调用参数，执行后回调 arg=执行中。工具执行由 agentLoop 异步完成，结果在后续 onMessage 中体现。
           const toolMsg = `🔧 **${emp.name}** 调用工具 **\`${toolName}\`**(${toolArgs || ''})\n⟳ ${result}`;
           dispatch({
@@ -814,22 +815,49 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             if (step) {
               step.events.push({ ts: Date.now(), type: 'tool', detail: `${toolName} ${toolArgs}${result && result !== '🔄 执行中…' ? ` → ${result}` : ''}`.slice(0, 360) });
               if (result && result !== '🔄 执行中…') {
-                const verified = protocolEvidence
+                const artifact = toolName === 'write_file' ? structuredEvidence?.artifacts?.[0] : undefined;
+                const review = structuredEvidence?.review;
+                const verified = artifact ? artifact.verified : review ? review.decision === 'pass' : protocolEvidence
                   ? protocolEvidence.ok && protocolEvidence.stage === 'completed'
                   : isToolResultSuccessful(result, success);
-                const kind = toolName === 'write_file' ? 'file' as const
+                const kind = artifact ? 'file' as const
+                  : review ? 'review' as const
+                  : toolName === 'write_file' ? 'file' as const
                   : toolName === 'run_command' ? 'run' as const
                     : /connector|obsidian|knowledge/iu.test(toolName) ? 'connection' as const : 'progress' as const;
-                const evidenceSummary = protocolEvidence
+                const evidenceSummary = artifact
+                  ? `${artifact.filename} · ${artifact.category} · ${artifact.bytes ?? 0} 字节 · ${artifact.verified ? '已重新验证' : '仅登记'}`
+                  : review
+                    ? `${review.decision === 'pass' ? '审查通过' : '审查退回'}：${review.reason}`
+                  : protocolEvidence
                   ? `${protocolEvidence.connectorLabel} · ${protocolEvidence.action}：${protocolEvidence.ok ? '客户端验证通过' : `失败于 ${protocolEvidence.stage}`} · ${protocolEvidence.latencyMs}ms${protocolEvidence.idempotencyHit ? ' · 幂等复用' : ''}`
                   : `${toolName}：${result}`.slice(0, 260);
-                const evidence = { ts: Date.now(), source: 'tool' as const, kind, summary: evidenceSummary, verified, connectorProtocol: protocolEvidence };
+                const evidence = { ts: Date.now(), source: 'tool' as const, kind, summary: evidenceSummary, verified, connectorProtocol: protocolEvidence, artifact, review };
                 step.evidence = [...(step.evidence ?? []), evidence].slice(-12);
                 run.evidence = [...(run.evidence ?? []), evidence].slice(-40);
+                const additionalArtifacts = toolName === 'write_file'
+                  ? structuredEvidence?.artifacts?.slice(1) ?? []
+                  : structuredEvidence?.artifacts ?? [];
+                for (const additionalArtifact of additionalArtifacts) {
+                  const additionalEvidence = {
+                    ts: Date.now(), source: 'tool' as const, kind: 'file' as const,
+                    summary: `${additionalArtifact.filename} · ${additionalArtifact.category} · ${additionalArtifact.bytes ?? 0} 字节 · ${additionalArtifact.verified ? '已重新验证' : '仅登记'}`,
+                    verified: additionalArtifact.verified, artifact: additionalArtifact,
+                  };
+                  step.evidence = [...(step.evidence ?? []), additionalEvidence].slice(-12);
+                  run.evidence = [...(run.evidence ?? []), additionalEvidence].slice(-40);
+                  appendTaskRunContext(run, {
+                    type: additionalArtifact.verified ? 'progress' : 'error', source: 'tool', stepId,
+                    summary: additionalEvidence.summary, verified: additionalArtifact.verified,
+                    data: { artifact: additionalArtifact },
+                  });
+                }
                 appendTaskRunContext(run, {
                   type: verified ? 'progress' : 'error', source: 'tool', stepId,
                   summary: evidenceSummary.slice(0, 420), verified,
-                  data: protocolEvidence ? {
+                  data: artifact ? { artifact }
+                    : review ? { review }
+                    : protocolEvidence ? {
                     connectorProtocol: {
                       protocolVersion: protocolEvidence.protocolVersion,
                       connectorId: protocolEvidence.connectorId,
@@ -898,13 +926,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           updateRun((run) => {
             if (run.steps.some((item) => item.id === step.id)) return;
             run.steps.push({ ...step, status: 'queued', attempts: 0, events: [{ ts: Date.now(), type: 'status', detail: '审查退回后新增步骤' }] });
+            if (run.runner) {
+              run.runner = appendTaskRunnerSteps(run.runner, [formalPlanStepForRun(run.id, step)], `审查退回后新增“${step.title}”`);
+              run.plan = run.runner.plan;
+            }
             run.revisionCount = (run.revisionCount ?? 0) + (step.kind === 'revision' ? 1 : 0);
           });
         },
-        onReviewDecision(stepId, approved, reason, responsibleEmployeeId) {
+        onReviewDecision(stepId, approved, reason, responsibleEmployeeId, responsibleStepId, review) {
           updateRun((run) => {
             const step = run.steps.find((item) => item.id === stepId);
             if (!step) return;
+            step.status = 'completed';
+            step.completedAt = Date.now();
             step.reviewDecision = approved ? 'pass' : 'reject';
             step.reviewReason = reason;
             step.responsibleEmployeeId = responsibleEmployeeId;
@@ -912,6 +946,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             const evidence = { ts: Date.now(), source: 'review' as const, kind: 'review' as const, summary: approved ? `审查通过：${reason ?? '符合验收要求'}` : `审查退回：${reason ?? '需要修改'}`, verified: approved };
             step.evidence = [...(step.evidence ?? []), evidence].slice(-12);
             run.evidence = [...(run.evidence ?? []), evidence].slice(-40);
+            if (run.runner) {
+              run.runner = recordTaskReviewDecision(run.runner, {
+                stepId, approved, reason, responsibleEmployeeId, responsibleStepId,
+                checkedArtifacts: review?.checkedArtifacts,
+              });
+              run.plan = run.runner.plan;
+            }
             appendTaskRunContext(run, { type: approved ? 'resolved' : 'blocked', source: 'review', stepId, summary: evidence.summary, verified: approved });
           });
         },

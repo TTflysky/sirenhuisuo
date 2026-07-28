@@ -54,6 +54,7 @@ export function createTaskRunner(plan, options = {}) {
     currentStepId: undefined,
     steps: validPlan.steps.map((step) => stepRecord(step, timestamp)),
     approvals: [],
+    reviews: [],
     idempotency: {},
     events: [],
     lastError: undefined,
@@ -76,6 +77,7 @@ export function restoreTaskRunner(snapshot, options = {}) {
     const merged = existing ? { ...stepRecord(step, restored.createdAt || now()), ...existing } : stepRecord(step, restored.createdAt || now());
     return merged.status === 'running' ? { ...merged, status: 'pending', updatedAt: now() } : merged;
   });
+  restored.reviews = Array.isArray(restored.reviews) ? restored.reviews : [];
   restored.status = restored.status === 'running' ? 'paused' : restored.status;
   restored.currentStepId = undefined;
   restored.updatedAt = now();
@@ -157,6 +159,61 @@ export function recordTaskStepResult(snapshot, input = {}) {
     }
   }
   state.updatedAt = now();
+  return state;
+}
+
+export function appendTaskRunnerSteps(snapshot, steps = [], detail = '任务计划已追加修订步骤') {
+  const state = clone(snapshot);
+  const existingIds = new Set(state.plan.steps.map((step) => step.stepId));
+  const additions = Array.isArray(steps) ? steps.filter((step) => !existingIds.has(step?.stepId)) : [];
+  if (additions.length === 0) return state;
+  const plan = assertValidPlan({
+    ...state.plan,
+    steps: [...state.plan.steps, ...clone(additions)],
+  }, { allowInlineApproval: true });
+  const timestamp = now();
+  state.plan = plan;
+  state.steps.push(...additions.map((step) => stepRecord(step, timestamp)));
+  if (state.status !== 'cancelled') state.status = 'ready';
+  state.currentStepId = undefined;
+  appendEvent(state, 'plan_extended', undefined, detail, { addedStepIds: additions.map((step) => step.stepId) });
+  state.updatedAt = timestamp;
+  return state;
+}
+
+export function recordTaskReviewDecision(snapshot, input = {}) {
+  const state = clone(snapshot);
+  const stepId = String(input.stepId || state.currentStepId || '');
+  const step = planStep(state, stepId);
+  const record = recordFor(state, stepId);
+  if (!step || !record) throw new Error(`Unknown task step: ${stepId}`);
+  if (step.type !== 'review') throw new Error(`Task step ${stepId} is not a review step`);
+  const decision = input.approved === true ? 'pass' : 'reject';
+  const timestamp = now();
+  const review = {
+    stepId,
+    decision,
+    reason: String(input.reason || (decision === 'pass' ? '验收通过' : '验收退回')).slice(0, 1200),
+    responsibleStepId: String(input.responsibleStepId || '').slice(0, 160) || undefined,
+    responsibleEmployeeId: String(input.responsibleEmployeeId || '').slice(0, 160) || undefined,
+    checkedArtifacts: Array.isArray(input.checkedArtifacts) ? input.checkedArtifacts.map(String).slice(0, 20) : [],
+    ts: timestamp,
+  };
+  state.reviews = [...(state.reviews || []), review].slice(-60);
+  record.status = 'succeeded';
+  record.output = { review };
+  record.completedAt = timestamp;
+  record.updatedAt = timestamp;
+  state.currentStepId = undefined;
+  state.status = decision === 'pass' && state.steps.every((item) => item.status === 'succeeded') ? 'completed' : 'ready';
+  state.lastError = decision === 'reject' ? review.reason : undefined;
+  appendEvent(state, decision === 'pass' ? 'review_passed' : 'review_rejected', stepId, review.reason, {
+    decision,
+    responsibleStepId: review.responsibleStepId,
+    responsibleEmployeeId: review.responsibleEmployeeId,
+    checkedArtifacts: review.checkedArtifacts,
+  });
+  state.updatedAt = timestamp;
   return state;
 }
 
