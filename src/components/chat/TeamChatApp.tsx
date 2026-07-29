@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { ArrowLeftOutlined, EditOutlined, HistoryOutlined, PauseCircleOutlined, PlayCircleOutlined, RobotOutlined, SearchOutlined, StopOutlined, UserAddOutlined } from '@ant-design/icons';
-import type { Team, Employee, TaskRun } from '../../types';
+import type { Team, Employee, TaskRun, ThoughtChainStep } from '../../types';
 import { useStore } from '../../storeContext';
 import { type Attachment } from '../../data/hermesClient';
 import AgentAvatar from '../office/AgentAvatar';
@@ -23,6 +23,7 @@ import { buildTaskReplay, searchTaskRunHistory } from '../../engine/taskHistory.
 import { getTaskLedgerEvents, getTaskLedgerIntegrity, readTaskLedger } from '../../data/taskRuns';
 import type { TaskLedgerEvent, TaskLedgerIntegrity, TaskWorkerCommandRecord } from '../../electron';
 import { cleanExecutionDisplay } from '../../engine/executionDisplay.mjs';
+import ThoughtChainView from './ThoughtChainView';
 
 interface Props {
   teamId: string;
@@ -76,7 +77,6 @@ export default function TeamChatApp({ teamId }: Props) {
   const [replayLedgerEvents, setReplayLedgerEvents] = useState<TaskLedgerEvent[]>([]);
   const [replayWorkerCommands, setReplayWorkerCommands] = useState<TaskWorkerCommandRecord[]>([]);
   const [ledgerIntegrity, setLedgerIntegrity] = useState<TaskLedgerIntegrity | null>(() => getTaskLedgerIntegrity());
-  const [expandedExecutionIds, setExpandedExecutionIds] = useState<Set<string>>(() => new Set());
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [skillRefs, setSkillRefs] = useState<SkillReference[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -535,10 +535,14 @@ export default function TeamChatApp({ teamId }: Props) {
               let executionStart = messageIndex;
               while (executionStart > 0 && allMessages[executionStart - 1]?.kind === 'execution') executionStart -= 1;
               const executionMessages = isExecution ? allMessages.slice(executionStart, messageIndex + 1) : [];
-              const executionGroupId = executionMessages[0]?.id ?? msg.id;
               const isFailure = /^⚠️|无法响应|执行失败|已手动停止/u.test(msg.content);
-              const toolName = isExecution ? msg.content.match(/`([^`]+)`/u)?.[1] : undefined;
-              const toolSummary = toolName === 'search_skills' ? '正在检索技能库' : toolName === 'read_skill' ? '正在读取技能说明' : toolName ? `正在调用 ${toolName}` : '正在调用工具';
+              const teamExecutionSteps: ThoughtChainStep[] = executionMessages.map((event) => ({
+                toolName: event.content.match(/`([^`]+)`/u)?.[1] ?? 'team_execution',
+                args: '',
+                result: cleanExecutionDisplay(event.content),
+                success: !/^⚠️|无法响应|执行失败|已手动停止/u.test(event.content),
+                timestamp: event.timestamp,
+              }));
 
               return (
                 <div key={msg.id} data-message-id={msg.id} className={`msg ${isHuman ? 'human' : ''}`}>
@@ -551,23 +555,7 @@ export default function TeamChatApp({ teamId }: Props) {
                     </div>
                   ) : <div className="msg-meta msg-human-time"><span className="msg-time">{new Date(msg.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span></div>}
                   {isExecution ? (
-                    <button
-                      type="button"
-                      className={`execution-event${expandedExecutionIds.has(executionGroupId) ? ' expanded' : ''}${executionIsLive ? ' is-live' : ' is-completed'}`}
-                      onClick={() => setExpandedExecutionIds((previous) => {
-                        const next = new Set(previous);
-                        if (next.has(executionGroupId)) next.delete(executionGroupId); else next.add(executionGroupId);
-                        return next;
-                      })}
-                      onContextMenu={(event) => {
-                        event.preventDefault(); setExpandedExecutionIds((previous) => { const next = new Set(previous); if (next.has(executionGroupId)) next.delete(executionGroupId); else next.add(executionGroupId); return next; });
-                      }}
-                    >
-                      <span className="execution-event-icon">...</span>
-                      <span className="execution-event-summary">执行过程 · {executionMessages.length} 条 · {author?.name ?? '成员'} {toolSummary}</span>
-                      <span className="execution-event-action">{expandedExecutionIds.has(executionGroupId) ? '收起' : '展开'}</span>
-                      {expandedExecutionIds.has(executionGroupId) && <div className="execution-event-detail">{executionMessages.map((event) => <pre key={event.id}>{cleanExecutionDisplay(event.content)}</pre>)}</div>}
-                    </button>
+                    <ThoughtChainView steps={teamExecutionSteps} summary={`${author?.name ?? '成员'}的执行过程`} live={executionIsLive} />
                   ) : msg.kind === 'task' ? (
                     <div className="task-card-msg" style={isHuman ? { marginLeft: 'auto', maxWidth: '85%' } : {}}>
                       <div className="task-card-title">📋 {msg.content.replace('[新任务] ', '')}</div>

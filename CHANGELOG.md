@@ -1,5 +1,13 @@
 # 更新日志
 
+## v1.0.2 (Readable execution details)
+
+- Raised execution-step titles, summaries, parameters, and raw results from 9-10 px utility text to the same configurable content-size system used by chat messages. Long results scroll inside their own region, while parameters preserve their original layout with horizontal scrolling.
+- Added a responsive wide execution-detail viewer with step navigation, success and failure states, full untruncated stored input and output, copy controls, and a wrap/original-display switch. Dark, light, 1000x850, and 600x760 visual regressions now cover the viewer.
+- Replaced the separate team execution bubble with the same `ThoughtChainView` used by assistant and employee direct messages, so all three chat levels expose the same readable history and wide viewer.
+- Restored the five selectable Chinese fonts accidentally removed in v1.0.0 while keeping 幼圆 as the default. The package gate now fails unless all six font files are present and non-empty inside `app.asar`.
+- Added `verify:execution-detail-ui` for real Electron window regression. On machines where Electron 33 can launch, it checks extra-large global sizing, independent scrolling, viewport fit, selectable text, and screenshots; browser fixture coverage remains available when the local GPU process cannot initialize.
+
 ## v1.0.1 (Semantic team dispatch)
 
 - Reconnected assistant team formation to the existing model task-decision kernel. The model now compiles the goal, route, required capabilities, and decision reason once; the same decision is reused by either the team dispatcher or the normal agent loop.

@@ -33,6 +33,19 @@ for (const file of requiredFiles) {
 }
 
 const archiveFiles = asar.listPackage(archive);
+const requiredFonts = [
+  /\\dist\\assets\\YouYuan-[^\\]+\.ttf$/u,
+  /\\dist\\assets\\NotoSansSC-[^\\]+\.ttf$/u,
+  /\\dist\\assets\\NotoSerifSC-[^\\]+\.ttf$/u,
+  /\\dist\\assets\\SourceHanSansCN-Regular-[^\\]+\.otf$/u,
+  /\\dist\\assets\\SourceHanSansCN-Light-[^\\]+\.otf$/u,
+  /\\dist\\assets\\SourceHanSansCN-Bold-[^\\]+\.otf$/u,
+];
+for (const fontPattern of requiredFonts) {
+  const bundledFont = archiveFiles.find((file) => fontPattern.test(file));
+  assert.ok(bundledFont, `Packaged font was not found: ${fontPattern}`);
+  assert.ok(asar.extractFile(archive, bundledFont.replace(/^\\/u, '')).length > 1_000_000, `Packaged font is unexpectedly small: ${bundledFont}`);
+}
 const rendererBundle = archiveFiles.find((file) => /\\dist\\assets\\index-[^\\]+\.js$/u.test(file));
 assert.ok(rendererBundle, 'Packaged renderer bundle was not found');
 const rendererSource = asar.extractFile(archive, rendererBundle.replace(/^\\/u, '')).toString('utf8');
@@ -59,6 +72,7 @@ console.log(JSON.stringify({
   passed: true,
   version: packaged.version,
   requiredFiles: requiredFiles.length,
+  bundledFonts: requiredFonts.length,
   executionControllerMarkers: 3,
   p1Markers: 12,
   installerBytes: fs.statSync(installer).size,

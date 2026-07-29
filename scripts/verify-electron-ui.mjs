@@ -114,7 +114,7 @@ await evaluate(`(() => {
 await delay(350);
 const fontOptions = await evaluate(`(() => {
   const options = [...document.querySelectorAll('.ant-select-item-option-content')].map((item) => item.textContent?.trim());
-  const serif = [...document.querySelectorAll('.ant-select-item-option-content')].find((item) => item.textContent?.trim() === '思源宋体');
+  const serif = [...document.querySelectorAll('.ant-select-item-option-content')].find((item) => item.textContent?.includes('Noto Serif'));
   serif?.dispatchEvent(new MouseEvent('click', { bubbles: true, button: 0 }));
   return options;
 })()`);

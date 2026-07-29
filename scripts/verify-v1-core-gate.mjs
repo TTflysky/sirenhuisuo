@@ -8,6 +8,7 @@ const checks = [
   ['run', 'verify:agent-kernel'],
   ['run', 'verify:dispatch-intelligence'],
   ['run', 'verify:team-membership'],
+  ['run', 'verify:execution-detail-contract'],
   ['run', 'verify:execution-controller'],
   ['run', 'verify:task-service'],
   ['run', 'verify:task-recovery-gate'],

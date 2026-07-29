@@ -109,6 +109,7 @@ if (-not $SkipTests) {
     'verify:native-execution',
     'verify:office-layout',
     'verify:team-membership',
+    'verify:execution-detail-contract',
     'verify:skill-atomic',
     'verify:update-download',
     'verify:web-search',

@@ -142,7 +142,7 @@ function AppearanceTab() {
   };
   return <div className="settings-content-page appearance-settings-page">
     <header><h2>外观</h2><span>客户端字体与界面字号</span></header>
-    <div className="settings-field"><label>字体</label><Select value={settings.font} options={FONT_OPTIONS.map(({ value, label }) => ({ value, label }))} disabled /></div>
+    <div className="settings-field"><label>字体</label><Select value={settings.font} options={FONT_OPTIONS.map(({ value, label }) => ({ value, label }))} onChange={(font) => update({ font })} /></div>
     <div className="settings-field"><label>字体大小</label><Segmented block value={settings.fontSize} options={FONT_SIZE_OPTIONS.map(({ value, label }) => ({ value, label }))} onChange={(fontSize: string | number) => update({ fontSize: fontSize as AppearanceSettings['fontSize'] })} /></div>
     <div className="appearance-font-preview" style={{ fontFamily: selectedFont.family }}>
       <strong>{APP_PRODUCT_NAME}</strong>
