@@ -370,6 +370,8 @@ export interface TaskRun {
   contract?: TaskContract;
   plan?: TaskPlan;
   runner?: TaskRunnerSnapshot;
+  /** Unified team execution contract shared by assistant, worker and chat windows. */
+  executionProtocol?: import('./engine/teamExecutionProtocol.mjs').TeamExecutionProtocol;
   /** 主进程原生 Adapter 写入的团队聊天投影；凭据和原始模型请求不会持久化。 */
   executionMessages?: ChatMessage[];
   verification?: Array<{ kind: TaskEvidenceKind; label: string; status: 'passed' | 'blocked' | 'pending'; detail: string }>;

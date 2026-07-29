@@ -155,7 +155,8 @@ function createNativeExecutionAdapter(options) {
         import(pathToFileURL(path.join(projectRoot, 'src/engine/toolRegistry.mjs')).href),
         import(pathToFileURL(path.join(projectRoot, 'src/engine/taskContextRouter.mjs')).href),
         import(pathToFileURL(path.join(projectRoot, 'src/engine/taskDelegation.mjs')).href),
-      ]).then(([fidelity, runner, toolRegistry, contextRouter, taskDelegation]) => ({ fidelity, runner, toolRegistry, contextRouter, taskDelegation }));
+        import(pathToFileURL(path.join(projectRoot, 'src/engine/teamExecutionProtocol.mjs')).href),
+      ]).then(([fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol]) => ({ fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol }));
     }
     return engineModulesPromise;
   }
@@ -624,7 +625,7 @@ function createNativeExecutionAdapter(options) {
   }
 
   async function beginStep(job, run, step, member) {
-    const { runner } = await loadEngineModules();
+    const { runner, teamExecutionProtocol } = await loadEngineModules();
     await checkpoint(job, { kind: 'step_started', stepId: step.id, summary: `${member.name}开始执行“${step.title}”` });
     await updateRun(job.taskId, (next) => {
       next.executionSessionId = options.sessionId;
@@ -634,6 +635,7 @@ function createNativeExecutionAdapter(options) {
       if (next.runner) {
         try { next.runner = runner.beginTaskStep(next.runner, step.id); } catch {}
       }
+      if (next.executionProtocol) next.executionProtocol = teamExecutionProtocol.projectTeamExecutionEvent(next.executionProtocol, { type: 'step_started', stepId: step.id, employeeId: member.id, detail: `${member.name} 开始执行 ${step.title}` });
       const delegated = next.delegations?.find((item) => item.id === step.delegationId);
       if (delegated) { delegated.status = 'running'; delegated.updatedAt = Date.now(); }
       if (next.recoveryContext) {
@@ -646,7 +648,7 @@ function createNativeExecutionAdapter(options) {
   }
 
   async function completeStep(job, run, step, member, result) {
-    const { runner } = await loadEngineModules();
+    const { runner, teamExecutionProtocol } = await loadEngineModules();
     if (step.kind === 'review') {
       const review = result.review;
       if (!review) throw new Error('审查步骤没有结构化审查证据');
@@ -669,6 +671,9 @@ function createNativeExecutionAdapter(options) {
           } catch {}
         }
       }, `原生 Adapter 记录审查 ${step.id}`);
+      await updateRun(job.taskId, (next) => {
+        if (next.executionProtocol) next.executionProtocol = teamExecutionProtocol.projectTeamExecutionEvent(next.executionProtocol, { type: review.decision === 'pass' ? 'review_passed' : 'review_rejected', stepId: step.id, employeeId: member.id, reason: review.reason, responsibleStepId: review.responsibleStepId, detail: review.reason });
+      }, `团队协议记录审查 ${step.id}`);
       if (review.decision === 'reject') await appendRevisionSteps(job, step, review);
     } else {
       await checkpoint(job, { kind: 'step_completed', stepId: step.id, summary: result.content.slice(0, 700) });
@@ -684,12 +689,17 @@ function createNativeExecutionAdapter(options) {
         }
       }, `原生 Adapter 完成步骤 ${step.id}`);
     }
+    if (step.kind !== 'review') {
+      await updateRun(job.taskId, (next) => {
+        if (next.executionProtocol) next.executionProtocol = teamExecutionProtocol.projectTeamExecutionEvent(next.executionProtocol, { type: 'step_completed', stepId: step.id, employeeId: member.id, detail: result.content.slice(0, 700) });
+      }, `团队协议完成步骤 ${step.id}`);
+    }
     await appendExecutionMessage(job, run, member, result.content, 'text');
     emit(job, 'step_completed', { stepId: step.id, member: publicMember(member), summary: result.content.slice(0, 700) });
   }
 
   async function appendRevisionSteps(job, reviewStep, review) {
-    const { runner, taskDelegation } = await loadEngineModules();
+    const { runner, taskDelegation, teamExecutionProtocol } = await loadEngineModules();
     await updateRun(job.taskId, (run) => {
       const revisionCount = Number(run.revisionCount) || 0;
       const maxRevisions = Number(run.maxRevisions) || 2;
@@ -723,6 +733,7 @@ function createNativeExecutionAdapter(options) {
         dependsOnStepIds: [revision.id], status: 'queued', attempts: 0, evidence: [], events: [{ ts: now, type: 'status', detail: '等待修订后复审' }],
       };
       run.steps.push(revision, recheck);
+      if (run.executionProtocol) run.executionProtocol = teamExecutionProtocol.reconcileTeamExecutionProtocol(run.executionProtocol, { members: run.memberSnapshot, steps: run.steps });
       run.revisionCount = count;
       if (run.runner) {
         try { run.runner = runner.appendTaskRunnerSteps(run.runner, [formalStep(run.id, revision), formalStep(run.id, recheck)], '原生 Adapter 审查退回'); run.plan = run.runner.plan; } catch {}
@@ -732,7 +743,7 @@ function createNativeExecutionAdapter(options) {
   }
 
   async function failStep(job, step, member, error) {
-    const { runner } = await loadEngineModules();
+    const { runner, teamExecutionProtocol } = await loadEngineModules();
     const reason = text(error?.message || error, 1200);
     const failedRun = await readRun(job.taskId).catch(() => undefined);
     if (failedRun?.worktree && options.worktreeManager) {
@@ -748,6 +759,7 @@ function createNativeExecutionAdapter(options) {
       }
       const delegated = run.delegations?.find((item) => item.id === step.delegationId);
       if (delegated) { delegated.status = 'failed'; delegated.updatedAt = Date.now(); delegated.completedAt = Date.now(); delegated.error = reason; }
+      if (run.executionProtocol) run.executionProtocol = teamExecutionProtocol.projectTeamExecutionEvent(run.executionProtocol, { type: 'step_failed', stepId: step.id, employeeId: member.id, detail: reason, error: reason });
       if (run.recoveryContext) {
         run.recoveryContext.summary = `${member.name}的步骤被阻塞，主进程已保留上下文。`;
         run.recoveryContext.unresolvedIssues = [...run.recoveryContext.unresolvedIssues, reason].slice(-20);

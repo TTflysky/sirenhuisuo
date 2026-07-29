@@ -1,9 +1,17 @@
 # 项目交接手册
 
 > 最后整理：2026-07-29
-> 当前源码版本：`v0.40.0`
+> 当前源码版本：`v0.49.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+
+## v0.41-v0.49 统一执行协议
+
+`src/engine/teamExecutionProtocol.mjs` 是助理、员工私聊、团队窗口和主进程 Worker 共用的任务范围协议。它保存团队和任务边界、成员独立模型快照、助理首发言、步骤依赖、员工状态、当前工具、事件序号、失败恢复、交付物和审查责任。
+
+版本职责：v0.41 首发言和责任计划；v0.42 Worker 事件投影；v0.43 可观测摘要和计时；v0.44 失败分类与原上下文恢复；v0.45 按 `teamId/runId/sequence` 跨窗口同步；v0.46 Skill/Connector 是否使用及调用证据；v0.47 真实磁盘交付物索引；v0.48 审查退回责任步骤；v0.49 全量发布门禁。
+
+新增回归：`npm.cmd run verify:team-execution-protocol`。最终发布门禁：`npm.cmd run verify:v049-release-gate`。小版本不生成客户端安装包，只有最终大版本统一构建、验证并发布。
 
 ## v0.40.0 收口门禁
 

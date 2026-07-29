@@ -1,5 +1,11 @@
 # 更新日志
 
+## v0.49.0 (Unified team execution protocol and release gate)
+
+- v0.41-v0.49 完成统一执行协议：团队首发言、成员责任、步骤依赖、状态投影、计时、恢复、重试分类、跨窗口同步、Skill/Connector 决策证据、交付物索引和审查责任回退。
+- 原生 Worker 的步骤开始、完成、失败和审查事件现在写入同一份团队协议，避免“助理说已调度但没有真实执行状态”。
+- 新增 `verify:team-execution-protocol` 与 `verify:v049-release-gate`，发布前校验协议、构建、任务内核、技能、连接器、恢复和版本锁定。
+
 ## v0.40.0 (Team window recovery and live execution projection)
 
 - 修复批准组建团队后偶发打开“团队不存在”空白窗口的问题：团队快照、首条消息和聊天子窗口初始化现在可恢复同步。

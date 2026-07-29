@@ -7,6 +7,7 @@ import { appendTaskContextEvent, buildTaskContextPrompt, createTaskContext, rest
 import { createContextBudget, createRecoveryCapsule, verifyRecoveryCapsule } from '../engine/taskContextRouter.mjs';
 import { normalizeTaskHandoff } from '../engine/taskHandoff.mjs';
 import { assertTaskRunTransition } from '../engine/taskStateMachine.mjs';
+import { createTeamExecutionProtocol, restoreTeamExecutionProtocol } from '../engine/teamExecutionProtocol.mjs';
 import type { TaskLedgerEvent, TaskLedgerIntegrity, TaskWorkerCommand, TaskWorkerCommandResult, TaskWorkerStatusResult } from '../electron';
 
 const LS_TASK_RUNS = 'hermes_office_task_runs_v1';
@@ -122,6 +123,14 @@ function normalizeTaskRuns(runs: TaskRun[]): TaskRun[] {
           budget: { ...recoveryDefaults.budget, ...(run.recoveryContext?.budget ?? {}) },
           controller: run.recoveryContext?.controller ?? recoveryDefaults.controller,
         },
+      });
+      next.executionProtocol = restoreTeamExecutionProtocol(next.executionProtocol, {
+        teamId: next.teamId,
+        runId: next.id,
+        goal: next.goal ?? next.request,
+        members: next.memberSnapshot,
+        steps: next.steps,
+        createdAt: next.createdAt,
       });
       const staleExecution = (next.status === 'running' || next.status === 'queued')
         && sessionId !== 'browser-session'
@@ -386,7 +395,22 @@ export function createTaskRun(team: Team, employees: Employee[], request: string
     controller: createExecutionController({ goal: request, acceptanceCriteria: contract.constraints.acceptanceCriteria, requiresEvidence: contract.constraints.requiresEvidence }),
   };
   const formalized = formalPlanForRun(baseRun);
-  const run = { ...baseRun, contract: formalized.contract, plan: formalized.plan, runner: createTaskRunner(formalized.plan, { traceId: id, createdAt: now }) };
+  const run = {
+    ...baseRun,
+    contract: formalized.contract,
+    plan: formalized.plan,
+    runner: createTaskRunner(formalized.plan, { traceId: id, createdAt: now }),
+    executionProtocol: createTeamExecutionProtocol({
+      teamId: team.id,
+      teamName: team.name,
+      runId: id,
+      goal: request,
+      assistantId: 'assistant',
+      members: memberSnapshot,
+      steps,
+      createdAt: now,
+    }),
+  };
   run.recoveryCapsule = createRecoveryCapsule(run, { reason: '任务创建' });
   return run;
 }
