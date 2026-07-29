@@ -1,4 +1,5 @@
 import type { Skill, SkillReference } from '../types';
+import { BUS_CHANNELS, sendBus } from '../ipcBus';
 
 export interface ReadSkillResult {
   id: string;
@@ -35,12 +36,14 @@ export async function readSkill(id: string): Promise<ReadSkillResult> {
 export async function deleteSkill(id: string): Promise<void> {
   if (!window.electronAPI?.skillsDelete) throw new Error('当前环境不支持技能删除');
   const result = await window.electronAPI.skillsDelete(id);
+  if (result.ok) sendBus(BUS_CHANNELS.SKILLS_CHANGED, { action: 'deleted', skillId: id });
   if (!result.ok) throw new Error(result.error ?? '技能删除失败');
 }
 
 export async function installSkill(sourceUrl: string, name?: string): Promise<Skill> {
   if (!window.electronAPI?.skillsInstall) throw new Error('当前环境不支持技能安装');
   const result = await window.electronAPI.skillsInstall({ sourceUrl, name });
+  if (result.ok && result.skill) sendBus(BUS_CHANNELS.SKILLS_CHANGED, { action: 'installed', skillId: result.skill.id });
   if (!result.ok || !result.skill) throw new Error(result.error ?? '技能安装失败');
   return result.skill;
 }
@@ -55,6 +58,7 @@ export async function inspectSkillSource(sourceUrl: string): Promise<import('../
 export async function repairSkill(id: string): Promise<Skill> {
   if (!window.electronAPI?.skillsRepair) throw new Error('当前环境不支持技能修复');
   const result = await window.electronAPI.skillsRepair(id);
+  if (result.ok && result.skill) sendBus(BUS_CHANNELS.SKILLS_CHANGED, { action: 'repaired', skillId: result.skill.id });
   if (!result.ok || !result.skill) throw new Error(result.error ?? '技能修复失败');
   return result.skill;
 }

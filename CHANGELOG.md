@@ -1,5 +1,12 @@
 # 更新日志
 
+## v0.31.0 (Skill mention picker usability)
+
+- Fixed the `@` Skill picker being clipped by the chat composer overflow container.
+- Added a visible Skill search field and empty/loading states.
+- Expanded the picker from 8 truncated candidates to a scrollable list of up to 100 filtered Skills.
+- Kept the picker shared across assistant chat, employee direct messages, and team chat.
+
 ## v0.30.0 (2026-07-29)
 
 ### Skill installation and IMA connector reliability

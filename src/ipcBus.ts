@@ -62,6 +62,7 @@ export const BUS_CHANNELS = {
   /** 产出物变更：某作用域新增/删除了产出物 */
   OUTPUTS_CHANGED: 'outputs:changed',
   CONNECTORS_CHANGED: 'connectors:changed',
+  SKILLS_CHANGED: 'skills:changed',
   ASSISTANT_SETTINGS_CHANGED: 'assistant-settings:changed',
   ASSISTANT_RUN_REQUEST: 'assistant:run-request',
   ASSISTANT_ACTIVITY_CHANGED: 'assistant:activity-changed',

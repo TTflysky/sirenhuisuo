@@ -677,6 +677,8 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         const api = getFsApi();
         if (!api?.skillsInstall) return { toolCallId: id, name, success: false, output: '当前环境不支持安装 Skill，请使用桌面客户端。' };
         const result = await api.skillsInstall({ sourceUrl: parsed.toString(), name: args.name?.trim() || undefined });
+        const { BUS_CHANNELS, sendBus } = await import('../ipcBus');
+        if (result?.ok && result.skill) sendBus(BUS_CHANNELS.SKILLS_CHANGED, { action: 'installed', skillId: result.skill.id });
         if (!result?.ok || !result.skill) return { toolCallId: id, name, success: false, output: `Skill 安装失败：${result?.error ?? '安装器没有返回有效结果'}` };
         if (args.connector?.trim()) {
           const { loadConnectors, updateConnector } = await import('../data/connectors');

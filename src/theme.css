@@ -1389,6 +1389,25 @@ html, body, #root, .app-root {
 .mention-option-title { font-size: 11px; }
 .mention-thinking { font-size: 14px; animation: spin 2s linear infinite; }
 .mention-popup-tip { padding: 5px 12px; font-size: 9px; color: var(--text-muted); background: var(--bg-deep); }
+.mention-skill-popup {
+  position: fixed; z-index: 10030; min-width: 0; max-width: calc(100vw - 24px);
+  max-height: min(600px, calc(100vh - 24px)); transform: none;
+}
+.mention-skill-popup .mention-popup-head { min-height: 34px; padding: 7px 12px; }
+.mention-skill-popup .mention-popup-head strong { font-size: 12px; color: var(--text); text-transform: none; letter-spacing: 0; }
+.mention-skill-search {
+  display: flex; align-items: center; gap: 7px; flex: 0 0 auto;
+  margin: 8px 10px 4px; padding: 7px 9px;
+  border: 1px solid var(--border); border-radius: 7px; background: var(--bg-deep);
+  color: var(--text-muted);
+}
+.mention-skill-search:focus-within { border-color: color-mix(in srgb, var(--apple-accent) 65%, var(--border)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--apple-accent) 12%, transparent); }
+.mention-skill-search input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--text); font: inherit; font-size: 12px; }
+.mention-skill-search input::placeholder { color: var(--text-muted); }
+.mention-skill-popup .mention-popup-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 8px 10px 10px; gap: 8px; }
+.mention-skill-popup .mention-card { min-height: 72px; padding: 10px 12px; }
+.mention-skill-popup .mention-card-desc { display: -webkit-box; white-space: normal; -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.35; }
+.mention-skill-empty { grid-column: 1 / -1; padding: 28px 12px; text-align: center; color: var(--text-muted); font-size: 12px; }
 
 /* ===== 思维链可视化 ===== */
 .cot-wrap {

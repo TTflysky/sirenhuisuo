@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { SearchOutlined, ThunderboltOutlined, CloseOutlined } from '@ant-design/icons';
 import type { Skill, SkillReference } from '../../types';
 import { listSkills, skillReference } from '../../data/skills';
+import { BUS_CHANNELS, onBus } from '../../ipcBus';
 
 interface Props {
   selected: SkillReference[];
@@ -18,11 +19,17 @@ export default function SkillPickerButton({ selected, onSelectedChange, disabled
   const buttonRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState({ left: 12, bottom: 52, width: 420 });
+  const refreshSkills = () => {
+    setLoading(true);
+    void listSkills().then(setSkills).catch(() => setSkills([])).finally(() => setLoading(false));
+  };
+
+  useEffect(() => onBus(BUS_CHANNELS.SKILLS_CHANGED, refreshSkills), []);
 
   useEffect(() => {
     if (!open) return;
     setLoading(true);
-    listSkills().then(setSkills).catch(() => setSkills([])).finally(() => setLoading(false));
+    refreshSkills();
     const place = () => {
       const rect = buttonRef.current?.getBoundingClientRect();
       if (!rect) return;
