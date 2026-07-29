@@ -1,4 +1,4 @@
-# 太极 AI 办公会所 v1.0.0
+# 太极 AI 办公会所 v1.0.1
 
 > 面向 Windows 的多模型 AI 虚拟办公室。创建员工、组建团队，让不同模型按照职责协作完成真实任务。
 
@@ -6,7 +6,7 @@
 
 ## 项目状态
 
-- 当前版本：`1.0.0`
+- 当前版本：`1.0.1`
 - 发布分支：`main`
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 33、React 19、TypeScript 6、Ant Design 6、Vite 8
@@ -152,15 +152,15 @@
 
 ### 使用安装包
 
-`v1.0.0` 已完成发布级回归。源码和交接资料以 `main` 为准。
+`v1.0.1` 已完成发布级回归。源码和交接资料以 `main` 为准。
 
-- [直接下载 v1.0.0 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v1.0.0/taiji-office-setup-1.0.0.exe)
-- [查看 v1.0.0 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v1.0.0)
+- [直接下载 v1.0.1 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v1.0.1/taiji-office-setup-1.0.1.exe)
+- [查看 v1.0.1 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v1.0.1)
 
 本地构建的安装程序生成在：
 
 ```text
-release/taiji-office-setup-1.0.0.exe
+release/taiji-office-setup-1.0.1.exe
 ```
 
 可以直接覆盖安装旧版本。应用数据保存在用户目录，正常覆盖安装不会删除员工、团队、聊天和模型配置。

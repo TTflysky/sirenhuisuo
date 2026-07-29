@@ -88,6 +88,7 @@ if (-not $SkipTests) {
     'verify:execution-controller',
     'verify:execution-evidence',
     'verify:agent-kernel',
+    'verify:dispatch-intelligence',
     'verify:foundation',
     'verify:task-runner',
     'verify:task-context',

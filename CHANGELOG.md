@@ -1,5 +1,14 @@
 # 更新日志
 
+## v1.0.1 (Semantic team dispatch)
+
+- Reconnected assistant team formation to the existing model task-decision kernel. The model now compiles the goal, route, required capabilities, and decision reason once; the same decision is reused by either the team dispatcher or the normal agent loop.
+- Replaced broad keyword-only member selection with required-capability coverage. UI and operating-system interface work now selects UI/UX and frontend specialists before generalists, while unrelated roles cannot win because of online order or a generic “design” word.
+- Member corrections now target the latest pending project or running project team first, support employee titles as well as names, and update the approval card without asking the user to repeat a team name.
+- Office employee counts, rosters, online state, and team counts now read local client state directly in assistant and team chat, bypassing Skill discovery, web search, and the previous running route.
+- Added a New Chat control with restorable local chat history. A fresh chat has an empty model context; active work must be paused or stopped before switching so task reports cannot cross sessions.
+- Added `verify:dispatch-intelligence` and included dispatch plus team-membership regressions in the v1 core release gate.
+
 ## v1.0.0 (Durable execution core)
 
 - Unified assistant, employee, and team work behind the durable TaskService: task contracts, executable plans, child tasks, evidence, artifacts, review, recovery, and a ledger-derived task tree now use one source of truth.

@@ -1141,7 +1141,7 @@ function connectorQueryFromRequest(userText: string): string {
   return providers.find(([pattern]) => pattern.test(userText))?.[1] ?? '';
 }
 
-async function compileTaskDecision(
+export async function compileTaskDecision(
   turns: ChatTurn[],
   tools: any[],
   modelConfig?: ModelConfig,
@@ -1236,6 +1236,8 @@ export interface AgentLoopOpts {
   onExecutionState?: (state: ExecutionControllerSnapshot) => void;
   /** Called after intent compilation and before any executable route starts. */
   onTaskPrepared?: (decision: TaskDecision) => Promise<void> | void;
+  /** UI control-plane routes may compile once before choosing the executor. */
+  taskDecisionCompilation?: Awaited<ReturnType<typeof compileTaskDecision>>;
   /** 团队多步骤共享控制器时用于隔离各步骤的同名工具路线。 */
   executionRouteScope?: string;
 }
@@ -1267,7 +1269,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   const {
     turns, tools, scene, label, onToolCall, onToolResult, modelConfig, extraSystemContext,
     scope, attachments, shouldStop, waitIfPaused, consumeSteeringMessages,
-    getModelRequestSignal, onSteeringReply, onModelRetry, initialExecutionState, onExecutionState, onTaskPrepared, skillRefs, referenceSourceUrl,
+    getModelRequestSignal, onSteeringReply, onModelRetry, initialExecutionState, onExecutionState, onTaskPrepared, taskDecisionCompilation, skillRefs, referenceSourceUrl,
   } = opts;
   let currentTurns = [...turns];
   let totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
@@ -1277,7 +1279,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     ? turn.content
     : (turn.content ?? []).filter((part): part is ContentPart => part.type === 'text').map((part) => part.text).join('\n'));
   const latestUserText = userTexts.at(-1) ?? '';
-  const compiled = await compileTaskDecision(turns, tools, modelConfig, getModelRequestSignal?.());
+  const compiled = taskDecisionCompilation ?? await compileTaskDecision(turns, tools, modelConfig, getModelRequestSignal?.());
   const taskDecision = compiled.decision;
   totalUsage.promptTokens += compiled.usage.promptTokens;
   totalUsage.completionTokens += compiled.usage.completionTokens;

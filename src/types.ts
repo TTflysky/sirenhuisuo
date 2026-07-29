@@ -68,6 +68,9 @@ export interface Project {
   steps: string[];
   expectedOutputs: string[];
   members: ProjectMember[];
+  /** 由模型任务决策内核识别，调度器据此覆盖核心能力。 */
+  requiredCapabilities?: string[];
+  decisionReason?: string;
   status: ProjectStatus;
   teamId?: string;
   rejectionReason?: string;

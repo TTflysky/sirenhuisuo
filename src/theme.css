@@ -3181,6 +3181,8 @@ body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
 .chat-input { min-height: 58px; padding: 9px 11px; border-color: var(--hairline-strong); border-radius: 7px; background: var(--bg-deep); color: var(--text); line-height: 1.5; }
 .chat-input:focus { border-color: color-mix(in srgb, var(--apple-accent) 60%, var(--hairline)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--apple-accent) 10%, transparent); }
 .composer-icon-btn { width: 30px; padding: 0; justify-content: center; }
+.assistant-chat-history-select { max-width: 128px; height: 28px; padding: 0 22px 0 8px; border: 1px solid var(--hairline-strong); border-radius: 6px; outline: 0; background: var(--bg-deep); color: var(--text-secondary); font: inherit; font-size: 10px; }
+.assistant-chat-history-select:focus { border-color: color-mix(in srgb, var(--apple-accent) 60%, var(--hairline)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--apple-accent) 10%, transparent); }
 .chat-composer .btn { box-shadow: none; }
 .execution-policy-control { min-width: 0; height: 28px; display: inline-flex; align-items: center; gap: 5px; padding: 0 7px; border: 1px solid var(--hairline-strong); border-radius: 6px; background: var(--bg-deep); color: var(--text-secondary); cursor: pointer; font-size: 10px; line-height: 1; }
 .execution-policy-control:focus-within { border-color: color-mix(in srgb, var(--apple-accent) 60%, var(--hairline)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--apple-accent) 10%, transparent); }

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { ChatMessage, ThoughtChainStep, SkillUsageEvidence } from '../../types';
-import { runAgentLoop, resolveApiBase, resolveChatSettings, extractUserInsights, fetchInitial, loadSettings, type ChatTurn, type Attachment } from '../../data/hermesClient';
+import { compileTaskDecision, runAgentLoop, resolveApiBase, resolveChatSettings, extractUserInsights, fetchInitial, loadSettings, type ChatTurn, type Attachment } from '../../data/hermesClient';
 import { getRegisteredTools } from '../../engine/toolCatalog';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
 import ProjectApprovalCard from './ProjectApprovalCard';
@@ -28,8 +28,9 @@ import { useStore } from '../../storeContext';
 import { BUS_CHANNELS, onBus, sendBus } from '../../ipcBus';
 import { getDirectExecutionControl, isExplicitPauseSteering, isExplicitResumeSteering, shouldHoldTaskForFeedback } from '../../engine/agentGuardrails.mjs';
 import { executionControllerStatus } from '../../engine/executionController.mjs';
-import { isTeamMemberAdditionRequest, resolveMentionedEmployees, resolveTargetTeam } from '../../engine/teamMembership';
+import { isTeamMemberAdditionRequest, isTeamMemberCorrectionRequest, resolveMentionedEmployees, resolveTargetProject, resolveTargetTeam } from '../../engine/teamMembership';
 import { matchProjectMembers } from '../../engine/taskMatcher';
+import { classifyLocalOfficeQuery, formatLocalOfficeAnswer } from '../../engine/officeDirectory';
 import {
   BEGINNER_RESPONSE_GUIDE,
   getToolActivity,
@@ -51,6 +52,7 @@ import {
   PaperClipOutlined,
   PauseCircleOutlined,
   PlayCircleOutlined,
+  PlusOutlined,
   RobotOutlined,
   SettingOutlined,
   StopOutlined,
@@ -58,6 +60,7 @@ import {
 
 const LS_KEY = 'hermes_office_assistant_chat';
 const LS_PENDING_REQUEST = 'hermes_office_assistant_pending_request';
+const LS_CHAT_ARCHIVES = 'hermes_office_assistant_chat_archives';
 
 interface PendingAssistantRequest {
   id: string;
@@ -65,6 +68,13 @@ interface PendingAssistantRequest {
   display?: string;
   createdAt: number;
   alreadyDisplayed?: boolean;
+}
+
+interface AssistantChatArchive {
+  id: string;
+  title: string;
+  messages: ChatMessage[];
+  updatedAt: number;
 }
 
 // 构建 API 上下文时排除的中间消息前缀（工具调用状态、错误提示等非实质对话）
@@ -89,6 +99,28 @@ function saveHistory(msgs: ChatMessage[]): void {
   } catch {}
 }
 
+function loadChatArchives(): AssistantChatArchive[] {
+  try {
+    const raw = localStorage.getItem(LS_CHAT_ARCHIVES);
+    if (raw) return (JSON.parse(raw) as AssistantChatArchive[]).filter((item) => item.id && Array.isArray(item.messages)).slice(0, 20);
+  } catch {}
+  return [];
+}
+
+function saveChatArchives(archives: AssistantChatArchive[]): void {
+  try { localStorage.setItem(LS_CHAT_ARCHIVES, JSON.stringify(archives.slice(0, 20))); } catch {}
+}
+
+function archiveFromMessages(messages: ChatMessage[]): AssistantChatArchive {
+  const firstUser = messages.find((message) => message.roleId === 'human')?.content.trim();
+  return {
+    id: `chat-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    title: (firstUser || '未命名对话').replace(/\s+/g, ' ').slice(0, 32),
+    messages: messages.slice(-300),
+    updatedAt: Date.now(),
+  };
+}
+
 const EXPLICIT_TEAM_DISPATCH_RE = /(?:拉(?:个|起|一个)?团队|拉群|组建团队|组队|召集.{0,12}(?:员工|成员|团队)|叫.{0,12}(?:员工|成员).{0,12}(?:来|去|做|负责)|安排.{0,12}(?:员工|成员).{0,12}(?:做|负责|开发|设计))/u;
 const SPECIALIST_DOMAIN_RE = /前端|后端|全栈|网页|网站|UI|界面|视觉|代码|开发|编程|脚本|文案|视频|分镜|报告|方案/u;
 const DELIVERABLE_ACTION_RE = /做|制作|开发|设计|编写|写|生成|实现|创建|完成|修复|优化|重写|起草|改造/u;
@@ -111,9 +143,19 @@ function findSpecialistMembers(content: string, employees: Employee[]) {
     });
 }
 
+function resolveDispatchRequest(current: string, recentUserMessages: string[]): string {
+  const text = current.trim();
+  const refersToPreviousGoal = /(?:这个|那个|刚才|刚刚|上面|前面|之前)(?:的)?(?:任务|需求|事情|项目)?|按(?:刚才|上面|之前)|继续(?:刚才|上面|之前)/u.test(text);
+  const hasConcreteCurrentGoal = DELIVERABLE_ACTION_RE.test(text) && (SPECIALIST_DOMAIN_RE.test(text) || text.length >= 16);
+  if (!refersToPreviousGoal || hasConcreteCurrentGoal) return text;
+  const previous = [...recentUserMessages].reverse().find((message) => DELIVERABLE_ACTION_RE.test(message) && message.trim() !== text);
+  return previous ? `${previous}\n\n老板最新调度要求：${text}` : text;
+}
+
 export default function AssistantChat() {
-  const { state, createProjectDraft, approveProject, rejectProject, addTeamMembers } = useStore();
+  const { state, createProjectDraft, approveProject, rejectProject, addTeamMembers, setProjectMembers } = useStore();
   const [msgs, setMsgs] = useState<ChatMessage[]>(() => loadHistory());
+  const [chatArchives, setChatArchives] = useState<AssistantChatArchive[]>(() => loadChatArchives());
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
@@ -184,7 +226,29 @@ export default function AssistantChat() {
     // A chat window can remain open while the office window adds or edits an
     // employee. Read the shared profile store at dispatch time, not only from
     // the last React render, before choosing project members.
-    const liveEmployees = fetchInitial().employees;
+    const liveState = fetchInitial();
+    const liveEmployees = liveState.employees;
+    const localOfficeQuery = atts.length === 0 ? classifyLocalOfficeQuery(content) : undefined;
+    if (localOfficeQuery) {
+      const display = displayOverride ?? content;
+      if (!externalRequest) {
+        setSkillRefs([]);
+        setText('');
+        setAttachments([]);
+      }
+      if (!alreadyDisplayed) {
+        push({
+          id: `h-${Date.now()}-me`, authorId: 'me', roleId: 'human',
+          content: display, mentions: [], timestamp: Date.now(), kind: 'text',
+        });
+      }
+      push({
+        id: `h-${Date.now()}-office-fact`, authorId: 'assistant', roleId: 'custom',
+        content: formatLocalOfficeAnswer(localOfficeQuery, liveEmployees, liveState.teams),
+        mentions: [], timestamp: Date.now(), kind: 'text',
+      });
+      return;
+    }
     const referenceResolution: ConversationReferenceResolution = externalRequest
       ? { status: 'none', references: [], skillRefs: [], context: '', action: 'refer' }
       : resolveConversationReferences({ input: content, history: msgs, selectedSkillRefs: skillRefs });
@@ -247,12 +311,43 @@ export default function AssistantChat() {
     }
 
     if (isTeamMemberAdditionRequest(enriched)) {
-      const mentionedEmployees = resolveMentionedEmployees(enriched, state.employees);
-      const targetTeam = resolveTargetTeam(enriched, state.teams, msgs.slice(-12).map((message) => message.content));
+      const mentionedEmployees = resolveMentionedEmployees(enriched, liveEmployees);
+      const explicitlyNamedTeam = [...state.teams].reverse().find((team) => !team.archived && enriched.replace(/\s+/g, '').includes(team.name.replace(/\s+/g, '')));
+      const contextualProject = explicitlyNamedTeam ? undefined : resolveTargetProject(enriched, state.projects);
+      if (contextualProject?.status === 'awaiting_approval') {
+        const selectionRequest = [contextualProject.request, ...(contextualProject.requiredCapabilities ?? [])].filter(Boolean).join('\n所需能力：');
+        const recommendedIds = matchProjectMembers(liveEmployees, selectionRequest).map((member) => member.employeeId);
+        const currentIds = contextualProject.members.map((member) => member.employeeId);
+        const requestedIds = mentionedEmployees.map((employee) => employee.id);
+        const nextIds = [...new Set([
+          ...(isTeamMemberCorrectionRequest(enriched) ? recommendedIds : currentIds),
+          ...requestedIds,
+        ])];
+        if (!requestedIds.length && !isTeamMemberCorrectionRequest(enriched)) {
+          push({
+            id: `h-${Date.now()}-employee-unclear`, authorId: 'assistant', roleId: 'custom',
+            content: `我已经锁定正在等待批准的「${contextualProject.title}」，但这句话里还没有识别出具体姓名或职位。请说员工姓名或职位，我会直接更新这张团队方案。`,
+            mentions: [], timestamp: Date.now(), kind: 'text',
+          });
+          return;
+        }
+        setProjectMembers(contextualProject.id, nextIds);
+        const selectedEmployees = nextIds
+          .map((employeeId) => liveEmployees.find((employee) => employee.id === employeeId))
+          .filter((employee): employee is Employee => !!employee);
+        push({
+          id: `h-${Date.now()}-project-members-updated`, authorId: 'assistant', roleId: 'custom',
+          content: `已直接修正正在等待批准的「${contextualProject.title}」，不需要你再说团队名。现在的候选成员是：${selectedEmployees.map((employee) => `${employee.name}（${employee.title}）`).join('、')}。${isTeamMemberCorrectionRequest(enriched) ? '原先与任务能力不匹配的候选已从方案中移除。' : ''}`,
+          mentions: nextIds, timestamp: Date.now(), kind: 'text',
+        });
+        return;
+      }
+      const preferredTeamIds = [contextualProject?.teamId].filter((teamId): teamId is string => !!teamId);
+      const targetTeam = explicitlyNamedTeam ?? resolveTargetTeam(enriched, state.teams, msgs.slice(-12).map((message) => message.content), preferredTeamIds);
       if (!targetTeam) {
         push({
           id: `h-${Date.now()}-team-unclear`, authorId: 'assistant', roleId: 'custom',
-          content: '我已经找到你要补充团队成员的意思，但当前有多个团队，无法可靠判断要改哪一个。请告诉我团队名称，我会直接添加，不会让你去别处重复操作。',
+          content: '我确认这是团队成员调整，但当前没有待批准项目或正在运行的团队可作为上下文，而且存在多个历史团队。请告诉我团队名称，我会直接处理。',
           mentions: [], timestamp: Date.now(), kind: 'text',
         });
         return;
@@ -260,7 +355,7 @@ export default function AssistantChat() {
       if (!mentionedEmployees.length) {
         push({
           id: `h-${Date.now()}-employee-unclear`, authorId: 'assistant', roleId: 'custom',
-          content: `我已确认要修改「${targetTeam.name}」，但这句话里没有匹配到办公室中的真实员工姓名。请直接说姓名，或在团队成员栏点“添加成员”选择。`,
+          content: `我已确认要修改「${targetTeam.name}」，但这句话里没有匹配到办公室中的真实员工姓名或职位。请直接说姓名或职位，也可以在团队成员栏点“添加成员”选择。`,
           mentions: [], timestamp: Date.now(), kind: 'text',
         });
         return;
@@ -283,40 +378,61 @@ export default function AssistantChat() {
       return;
     }
 
-    // Team formation is a control-plane action. Handle it before the model loop
-    // so a supervisor cannot spend the task budget reading files instead.
     const explicitTeamDispatch = shouldExplicitlyDispatchTeam(enriched);
     const specialistMembers = findSpecialistMembers(enriched, liveEmployees);
     const shouldAutoDispatchSpecialist = !explicitTeamDispatch && specialistMembers.length > 0;
-    if (explicitTeamDispatch || shouldAutoDispatchSpecialist) {
-      if (busy) {
-        executionControl.stop();
-        steeringMessagesRef.current.splice(0);
-        setStatus('已停止当前路线，正在建立团队任务草案…');
-      }
-      const recentUserContext = msgs
+    let taskDecisionCompilation: Awaited<ReturnType<typeof compileTaskDecision>> | undefined;
+    if (busy && (explicitTeamDispatch || shouldAutoDispatchSpecialist)) {
+      executionControl.stop();
+      steeringMessagesRef.current.splice(0);
+    }
+    if (!busy || explicitTeamDispatch || shouldAutoDispatchSpecialist) {
+      setBusy(true);
+      setStatus('正在理解当前需求…');
+      const decisionTurns: ChatTurn[] = [
+        ...msgs.filter(isDialogMessage).slice(-8).map((message) => ({
+          role: message.roleId === 'human' ? 'user' as const : 'assistant' as const,
+          content: message.content,
+        })),
+        { role: 'user', content: enriched },
+      ];
+      taskDecisionCompilation = await compileTaskDecision(decisionTurns, getRegisteredTools(), resolveChatSettings());
+      setBusy(false);
+      setStatus('');
+    }
+    const semanticTeamDispatch = taskDecisionCompilation?.decision.primaryRoute === 'team_dispatch'
+      || taskDecisionCompilation?.decision.teamPolicy?.requiresTeam === true;
+
+    // The model understands the request first; this control-plane executor then
+    // builds a reviewable team proposal without granting the model direct access.
+    if (explicitTeamDispatch || shouldAutoDispatchSpecialist || semanticTeamDispatch) {
+      if (busy) setStatus('已停止当前路线，正在建立团队任务草案…');
+      const recentUserMessages = msgs
         .filter((message) => message.roleId === 'human')
-        .slice(-4)
-        .map((message) => message.content)
-        .join('\n');
-      const dispatchRequest = explicitTeamDispatch && recentUserContext
-        ? `${recentUserContext}\n\n老板最新调度要求：${enriched}`
-        : enriched;
+        .slice(-8)
+        .map((message) => message.content);
+      const dispatchRequest = resolveDispatchRequest(enriched, recentUserMessages);
+      const decision = taskDecisionCompilation!.decision;
+      const requiredCapabilities = decision.requiredCapabilities ?? [];
+      const selectionRequest = [dispatchRequest, ...requiredCapabilities].filter(Boolean).join('\n所需能力：');
       const existing = state.projects.find((project) => project.status === 'awaiting_approval' && project.request === dispatchRequest);
-      if (!existing) createProjectDraft({ title: (recentUserContext || content).slice(0, 40), request: dispatchRequest });
-      const members = specialistMembers.length && !explicitTeamDispatch
-        ? specialistMembers
-        : matchProjectMembers(liveEmployees, dispatchRequest)
-          .map((member) => liveEmployees.find((employee) => employee.id === member.employeeId))
-          .filter((employee): employee is Employee => !!employee);
+      if (!existing) createProjectDraft({
+        title: content.slice(0, 40),
+        request: dispatchRequest,
+        requiredCapabilities,
+        decisionReason: decision.decisionReason,
+      });
+      const members = matchProjectMembers(liveEmployees, selectionRequest)
+        .map((member) => liveEmployees.find((employee) => employee.id === member.employeeId))
+        .filter((employee): employee is Employee => !!employee);
       const memberText = members.length
         ? `已识别候选成员：${members.map((employee) => `${employee.name}（${employee.title}）`).join('、')}。`
         : '当前没有匹配到在线专员，草案会标记为待补充成员。';
       push({
         id: `h-${Date.now()}-dispatch`, authorId: 'assistant', roleId: 'custom',
-        content: explicitTeamDispatch
-          ? `已识别为团队调度请求，已建立待授权方案，不再自行读取工作区或消耗执行预算。${memberText}请直接在这条消息下方批准或驳回。`
-          : `这个任务适合由专员完成，已停止助理直接产出并建立待授权方案。${memberText}请直接在这条消息下方批准或驳回。`,
+        content: explicitTeamDispatch || semanticTeamDispatch
+          ? `模型已先理解任务，再由调度器建立待授权方案。判断依据：${decision.decisionReason}。${memberText}请直接在这条消息下方批准或驳回。`
+          : `模型判断这个任务适合由专员完成，已建立待授权方案。判断依据：${decision.decisionReason}。${memberText}请直接在这条消息下方批准或驳回。`,
         mentions: members.map((employee) => employee.id), timestamp: Date.now(), kind: 'text',
       });
       return;
@@ -464,6 +580,7 @@ ${employeeDirectory}
         referenceContext: referenceResolution.context,
         referenceSourceUrl: referenceResolution.references[0]?.sourceUrl,
         extraSystemContext: [organizationContext, layeredMemoryContext, selectedSkillGuide, skillContext, referenceResolution.context].filter(Boolean).join('\n\n'),
+        taskDecisionCompilation,
         shouldStop: executionControl.shouldStop,
         waitIfPaused: executionControl.waitIfPaused,
         consumeSteeringMessages: () => steeringMessagesRef.current.splice(0),
@@ -694,6 +811,33 @@ ${employeeDirectory}
     window.requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
+  const handleStartNewChat = () => {
+    if (busy) return;
+    if (msgs.length) {
+      const nextArchives = [archiveFromMessages(msgs), ...chatArchives].slice(0, 20);
+      setChatArchives(nextArchives);
+      saveChatArchives(nextArchives);
+    }
+    setMsgs([]);
+    setSkillRefs([]);
+    setAttachments([]);
+    localStorage.removeItem(LS_KEY);
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
+  const handleRestoreArchive = (archiveId: string) => {
+    if (!archiveId || busy) return;
+    const target = chatArchives.find((archive) => archive.id === archiveId);
+    if (!target) return;
+    const remaining = chatArchives.filter((archive) => archive.id !== archiveId);
+    const nextArchives = msgs.length ? [archiveFromMessages(msgs), ...remaining].slice(0, 20) : remaining;
+    setChatArchives(nextArchives);
+    saveChatArchives(nextArchives);
+    setMsgs(target.messages);
+    saveHistory(target.messages);
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -815,6 +959,13 @@ ${employeeDirectory}
           <div className={`chat-composer ${fileDrop.dragActive ? 'is-file-dragging' : ''}`} {...fileDrop.dropProps}>
             {fileDrop.dragActive && <div className="chat-file-drop-overlay"><strong>松开添加文件</strong><span>文件将真实写入本次聊天工作区</span></div>}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+              <button className="btn btn-sm composer-icon-btn" onClick={handleStartNewChat} disabled={busy} title={busy ? '请先暂停或停止当前任务' : '保存当前对话并开启空白上下文'} aria-label="新对话"><PlusOutlined /></button>
+              {chatArchives.length > 0 && (
+                <select className="assistant-chat-history-select" value="" onChange={(event) => handleRestoreArchive(event.target.value)} disabled={busy} aria-label="历史对话">
+                  <option value="">历史对话</option>
+                  {chatArchives.map((archive) => <option key={archive.id} value={archive.id}>{archive.title}</option>)}
+                </select>
+              )}
               <button
                 className={`btn btn-sm ${showOutputs ? 'btn-primary' : ''}`}
                 onClick={() => setShowOutputs(!showOutputs)}

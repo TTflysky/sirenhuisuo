@@ -17,6 +17,7 @@ import type {
   DiscussionProgress,
   DiscussionTriggerInput,
   Project,
+  ProjectMember,
   TaskRun,
   SkillUsageEvidence,
 } from './types';
@@ -47,6 +48,7 @@ import { getConnectorTools } from './engine/connectorTools';
 import { buildLayeredMemoryContext } from './data/layeredMemory';
 import { classifyTeamMention } from './engine/teamMentionRouting.mjs';
 import { cleanExecutionDisplay } from './engine/executionDisplay.mjs';
+import { classifyLocalOfficeQuery, formatLocalOfficeAnswer } from './engine/officeDirectory';
 
 // ===== Action =====
 type Action =
@@ -308,7 +310,8 @@ export interface StoreCtx {
   addEmployee: (name: string, title: string, role: OpcRoleId, avatar: string, avatarKind: 'preset' | 'custom', statusColor?: string, prompt?: string, avatarFrame?: import('./types').AvatarFrameConfig) => void;
   createTeam: (name: string, icon: string, memberIds: string[], description?: string) => void;
   addTeamMembers: (teamId: string, memberIds: string[]) => Employee[];
-  createProjectDraft: (input: { title: string; request: string; steps?: string[]; expectedOutputs?: string[] }) => void;
+  setProjectMembers: (projectId: string, memberIds: string[]) => ProjectMember[];
+  createProjectDraft: (input: { title: string; request: string; steps?: string[]; expectedOutputs?: string[]; requiredCapabilities?: string[]; decisionReason?: string }) => void;
   approveProject: (projectId: string) => void;
   rejectProject: (projectId: string, reason?: string) => void;
   archiveProject: (projectId: string) => void;
@@ -611,7 +614,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return added;
   };
 
-  const createProjectDraft = (input: { title: string; request: string; steps?: string[]; expectedOutputs?: string[] }) => {
+  const setProjectMembers = (projectId: string, memberIds: string[]): ProjectMember[] => {
+    const current = stateRef.current;
+    const project = current.projects.find((item) => item.id === projectId);
+    if (!project || project.status !== 'awaiting_approval') return [];
+    const employees = client.fetchInitial().employees;
+    const selectionRequest = [project.request, ...(project.requiredCapabilities ?? [])].filter(Boolean).join('\n所需能力：');
+    const recommended = new Map(matchProjectMembers(employees, selectionRequest).map((member) => [member.employeeId, member.reason]));
+    const members = [...new Set(memberIds)]
+      .filter((employeeId) => employees.some((employee) => employee.id === employeeId))
+      .map((employeeId) => ({ employeeId, reason: recommended.get(employeeId) ?? '按老板最新的成员调整加入' }));
+    dispatch({ type: 'UPDATE_PROJECT', id: projectId, partial: { members } });
+    return members;
+  };
+
+  const createProjectDraft = (input: { title: string; request: string; steps?: string[]; expectedOutputs?: string[]; requiredCapabilities?: string[]; decisionReason?: string }) => {
     const now = Date.now();
     const latestEmployees = client.fetchInitial().employees;
     const project: Project = {
@@ -620,7 +637,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       request: input.request.trim(),
       steps: input.steps?.filter(Boolean) ?? [],
       expectedOutputs: input.expectedOutputs?.filter(Boolean) ?? [],
-      members: matchProjectMembers(latestEmployees, input.request),
+      members: matchProjectMembers(latestEmployees, [input.request, ...(input.requiredCapabilities ?? [])].filter(Boolean).join('\n所需能力：')),
+      requiredCapabilities: input.requiredCapabilities?.filter(Boolean),
+      decisionReason: input.decisionReason?.trim(),
       status: 'awaiting_approval', createdAt: now, updatedAt: now,
     };
     dispatch({ type: 'CREATE_PROJECT', project });
@@ -1910,6 +1929,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         });
         return;
       }
+      const localOfficeQuery = classifyLocalOfficeQuery(content);
+      if (localOfficeQuery) {
+        dispatch({
+          type: 'APPEND_CHAT', teamId,
+          msgs: [{
+            id: `msg-office-fact-${Date.now()}`, authorId: 'assistant', roleId: 'custom',
+            content: formatLocalOfficeAnswer(localOfficeQuery, current.employees, current.teams),
+            mentions: [], timestamp: Date.now(), kind: 'text',
+          }],
+        });
+        return;
+      }
       if (isTeamMemberAdditionRequest(content)) {
         const mentionedEmployees = resolveMentionedEmployees(content, current.employees);
         const newMembers = mentionedEmployees.filter((employee) => !team.memberIds.includes(employee.id));
@@ -2076,6 +2107,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         addEmployee,
         createTeam,
         addTeamMembers,
+        setProjectMembers,
         createProjectDraft,
         approveProject,
         rejectProject,

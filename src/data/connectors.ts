@@ -1,3 +1,5 @@
+import { APP_VERSION } from '../appVersion';
+
 const LS_CONNECTORS = 'hermes_office_connectors';
 
 /* ===== 类型定义 ===== */
@@ -548,7 +550,7 @@ export async function checkConnector(c: Connector): Promise<{ status: Connector[
       await mcpRequest(c, 'initialize', {
         protocolVersion: '2025-03-26',
         capabilities: {},
-        clientInfo: { name: 'hermes-office-pro', version: '1.0.0' },
+        clientInfo: { name: 'hermes-office-pro', version: APP_VERSION },
       }, 5000);
       const listed = await mcpRequest(c, 'tools/list', {}, 10000);
       const tools = Array.isArray(listed?.tools) ? listed.tools : [];
