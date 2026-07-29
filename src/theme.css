@@ -464,8 +464,19 @@ html, body, #root, .app-root {
   background: color-mix(in srgb, var(--surface) 62%, transparent); color: var(--text-secondary);
   cursor: pointer; text-align: left; opacity: 0.76;
   transition: opacity 160ms ease, background-color 160ms ease, border-color 160ms ease;
-  animation: execution-flow 1.8s ease-in-out infinite;
 }
+.execution-event.is-live {
+  animation: execution-flow 1.8s ease-in-out infinite;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--apple-accent) 10%, transparent), 0 5px 18px color-mix(in srgb, var(--apple-accent) 12%, transparent);
+}
+.execution-event.is-live .execution-event-icon {
+  animation: execution-icon-pulse 1.2s ease-in-out infinite;
+}
+.execution-event.is-completed { opacity: .68; }
+.chat-team-hydrating { align-items: center; justify-content: center; }
+.chat-team-hydrating-card { display: flex; flex-direction: column; align-items: center; gap: 8px; max-width: 300px; padding: 24px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); text-align: center; box-shadow: var(--apple-shadow); }
+.chat-team-hydrating-card > svg { font-size: 28px; color: var(--apple-accent); }
+.chat-team-hydrating-card small { color: var(--text-muted); line-height: 1.5; }
 .execution-event:hover, .execution-event.expanded { opacity: 1; background: var(--surface-raised); }
 .execution-event-icon { color: var(--apple-accent); font-weight: 700; text-align: center; }
 .execution-event-summary { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -563,7 +574,8 @@ html, body, #root, .app-root {
 .chat-jump-marker:hover::after { content: attr(data-tooltip); position: absolute; right: calc(100% + 8px); top: 50%; transform: translateY(-50%); z-index: 30; width: 210px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-raised); color: var(--text); box-shadow: var(--apple-shadow); font-size: 10px; line-height: 1.4; text-align: left; white-space: normal; pointer-events: none; }
 .chat-jump-bottom { width: 24px; height: 24px; padding: 0; border: 0; border-radius: 5px; background: var(--bg-deep); color: var(--text-secondary); cursor: pointer; }.chat-jump-bottom:hover { color: var(--text); }
 .workspace-resize-handle { width: 7px; min-width: 7px; cursor: col-resize; background: var(--bg-deep); border-left: 1px solid var(--border-light); border-right: 1px solid var(--border-light); position: relative; z-index: 5; }.workspace-resize-handle::after { content: '⋮'; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: var(--text-muted); font-size: 16px; }.workspace-resize-handle:hover { background: rgba(10,132,255,.16); }
-@keyframes execution-flow { 0%, 100% { border-color: rgba(128, 132, 145, 0.24); } 50% { border-color: rgba(10, 132, 255, 0.52); } }
+@keyframes execution-flow { 0%, 100% { border-color: rgba(128, 132, 145, 0.24); } 50% { border-color: rgba(10, 132, 255, 0.72); } }
+@keyframes execution-icon-pulse { 0%, 100% { opacity: .55; transform: scale(.92); } 50% { opacity: 1; transform: scale(1.08); } }
 
 .chat-only-titlebar,
 .dm-peer,

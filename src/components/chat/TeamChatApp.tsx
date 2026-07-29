@@ -20,6 +20,7 @@ import { useFileDrop } from '../../hooks/useFileDrop';
 import { buildTaskReplay, searchTaskRunHistory } from '../../engine/taskHistory.mjs';
 import { getTaskLedgerEvents, getTaskLedgerIntegrity, readTaskLedger } from '../../data/taskRuns';
 import type { TaskLedgerEvent, TaskLedgerIntegrity, TaskWorkerCommandRecord } from '../../electron';
+import { cleanExecutionDisplay } from '../../engine/executionDisplay.mjs';
 
 interface Props {
   teamId: string;
@@ -110,6 +111,7 @@ export default function TeamChatApp({ teamId }: Props) {
   const jumpMessages = (team?.chatMessages ?? []).filter((message) => message.kind !== 'execution').slice(-24);
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
   const [progressNow, setProgressNow] = useState(Date.now());
+  const executionIsLive = Boolean(myProgress) || activeTaskRuns.some((run) => run.status === 'queued' || run.status === 'running');
   const historyMatches = useMemo(() => taskHistoryQuery.trim()
     ? searchTaskRunHistory(state.taskRuns, taskHistoryQuery, { teams: state.teams, limit: 12 })
     : [], [taskHistoryQuery, state.taskRuns, state.teams]);
@@ -530,7 +532,7 @@ export default function TeamChatApp({ teamId }: Props) {
                   {isExecution ? (
                     <button
                       type="button"
-                      className={`execution-event${expandedExecutionIds.has(executionGroupId) ? ' expanded' : ''}`}
+                      className={`execution-event${expandedExecutionIds.has(executionGroupId) ? ' expanded' : ''}${executionIsLive ? ' is-live' : ' is-completed'}`}
                       onClick={() => setExpandedExecutionIds((previous) => {
                         const next = new Set(previous);
                         if (next.has(executionGroupId)) next.delete(executionGroupId); else next.add(executionGroupId);
@@ -543,7 +545,7 @@ export default function TeamChatApp({ teamId }: Props) {
                       <span className="execution-event-icon">...</span>
                       <span className="execution-event-summary">执行过程 · {executionMessages.length} 条 · {author?.name ?? '成员'} {toolSummary}</span>
                       <span className="execution-event-action">{expandedExecutionIds.has(executionGroupId) ? '收起' : '展开'}</span>
-                      {expandedExecutionIds.has(executionGroupId) && <div className="execution-event-detail">{executionMessages.map((event) => <pre key={event.id}>{event.content}</pre>)}</div>}
+                      {expandedExecutionIds.has(executionGroupId) && <div className="execution-event-detail">{executionMessages.map((event) => <pre key={event.id}>{cleanExecutionDisplay(event.content)}</pre>)}</div>}
                     </button>
                   ) : msg.kind === 'task' ? (
                     <div className="task-card-msg" style={isHuman ? { marginLeft: 'auto', maxWidth: '85%' } : {}}>

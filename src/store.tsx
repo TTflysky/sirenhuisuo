@@ -47,6 +47,7 @@ import { CONNECTOR_PRESETS, loadConnectors } from './data/connectors';
 import { getConnectorTools } from './engine/connectorTools';
 import { buildLayeredMemoryContext } from './data/layeredMemory';
 import { classifyTeamMention } from './engine/teamMentionRouting.mjs';
+import { cleanExecutionDisplay } from './engine/executionDisplay.mjs';
 
 // ===== Action =====
 type Action =
@@ -135,6 +136,10 @@ function reducer(s: AppState, a: Action): AppState {
     case 'ADD_TEAM': {
       const next = [...s.teams, a.team];
       client.saveTeams(next);
+      // Team metadata and its first messages use separate storage keys. Persist
+      // the welcome message here as well so a newly opened child window can
+      // render the same team immediately.
+      if (a.team.chatMessages?.length) client.appendChat(a.team.id, a.team.chatMessages);
       return { ...s, teams: next };
     }
 
@@ -320,6 +325,7 @@ const SKIP_BROADCAST = new Set<Action['type']>(['INIT', 'HYDRATE_TASK_RUNS']);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, rawDispatch] = useReducer(reducer, initialState);
+  const nativeWorkingEmployeesRef = React.useRef<Set<string>>(new Set());
 
   // 标记当前是否正在应用「来自其他窗口」的广播，避免回环广播
   const applyingRemote = React.useRef(false);
@@ -349,15 +355,37 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const appState = client.fetchInitial();
     dispatch({ type: 'INIT', state: appState });
+    const projectNativeEmployeeStatus = (runs: TaskRun[]) => {
+      const active = new Map<string, string>();
+      for (const run of runs) {
+        if (!['queued', 'running'].includes(run.status)) continue;
+        for (const step of run.steps) {
+          if (step.status === 'queued' || step.status === 'running') {
+            active.set(step.employeeId, `执行：${step.title}`);
+          }
+        }
+      }
+      for (const [employeeId, task] of active) {
+        dispatch({ type: 'UPDATE_EMPLOYEE', id: employeeId, partial: { isWorking: true, currentTask: task } });
+      }
+      for (const employeeId of nativeWorkingEmployeesRef.current) {
+        if (!active.has(employeeId)) dispatch({ type: 'UPDATE_EMPLOYEE', id: employeeId, partial: { isWorking: false, currentTask: undefined } });
+      }
+      nativeWorkingEmployeesRef.current = new Set(active.keys());
+    };
     void hydrateTaskRunsFromMainStore().then(async (runs) => {
       if (runs) {
         await syncNativeRunArtifacts(runs);
         dispatch({ type: 'HYDRATE_TASK_RUNS', runs });
+        projectNativeEmployeeStatus(runs);
       }
     });
     const unsubscribeWorker = window.electronAPI?.onTaskWorkerChanged?.(() => {
       void hydrateTaskRunsFromMainStore().then((runs) => {
-        if (runs) dispatch({ type: 'HYDRATE_TASK_RUNS', runs });
+        if (runs) {
+          dispatch({ type: 'HYDRATE_TASK_RUNS', runs });
+          projectNativeEmployeeStatus(runs);
+        }
       });
     });
     const unsubscribeExecution = window.electronAPI?.onTaskExecutionChanged?.((event) => {
@@ -373,6 +401,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (runs) {
           await syncNativeRunArtifacts(runs);
           dispatch({ type: 'HYDRATE_TASK_RUNS', runs });
+          projectNativeEmployeeStatus(runs);
         }
       });
     });
@@ -597,7 +626,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       name: project.title,
       icon: '📌', memberIds, projectId,
       chatMessages: [{ id: `msg-project-${Date.now()}`, authorId: 'assistant', roleId: 'custom',
-        content: `项目已批准。驴狗蛋助手将按既定步骤调度成员，最终产出须经审查后交付。`, mentions: memberIds, timestamp: Date.now(), kind: 'text' }],
+        content: `收到项目需求：${project.request.slice(0, 240)}\n需求复述：${project.request.slice(0, 240)}\n我已拆解为既定执行顺序，后一步等待前一步真实结果后再开始：\n${project.steps.map((step, index) => `${index + 1}. ${step}`).join('\n')}\n${memberIds.map((id) => `@${stateRef.current.employees.find((employee) => employee.id === id)?.name ?? id}`).join('、')} 请按各自步骤执行，最终由审查者验收。`, mentions: memberIds, timestamp: Date.now(), kind: 'text' }],
       tasks: [],
     };
     dispatch({ type: 'ADD_TEAM', team });
@@ -637,7 +666,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   };
 
   const openTeamChat = (teamId: string) => {
-    if (!state.teams.some((team) => team.id === teamId)) return;
+    const localTeam = state.teams.find((team) => team.id === teamId);
+    if (!localTeam) {
+      // A project approval can be broadcast to another renderer before its
+      // local store has received ADD_TEAM. Refresh the durable snapshot before
+      // deciding that the requested team is invalid.
+      const persisted = client.fetchInitial();
+      const persistedTeam = persisted.teams.find((team) => team.id === teamId);
+      if (!persistedTeam) return;
+      dispatch({
+        type: 'INIT',
+        state: { ...state, employees: persisted.employees, teams: persisted.teams, projects: persisted.projects, taskRuns: persisted.taskRuns },
+      });
+    }
     openChatWindow('team-chat', teamId);
   };
 
@@ -915,14 +956,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               authorId: emp.id,
               authorName: emp.name,
               roleId: emp.role,
-              content: `执行过程 · ${emp.name} · ${stepSnapshot?.title ?? '当前步骤'} · ${toolEvents.length} 项工具动作\n${toolEvents.map((event) => `- ${event.detail}`).join('\n')}`,
+              content: `执行过程 · ${emp.name} · ${stepSnapshot?.title ?? '当前步骤'} · ${toolEvents.length} 项工具动作\n${toolEvents.map((event) => `- ${cleanExecutionDisplay(event.detail, 320)}`).join('\n')}`,
               mentions: [], timestamp: Date.now(), kind: 'execution', discussionId: opts?.discussionId,
             }
             : undefined;
           // Keep the chat readable: one expandable summary per completed step.
           // Full tool evidence remains in the task run and replay panels.
           dispatch({ type: 'APPEND_CHAT', teamId, msgs: executionSummary ? [executionSummary, msg] : [msg] });
-          dispatch({ type: 'UPDATE_EMPLOYEE', id: emp.id, partial: { isWorking: false } });
           let reportedStepId: string | undefined;
           let reportedStepStatus: 'completed' | 'failed' | undefined;
           updateRun((run) => {
@@ -981,7 +1021,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               reportedStepStatus = step.status;
             }
           });
-          if (reportedStepId && reportedStepStatus) {
+          if (!stepId || (reportedStepId && reportedStepStatus)) {
+            dispatch({ type: 'UPDATE_EMPLOYEE', id: emp.id, partial: { isWorking: false, currentTask: undefined } });
             void reportAdapterCheckpoint({
               kind: reportedStepStatus === 'failed' ? 'step_failed' : 'step_completed',
               stepId: reportedStepId,
@@ -1010,6 +1051,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // Tool calls update the structured task evidence below. They are not
           // appended as individual chat bubbles; the step summary is emitted
           // once in onMessage after the member has returned.
+          dispatch({
+            type: 'UPDATE_EMPLOYEE',
+            id: emp.id,
+            partial: { isWorking: true, currentTask: `姝ｅ湪璋冪敤 ${toolName}` },
+          });
           updateRun((run) => {
             const step = run.steps.find((item) => item.id === stepId) ?? run.steps.find((item) => item.employeeId === emp.id && item.status === 'running');
             if (step) {
@@ -1946,11 +1992,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const mayDelegate = teamCheckRequested || continuesSupervisorPlan || actionableRequest;
       const taskRequest = buildTeamTaskRequest(team, content);
       const requestedMemberIds = mayDelegate ? matchTeamMembers(team, current.employees, taskRequest, directMentions) : [];
+      const planned = requestedMemberIds.length > 0 ? buildTaskPlan(team, current.employees, taskRequest, requestedMemberIds) : [];
+      if (planned.length > 0) {
+        const planText = planned.map((step) => {
+          const employee = current.employees.find((item) => item.id === step.employeeId);
+          return `${step.order}. @${employee?.name ?? step.employeeId}：${step.assignment}`;
+        }).join('\n');
+        dispatch({
+          type: 'APPEND_CHAT', teamId,
+          msgs: [{
+            id: `msg-dispatch-plan-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            authorId: 'assistant', roleId: 'custom',
+            content: `收到需求：${content.slice(0, 240)}\n需求复述：${taskRequest.slice(0, 240)}\n我已拆解为以下顺序，后一步等待前一步真实结果后再开始：\n${planText}`,
+            mentions: requestedMemberIds, timestamp: Date.now(), kind: 'text',
+          }],
+        });
+      }
       const supervisorResult = await enqueueAssistantSupervisor(team, content, mayDelegate);
       await relayAssistantMentions(team, supervisorResult);
       if (!mayDelegate) return;
       if (requestedMemberIds.length > 0) {
-        const planned = buildTaskPlan(team, current.employees, taskRequest, requestedMemberIds);
         const sequence = planned.map((step) => `${step.order}. ${step.title}`).join(' → ');
         dispatch({
           type: 'APPEND_CHAT',

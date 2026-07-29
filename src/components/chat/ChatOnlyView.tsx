@@ -3,6 +3,7 @@ import { useStore } from '../../store';
 import DmChatApp from './DmChatApp';
 import TeamChatApp from './TeamChatApp';
 import AssistantChat from './AssistantChat';
+import { fetchInitial } from '../../data/hermesClient';
 import { BorderOutlined, CloseOutlined, LockOutlined, MessageOutlined, MinusOutlined, RobotOutlined, TeamOutlined, UnlockOutlined } from '@ant-design/icons';
 import { APP_VERSION } from '../../appVersion';
 import { APP_BRAND_NAME } from '../../brand';
@@ -27,9 +28,10 @@ function parseChatHash(hash: string): { type: string; id: string } {
  * 标题栏用 -webkit-app-region:drag 实现窗口拖动，可拖到屏幕任意位置。
  */
 export default function ChatOnlyView({ hash }: Props) {
-  const { state } = useStore();
+  const { state, dispatch } = useStore();
   const { type, id } = parseChatHash(hash);
   const [locked, setLocked] = useState(false);
+  const [teamHydrating, setTeamHydrating] = useState(type === 'team-chat' || type === 'team');
   const canLockToMain = type === 'dm-chat' || type === 'dm' || type === 'team-chat' || type === 'team';
 
   useEffect(() => {
@@ -38,6 +40,41 @@ export default function ChatOnlyView({ hash }: Props) {
       .then(({ locked: value }) => setLocked(value))
       .catch(() => {});
   }, [canLockToMain, id, type]);
+
+  useEffect(() => {
+    if (type !== 'team-chat' && type !== 'team') return;
+    if (state.teams.some((team) => team.id === id)) {
+      setTeamHydrating(false);
+      return;
+    }
+    let cancelled = false;
+    let attempts = 0;
+    let timer: number | undefined;
+    const hydrate = () => {
+      if (cancelled) return;
+      const persisted = fetchInitial();
+      const team = persisted.teams.find((item) => item.id === id);
+      if (team) {
+        dispatch({
+          type: 'INIT',
+          state: { ...state, employees: persisted.employees, teams: persisted.teams, projects: persisted.projects, taskRuns: persisted.taskRuns },
+        });
+        setTeamHydrating(false);
+        return;
+      }
+      attempts += 1;
+      if (attempts >= 8) {
+        setTeamHydrating(false);
+        return;
+      }
+      timer = window.setTimeout(hydrate, 120 * attempts);
+    };
+    hydrate();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [dispatch, id, state, type]);
 
   const toggleLock = async () => {
     const result = await window.electronAPI?.setChatLock?.({
@@ -64,6 +101,19 @@ export default function ChatOnlyView({ hash }: Props) {
     title = '驴狗蛋助手';
     subtitle = '执行、调度与交付';
     titleIcon = <RobotOutlined />;
+  }
+
+  if ((type === 'team-chat' || type === 'team') && !state.teams.some((team) => team.id === id)) {
+    return (
+      <div className="chat-only-view chat-team-hydrating">
+        <div className="chat-team-hydrating-card">
+          <TeamOutlined />
+          <strong>{teamHydrating ? '正在同步团队…' : '团队窗口无效'}</strong>
+          <small>{teamHydrating ? '正在等待批准结果写入本地团队列表' : '这个窗口没有对应的团队记录，可以关闭后重新打开'}</small>
+          {!teamHydrating && <button type="button" className="btn btn-sm" onClick={() => window.electronAPI?.close()}>关闭窗口</button>}
+        </div>
+      </div>
+    );
   }
 
   return (
