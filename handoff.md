@@ -1,5 +1,35 @@
 # 太极项目当前交接
 
+## v2.1.0 当前状态（2026-07-29）
+
+- 当前源码版本：`v2.1.0`。本轮按 Hermes 提交 `41a07f5` 的真实运行链路完成四层对齐：模型决策与公开轨迹、执行循环与分类恢复、工具/Skill 真实调用、记忆与团队协作闭环。
+- 新增 `src/engine/turnLifecycle.mjs`，助手、员工私聊和原生团队 Worker 统一记录目标、公开决定、工具调用/结果、真实证据、上下文压缩、用户插话、预算、退出原因和恢复条件；不保存隐藏思维链。
+- TaskService 升级到协议 v2，持久化 `conversationId`、`turnRuntime`、`turnFinalization`、`turnLifecycle` 和 `lifecycleRecovery`。旧序号或同序号冲突快照不能覆盖新事实，心跳不会冒充真实进展。
+- 主进程对生命周期和恢复胶囊再次脱敏。工具调用通过 `callId` 原子配对，中断恢复后由同一真实证据闭合，避免重复副作用或永久显示“进行中”。
+- 子任务继承父任务已验证产物、引用、生命周期退出状态和恢复胶囊，不继承未验证的口头完成声明。暂停、等待用户、检查点、停止和失败都有独立结局与继续条件。
+- 详细源码映射：`docs/HERMES_RUNTIME_ALIGNMENT_V2.1.md`。专项回归：`npm.cmd run verify:turn-lifecycle`。
+- 已通过：`verify:v2-core-gate`、`verify:v1-core-gate`、`verify:v1-fault-injection`、`verify:turn-lifecycle`、`verify:task-service`、`verify:native-execution`、`build`、`lint` 和 `verify:package`。
+- Windows 安装包：`release/taiji-office-setup-2.1.0.exe`，大小 `174349843` 字节，SHA-256：`EF27766D8AED9D5D5A28321BB7AE6EE5E0EF278738E762112F75DFA42F9B16E9`。`latest.yml` 与安装包版本、大小一致，包内 6 款字体、内置 Skill 和 16 项必需运行文件均已验证。
+- 本机真实 Electron UI 自动化未完成：Electron 33 的 GPU 子进程仍以系统错误 `-1073741515` 在渲染前退出，即使使用独立用户目录和 `--disable-gpu` 也相同。核心、组件合同、构建和包内验证均通过；`verify:foundation-ui` 与 `verify:chat-controls-ui` 留给图形运行环境正常的电脑补跑，不能记录为已通过。
+- GitHub 发布状态：等待本轮提交后执行 `npm.cmd run publish:release`；发布完成后必须再核对远端 `main`、`v2.1.0` tag、安装包大小和 digest。
+
+### 当前问题与下一步
+
+- 办公室电脑先补跑 `npm.cmd run verify:foundation-ui` 和 `npm.cmd run verify:chat-controls-ui`；本机 GPU 环境失败不能通过修改业务代码或跳过断言伪装解决。
+- 提交并推送 `main`、创建 `v2.1.0` Release、核对远端资产大小和 digest；若网络失败，保留本地提交与安装包并在本节记录真实阻塞。
+- 助手和员工聊天进一步迁移到完全由主进程托管的长期后台队列属于后续增量，不在本版伪报完成；当前原生团队 Worker 已由主进程托管。
+
+### 已踩过的坑
+
+- 不能把心跳当作真实进展，否则卡死进程会长期显示“正在工作”。
+- 不能只在渲染端脱敏；TaskService 是持久化边界，必须二次清洗。
+- 生命周期序号相同也不能允许内容冲突覆盖；相同序号只应视为幂等重发。
+- 工具开始和结果必须以同一 `callId` 闭合；恢复时另建记录会导致重复执行或错误验收。
+- `waiting_user`、`paused` 和预算检查点不是普通失败，更不能包装成完成。
+- GitHub 发布成功必须同时满足远端 `main`、tag、Release 资产大小和 SHA-256 一致；网络失败时只能记录阻塞，不能声称已发布。
+
+---
+
 ## 本地续作状态（2026-07-29）
 
 - 当前本地开发版本：`v2.0.1`。本轮完成 SkillHub/GitHub/ZIP/SKILL.md 统一安装闭环、助理/员工/团队三类独立聊天历史、任务与子任务会话归属、父子任务正确恢复顺序、真实进展与进程心跳分离，以及模型/工具无响应时的自动停滞保护。

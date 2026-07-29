@@ -17,6 +17,7 @@ async function main() {
       title: '统一任务服务验收',
       goal: '验证任务可以持久化、产生子任务并记录真实证据',
       idempotencyKey: 'acceptance-001',
+      conversationId: 'conversation-task-service',
       memberSnapshot: [{ id: 'researcher', name: '研究员工', role: 'researcher', modelConfig: { model: 'mock-model' } }],
       steps: [{ id: 'research', title: '检索资料', employeeId: 'researcher' }],
     });
@@ -62,6 +63,7 @@ async function main() {
     const child = await service.createChild(taskId, { employeeId: 'researcher', title: '员工子任务', goal: '执行资料检索' });
     assert.equal(child.ok, true);
     assert.equal(child.task.parentTaskId, taskId);
+    assert.equal(child.task.conversationId, 'conversation-task-service');
     assert.equal(child.task.steps[0].employeeId, 'researcher');
     assert.deepEqual(child.task.memberSnapshot, created.task.memberSnapshot, 'child task must inherit executable team member snapshots');
     const childContext = await service.context(child.task.id);
@@ -93,6 +95,28 @@ async function main() {
     const released = await worker.dispatch({ taskId, type: 'release', requestedBy: 'test', payload: { leaseId: claim.run.worker.leaseId } });
     assert.equal(released.ok, true);
     await service.heartbeat(taskId, { state: 'act', detail: 'native tool is running', workspaceId: 'workspace/task-service', observedAt: 1700000000000 });
+    await service.recordLifecycle(taskId, {
+      lifecycle: {
+        protocolVersion: 1, lifecycleId: 'lifecycle-task-service', turnId: 'turn-task-service',
+        taskId, conversationId: 'conversation-task-service', scope: 'assistant', goal: created.task.goal,
+        deliverableType: 'answer', status: 'running', phase: 'act', sequence: 5,
+        activity: '正在执行真实工具', progressAt: 1700000000500, updatedAt: 1700000000500,
+        events: [{ sequence: 5, type: 'tool_started', activity: '正在执行真实工具', at: 1700000000500, detail: { authorization: 'Bearer task-service-secret' } }],
+      },
+      recovery: { protocolVersion: 1, goal: created.task.goal, resumable: true, token: 'recovery-secret' },
+    });
+    await service.recordLifecycle(taskId, {
+      lifecycle: {
+        protocolVersion: 1, lifecycleId: 'conflict', turnId: 'conflict', taskId,
+        status: 'running', phase: 'observe', sequence: 5, activity: '同序号冲突状态', progressAt: 2, updatedAt: 2,
+      },
+    });
+    await service.recordLifecycle(taskId, {
+      lifecycle: {
+        protocolVersion: 1, lifecycleId: 'stale', turnId: 'stale', taskId,
+        status: 'running', phase: 'observe', sequence: 4, activity: '过期状态', progressAt: 1, updatedAt: 1,
+      },
+    });
     const restartedStore = createTaskRuntimeStore(root);
     const restarted = await createTaskService(restartedStore).read({ taskId });
     assert.equal(restarted.ok, true);
@@ -104,6 +128,15 @@ async function main() {
     assert.equal(restarted.runs[0].references[0].id, 'social-content');
     assert.equal(restarted.runs[0].heartbeat.state, 'act');
     assert.equal(restarted.runs[0].heartbeat.leaseExpiresAt, 1700000090000);
+    assert.equal(restarted.runs[0].conversationId, 'conversation-task-service');
+    assert.equal(restarted.runs[0].turnLifecycle.sequence, 5, '旧生命周期快照不得覆盖新快照');
+    assert.equal(restarted.runs[0].turnLifecycle.activity, '正在执行真实工具');
+    assert.equal(restarted.runs[0].turnLifecycle.events[0].detail.authorization, '[REDACTED]', '主进程必须再次脱敏生命周期');
+    assert.equal(restarted.runs[0].lifecycleRecovery.resumable, true);
+    assert.equal(restarted.runs[0].lifecycleRecovery.token, '[REDACTED]', '恢复胶囊不得持久化凭据');
+    const restoredContext = await createTaskService(restartedStore).context(taskId);
+    assert.equal(restoredContext.turnLifecycle.sequence, 5);
+    assert.equal(restoredContext.lifecycleRecovery.goal, created.task.goal);
     const all = await createTaskService(restartedStore).read({});
     assert.equal(all.runs.length, 3);
     assert.equal(all.integrity.ok, true);

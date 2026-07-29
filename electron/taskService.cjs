@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const path = require('path');
 const { pathToFileURL } = require('url');
 
-const TASK_SERVICE_VERSION = 1;
+const TASK_SERVICE_VERSION = 2;
 const TASK_TYPES = new Set(['assistant', 'dm', 'team', 'child']);
 const ACTIVE_STATUSES = new Set(['queued', 'running', 'awaiting_user', 'paused']);
 const TERMINAL_STATUSES = new Set(['failed', 'completed', 'stopped']);
@@ -58,6 +58,7 @@ function normalizeTaskInput(input = {}) {
     id: text(input.id, 180) || id('task'),
     taskType,
     teamId: text(input.teamId, 180) || `scope:${taskType}`,
+    conversationId: text(input.conversationId, 180) || undefined,
     ownerId: text(input.ownerId, 180) || 'assistant',
     parentTaskId: text(input.parentTaskId, 180) || undefined,
     sourceMessageId: text(input.sourceMessageId, 180) || undefined,
@@ -99,6 +100,35 @@ function appendServiceEvent(task, type, detail, payload = {}) {
   task.serviceEvents = Array.isArray(task.serviceEvents) ? task.serviceEvents : [];
   task.serviceEvents.push({ ts: Date.now(), type, detail: text(detail, 1000), payload: clone(payload) });
   task.serviceEvents = task.serviceEvents.slice(-500);
+}
+
+function normalizeLifecycle(input) {
+  const lifecycle = input?.lifecycle;
+  if (!lifecycle || typeof lifecycle !== 'object' || Array.isArray(lifecycle)) throw new Error('TaskService: lifecycle snapshot is required');
+  const sequence = Math.max(0, Number(lifecycle.sequence) || 0);
+  const status = text(lifecycle.status, 40) || 'running';
+  if (!['running', 'completed', 'waiting_user', 'paused', 'checkpointed', 'stopped', 'failed'].includes(status)) {
+    throw new Error(`TaskService: invalid lifecycle status ${status}`);
+  }
+  return {
+    ...clone(lifecycle),
+    protocolVersion: Math.max(1, Number(lifecycle.protocolVersion) || 1),
+    sequence,
+    status,
+    phase: text(lifecycle.phase, 80) || status,
+    activity: text(lifecycle.activity, 500) || undefined,
+    progressAt: Number(lifecycle.progressAt) || Date.now(),
+    updatedAt: Number(lifecycle.updatedAt) || Date.now(),
+  };
+}
+
+async function sanitizeLifecycleInput(input = {}) {
+  const projectRoot = path.resolve(__dirname, '..');
+  const lifecycleEngine = await import(pathToFileURL(path.join(projectRoot, 'src/engine/turnLifecycle.mjs')).href);
+  return {
+    lifecycle: lifecycleEngine.sanitizeLifecycleValue(input.lifecycle),
+    recovery: lifecycleEngine.sanitizeLifecycleValue(input.recovery),
+  };
 }
 
 function updateStep(task, stepId, mutate) {
@@ -318,6 +348,7 @@ function createTaskService(store) {
       taskType: 'child',
       parentTaskId,
       teamId: input.teamId || parent?.teamId,
+      conversationId: input.conversationId || parent?.conversationId,
       memberSnapshot: input.memberSnapshot || parent?.memberSnapshot,
       steps: input.steps || [{ id: 'step-1', title: input.title || '员工子任务', assignment, employeeId: input.employeeId }],
       idempotencyKey: input.idempotencyKey || `child:${parentTaskId}:${input.employeeId || input.title || input.goal}`,
@@ -332,6 +363,8 @@ function createTaskService(store) {
           acceptanceCriteria: list(parent.acceptanceCriteria),
           verifiedArtifacts: clone(inheritedArtifacts),
           references: clone(inheritedReferences),
+          parentLifecycleRecovery: clone(parent.lifecycleRecovery),
+          parentLifecycleExit: clone(parent.turnLifecycle?.exit),
           capturedAt: Date.now(),
         };
         child.references = [...inheritedReferences, ...(child.references || [])].filter((item, index, all) => all.findIndex((candidate) => candidate.id === item.id) === index).slice(-60);
@@ -358,7 +391,47 @@ function createTaskService(store) {
       references: (task.references || []).slice(-limit).map(clone),
       completedSteps: (task.steps || []).filter((step) => step.status === 'completed').slice(-limit).map((step) => ({ id: step.id, title: step.title, output: clone(step.output) })),
       unresolvedIssues: [task.lastError, ...(task.steps || []).filter((step) => step.status === 'failed').map((step) => step.lastError)].filter(Boolean).slice(-limit),
+      turnLifecycle: clone(task.turnLifecycle),
+      lifecycleRecovery: clone(task.lifecycleRecovery),
     };
+  }
+
+  async function recordLifecycle(taskId, input = {}) {
+    const safeInput = await sanitizeLifecycleInput(input);
+    const incoming = normalizeLifecycle(safeInput);
+    return update(taskId, (task) => {
+      const currentSequence = Number(task.turnLifecycle?.sequence) || 0;
+      if (task.turnLifecycle && incoming.sequence <= currentSequence) return;
+      task.turnLifecycle = incoming;
+      if (safeInput.recovery && typeof safeInput.recovery === 'object') task.lifecycleRecovery = clone(safeInput.recovery);
+      if (incoming.status === 'waiting_user') {
+        task.status = 'awaiting_user';
+        task.phase = 'awaiting_user';
+        task.waitingFor = text(incoming.exit?.waitingFor || incoming.recovery?.reason, 1200) || task.waitingFor;
+      } else if (incoming.status === 'paused' || incoming.status === 'checkpointed') {
+        task.status = 'paused';
+        task.phase = 'blocked';
+        task.waitingFor = undefined;
+      } else if (incoming.status === 'stopped') {
+        task.status = 'stopped';
+        task.phase = 'blocked';
+        task.waitingFor = undefined;
+      } else if (incoming.status === 'failed') {
+        task.status = 'failed';
+        task.phase = 'blocked';
+        task.waitingFor = undefined;
+      }
+      const previousType = task.serviceEvents?.at(-1)?.payload?.lifecycleType;
+      const lifecycleType = incoming.events?.at(-1)?.type;
+      if (lifecycleType && lifecycleType !== previousType) {
+        appendServiceEvent(task, 'lifecycle_advanced', incoming.activity || lifecycleType, {
+          lifecycleType,
+          sequence: incoming.sequence,
+          phase: incoming.phase,
+          status: incoming.status,
+        });
+      }
+    }, `记录 Turn Lifecycle #${incoming.sequence}`);
   }
 
   async function readySteps(taskId) {
@@ -570,12 +643,15 @@ function createTaskService(store) {
 
   async function heartbeat(taskId, input = {}) {
     const observedAt = Number(input.observedAt) || Date.now();
+    const progressAt = Number(input.progressAt) || undefined;
     return update(taskId, (task) => {
       task.heartbeat = {
         state: text(input.state, 80) || 'running',
         detail: text(input.detail, 800) || undefined,
+        activity: text(input.activity, 500) || task.heartbeat?.activity || undefined,
         workspaceId: text(input.workspaceId, 800) || undefined,
         observedAt,
+        progressAt: progressAt ? Math.max(Number(task.heartbeat?.progressAt) || 0, progressAt) : task.heartbeat?.progressAt,
         leaseExpiresAt: observedAt + 90000,
       };
       if (task.status === 'queued') task.status = 'running';
@@ -639,12 +715,16 @@ function createTaskService(store) {
     if (!ACTIVE_STATUSES.has(status) && !TERMINAL_STATUSES.has(status)) throw new Error(`TaskService: invalid status ${status}`);
     return update(taskId, (task) => {
       task.status = status;
-      task.phase = status === 'completed' ? 'completed' : status === 'failed' || status === 'stopped' ? 'blocked' : status === 'running' ? 'executing' : task.phase || 'preflight';
+      task.phase = status === 'completed' ? 'completed'
+        : status === 'failed' || status === 'stopped' || status === 'paused' ? 'blocked'
+          : status === 'awaiting_user' ? 'awaiting_user'
+            : status === 'running' ? 'executing' : task.phase || 'preflight';
+      if (status !== 'awaiting_user') task.waitingFor = undefined;
       appendServiceEvent(task, `status_${status}`, detail || `任务状态变为 ${status}`);
     }, '更新任务状态');
   }
 
-  return { version: TASK_SERVICE_VERSION, read, create, update, recordToolAttempt, addArtifact, addReference, createChild, context, readySteps, completeStep, failStep, requestApproval, decideApproval, recordUsage, metrics, tree, recoveryPlan, heartbeat, recordCheckpoint, recordVerification, validateCompletion, setStatus };
+  return { version: TASK_SERVICE_VERSION, read, create, update, recordToolAttempt, addArtifact, addReference, createChild, context, recordLifecycle, readySteps, completeStep, failStep, requestApproval, decideApproval, recordUsage, metrics, tree, recoveryPlan, heartbeat, recordCheckpoint, recordVerification, validateCompletion, setStatus };
 }
 
 module.exports = { TASK_SERVICE_VERSION, createTaskService };

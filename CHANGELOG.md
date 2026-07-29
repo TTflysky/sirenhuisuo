@@ -1,5 +1,15 @@
 # 更新日志
 
+## v2.1.0 (Durable turn lifecycle)
+
+- Aligned assistant chat, employee direct messages, and native team execution on one durable Turn Lifecycle without storing hidden chain-of-thought. The public trajectory records the goal, model decisions, paired tool calls and results, verified evidence, context compaction, user steering, budget, exit reason, and recovery conditions.
+- Added monotonic lifecycle persistence to TaskService. Older or equal-sequence conflict snapshots cannot overwrite newer facts, while lifecycle status maps waiting, paused, checkpointed, stopped, failed, and completed outcomes without treating every non-completion as the same failure.
+- Added lifecycle recovery capsules to parent and child tasks. Children inherit verified artifacts, references, the parent exit state, and the resumable handoff, but never inherit an unverified completion claim as fact.
+- Separated process heartbeat from real progress throughout the lifecycle. Heartbeats retain the current activity but cannot advance `progressAt`; model decisions, real tool results, steering, and context updates remain the only progress sources.
+- Hardened tool-call recovery. A persisted in-progress call is closed by a later matching evidence record with the same `callId`, rather than duplicated or left permanently running after restart.
+- Added defense-in-depth redaction in the main process. Lifecycle and recovery snapshots are sanitized again at the TaskService boundary so API keys, tokens, cookies, passwords, Bearer credentials, and URL query credentials cannot be persisted even if a renderer sends unsafe data.
+- Added `verify:turn-lifecycle`, expanded TaskService and native execution regressions, and included the lifecycle contract in the v2 core and GitHub release gates. See `docs/HERMES_RUNTIME_ALIGNMENT_V2.1.md` for the source-level four-layer alignment against Hermes commit `41a07f5`.
+
 ## v2.0.1 (Truthful progress and isolated conversations)
 
 - Rebuilt Skill installation as one verified path for SkillHub names and slugs, SkillHub detail/API URLs, GitHub repositories or directories, ZIP packages, and direct `SKILL.md` sources. The installer now rescans, reads back, and health-checks the installed package before reporting success.

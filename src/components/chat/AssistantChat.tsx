@@ -505,6 +505,7 @@ export default function AssistantChat() {
       goal: enriched,
       workspaceId,
       idempotencyKey: `assistant-chat:${workspaceId}`,
+      conversationId: conversationIdRef.current,
       references: usedReferences,
     });
     try {
@@ -593,6 +594,9 @@ ${employeeDirectory}
           taskBridge.heartbeat(state);
           setStatus(executionControllerStatus(state));
         },
+        onTurnLifecycle(state) {
+          taskBridge.lifecycle(state);
+        },
         onSteeringReply(content, usage, contextUsage) {
           push({
             id: `h-${Date.now()}-steering`, authorId: 'assistant', roleId: 'custom',
@@ -675,7 +679,15 @@ ${employeeDirectory}
       });
 
       const ts = Date.now();
-      await taskBridge.finish({ executionState: r.executionState, usage: r.usage, model: r.model, output: r.content });
+      await taskBridge.finish({
+        executionState: r.executionState,
+        usage: r.usage,
+        model: r.model,
+        output: r.content,
+        turnRuntime: r.turnRuntime,
+        turnFinalization: r.turnFinalization,
+        lifecycle: r.turnLifecycle,
+      });
       setStatus('正在整理清楚的结果…');
       push({
         id: `h-${ts}-ai`, authorId: 'assistant', roleId: 'custom',

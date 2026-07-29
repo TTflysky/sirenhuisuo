@@ -1078,6 +1078,9 @@ function createWindow() {
   ipcMain.handle('task-service:heartbeat', async (_event, input) => {
     try { return await taskService.heartbeat(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
   });
+  ipcMain.handle('task-service:lifecycle', async (_event, input) => {
+    try { return await taskService.recordLifecycle(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
   ipcMain.handle('task-service:checkpoint', async (_event, input) => {
     try { return await taskService.recordCheckpoint(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
   });

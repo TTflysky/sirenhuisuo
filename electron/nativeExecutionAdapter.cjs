@@ -84,6 +84,25 @@ function buildChildTaskContext(run) {
   ].filter(Boolean).join('\n')).join('\n')}`;
 }
 
+function buildInheritedTaskContext(run) {
+  const inherited = run?.inheritedContext;
+  if (!inherited || typeof inherited !== 'object') return '';
+  const lifecycle = inherited.parentLifecycleRecovery || {};
+  const artifacts = (inherited.verifiedArtifacts || []).slice(-12)
+    .map((artifact) => artifact.path || artifact.diskPath || artifact.name).filter(Boolean);
+  return [
+    '\n\n## 父任务可恢复交接',
+    `父任务目标：${text(inherited.parentGoal, 2000) || '未记录'}`,
+    inherited.acceptanceCriteria?.length ? `验收标准：${inherited.acceptanceCriteria.join('；')}` : '',
+    lifecycle.activity ? `父任务最后动作：${text(lifecycle.activity, 500)}` : '',
+    lifecycle.context?.summary ? `父任务上下文摘要：${text(lifecycle.context.summary, 1600)}` : '',
+    lifecycle.context?.unresolvedIssues?.length ? `未决问题：${lifecycle.context.unresolvedIssues.slice(-12).join('；')}` : '',
+    lifecycle.steering?.length ? `用户最新补充：${lifecycle.steering.slice(-8).map((item) => item.message).join('；')}` : '',
+    artifacts.length ? `已验证产出：${artifacts.join('；')}` : '',
+    '只继承以上已验证事实；不要把父任务的未完成声明当成子任务已经完成。',
+  ].filter(Boolean).join('\n');
+}
+
 function resolveEndpoint(model) {
   const base = String(model?.apiHost || '').trim().replace(/\/+$/u, '');
   if (!base) throw new Error('未配置 API 地址');
@@ -221,6 +240,7 @@ function createNativeExecutionAdapter(options) {
     const value = text(activity, 500) || '后台任务正在推进';
     job.currentActivity = value;
     const event = emit(job, type, { ...detail, activity: value });
+    const { turnLifecycle } = await loadEngineModules();
     await updateRun(job.taskId, (run) => {
       if (run.worker) {
         run.worker.progressAt = event.occurredAt;
@@ -235,6 +255,23 @@ function createNativeExecutionAdapter(options) {
         }
       }
       if (run.recoveryContext) run.recoveryContext.summary = value;
+      run.turnLifecycle = turnLifecycle.recordLifecycleProgress(
+        turnLifecycle.restoreTurnLifecycle(run.turnLifecycle, {
+          taskId: run.id,
+          conversationId: run.conversationId,
+          scope: `team:${run.teamId}`,
+          goal: run.goal || run.request,
+          deliverableType: run.contract?.deliverableType,
+        }),
+        {
+          type,
+          phase: run.phase || 'executing',
+          activity: value,
+          detail: { stepId: detail.stepId, toolName: detail.toolName, attempt: detail.attempt },
+          at: event.occurredAt,
+        },
+      );
+      run.lifecycleRecovery = turnLifecycle.createLifecycleRecoveryCapsule(run.turnLifecycle);
     }, `原生 Adapter 进展：${value}`).catch(() => {});
     return event;
   }
@@ -263,10 +300,11 @@ function createNativeExecutionAdapter(options) {
         import(pathToFileURL(path.join(projectRoot, 'src/engine/taskDelegation.mjs')).href),
         import(pathToFileURL(path.join(projectRoot, 'src/engine/teamExecutionProtocol.mjs')).href),
         import(pathToFileURL(path.join(projectRoot, 'src/engine/turnRuntime.mjs')).href),
+        import(pathToFileURL(path.join(projectRoot, 'src/engine/turnLifecycle.mjs')).href),
         import(pathToFileURL(path.join(projectRoot, 'src/engine/moaRuntime.mjs')).href),
         import(pathToFileURL(path.join(projectRoot, 'src/engine/capabilityGraph.mjs')).href),
-      ]).then(([fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol, turnRuntime, moaRuntime, capabilityGraph]) => ({
-        fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol, turnRuntime, moaRuntime, capabilityGraph,
+      ]).then(([fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol, turnRuntime, turnLifecycle, moaRuntime, capabilityGraph]) => ({
+        fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol, turnRuntime, turnLifecycle, moaRuntime, capabilityGraph,
       }));
     }
     return engineModulesPromise;
@@ -589,14 +627,47 @@ function createNativeExecutionAdapter(options) {
 
   async function persistTurnRuntime(job, runtime, finalization, detail) {
     const safe = sanitizedRuntime(runtime);
+    const { turnLifecycle } = await loadEngineModules();
     await updateRun(job.taskId, (next) => {
       next.turnRuntime = safe;
       if (finalization) next.turnFinalization = clone(finalization);
+      next.turnLifecycle = turnLifecycle.synchronizeTurnLifecycle(next.turnLifecycle, safe, finalization, {
+        taskId: next.id,
+        conversationId: next.conversationId,
+        scope: `team:${next.teamId}`,
+        goal: next.goal || next.request,
+        deliverableType: next.contract?.deliverableType,
+        reason: finalization?.status,
+      });
+      next.lifecycleRecovery = turnLifecycle.createLifecycleRecoveryCapsule(next.turnLifecycle);
       if (next.recoveryContext) {
         next.recoveryContext.summary = finalization?.summary
           || `Turn Runtime 已记录 ${safe.round} 轮决策和 ${safe.evidence.length} 条结构化证据。`;
       }
     }, detail);
+  }
+
+  async function persistControlledLifecycle(job, status, reason) {
+    const { turnLifecycle } = await loadEngineModules();
+    await updateRun(job.taskId, (run) => {
+      const current = turnLifecycle.restoreTurnLifecycle(run.turnLifecycle, {
+        taskId: run.id,
+        conversationId: run.conversationId,
+        scope: `team:${run.teamId}`,
+        goal: run.goal || run.request,
+        deliverableType: run.contract?.deliverableType,
+      });
+      run.turnLifecycle = turnLifecycle.finalizeTurnLifecycle(current, {
+        status,
+        summary: reason,
+        waitingFor: status === 'waiting_user' ? reason : '',
+        reason,
+      });
+      run.lifecycleRecovery = turnLifecycle.createLifecycleRecoveryCapsule(run.turnLifecycle, {
+        reason,
+        nextAction: run.turnLifecycle.recovery?.nextAction,
+      });
+    }, `原生 Adapter 保存 ${status} 生命周期`).catch(() => {});
   }
 
   async function consultStepAdvisors(job, run, step, actingMember, moaRuntime, currentEvidence) {
@@ -727,7 +798,7 @@ function createNativeExecutionAdapter(options) {
   }
 
   async function executeStep(job, run, step, member, executionOptions = {}) {
-    const { fidelity, toolRegistry, contextRouter, turnRuntime, moaRuntime } = await loadEngineModules();
+    const { fidelity, toolRegistry, contextRouter, turnRuntime, turnLifecycle, moaRuntime } = await loadEngineModules();
     let runtime = turnRuntime.createTurnRuntime({
       taskId: job.taskId,
       scope: `team:${run.teamId}`,
@@ -745,7 +816,7 @@ function createNativeExecutionAdapter(options) {
       ? ''
       : await consultStepAdvisors(job, run, step, member, moaRuntime, run.evidence || []);
     const messages = [
-      { role: 'system', content: `${buildSystem(run, step, member, job, turnRuntime.buildTurnGuidance(runtime), advisorGuidance)}${layeredMemory.context ? `\n\n## 太极分层热记忆\n${layeredMemory.context}\n\n以上记忆只作为可复用背景；与老板当前明确要求冲突时，以当前要求为准。` : ''}${buildChildTaskContext(run)}\n\n${stepRecoveryPrompt}` },
+      { role: 'system', content: `${buildSystem(run, step, member, job, turnRuntime.buildTurnGuidance(runtime), advisorGuidance)}${layeredMemory.context ? `\n\n## 太极分层热记忆\n${layeredMemory.context}\n\n以上记忆只作为可复用背景；与老板当前明确要求冲突时，以当前要求为准。` : ''}${buildInheritedTaskContext(run)}${buildChildTaskContext(run)}\n\n${stepRecoveryPrompt}` },
       buildUserTurn(run, step, job),
     ];
     const registry = toolRegistry.buildToolRegistry([...options.toolRuntime.definitions, ...(job.connectorTools || [])]);
@@ -786,6 +857,24 @@ function createNativeExecutionAdapter(options) {
           liveBudget = budget;
           next.recoveryContext.summary = `长任务已完成第 ${budget.stage - 1} 阶段压缩，保留原始目标、证据和未决问题后继续。`;
           next.recoveryCapsule = contextRouter.createRecoveryCapsule(next, { reason: `上下文阶段 ${budget.stage} 压缩` });
+          next.turnLifecycle = turnLifecycle.recordLifecycleContext(
+            turnLifecycle.restoreTurnLifecycle(next.turnLifecycle, {
+              taskId: next.id,
+              conversationId: next.conversationId,
+              scope: `team:${next.teamId}`,
+              goal: next.goal || next.request,
+              deliverableType: next.contract?.deliverableType,
+            }),
+            {
+              compacted: true,
+              stage: budget.stage,
+              estimatedTokens: budget.estimatedTokens,
+              contextWindowTokens: budget.contextWindowTokens,
+              summary: next.recoveryContext.summary,
+              unresolvedIssues: next.recoveryContext.unresolvedIssues,
+            },
+          );
+          next.lifecycleRecovery = turnLifecycle.createLifecycleRecoveryCapsule(next.turnLifecycle);
         }, '原生 Adapter 压缩长任务上下文');
         if (stageBoundary) await options.store.createRecoveryPoint({ taskId: job.taskId, label: `自动阶段 ${Math.floor(round / MODEL_ROUNDS_PER_STAGE)} 恢复点` });
         emit(job, 'context_compacted', { stepId: step.id, removedMessages: compacted.removed, round, reason: stageBoundary ? 'stage-boundary' : budgetAssessment.reason });
@@ -797,6 +886,19 @@ function createNativeExecutionAdapter(options) {
       if (job.steering.length > appliedSteering) {
         const updates = job.steering.slice(appliedSteering);
         runtime = turnRuntime.applySteering(runtime, updates);
+        await updateRun(job.taskId, (next) => {
+          next.turnLifecycle = turnLifecycle.recordLifecycleSteering(
+            turnLifecycle.restoreTurnLifecycle(next.turnLifecycle, {
+              taskId: next.id,
+              conversationId: next.conversationId,
+              scope: `team:${next.teamId}`,
+              goal: next.goal || next.request,
+              deliverableType: next.contract?.deliverableType,
+            }),
+            updates,
+          );
+          next.lifecycleRecovery = turnLifecycle.createLifecycleRecoveryCapsule(next.turnLifecycle);
+        }, '原生 Adapter 将用户插话写入 Turn Lifecycle');
         messages.push({ role: 'system', content: `老板在执行中补充了要求。先结合原目标判断影响，再调整当前路线：\n${updates.join('\n')}` });
         messages.push({ role: 'system', content: turnRuntime.buildTurnGuidance(runtime) });
         appliedSteering = job.steering.length;
@@ -836,13 +938,27 @@ function createNativeExecutionAdapter(options) {
       }
       const message = response.message;
       const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
-      runtime = turnRuntime.observeModelDecision(runtime, {
+      const observedDecision = turnRuntime.observeModelDecision(runtime, {
         content: message.content,
         toolCalls: toolCalls.map((call) => ({
           name: call?.function?.name,
           arguments: call?.function?.arguments,
         })),
-      }).runtime;
+      });
+      runtime = observedDecision.runtime;
+      await updateRun(job.taskId, (next) => {
+        next.turnLifecycle = turnLifecycle.recordLifecycleDecision(
+          turnLifecycle.restoreTurnLifecycle(next.turnLifecycle, {
+            taskId: next.id,
+            conversationId: next.conversationId,
+            scope: `team:${next.teamId}`,
+            goal: next.goal || next.request,
+            deliverableType: next.contract?.deliverableType,
+          }),
+          observedDecision.decision,
+        );
+        next.lifecycleRecovery = turnLifecycle.createLifecycleRecoveryCapsule(next.turnLifecycle);
+      }, '原生 Adapter 保存模型公开决策');
       liveBudget = contextRouter.recordContextUsage({
         ...liveBudget,
         contextWindowTokens: Number(modelMember.modelConfig?.contextWindowTokens) || liveBudget.contextWindowTokens,
@@ -1492,21 +1608,19 @@ function createNativeExecutionAdapter(options) {
       emit(job, 'job_completed');
     } catch (error) {
       if (error instanceof ExecutionControlSignal) {
-        job.state = error.kind === 'stop' || error.kind === 'close' ? 'stopped' : error.kind === 'awaiting_user' ? 'awaiting_user' : 'paused';
+        let controlKind = job.control === 'stop' ? 'stop' : error.kind;
         job.lastError = error.message;
-        emit(job, 'job_controlled', { control: error.kind, error: error.message });
-        if (error.kind === 'stop' || error.kind === 'close') {
-          await runCompensations(job, `${error.kind}: ${error.message}`).catch(() => {});
+        let lifecycleStatus = controlKind === 'stop' || controlKind === 'close' ? 'stopped'
+          : controlKind === 'awaiting_user' ? 'waiting_user'
+            : controlKind === 'checkpoint' ? 'checkpointed'
+              : controlKind === 'steer' || controlKind === 'delegate_wait' ? '' : 'paused';
+        let compensationHandled = false;
+        if (controlKind === 'stop' || controlKind === 'close') {
+          await runCompensations(job, `${controlKind}: ${error.message}`).catch(() => {});
+          compensationHandled = true;
         }
-        if (error.kind === 'stall') {
-          const paused = await options.worker.dispatch({
-            commandId: `native-stall-${job.jobId}-${Date.now()}`,
-            taskId: job.taskId,
-            type: 'pause',
-            requestedBy: 'main-native-execution-watchdog',
-            sessionId: options.sessionId,
-            payload: { reason: error.message },
-          }).catch(() => undefined);
+        if (controlKind === 'stall') {
+          emit(job, 'execution_paused_after_stall', { error: error.message });
           try {
             await updateRun(job.taskId, (run) => {
               run.status = 'paused';
@@ -1536,10 +1650,17 @@ function createNativeExecutionAdapter(options) {
                 run.recoveryContext.autoResume = false;
                 run.recoveryContext.waitingFor = undefined;
               }
-            }, paused?.ok ? '原生 Adapter 停滞保护已暂停任务' : '原生 Adapter 停滞保护兜底暂停任务');
+            }, '原生 Adapter 停滞保护已写入完整恢复交接');
           } catch {}
-          emit(job, 'execution_paused_after_stall', { error: error.message });
-        } else if (error.kind === 'delegate_wait') {
+          await options.worker.dispatch({
+            commandId: `native-stall-${job.jobId}-${Date.now()}`,
+            taskId: job.taskId,
+            type: 'pause',
+            requestedBy: 'main-native-execution-watchdog',
+            sessionId: options.sessionId,
+            payload: { reason: error.message },
+          }).catch(() => undefined);
+        } else if (controlKind === 'delegate_wait') {
           job.state = 'queued';
           job.requeueAfterExecution = true;
           await updateRun(job.taskId, (run) => {
@@ -1548,7 +1669,7 @@ function createNativeExecutionAdapter(options) {
             run.lastError = undefined;
           }, 'Parent task yielded its queue slot while waiting for a child task').catch(() => {});
           emit(job, 'child_task_waiting', { error: error.message });
-        } else if (error.kind === 'steer') {
+        } else if (controlKind === 'steer') {
           job.state = 'queued';
           job.requeueAfterExecution = true;
           job.interruptReason = undefined;
@@ -1572,7 +1693,7 @@ function createNativeExecutionAdapter(options) {
             }, '原生 Adapter 收到插话后抢占并重新排队');
           } catch {}
           emit(job, 'steering_preempted', { message: error.message });
-        } else if (error.kind === 'awaiting_user') {
+        } else if (controlKind === 'awaiting_user') {
           job.waitingFor = error.message;
           try {
             await updateRun(job.taskId, (run) => {
@@ -1588,7 +1709,7 @@ function createNativeExecutionAdapter(options) {
               }
             }, '原生 Adapter 等待用户条件');
           } catch {}
-        } else if (error.kind === 'checkpoint') {
+        } else if (controlKind === 'checkpoint') {
           try {
             const { contextRouter } = await loadEngineModules();
             await updateRun(job.taskId, (run) => {
@@ -1606,12 +1727,30 @@ function createNativeExecutionAdapter(options) {
             }, '原生 Adapter 达到预算后写入可恢复交接');
           } catch {}
         }
+        if (job.control === 'stop' && controlKind !== 'stop') {
+          controlKind = 'stop';
+          lifecycleStatus = 'stopped';
+        }
+        if ((controlKind === 'stop' || controlKind === 'close') && !compensationHandled) {
+          await runCompensations(job, `${controlKind}: ${error.message}`).catch(() => {});
+          compensationHandled = true;
+        }
+        if (lifecycleStatus) await persistControlledLifecycle(job, lifecycleStatus, error.message);
+        if (job.control === 'stop' && controlKind !== 'stop') {
+          controlKind = 'stop';
+          await runCompensations(job, `stop: ${error.message}`).catch(() => {});
+          await persistControlledLifecycle(job, 'stopped', error.message);
+        }
+        const controlledJobState = controlKind === 'stop' || controlKind === 'close' ? 'stopped' : controlKind === 'awaiting_user' ? 'awaiting_user' : 'paused';
+        if (controlKind !== 'steer' && controlKind !== 'delegate_wait') job.state = controlledJobState;
+        emit(job, 'job_controlled', { control: controlKind, error: error.message });
       } else {
-        job.state = 'failed';
         job.lastError = text(error?.message || error, 1200);
+        await persistControlledLifecycle(job, 'failed', job.lastError);
         await runCompensations(job, job.lastError).catch(() => {});
         await syncChildTaskTerminal(job.taskId, 'failed', job.lastError).catch(() => {});
         try { await checkpoint(job, { kind: 'run_failed', summary: job.lastError }); } catch {}
+        job.state = 'failed';
         emit(job, 'job_failed', { error: job.lastError });
         if (options.learningReviewQueue) {
           void readRun(job.taskId).then((failedRun) => failedRun && options.learningReviewQueue.enqueue(failedRun, {
@@ -1710,6 +1849,8 @@ function createNativeExecutionAdapter(options) {
     }
     const forwardedType = type === 'close' ? 'stop' : type;
     for (const child of descendants.filter((item) => !['completed', 'failed', 'stopped'].includes(item.status))) {
+      const childJob = jobs.get(child.id);
+      const queuedBeforeControl = applyJobControl(childJob, forwardedType);
       const result = await options.worker.dispatch({
         commandId: `native-cascade-${forwardedType}-${parentTaskId}-${child.id}-${crypto.randomUUID()}`,
         taskId: child.id,
@@ -1719,8 +1860,6 @@ function createNativeExecutionAdapter(options) {
         payload: {},
       });
       if (result?.ok) {
-        const childJob = jobs.get(child.id);
-        const queuedBeforeControl = applyJobControl(childJob, forwardedType);
         // A queued child has no active execute() catch block to initiate rollback.
         // Complete its declared compensation before the active parent may compensate shared state.
         if (queuedBeforeControl && forwardedType === 'stop' && childJob) {
@@ -1777,7 +1916,7 @@ function createNativeExecutionAdapter(options) {
     const value = text(message, 2000);
     if (!job || !ACTIVE_JOB_STATES.has(job.state)) return { ok: false, error: '任务当前没有由原生 Adapter 执行' };
     if (!value) return { ok: false, error: '插话内容不能为空' };
-    const { contextRouter } = await loadEngineModules();
+    const { contextRouter, turnLifecycle } = await loadEngineModules();
     const current = await readRun(job.taskId);
     const routed = current ? contextRouter.routeTaskInput(current, value) : { route: contextRouter.classifyTaskInput(value, { status: job.state }) };
     job.steering.push(value);
@@ -1790,6 +1929,17 @@ function createNativeExecutionAdapter(options) {
         next.context = routed.run.context;
         next.recoveryContext = routed.run.recoveryContext;
         next.recoveryCapsule = routed.run.recoveryCapsule;
+        next.turnLifecycle = turnLifecycle.recordLifecycleSteering(
+          turnLifecycle.restoreTurnLifecycle(next.turnLifecycle, {
+            taskId: next.id,
+            conversationId: next.conversationId,
+            scope: `team:${next.teamId}`,
+            goal: next.goal || next.request,
+            deliverableType: next.contract?.deliverableType,
+          }),
+          value,
+        );
+        next.lifecycleRecovery = turnLifecycle.createLifecycleRecoveryCapsule(next.turnLifecycle);
       }, `上下文路由：${routed.route.kind} -> ${routed.route.action}`);
     }
     if (routed.route.action === 'pause') {

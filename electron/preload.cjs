@@ -26,6 +26,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   taskServiceTree: (taskId) => ipcRenderer.invoke('task-service:tree', taskId),
   taskServiceRecoveryPlan: (taskId) => ipcRenderer.invoke('task-service:recovery-plan', taskId),
   taskServiceHeartbeat: (input) => ipcRenderer.invoke('task-service:heartbeat', input),
+  taskServiceLifecycle: (input) => ipcRenderer.invoke('task-service:lifecycle', input),
   taskServiceCheckpoint: (input) => ipcRenderer.invoke('task-service:checkpoint', input),
   taskServiceVerification: (input) => ipcRenderer.invoke('task-service:verification', input),
   taskServiceValidateCompletion: (taskId) => ipcRenderer.invoke('task-service:validate-completion', taskId),

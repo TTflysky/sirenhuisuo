@@ -318,6 +318,8 @@ export interface TaskServiceTask {
   references: Array<Record<string, unknown>>;
   createdAt: number;
   updatedAt: number;
+  turnLifecycle?: import('./engine/turnLifecycle.mjs').TurnLifecycleState;
+  lifecycleRecovery?: Record<string, unknown>;
 }
 
 export interface TaskServiceResult {
@@ -428,7 +430,8 @@ declare global {
     taskServiceMetrics: (taskId: string) => Promise<TaskServiceResult & { durationMs?: number; tools?: Record<string, unknown>; usage?: Record<string, unknown> }>;
     taskServiceTree: (taskId: string) => Promise<TaskServiceResult & { rootTaskId?: string; tree?: { nodes: Array<Record<string, unknown>>; totals: Record<string, number>; generatedAt: number } }>;
     taskServiceRecoveryPlan: (taskId: string) => Promise<TaskServiceResult & { plan?: { rootTaskId: string; rootStatus: string; ready: boolean; resumeOrder: Array<Record<string, unknown>>; blockers: Array<Record<string, unknown>>; compensationOrder: Array<Record<string, unknown>>; nextAction: string; generatedAt: number } }>;
-    taskServiceHeartbeat: (input: { taskId: string; state?: string; detail?: string; workspaceId?: string; observedAt?: number }) => Promise<TaskServiceResult>;
+    taskServiceHeartbeat: (input: { taskId: string; state?: string; detail?: string; activity?: string; workspaceId?: string; observedAt?: number; progressAt?: number }) => Promise<TaskServiceResult>;
+    taskServiceLifecycle: (input: { taskId: string; lifecycle: import('./engine/turnLifecycle.mjs').TurnLifecycleState; recovery?: Record<string, unknown> }) => Promise<TaskServiceResult>;
     taskServiceCheckpoint: (input: Record<string, unknown> & { taskId: string; label?: string }) => Promise<TaskServiceResult>;
     taskServiceVerification: (input: Record<string, unknown> & { taskId: string; label: string; status: 'passed' | 'failed' | 'blocked' }) => Promise<TaskServiceResult>;
     taskServiceValidateCompletion: (taskId: string) => Promise<TaskServiceResult & { passed?: boolean; checks?: Array<Record<string, unknown>> }>;

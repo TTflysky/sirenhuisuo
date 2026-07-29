@@ -392,6 +392,7 @@ export default function DmChatApp({ empId }: Props) {
       goal: job.userText,
       workspaceId: job.workspaceId,
       idempotencyKey: `dm-chat:${empId}:${job.id}`,
+      conversationId: job.conversationId,
       references: job.skillRefs.map((skill) => ({ kind: 'skill', id: skill.id, label: skill.name, state: 'local' })),
     });
     try {
@@ -526,6 +527,9 @@ export default function DmChatApp({ empId }: Props) {
         setStatus(executionControllerStatus(state));
         onExecutionState?.(state);
       },
+      onTurnLifecycle(state) {
+        taskBridge?.lifecycle(state);
+      },
       onSteeringReply(content, usage, contextUsage) {
         push({
           id: `dm-${Date.now()}-${empId}-steering`, authorId: empId, roleId: emp.role,
@@ -587,7 +591,15 @@ export default function DmChatApp({ empId }: Props) {
         setLiveExecutionSteps((current) => [...current, step].slice(-50));
       },
     });
-    await taskBridge?.finish({ executionState: r.executionState, usage: r.usage, model: r.model, output: r.content ?? '' });
+    await taskBridge?.finish({
+      executionState: r.executionState,
+      usage: r.usage,
+      model: r.model,
+      output: r.content ?? '',
+      turnRuntime: r.turnRuntime,
+      turnFinalization: r.turnFinalization,
+      lifecycle: r.turnLifecycle,
+    });
     return { text: r.content ?? '（无回复）', usage: r.usage.totalTokens, contextUsage: r.contextUsage, thoughtChain: thoughtChain.length ? thoughtChain : undefined, skillEvidence: executionSkillEvidence, references: executionReferences, executionState: r.executionState };
   };
 

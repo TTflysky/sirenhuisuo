@@ -88,6 +88,7 @@ if (-not $SkipTests) {
     'verify:execution-controller',
     'verify:execution-evidence',
     'verify:unified-turn-runtime',
+    'verify:turn-lifecycle',
     'verify:agent-trajectory-suite',
     'verify:agent-kernel',
     'verify:dispatch-intelligence',

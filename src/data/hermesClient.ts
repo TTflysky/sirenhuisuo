@@ -77,6 +77,17 @@ import {
   observeToolResult as observeTurnToolResult,
   type TurnRuntimeState,
 } from '../engine/turnRuntime.mjs';
+import {
+  createTurnLifecycle,
+  recordLifecycleContext,
+  recordLifecycleDecision,
+  recordLifecycleProgress,
+  recordLifecycleSteering,
+  recordLifecycleToolFinished,
+  recordLifecycleToolStarted,
+  synchronizeTurnLifecycle,
+  type TurnLifecycleState,
+} from '../engine/turnLifecycle.mjs';
 
 const LS_EMPLOYEES = 'hermes_office_employees';
 const LS_TEAMS = 'hermes_office_teams';
@@ -1223,6 +1234,8 @@ export interface AgentLoopOpts {
   initialExecutionState?: ExecutionControllerSnapshot;
   /** 每次观察、恢复决策或验收状态变化时通知调用方。 */
   onExecutionState?: (state: ExecutionControllerSnapshot) => void;
+  /** 跨聊天与后台 Worker 共享的公开行动生命周期，不包含隐藏思维链。 */
+  onTurnLifecycle?: (state: TurnLifecycleState) => void;
   /** Called after intent compilation and before any executable route starts. */
   onTaskPrepared?: (decision: TaskDecision) => Promise<void> | void;
   /** UI control-plane routes may compile once before choosing the executor. */
@@ -1254,11 +1267,11 @@ function getUserActionForFailure(raw: string): string {
   return '请展开最后一条“执行过程”查看通俗原因；如果需要你提供账号、授权、文件或选择，助手会明确说明具体缺少哪一项。';
 }
 
-export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: string; usage: TokenUsage; contextUsage?: ContextUsage; model: string; executionState: ExecutionControllerSnapshot; taskDecision: TaskDecision; turnRuntime: TurnRuntimeState; turnFinalization: Record<string, unknown> }> {
+export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: string; usage: TokenUsage; contextUsage?: ContextUsage; model: string; executionState: ExecutionControllerSnapshot; taskDecision: TaskDecision; turnRuntime: TurnRuntimeState; turnFinalization: Record<string, unknown>; turnLifecycle: TurnLifecycleState }> {
   const {
     turns, tools, scene, label, onToolCall, onToolResult, modelConfig, extraSystemContext,
     scope, attachments, shouldStop, waitIfPaused, consumeSteeringMessages,
-    getModelRequestSignal, onSteeringReply, onModelRetry, initialExecutionState, onExecutionState, onTaskPrepared, taskDecisionCompilation,
+    getModelRequestSignal, onSteeringReply, onModelRetry, initialExecutionState, onExecutionState, onTurnLifecycle, onTaskPrepared, taskDecisionCompilation,
   } = opts;
   let currentTurns = [...turns];
   let totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
@@ -1296,7 +1309,17 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     goal: originalUserText,
     contract: taskDecision,
   });
+  let turnLifecycle = createTurnLifecycle({
+    turnId: turnRuntime.turnId,
+    scope: scope ?? scene,
+    goal: originalUserText,
+    deliverableType: turnRuntime.deliverableType,
+    contextWindowTokens: modelConfig?.contextWindowTokens,
+    maxModelRounds: connectorSetupTask ? 24 : 36,
+  });
+  const publishTurnLifecycle = () => onTurnLifecycle?.(turnLifecycle);
   if (!conversationOnly) await onTaskPrepared?.(taskDecision);
+  publishTurnLifecycle();
   currentTurns = conversationOnly
     ? [{ role: 'system', content: `${taskContract}\n\n当前消息不需要工具执行。直接结合最近上下文回应，不得自动恢复、重放或继续上一项任务。只有用户明确提出新的执行目标或明确要求继续时，才能重新开始执行。` }, ...currentTurns]
     : [{
@@ -1380,6 +1403,8 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       const instruction = pendingMessages.join('\n').trim();
       if (!instruction) return { stopped: false };
       turnRuntime = applyTurnSteering(turnRuntime, instruction);
+      turnLifecycle = recordLifecycleSteering(turnLifecycle, pendingMessages);
+      publishTurnLifecycle();
       publishExecutionState(applyExecutionSteering(executionState, instruction));
       const userTurn: ChatTurn = {
         role: 'user',
@@ -1453,6 +1478,13 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       });
       const runtimeSnapshot = compactRuntimeEvidence(turnRuntime);
       const summary = `${summaryRows.length > 0 ? summaryRows.join('\n') : '这一阶段没有产生有效操作。'}\n\n结构化观察：${JSON.stringify(runtimeSnapshot)}`;
+      turnLifecycle = recordLifecycleContext(turnLifecycle, {
+        compacted: true,
+        stage: completedToolPhases + 2,
+        summary,
+        unresolvedIssues: turnRuntime.unresolvedIssues,
+      });
+      publishTurnLifecycle();
       if (stalledPhases >= 3 || completedToolPhases >= maxAutonomousToolPhases - 1) {
         executionBudgetReached = true;
         break;
@@ -1480,6 +1512,13 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       });
       const runtimeSnapshot = compactRuntimeEvidence(turnRuntime);
       const summary = `${summaryRows.length > 0 ? summaryRows.join('\n') : '这一阶段没有产生有效操作。'}\n\n结构化观察：${JSON.stringify(runtimeSnapshot)}`;
+      turnLifecycle = recordLifecycleContext(turnLifecycle, {
+        compacted: true,
+        stage: Math.floor(iter / iterationsPerPhase) + 2,
+        summary,
+        unresolvedIssues: turnRuntime.unresolvedIssues,
+      });
+      publishTurnLifecycle();
       if (stalledPhases >= 3) {
         executionBudgetReached = true;
         break;
@@ -1496,6 +1535,13 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     let r: ChatResult;
     try {
       const toolsForCall = conversationOnly ? undefined : tools;
+      turnLifecycle = recordLifecycleProgress(turnLifecycle, {
+        type: 'model_request_started',
+        phase: 'observe',
+        activity: `正在请求 ${modelConfig?.model || '当前模型'} 判断下一步`,
+        modelRounds: 1,
+      });
+      publishTurnLifecycle();
       r = await chatCompletion(
         currentTurns,
         scene,
@@ -1512,6 +1558,15 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         toolCalls: r.toolCalls,
       });
       turnRuntime = observedDecision.runtime;
+      turnLifecycle = recordLifecycleDecision(turnLifecycle, observedDecision.decision);
+      turnLifecycle = recordLifecycleProgress(turnLifecycle, {
+        type: 'model_response_received',
+        phase: observedDecision.decision.action,
+        activity: r.toolCalls?.length ? '模型已返回工具动作，正在执行' : '模型已返回内容，正在核对验收条件',
+        estimatedTokens: r.contextUsage?.promptTokens ?? r.usage.promptTokens,
+        contextWindowTokens: r.contextUsage?.contextWindowTokens ?? modelConfig?.contextWindowTokens,
+      });
+      publishTurnLifecycle();
     } catch (error: any) {
       const interruptedMessages = consumeSteeringMessages?.() ?? [];
       if (error?.name === 'ExternalAbortError' && interruptedMessages.length > 0) {
@@ -1534,6 +1589,13 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       turnRuntime = observedModelFailure.runtime;
       const modelRecovery = decideTurnRecovery(turnRuntime, observedModelFailure.error ?? errorText);
       turnRuntime = modelRecovery.runtime;
+      turnLifecycle = recordLifecycleProgress(turnLifecycle, {
+        type: 'model_request_failed',
+        phase: modelRecovery.decision.action === 'waiting_user' ? 'waiting_user' : 'observe',
+        activity: modelRecovery.decision.action === 'retry' ? '模型请求未成功，正在按分类恢复' : '模型请求未成功，正在保存恢复现场',
+        detail: { errorType: modelRecovery.decision.errorType, action: modelRecovery.decision.action },
+      });
+      publishTurnLifecycle();
       publishExecutionState(observeExecutionResult(executionState, {
         toolName: 'model_request',
         routeKey: executionRouteKey('model_request', JSON.stringify({ model: modelConfig?.model ?? 'active-model', scene })),
@@ -1624,6 +1686,14 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
             effectiveCallError = resolvedInstall.error;
           }
         }
+        const lifecycleArgs = (() => { try { return JSON.parse(effectiveArguments); } catch { return {}; } })();
+        turnLifecycle = recordLifecycleToolStarted(turnLifecycle, {
+          callId: tc.id,
+          name: tc.name,
+          args: lifecycleArgs,
+          activity: `正在调用 ${getToolStage(tc.name)}`,
+        });
+        publishTurnLifecycle();
         const cacheKey = canonicalToolCallKey(tc.name, effectiveArguments);
         const routeGate = canExecuteRoute(executionState, { toolName: tc.name, routeKey: executionRouteKey(tc.name, effectiveArguments) });
         const controllerRetry = executionState.decision.kind === 'retry' && executionState.decision.routeId === routeGate.routeId;
@@ -1684,6 +1754,16 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
           kind: tc.name === 'write_file' ? 'file' : tc.name === 'test_connector' ? 'connection' : 'tool',
         });
         turnRuntime = observedResult.runtime;
+        turnLifecycle = recordLifecycleToolFinished(turnLifecycle, {
+          callId: tc.id,
+          name: tc.name,
+          success: resultSuccess,
+          output: result.output,
+          errorType: observedResult.error?.type,
+          resultRef: observedResult.evidence.resultRef,
+          evidenceIds: [observedResult.evidence.evidenceId],
+        });
+        publishTurnLifecycle();
         if (!resultSuccess && observedResult.error) {
           const recovery = decideTurnRecovery(turnRuntime, observedResult.error);
           turnRuntime = recovery.runtime;
@@ -1903,7 +1983,13 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     waitingFor: turnRuntime.phase === 'waiting_user' ? turnRuntime.unresolvedIssues.at(-1) : '',
   });
   turnRuntime = finalized.runtime;
-  return { content: finalContent, usage: totalUsage, contextUsage: latestContextUsage, model: finalModel, executionState, taskDecision, turnRuntime, turnFinalization: finalized.finalization };
+  turnLifecycle = synchronizeTurnLifecycle(turnLifecycle, turnRuntime, finalized.finalization, {
+    scope: scope ?? scene,
+    goal: originalUserText,
+    reason: finalized.finalization.status,
+  });
+  publishTurnLifecycle();
+  return { content: finalContent, usage: totalUsage, contextUsage: latestContextUsage, model: finalModel, executionState, taskDecision, turnRuntime, turnFinalization: finalized.finalization, turnLifecycle };
 }
 
 // ===== 初始加载 =====

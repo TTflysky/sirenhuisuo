@@ -1,9 +1,19 @@
 # 项目交接手册
 
 > 最后整理：2026-07-29
-> 当前源码版本：`v2.0.1`
+> 当前源码版本：`v2.1.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+
+## v2.1 Hermes 真实运行链路
+
+`v2.1.0` 沿用现有太极架构，新增贯穿助手、员工私聊和原生团队 Worker 的持久 Turn Lifecycle。它只保存可审计的公开行动轨迹，不保存隐藏思维链；模型公开决定、工具调用与结果、上下文压缩、用户插话、预算、退出原因和恢复条件均可跨 TaskService 恢复。
+
+生命周期使用严格单调序号，旧窗口和延迟 IPC 不能回退新状态。工具开始与结果按 `callId` 配对，中断后可由同一真实证据闭合；TaskService 在主进程再次脱敏生命周期和恢复胶囊。`waiting_user`、`paused`、`checkpointed`、`stopped`、`failed` 与 `completed` 保持不同语义，进程心跳不会刷新真实进展。
+
+源码级四层映射、未照搬边界和后续保留项见 `docs/HERMES_RUNTIME_ALIGNMENT_V2.1.md`。专项回归为 `npm.cmd run verify:turn-lifecycle`，并已进入 `verify:v2-core-gate` 与正式发布脚本。
+
+本地 `v2.1.0` 安装包为 `release/taiji-office-setup-2.1.0.exe`，大小 `174349843` 字节，SHA-256 为 `EF27766D8AED9D5D5A28321BB7AE6EE5E0EF278738E762112F75DFA42F9B16E9`。`verify:v2-core-gate`、`verify:v1-core-gate` 与 `verify:package` 已通过。本机 Electron 33 的 GPU 子进程仍以系统错误 `-1073741515` 在渲染前退出，因此真实窗口 UI 回归需在图形环境正常的办公室电脑补跑，不能写成已通过。
 
 ## v2.0 统一智能体运行时
 

@@ -406,6 +406,9 @@ export interface TaskRun {
   /** v2 每轮模型决策、工具证据和恢复状态；持久化前已脱敏。 */
   turnRuntime?: import('./engine/turnRuntime.mjs').TurnRuntimeState;
   turnFinalization?: Record<string, unknown>;
+  /** v2.1 跨助手、员工和团队共享的公开行动生命周期；不保存隐藏思维链。 */
+  turnLifecycle?: import('./engine/turnLifecycle.mjs').TurnLifecycleState;
+  lifecycleRecovery?: Record<string, unknown>;
   /** Unified team execution contract shared by assistant, worker and chat windows. */
   executionProtocol?: import('./engine/teamExecutionProtocol.mjs').TeamExecutionProtocol;
   /** 主进程原生 Adapter 写入的团队聊天投影；凭据和原始模型请求不会持久化。 */

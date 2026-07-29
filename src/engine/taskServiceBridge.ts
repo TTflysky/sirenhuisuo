@@ -1,6 +1,8 @@
 import type { TaskDecision } from './taskDecisionKernel.mjs';
 import type { ExecutionControllerSnapshot } from './executionController.mjs';
 import type { ToolExecutionEvidence } from './executionEvidence.mjs';
+import { createLifecycleRecoveryCapsule, type TurnLifecycleState } from './turnLifecycle.mjs';
+import type { TurnRuntimeState } from './turnRuntime.mjs';
 
 type Reference = { kind?: string; id?: string; label?: string; sourceUrl?: string; state?: string };
 type Usage = { promptTokens?: number; completionTokens?: number; totalTokens?: number };
@@ -15,11 +17,12 @@ function failureClass(value: string): string {
 
 export function createChatTaskBridge(input: {
   taskType: 'assistant' | 'dm'; ownerId: string; title: string; goal: string; workspaceId: string;
-  idempotencyKey: string; references?: Reference[];
+  idempotencyKey: string; conversationId?: string; references?: Reference[];
 }) {
   let taskId: string | undefined;
   let workerLeaseId: string | undefined;
   let heartbeatTimer: number | undefined;
+  let latestLifecycle: TurnLifecycleState | undefined;
   const attempts = new Map<string, string>();
   const pendingWrites: Array<Promise<unknown>> = [];
   const stepId = 'execution';
@@ -35,8 +38,32 @@ export function createChatTaskBridge(input: {
       taskId: currentTaskId,
       type: 'heartbeat',
       requestedBy: 'renderer-chat-task-service',
-      payload: { leaseId: workerLeaseId },
+      payload: {
+        leaseId: workerLeaseId,
+        progressAt: latestLifecycle?.progressAt,
+        activity: latestLifecycle?.activity,
+      },
     }));
+  };
+  const writeLifecycle = async (lifecycle: TurnLifecycleState) => {
+    const electron = api();
+    const currentTaskId = taskId;
+    latestLifecycle = lifecycle;
+    if (!electron || !currentTaskId) return;
+    const recovery = createLifecycleRecoveryCapsule(lifecycle, {
+      reason: lifecycle.exit?.reason || lifecycle.recovery?.reason,
+      nextAction: lifecycle.recovery?.nextAction,
+      resumable: lifecycle.recovery?.resumable,
+    });
+    await electron.taskServiceLifecycle({ taskId: currentTaskId, lifecycle, recovery });
+    if (workerLeaseId) {
+      await electron.taskWorkerCommand({
+        taskId: currentTaskId,
+        type: 'heartbeat',
+        requestedBy: 'renderer-chat-task-service',
+        payload: { leaseId: workerLeaseId, progressAt: lifecycle.progressAt, activity: lifecycle.activity },
+      });
+    }
   };
   const releaseWorkerLease = async () => {
     const electron = api();
@@ -65,6 +92,7 @@ export function createChatTaskBridge(input: {
         acceptanceCriteria: decision.acceptanceCriteria, constraints: decision.requiredConstraints,
         taskDecision: decision,
         idempotencyKey: input.idempotencyKey,
+        conversationId: input.conversationId,
         steps: [{ id: stepId, title: 'Execute task route', assignment: decision.goal || input.goal, deliverableType: decision.deliverableType }],
       });
       const createdTask = created as { ok?: boolean; task?: { id?: string } };
@@ -125,6 +153,9 @@ export function createChatTaskBridge(input: {
         }));
       }
     },
+    lifecycle(snapshot: TurnLifecycleState) {
+      schedule(writeLifecycle(snapshot));
+    },
     heartbeat(state: ExecutionControllerSnapshot) {
       const electron = api();
       const currentTaskId = taskId;
@@ -133,25 +164,59 @@ export function createChatTaskBridge(input: {
         taskId: currentTaskId,
         state: state.status,
         detail: state.phase,
+        activity: latestLifecycle?.activity,
         workspaceId: input.workspaceId,
         observedAt: Date.now(),
+        progressAt: latestLifecycle?.progressAt,
       }));
       renewWorkerLease();
     },
-    async finish(result: { executionState: ExecutionControllerSnapshot; usage: Usage; model?: string; output: string }) {
+    async finish(result: {
+      executionState: ExecutionControllerSnapshot;
+      usage: Usage;
+      model?: string;
+      output: string;
+      turnRuntime?: TurnRuntimeState;
+      turnFinalization?: Record<string, any>;
+      lifecycle?: TurnLifecycleState;
+    }) {
       const electron = api();
       const currentTaskId = taskId;
       if (!currentTaskId || !electron) return;
       try {
+        if (result.lifecycle) await writeLifecycle(result.lifecycle);
         await Promise.allSettled(pendingWrites.splice(0));
         await electron.taskServiceUsage({ taskId: currentTaskId, modelRounds: 1, promptTokens: result.usage.promptTokens || 0,
         completionTokens: result.usage.completionTokens || 0, estimatedTokens: result.usage.totalTokens || 0 });
-      if (result.executionState.status === 'completed') {
+      if (result.turnRuntime || result.turnFinalization) {
+        await electron.taskServiceUpdate({
+          taskId: currentTaskId,
+          patch: { turnRuntime: result.turnRuntime, turnFinalization: result.turnFinalization },
+          detail: '保存聊天执行的 Turn Runtime 与统一收尾结果',
+        });
+      }
+      const finalStatus = String(result.turnFinalization?.status || result.lifecycle?.status || result.executionState.status);
+      if (finalStatus === 'completed' && result.executionState.status === 'completed') {
         await electron.taskServiceCompleteStep({ taskId: currentTaskId, stepId, summary: result.output.slice(0, 1000), output: { model: result.model, summary: result.output.slice(0, 3000) } });
         const validation = await electron.taskServiceValidateCompletion(currentTaskId);
         if (validation.passed) await electron.taskServiceStatus({ taskId: currentTaskId, status: 'completed', detail: 'Execution evidence and completion gate passed' });
         else await electron.taskServiceStatus({ taskId: currentTaskId, status: 'awaiting_user', detail: 'Execution returned, but the completion gate still needs evidence' });
-      } else if (result.executionState.status === 'stopped') {
+      } else if (finalStatus === 'waiting_user') {
+        await electron.taskServiceUpdate({
+          taskId: currentTaskId,
+          patch: { waitingFor: result.turnFinalization?.waitingFor || result.output.slice(0, 1200) },
+          detail: '聊天任务等待用户补充唯一条件',
+        });
+        await electron.taskServiceStatus({ taskId: currentTaskId, status: 'awaiting_user', detail: 'Execution is waiting for a required user condition' });
+      } else if (finalStatus === 'paused' || finalStatus === 'checkpointed') {
+        await electron.taskServiceCheckpoint({
+          taskId: currentTaskId,
+          kind: 'turn-lifecycle',
+          label: finalStatus === 'checkpointed' ? '执行阶段恢复点' : '用户暂停恢复点',
+          workspaceId: input.workspaceId,
+        });
+        await electron.taskServiceStatus({ taskId: currentTaskId, status: 'paused', detail: 'Execution state was saved and can be resumed' });
+      } else if (finalStatus === 'stopped' || result.executionState.status === 'stopped') {
         await electron.taskServiceStatus({ taskId: currentTaskId, status: 'stopped', detail: 'Stopped by execution controller' });
       } else {
         await electron.taskServiceFailStep({ taskId: currentTaskId, stepId, error: result.output.slice(0, 1200), errorClass: failureClass(result.output) });

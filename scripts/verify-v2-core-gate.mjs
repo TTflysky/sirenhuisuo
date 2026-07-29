@@ -4,6 +4,7 @@ const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const checks = [
   'build',
   'verify:unified-turn-runtime',
+  'verify:turn-lifecycle',
   'verify:agent-trajectory-suite',
   'verify:native-execution',
   'verify:task-worker',
