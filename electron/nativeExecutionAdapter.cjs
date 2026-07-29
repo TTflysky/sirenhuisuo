@@ -8,6 +8,9 @@ const MAX_TOOL_CALLS_PER_STEP = 24;
 const MAX_MODEL_ROUNDS_PER_STEP = 12;
 const MODEL_ROUNDS_PER_STAGE = 6;
 const MAX_PREPARATION_STREAK = 4;
+const DEFAULT_MODEL_REQUEST_TIMEOUT_MS = 120_000;
+const DEFAULT_TOOL_CALL_TIMEOUT_MS = 120_000;
+const DEFAULT_PROGRESS_STALL_MS = 150_000;
 const ACTIVE_JOB_STATES = new Set(['queued', 'running']);
 
 const ROLE_DUTY = {
@@ -104,6 +107,8 @@ function safeJob(job) {
     waitingFor: job.waitingFor,
     startedAt: job.startedAt,
     updatedAt: job.updatedAt,
+    lastProgressAt: job.lastProgressAt,
+    currentActivity: job.currentActivity,
     finishedAt: job.finishedAt,
     currentStepId: job.currentStepId,
     currentMember: job.currentMember ? publicMember(job.currentMember) : undefined,
@@ -121,6 +126,9 @@ function createNativeExecutionAdapter(options) {
   let activeJob;
   const projectRoot = path.resolve(options.projectRoot);
   const retryDelays = options.retryDelays ?? [0, 1000, 3000, 6000, 10000];
+  const modelRequestTimeoutMs = Math.max(100, Number(options.modelRequestTimeoutMs) || DEFAULT_MODEL_REQUEST_TIMEOUT_MS);
+  const toolCallTimeoutMs = Math.max(100, Number(options.toolCallTimeoutMs) || DEFAULT_TOOL_CALL_TIMEOUT_MS);
+  const progressStallMs = Math.max(modelRequestTimeoutMs + 5_000, Number(options.progressStallMs) || DEFAULT_PROGRESS_STALL_MS);
   let engineModulesPromise;
 
   function refreshQueuePositions() {
@@ -190,6 +198,7 @@ function createNativeExecutionAdapter(options) {
 
   function emit(job, type, detail = {}) {
     job.updatedAt = Date.now();
+    job.lastProgressAt = job.updatedAt;
     job.eventSequence += 1;
     const event = {
       protocolVersion: NATIVE_ADAPTER_VERSION,
@@ -206,6 +215,42 @@ function createNativeExecutionAdapter(options) {
     if (job.events.length > 500) job.events.splice(0, job.events.length - 500);
     try { options.onChanged?.(clone(event)); } catch {}
     return event;
+  }
+
+  async function reportActivity(job, type, activity, detail = {}) {
+    const value = text(activity, 500) || '后台任务正在推进';
+    job.currentActivity = value;
+    const event = emit(job, type, { ...detail, activity: value });
+    await updateRun(job.taskId, (run) => {
+      if (run.worker) {
+        run.worker.progressAt = event.occurredAt;
+        run.worker.activity = value;
+      }
+      const step = run.steps?.find((item) => item.id === job.currentStepId);
+      if (step) {
+        step.events ||= [];
+        if (step.events.at(-1)?.detail !== value) {
+          step.events.push({ ts: event.occurredAt, type: 'status', detail: value });
+          if (step.events.length > 120) step.events = step.events.slice(-120);
+        }
+      }
+      if (run.recoveryContext) run.recoveryContext.summary = value;
+    }, `原生 Adapter 进展：${value}`).catch(() => {});
+    return event;
+  }
+
+  function timeoutPromise(ms, message, onTimeout) {
+    let timer;
+    const promise = new Promise((_, reject) => {
+      timer = setTimeout(() => {
+        try { onTimeout?.(); } catch {}
+        const error = new Error(message);
+        error.code = 'TAIJI_OPERATION_TIMEOUT';
+        error.retryable = true;
+        reject(error);
+      }, ms);
+    });
+    return { promise, clear: () => clearTimeout(timer) };
   }
 
   async function loadEngineModules() {
@@ -261,6 +306,7 @@ function createNativeExecutionAdapter(options) {
   async function assertCanContinue(job) {
     if (!job.compensating && job.control === 'stop') throw new ExecutionControlSignal('stop', '任务已停止');
     if (!job.compensating && job.control === 'pause') throw new ExecutionControlSignal('pause', '任务已暂停');
+    if (!job.compensating && job.control === 'stall') throw new ExecutionControlSignal('stall', job.lastError || '任务长时间没有产生新进展，已安全暂停。');
     const run = await readRun(job.taskId);
     if (!run) throw new ExecutionControlSignal('close', '任务已关闭');
     if (!job.compensating && run.status === 'stopped') throw new ExecutionControlSignal('stop', '任务已停止');
@@ -299,17 +345,28 @@ function createNativeExecutionAdapter(options) {
       type: 'claim',
       requestedBy: 'main-native-execution-adapter',
       sessionId: options.sessionId,
-      payload: { adapter: 'main-native-execution-adapter', adapterProtocolVersion: ADAPTER_PROTOCOL_VERSION, jobId: job.jobId },
+      payload: {
+        adapter: 'main-native-execution-adapter', adapterProtocolVersion: ADAPTER_PROTOCOL_VERSION, jobId: job.jobId,
+        progressAt: job.lastProgressAt, activity: job.currentActivity,
+      },
     });
     if (!result.ok || !result.run?.worker?.leaseId) throw new Error(result.error || '原生 Adapter 无法领取 Worker 租约');
     job.leaseId = result.run.worker.leaseId;
     job.checkpointSequence = Number(result.run.worker.checkpointSequence) || 0;
     job.heartbeat = setInterval(() => {
       if (!job.leaseId || job.state !== 'running') return;
+      const silentFor = Date.now() - Number(job.lastProgressAt || job.startedAt || job.createdAt || Date.now());
+      if (silentFor >= progressStallMs) {
+        job.lastError = `当前动作超过 ${Math.ceil(progressStallMs / 1000)} 秒没有产生新结果。系统已保留现场并暂停，避免继续空转。`;
+        job.control = 'stall';
+        job.abortController?.abort();
+        emit(job, 'execution_stalled', { silentForMs: silentFor, activity: job.currentActivity, error: job.lastError });
+        return;
+      }
       void options.worker.dispatch({
         commandId: `native-heartbeat-${job.taskId}-${Date.now()}`,
         taskId: job.taskId, type: 'heartbeat', requestedBy: 'main-native-execution-adapter', sessionId: options.sessionId,
-        payload: { leaseId: job.leaseId },
+        payload: { leaseId: job.leaseId, progressAt: job.lastProgressAt, activity: job.currentActivity },
       }).then((heartbeat) => {
         if (!heartbeat.ok) { job.lastError = heartbeat.error; job.control = 'pause'; job.abortController?.abort(); }
       });
@@ -373,28 +430,38 @@ function createNativeExecutionAdapter(options) {
       if (retryDelays[attempt]) await sleep(retryDelays[attempt]);
       const controller = new AbortController();
       job.abortController = controller;
-      const timer = setTimeout(() => controller.abort(), 120000);
+      await reportActivity(job, 'model_request_started', `${member.name} 正在请求模型 ${modelName(config)}（第 ${attempt + 1} 次）`, {
+        stepId: job.currentStepId, member: publicMember(member), attempt: attempt + 1, timeoutMs: modelRequestTimeoutMs,
+      });
+      const deadline = timeoutPromise(modelRequestTimeoutMs, `模型在 ${Math.ceil(modelRequestTimeoutMs / 1000)} 秒内没有返回`, () => controller.abort());
       try {
-        const response = await options.fetchImpl(endpoint, {
-          method: 'POST', headers, signal: controller.signal,
-          body: JSON.stringify({
-            model: modelName(config),
-            messages,
-            ...(Array.isArray(tools) && tools.length ? { tools, tool_choice: 'auto' } : {}),
-            stream: false,
-          }),
+        const operation = (async () => {
+          const response = await options.fetchImpl(endpoint, {
+            method: 'POST', headers, signal: controller.signal,
+            body: JSON.stringify({
+              model: modelName(config),
+              messages,
+              ...(Array.isArray(tools) && tools.length ? { tools, tool_choice: 'auto' } : {}),
+              stream: false,
+            }),
+          });
+          const raw = await response.text();
+          if (!response.ok) {
+            const error = new Error(`模型 HTTP ${response.status}：${raw.slice(0, 1000)}`);
+            error.retryable = response.status === 408 || response.status === 409 || response.status === 429 || response.status >= 500;
+            throw error;
+          }
+          let data;
+          try { data = JSON.parse(raw); } catch { throw new Error('模型返回了无效 JSON'); }
+          const message = data?.choices?.[0]?.message;
+          if (!message) throw new Error('模型没有返回可用消息');
+          return { message, usage: data.usage || {}, model: data.model || modelName(config) };
+        })();
+        const result = await Promise.race([operation, deadline.promise]);
+        await reportActivity(job, 'model_response_received', `${member.name} 已收到模型回复，正在检查下一步动作`, {
+          stepId: job.currentStepId, member: publicMember(member), attempt: attempt + 1,
         });
-        const raw = await response.text();
-        if (!response.ok) {
-          const error = new Error(`模型 HTTP ${response.status}：${raw.slice(0, 1000)}`);
-          error.retryable = response.status === 408 || response.status === 409 || response.status === 429 || response.status >= 500;
-          throw error;
-        }
-        let data;
-        try { data = JSON.parse(raw); } catch { throw new Error('模型返回了无效 JSON'); }
-        const message = data?.choices?.[0]?.message;
-        if (!message) throw new Error('模型没有返回可用消息');
-        return { message, usage: data.usage || {}, model: data.model || modelName(config) };
+        return result;
       } catch (error) {
         if (job.interruptReason === 'steer') {
           throw new ExecutionControlSignal('steer', '已收到新的要求，正在根据最新内容调整当前步骤。');
@@ -404,7 +471,7 @@ function createNativeExecutionAdapter(options) {
         const classified = turnRuntime.classifyExecutionError(error);
         const used = recoveryAttempts.get(classified.type) || 0;
         const limit = Number(turnRuntime.TAIJI_RECOVERY_LIMITS[classified.type] ?? 1);
-        emit(job, 'model_retry', {
+        await reportActivity(job, 'model_retry', `${member.name} 的模型请求未成功，正在按恢复策略重试`, {
           stepId: job.currentStepId,
           attempt: used + 1,
           maxAttempts: limit + 1,
@@ -414,7 +481,7 @@ function createNativeExecutionAdapter(options) {
         if (error?.retryable === false || !classified.retryable || classified.needsUser || used >= limit) break;
         recoveryAttempts.set(classified.type, used + 1);
       } finally {
-        clearTimeout(timer);
+        deadline.clear();
         if (job.abortController === controller) job.abortController = undefined;
       }
     }
@@ -426,6 +493,7 @@ function createNativeExecutionAdapter(options) {
     const message = {
       id, authorId: member.id, authorName: member.name, roleId: member.role || 'custom', content: text(content, 20000), mentions: [],
       timestamp: Date.now(), kind, discussionId: job.taskId, triggeredBy: 'task', ...(tool ? { tool } : {}),
+      ...(run?.conversationId ? { conversationId: run.conversationId } : {}),
     };
     await updateRun(job.taskId, (next) => {
       if (!Array.isArray(next.executionMessages)) next.executionMessages = [];
@@ -584,6 +652,12 @@ function createNativeExecutionAdapter(options) {
           acceptanceCriteria: appended.delegation.acceptanceCriteria,
         })
         : undefined;
+      if (child?.task?.id && current.conversationId) {
+        await updateRun(child.task.id, (next) => {
+          next.conversationId = current.conversationId;
+          next.teamId = current.teamId;
+        }, `继承父任务 ${current.id} 的聊天会话`);
+      }
       await updateRun(job.taskId, (next) => {
         next.delegations = appended.run.delegations;
         next.steps = appended.run.steps;
@@ -801,12 +875,32 @@ function createNativeExecutionAdapter(options) {
           if (!normalizedCall.ok) result = { name, success: false, output: normalizedCall.error || '工具参数无效' };
           else if (!preflight.ok) result = { name, success: false, output: `工具预检未通过：${preflight.message}` };
           else if (cache.has(key)) result = { name, success: false, output: '完全相同的工具调用已执行，不能重复消耗算力，必须更换路线。' };
-          else if (name === 'delegate_subtask') result = await delegateSubtask(job, run, step, args);
-          else if (name === 'prepare_git_worktree' || name === 'checkpoint_git_worktree') result = await executeWorktreeTool(job, run, name, args);
-          else result = await options.toolRuntime.execute(name, args, {
-            taskId: job.taskId, scope: `team:${run.teamId}`, workspaceId: run.workspaceId,
-            executionPolicy: job.executionPolicy, connectors: job.connectors, connectorActions: job.connectorActions,
-          });
+          else {
+            await reportActivity(job, 'tool_started', `${member.name} 正在调用 ${name}`, {
+              stepId: step.id, member: publicMember(member), toolName: name,
+            });
+            const deadline = timeoutPromise(toolCallTimeoutMs, `工具 ${name} 在 ${Math.ceil(toolCallTimeoutMs / 1000)} 秒内没有返回`, () => {});
+            try {
+              const execution = name === 'delegate_subtask'
+                ? delegateSubtask(job, run, step, args)
+                : name === 'prepare_git_worktree' || name === 'checkpoint_git_worktree'
+                  ? executeWorktreeTool(job, run, name, args)
+                  : options.toolRuntime.execute(name, args, {
+                    taskId: job.taskId, scope: `team:${run.teamId}`, workspaceId: run.workspaceId,
+                    goal: run.goal || run.request,
+                    executionPolicy: job.executionPolicy, connectors: job.connectors, connectorActions: job.connectorActions,
+                  });
+              result = await Promise.race([execution, deadline.promise]);
+            } catch (error) {
+              if (error?.code === 'TAIJI_OPERATION_TIMEOUT') {
+                job.lastError = `${error.message}。结果是否已产生尚未确认，为避免重复执行，任务已安全暂停。`;
+                throw new ExecutionControlSignal('stall', job.lastError);
+              }
+              throw error;
+            } finally {
+              deadline.clear();
+            }
+          }
           cache.set(key, { success: result.success, output: result.output });
           callLog.push({ name, args: JSON.stringify(args), result: result.output, success: result.success });
           if (result.structuredEvidence?.review) review = result.structuredEvidence.review;
@@ -1404,7 +1498,48 @@ function createNativeExecutionAdapter(options) {
         if (error.kind === 'stop' || error.kind === 'close') {
           await runCompensations(job, `${error.kind}: ${error.message}`).catch(() => {});
         }
-        if (error.kind === 'delegate_wait') {
+        if (error.kind === 'stall') {
+          const paused = await options.worker.dispatch({
+            commandId: `native-stall-${job.jobId}-${Date.now()}`,
+            taskId: job.taskId,
+            type: 'pause',
+            requestedBy: 'main-native-execution-watchdog',
+            sessionId: options.sessionId,
+            payload: { reason: error.message },
+          }).catch(() => undefined);
+          try {
+            await updateRun(job.taskId, (run) => {
+              run.status = 'paused';
+              run.phase = 'blocked';
+              run.lastError = undefined;
+              run.steps.forEach((step) => {
+                if (step.status === 'running' || step.status === 'queued') {
+                  step.status = 'paused';
+                  step.events ||= [];
+                  step.events.push({ ts: Date.now(), type: 'error', detail: error.message });
+                }
+              });
+              if (run.worker) {
+                run.worker.state = 'paused';
+                run.worker.activity = '已检测到停滞并暂停';
+              }
+              run.handoff = {
+                ts: Date.now(),
+                completed: run.steps.filter((step) => step.status === 'completed').map((step) => step.title),
+                blocked: error.message,
+                nextAction: '先检查网络、模型或外部工具是否可用；确认后点击“继续执行”，系统会从未完成步骤恢复。',
+              };
+              if (run.recoveryContext) {
+                run.recoveryContext.summary = '任务长时间没有新结果，系统已停止空转并保存现场。';
+                run.recoveryContext.interruptedAt = Date.now();
+                run.recoveryContext.interruptionReason = error.message;
+                run.recoveryContext.autoResume = false;
+                run.recoveryContext.waitingFor = undefined;
+              }
+            }, paused?.ok ? '原生 Adapter 停滞保护已暂停任务' : '原生 Adapter 停滞保护兜底暂停任务');
+          } catch {}
+          emit(job, 'execution_paused_after_stall', { error: error.message });
+        } else if (error.kind === 'delegate_wait') {
           job.state = 'queued';
           job.requeueAfterExecution = true;
           await updateRun(job.taskId, (run) => {
@@ -1519,7 +1654,7 @@ function createNativeExecutionAdapter(options) {
     const job = {
       protocolVersion: NATIVE_ADAPTER_VERSION,
       jobId: `native-job-${taskId}-${crypto.randomUUID()}`,
-      taskId, state: 'queued', createdAt: Date.now(), updatedAt: Date.now(),
+      taskId, state: 'queued', createdAt: Date.now(), updatedAt: Date.now(), lastProgressAt: Date.now(), currentActivity: '等待进入后台队列',
       members, attachments: clone(input.attachments || []), extraSystemContext: text(input.extraSystemContext, 80000),
       reviewModelConfig: clone(input.reviewModelConfig || undefined),
       memoryWriteApproval: input.memoryWriteApproval !== false,
@@ -1615,6 +1750,19 @@ function createNativeExecutionAdapter(options) {
         }
       }).catch(() => {});
     }
+    if (type === 'resume') {
+      // Resume descendants first. Otherwise the parent can re-enter execute(),
+      // observe a still-paused child and immediately fall back to awaiting_user.
+      if (job && !['completed', 'failed', 'stopped'].includes(job.state)) {
+        job.control = undefined;
+        job.state = 'queued';
+        emit(job, 'resume_waiting_for_children');
+      }
+      void cascadeChildControl(taskId, type)
+        .then(() => applyJobControl(job, type))
+        .catch((error) => emit(job, 'child_task_control_failed', { control: type, error: text(error?.message || error, 600) }));
+      return;
+    }
     const queuedBeforeControl = applyJobControl(job, type);
     const cascade = cascadeChildControl(taskId, type).catch(() => {});
     if (queuedBeforeControl && (type === 'stop' || type === 'close') && job) {
@@ -1677,6 +1825,12 @@ function createNativeExecutionAdapter(options) {
           acceptanceCriteria: appended.delegation.acceptanceCriteria,
         })
         : undefined;
+      if (child?.task?.id && current.conversationId) {
+        await updateRun(child.task.id, (next) => {
+          next.conversationId = current.conversationId;
+          next.teamId = current.teamId;
+        }, `继承父任务 ${current.id} 的聊天会话`);
+      }
       await updateRun(current.id, (next) => {
         next.delegations = appended.run.delegations;
         next.steps = appended.run.steps;

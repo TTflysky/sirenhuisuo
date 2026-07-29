@@ -6,6 +6,8 @@ const checks = [
   'verify:unified-turn-runtime',
   'verify:agent-trajectory-suite',
   'verify:native-execution',
+  'verify:task-worker',
+  'verify:chat-session-isolation',
   'verify:dispatch-intelligence',
   'verify:task-delegation',
   'verify:context-tool-pairs',
@@ -15,6 +17,7 @@ const checks = [
   'verify:execution-controller',
   'verify:execution-evidence',
   'verify:tool-registry',
+  'verify:skill-install-e2e',
 ];
 
 for (const script of checks) {

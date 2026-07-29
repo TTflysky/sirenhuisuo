@@ -63,8 +63,9 @@ export function createChatTaskBridge(input: {
         taskType: input.taskType, ownerId: input.ownerId, title: input.title,
         goal: decision.goal || input.goal, request: input.goal,
         acceptanceCriteria: decision.acceptanceCriteria, constraints: decision.requiredConstraints,
+        taskDecision: decision,
         idempotencyKey: input.idempotencyKey,
-        steps: [{ id: stepId, title: 'Execute task route', assignment: decision.goal || input.goal }],
+        steps: [{ id: stepId, title: 'Execute task route', assignment: decision.goal || input.goal, deliverableType: decision.deliverableType }],
       });
       const createdTask = created as { ok?: boolean; task?: { id?: string } };
       taskId = createdTask.ok ? createdTask.task?.id : undefined;

@@ -23,6 +23,7 @@ function object(value) {
 
 function deliverableFormat(value) {
   const textValue = text(value, 80).toLowerCase();
+  if (['answer', 'connection', 'operation', 'decision', 'mixed'].includes(textValue)) return textValue;
   if (/markdown|\.md\b/u.test(textValue)) return 'markdown';
   if (/word|\.docx\b/u.test(textValue)) return 'docx';
   if (/excel|xlsx|\.csv\b/u.test(textValue)) return 'spreadsheet';
@@ -32,7 +33,7 @@ function deliverableFormat(value) {
   return 'text';
 }
 
-function normalizeDeliverables(value, goal) {
+function normalizeDeliverables(value, goal, deliverableType) {
   const source = Array.isArray(value) ? value : [];
   const normalized = source.map((item) => {
     const label = typeof item === 'string' ? text(item, 500) : text(item?.label ?? item?.name ?? item?.title, 500);
@@ -40,7 +41,7 @@ function normalizeDeliverables(value, goal) {
     return {
       label,
       format: deliverableFormat(typeof item === 'string' ? item : item?.format ?? label),
-      type: ['answer', 'file', 'connection', 'operation', 'decision', 'mixed'].includes(item?.type) ? item.type : undefined,
+      type: ['answer', 'file', 'connection', 'operation', 'decision', 'mixed'].includes(item?.type) ? item.type : deliverableType,
       category: ['final', 'working', 'reference'].includes(item?.category) ? item.category : 'final',
       required: item?.required !== false,
     };
@@ -50,7 +51,9 @@ function normalizeDeliverables(value, goal) {
   return [{
     label: inferredFormat === 'source' ? '可运行代码或明确的修改文件' : '可交接且可验证的任务结果',
     format: inferredFormat,
-    type: inferredFormat === 'text' ? 'answer' : 'file',
+    type: ['answer', 'file', 'connection', 'operation', 'decision', 'mixed'].includes(deliverableType)
+      ? deliverableType
+      : inferredFormat === 'text' ? 'answer' : 'file',
     category: 'final',
     required: true,
   }];
@@ -110,6 +113,7 @@ export function createTaskContract(input = {}) {
     deliverables: normalizeDeliverables(
       decision.deliverables ?? input.deliverables ?? input.expectedOutputs,
       `${goal} ${acceptanceCriteria.join(' ')} ${requiredConstraints.join(' ')}`,
+      decision.deliverableType,
     ),
     requiredCapabilities: inferCapabilities(goal, primaryRoute, decision.requiredCapabilities ?? input.requiredCapabilities),
     riskLevel: inferRisk(goal, decision.riskLevel ?? input.riskLevel),

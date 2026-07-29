@@ -2,6 +2,7 @@ const path = require('path');
 const fs = require('fs/promises');
 const crypto = require('crypto');
 const os = require('os');
+const { pathToFileURL } = require('url');
 const extractZip = require('extract-zip');
 const yauzl = require('yauzl');
 
@@ -14,6 +15,15 @@ const MAX_SKILL_ARCHIVE_BYTES = 12 * 1024 * 1024;
 const MAX_SKILL_EXPANDED_BYTES = 16 * 1024 * 1024;
 const SKILL_DRAFT_SCHEMA = 1;
 const SKILL_DOCUMENT_ROOTS = new Set(['references', 'scripts', 'assets', 'knowledge-base', 'notes']);
+let skillInstallRoutingPromise;
+
+function loadSkillInstallRouting() {
+  if (!skillInstallRoutingPromise) {
+    const modulePath = path.join(__dirname, '../src/engine/skillInstallRouting.mjs');
+    skillInstallRoutingPromise = import(pathToFileURL(modulePath).href);
+  }
+  return skillInstallRoutingPromise;
+}
 
 function isSkillHubDownloadUrl(value) {
   try {
@@ -565,8 +575,11 @@ async function installZipSkill(projectRoot, sourceUrl, requestedName, fetchImpl 
 }
 
 async function installSkill(projectRoot, input, options = {}) {
-  const sourceUrl = typeof input?.sourceUrl === 'string' ? input.sourceUrl.trim() : '';
-  const requestedName = typeof input?.name === 'string' ? input.name.trim().slice(0, 80) : '';
+  const { resolveSkillInstallInput } = await loadSkillInstallRouting();
+  const normalized = resolveSkillInstallInput(input, input?.requestText);
+  if (normalized.error) throw new Error(normalized.error);
+  const sourceUrl = normalized.sourceUrl;
+  const requestedName = typeof normalized.name === 'string' ? normalized.name.trim().slice(0, 80) : '';
   if (!sourceUrl || sourceUrl.length > 2048) throw new Error('请填写有效的技能地址');
   let parsedSource;
   try { parsedSource = new URL(sourceUrl); } catch { throw new Error('技能地址不是有效 URL'); }
@@ -574,7 +587,8 @@ async function installSkill(projectRoot, input, options = {}) {
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   if (typeof fetchImpl !== 'function') throw new Error('当前环境没有可用的技能下载运行时');
   if (/\.zip$/i.test(parsedSource.pathname) || isSkillHubDownloadUrl(parsedSource.toString())) {
-    return installZipSkill(projectRoot, parsedSource.toString(), requestedName, fetchImpl);
+    const installed = await installZipSkill(projectRoot, parsedSource.toString(), requestedName, fetchImpl);
+    return verifyInstalledSkill(projectRoot, installed, normalized);
   }
   const { content, resolvedUrl } = await downloadSkillMarkdown(sourceUrl, fetchImpl);
   const frontmatter = parseFrontmatter(content);
@@ -608,12 +622,47 @@ async function installSkill(projectRoot, input, options = {}) {
     throw error;
   }
   const installed = (await scanSkills(projectRoot)).find((item) => item._path === path.join(targetDir, 'SKILL.md'));
-  return { ok: true, skill: installed ? (({ _path, ...item }) => item)(installed) : { name, source: slug }, resolvedUrl };
+  return verifyInstalledSkill(projectRoot, {
+    ok: true,
+    skill: installed ? (({ _path, ...item }) => item)(installed) : { name, source: slug },
+    resolvedUrl,
+  }, normalized);
+}
+
+async function verifyInstalledSkill(projectRoot, result, request) {
+  const scanned = await scanSkills(projectRoot);
+  const requestedId = result?.skill?.id;
+  const requestedName = String(result?.skill?.name || request?.name || '').toLocaleLowerCase();
+  const found = scanned.find((item) => item.id === requestedId)
+    || [...scanned].reverse().find((item) => item.name.toLocaleLowerCase() === requestedName);
+  if (!found?.id) throw new Error('技能文件已经写入，但安装后扫描没有找到它，已阻止错误地报告成功');
+  if (found.health === 'broken' || found.quarantined) {
+    throw new Error(found.healthMessage || '技能安装后完整性检查未通过');
+  }
+  const readBack = await readSkill(projectRoot, found.id);
+  if (!readBack.content?.trim()) throw new Error('技能已经写入，但安装后无法回读 SKILL.md');
+  const { _path, ...skill } = found;
+  return {
+    ...result,
+    skill,
+    requestedSourceUrl: request.sourceUrl,
+    slug: request.slug,
+    verification: {
+      verified: true,
+      manifestReadable: true,
+      skillId: found.id,
+      health: found.health,
+      documentCount: readBack.documents?.length || 0,
+      checkedAt: new Date().toISOString(),
+    },
+  };
 }
 
 async function inspectSkillSource(sourceUrl, options = {}) {
-  if (typeof sourceUrl !== 'string' || !sourceUrl.trim() || sourceUrl.length > 2048) throw new Error('请填写有效的技能地址');
-  const parsed = new URL(sourceUrl.trim());
+  const { resolveSkillInstallInput } = await loadSkillInstallRouting();
+  const normalized = resolveSkillInstallInput({ sourceUrl });
+  if (normalized.error) throw new Error(normalized.error);
+  const parsed = new URL(normalized.sourceUrl);
   if (parsed.protocol !== 'https:') throw new Error('技能地址必须使用 HTTPS');
   if (/\.zip$/i.test(parsed.pathname) || isSkillHubDownloadUrl(parsed.toString())) {
     return { name: path.basename(parsed.pathname, '.zip') || 'ZIP Skill', description: 'ZIP 技能包会在安装前检查路径、文件数和解压大小。', installMode: 'zip', requirements: { environmentVariables: [], externalSoftware: [], accountRequired: false, referencedFiles: [], missingFiles: [] } };

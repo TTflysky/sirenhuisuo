@@ -50,6 +50,7 @@ import { classifyTeamMention } from './engine/teamMentionRouting.mjs';
 import { cleanExecutionDisplay } from './engine/executionDisplay.mjs';
 import { classifyLocalOfficeQuery, formatLocalOfficeAnswer } from './engine/officeDirectory';
 import { getRegisteredTools } from './engine/toolCatalog';
+import { ensureActiveChatSession, legacyConversationId, messageBelongsToConversation } from './data/chatSessions';
 
 // ===== Action =====
 type Action =
@@ -63,7 +64,7 @@ type Action =
   | { type: 'REMOVE_TEAM'; id: string }
   | { type: 'CREATE_PROJECT'; project: Project }
   | { type: 'UPDATE_PROJECT'; id: string; partial: Partial<Project> }
-  | { type: 'APPEND_CHAT'; teamId: string; msgs: ChatMessage[] }
+  | { type: 'APPEND_CHAT'; teamId: string; msgs: ChatMessage[]; conversationId?: string }
   | { type: 'ADD_TASK'; teamId: string; task: TeamTask }
   | { type: 'ADVANCE_TASK'; teamId: string; taskId: string; lane: TaskLane }
   | { type: 'CLAIM_TASK'; teamId: string; taskId: string; claimerId: string }
@@ -89,7 +90,9 @@ function mergeTaskExecutionMessages(s: AppState, runs: TaskRun[]): AppState {
   for (const run of runs) {
     if (!run.executionMessages?.length) continue;
     const current = byTeam.get(run.teamId) ?? [];
-    current.push(...run.executionMessages);
+    current.push(...run.executionMessages.map((message) => message.conversationId || !run.conversationId
+      ? message
+      : { ...message, conversationId: run.conversationId }));
     byTeam.set(run.teamId, current);
   }
   if (!byTeam.size) return { ...s, taskRuns: runs };
@@ -182,9 +185,11 @@ function reducer(s: AppState, a: Action): AppState {
     }
 
     case 'APPEND_CHAT': {
-      client.appendChat(a.teamId, a.msgs);
+      const sessionId = a.conversationId ?? ensureActiveChatSession(`team:${a.teamId}`);
+      const messages = a.msgs.map((message) => message.conversationId ? message : { ...message, conversationId: sessionId });
+      client.appendChat(a.teamId, messages);
       const next = s.teams.map((t) =>
-        t.id === a.teamId ? { ...t, chatMessages: [...(t.chatMessages || []), ...a.msgs] } : t
+        t.id === a.teamId ? { ...t, chatMessages: [...(t.chatMessages || []), ...messages] } : t
       );
       return { ...s, teams: next };
     }
@@ -205,6 +210,7 @@ function reducer(s: AppState, a: Action): AppState {
         timestamp: Date.now(),
         kind: 'task',
         taskRef: task.id,
+        conversationId: ensureActiveChatSession(`team:${a.teamId}`),
       };
       client.appendChat(a.teamId, [taskMsg]);
       const withMsg = next.map((t) =>
@@ -305,7 +311,7 @@ export interface StoreCtx {
   state: AppState;
   dispatch: React.Dispatch<Action>;
   // 便捷方法
-  sendMessage: (teamId: string, authorId: string, roleId: RoleId, content: string, mentions?: string[], attachments?: import('./data/hermesClient').Attachment[], skillRefs?: import('./types').SkillReference[]) => void;
+  sendMessage: (teamId: string, authorId: string, roleId: RoleId, content: string, mentions?: string[], attachments?: import('./data/hermesClient').Attachment[], skillRefs?: import('./types').SkillReference[], conversationId?: string) => void;
   startTeamDemo: (teamId: string) => void;
   resetDemo: () => void;
   addEmployee: (name: string, title: string, role: OpcRoleId, avatar: string, avatarKind: 'preset' | 'custom', statusColor?: string, prompt?: string, avatarFrame?: import('./types').AvatarFrameConfig) => void;
@@ -322,7 +328,7 @@ export interface StoreCtx {
   advanceTask: (teamId: string, taskId: string, lane: TaskLane) => void;
   claimTask: (teamId: string, taskId: string, claimerId: string) => void;
   publishTask: (teamId: string, title: string, description?: string, acceptance?: string) => void;
-  triggerDiscussion: (teamId: string, opts?: { task?: TeamTask; userText?: string; extraSystemContext?: string; attachments?: import('./data/hermesClient').Attachment[]; participantPlan?: import('./types').DiscussionParticipantPlan[]; triggerMessageId?: string; discussionId?: string; forcedMemberIds?: string[]; maxRounds?: number }) => void;
+  triggerDiscussion: (teamId: string, opts?: { task?: TeamTask; userText?: string; extraSystemContext?: string; attachments?: import('./data/hermesClient').Attachment[]; participantPlan?: import('./types').DiscussionParticipantPlan[]; triggerMessageId?: string; discussionId?: string; conversationId?: string; forcedMemberIds?: string[]; maxRounds?: number }) => void;
   pauseTaskRun: (runId: string) => void;
   resumeTaskRun: (runId: string) => void;
   stopTaskRun: (runId: string) => void;
@@ -429,7 +435,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     content: string,
     mentions: string[] = [],
     attachments?: import('./data/hermesClient').Attachment[],
-    skillRefs?: import('./types').SkillReference[]
+    skillRefs?: import('./types').SkillReference[],
+    conversationId = ensureActiveChatSession(`team:${teamId}`),
   ) => {
     const msg: ChatMessage = {
       id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -441,11 +448,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       kind: 'text',
       attachments,
       skillRefs,
+      conversationId,
     };
-    dispatch({ type: 'APPEND_CHAT', teamId, msgs: [msg] });
+    dispatch({ type: 'APPEND_CHAT', teamId, msgs: [msg], conversationId });
     if (roleId === 'human') {
       const executionContent = `${content}${attachmentWorkspaceContext(attachments ?? [])}`;
-      enqueueAutoDiscussion(teamId, msg.id, executionContent, mentions, attachments, skillRefs);
+      enqueueAutoDiscussion(teamId, msg.id, executionContent, mentions, attachments, skillRefs, conversationId);
     }
   };
 
@@ -748,7 +756,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       ? !!settings.autoDiscuss
       : settings.autoDiscussMode !== 'off';
     if (autoDiscussEnabled) {
-      enqueueDiscussion(teamId, { task, userText: `新任务：${title}${description ? `\n${description}` : ''}`, triggerMessageId: task.id, discussionId: `discussion-${task.id}`, maxRounds: settings.autoDiscussMaxRounds });
+      enqueueDiscussion(teamId, { task, userText: `新任务：${title}${description ? `\n${description}` : ''}`, triggerMessageId: task.id, discussionId: `discussion-${task.id}`, conversationId: ensureActiveChatSession(`team:${teamId}`), maxRounds: settings.autoDiscussMaxRounds });
     }
   };
 
@@ -811,6 +819,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (discussingRef.current.has(teamId)) return false;
     const team = stateRef.current.teams.find((t) => t.id === teamId);
     if (!team) return false;
+    const runConversationId = opts?.runId
+      ? stateRef.current.taskRuns.find((item) => item.id === opts?.runId)?.conversationId
+      : undefined;
+    const conversationId = opts?.conversationId ?? runConversationId ?? ensureActiveChatSession(`team:${teamId}`);
+    opts = { ...(opts ?? {}), conversationId };
+    const conversationTeam: Team = {
+      ...team,
+      chatMessages: team.chatMessages.filter((message) => messageBelongsToConversation(message, conversationId, `team:${teamId}`)),
+    };
     discussingRef.current.add(teamId);
     const activeScheduler = schedulerRef.current.get(teamId) ?? { running: true, keys: new Set<string>() };
     activeScheduler.modelRequestController?.abort();
@@ -946,7 +963,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       markRunExecuting();
       const layeredMemoryContext = await buildLayeredMemoryContext({ query: opts?.userText || opts?.task?.title || '', teamId, limit: 18 });
       return runTeamDiscussion(
-      team,
+      conversationTeam,
       stateRef.current.employees,
       { ...(opts ?? {}), extraSystemContext: [opts?.extraSystemContext, layeredMemoryContext].filter(Boolean).join('\n\n'), initialExecutionState: liveRun?.recoveryContext?.controller },
       {
@@ -984,6 +1001,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             discussionRound,
             triggeredBy: opts?.task ? 'task' : 'message',
             inReplyToMessageId,
+            conversationId,
           };
           const stepSnapshot = stepId ? liveRun?.steps.find((item) => item.id === stepId) : undefined;
           const toolEvents = stepSnapshot?.events
@@ -996,12 +1014,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               authorName: emp.name,
               roleId: emp.role,
               content: `执行过程 · ${emp.name} · ${stepSnapshot?.title ?? '当前步骤'} · ${toolEvents.length} 项工具动作\n${toolEvents.map((event) => `- ${cleanExecutionDisplay(event.detail, 320)}`).join('\n')}`,
-              mentions: [], timestamp: Date.now(), kind: 'execution', discussionId: opts?.discussionId,
+              mentions: [], timestamp: Date.now(), kind: 'execution', discussionId: opts?.discussionId, conversationId,
             }
             : undefined;
           // Keep the chat readable: one expandable summary per completed step.
           // Full tool evidence remains in the task run and replay panels.
-          dispatch({ type: 'APPEND_CHAT', teamId, msgs: executionSummary ? [executionSummary, msg] : [msg] });
+          dispatch({ type: 'APPEND_CHAT', teamId, msgs: executionSummary ? [executionSummary, msg] : [msg], conversationId });
           let reportedStepId: string | undefined;
           let reportedStepStatus: 'completed' | 'failed' | undefined;
           updateRun((run) => {
@@ -1071,11 +1089,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         },
         onSteeringReply(emp, content, tokens, contextUsage, stepId) {
           dispatch({
-            type: 'APPEND_CHAT', teamId,
+            type: 'APPEND_CHAT', teamId, conversationId,
             msgs: [{
               id: `msg-steering-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
               authorId: emp.id, roleId: emp.role, content, mentions: [], timestamp: Date.now(), kind: 'text',
-              tokens, contextUsage, discussionId: opts?.discussionId, triggeredBy: 'message',
+              tokens, contextUsage, discussionId: opts?.discussionId, triggeredBy: 'message', conversationId,
             }],
           });
           updateRun((run) => {
@@ -1460,9 +1478,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }, delay);
   };
 
-  const enqueueAssistantSupervisor = async (team: Team, content: string, mayDelegate: boolean): Promise<{ reply: string; messageId: string } | undefined> => {
-    if (supervisorBusyRef.current.has(team.id)) return undefined;
-    supervisorBusyRef.current.add(team.id);
+  const enqueueAssistantSupervisor = async (team: Team, content: string, mayDelegate: boolean, conversationId: string): Promise<{ reply: string; messageId: string } | undefined> => {
+    const busyKey = `${team.id}:${conversationId}`;
+    if (supervisorBusyRef.current.has(busyKey)) return undefined;
+    supervisorBusyRef.current.add(busyKey);
     const sanitizeSupervisorReply = (reply: string) => {
       if (mayDelegate && /没有权限|未开放.*(?:接口|调度)|无法.*(?:分派|调用|调度)|切换到.*会话|开启.*调度/u.test(reply)) {
         return '我会按团队成员的职责分派执行，并在任务面板持续跟踪；产出完成后安排审查验收。';
@@ -1478,6 +1497,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       dispatch({
         type: 'APPEND_CHAT',
         teamId: team.id,
+        conversationId,
         msgs: [{
           id: messageId,
           authorId: 'assistant',
@@ -1487,6 +1507,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           timestamp: Date.now(),
           kind: 'text',
           tokens,
+          conversationId,
         }],
       });
       return { reply: visibleReply, messageId };
@@ -1510,7 +1531,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           content: `${configuredPrompt ? `## 助理配置\n${configuredPrompt}\n\n` : ''}${userContext ? `${userContext}\n` : ''}你是${APP_PRODUCT_NAME}的章北海助理，负责监督进度、调度成员和理解老板的工作习惯。\n\n## 系统能力声明\n团队调度器、任务运行器、成员资料和 Skill 库均已连接并可用。程序会在你回复后真正创建任务并调用成员。禁止声称“没有权限”“未开放接口”“需要切换会话”或要求老板再次确认已明确提出的工作。\n\n## 当前团队（唯一可调度范围）\n团队名称：${team.name}\n${teamRoster || '暂无成员'}\n\n## 可用 Skill\n${skillRoster || '暂无可用 Skill'}\n\n监工禁止输出脚本、代码、长文正文、分镜或最终产物，绝不能替成员完成工作。${mayDelegate ? '老板的工作请求已经授权执行。简短说明你将如何分派和验收，程序会自动选择真实成员并启动任务；不要虚构成员结果。回复最多 180 个汉字。' : '当前消息不需要启动团队，只做简短直接回应。'} 你自己不是团队成员，不能@自己。`,
         },
         { role: 'system', content: BEGINNER_RESPONSE_GUIDE },
-        ...team.chatMessages.slice(-12).map((message) => ({
+        ...team.chatMessages.filter((message) => messageBelongsToConversation(message, conversationId, `team:${team.id}`)).slice(-12).map((message) => ({
           role: message.roleId === 'human' ? 'user' as const : 'assistant' as const,
           content: `${stateRef.current.employees.find((employee) => employee.id === message.authorId)?.name ?? '团队成员'}: ${message.content}`,
         })),
@@ -1532,7 +1553,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const reply = `⚠️ 章北海助理本次模型调用失败：${reason.slice(0, 180)}。任务没有被伪装为已执行；请检查模型连接后重试。`;
       return appendSupervisorMessage(reply);
     } finally {
-      supervisorBusyRef.current.delete(team.id);
+      supervisorBusyRef.current.delete(busyKey);
     }
   };
 
@@ -1607,15 +1628,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [state.taskRuns, state.employees, dispatch]);
 
-  const startTaskRun = async (teamId: string, request: string, employeeIds: string[], sourceMessageId?: string, attachments?: import('./data/hermesClient').Attachment[], explicitSkillRefs: import('./types').SkillReference[] = [], taskDecision?: import('./engine/taskDecisionKernel.mjs').TaskDecision) => {
+  const startTaskRun = async (teamId: string, request: string, employeeIds: string[], sourceMessageId?: string, attachments?: import('./data/hermesClient').Attachment[], explicitSkillRefs: import('./types').SkillReference[] = [], taskDecision?: import('./engine/taskDecisionKernel.mjs').TaskDecision, requestedConversationId?: string) => {
     const current = stateRef.current;
     const team = current.teams.find((item) => item.id === teamId);
     if (!team) return;
+    const conversationId = requestedConversationId
+      ?? team.chatMessages.find((message) => message.id === sourceMessageId)?.conversationId
+      ?? ensureActiveChatSession(`team:${teamId}`);
     const plan = buildTaskPlan(team, current.employees, request, employeeIds);
     const skillRefs = explicitSkillRefs.length ? explicitSkillRefs : await matchSkills(request);
     const skillBundle = await buildSkillContextWithEvidence(skillRefs);
     const skillContext = skillBundle.context;
-    const run = createTaskRun(team, current.employees, request, plan, sourceMessageId, skillRefs, undefined, taskDecision);
+    const run = createTaskRun(team, current.employees, request, plan, sourceMessageId, skillRefs, undefined, taskDecision, conversationId);
     const historyMatches = searchTaskRunHistory(current.taskRuns, request, { teams: current.teams, limit: 4 });
     const historyContext = buildTaskHistoryPrompt(historyMatches);
     const layeredMemoryContext = await buildLayeredMemoryContext({ query: request, teamId, limit: 18 });
@@ -1695,6 +1719,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
     enqueueDiscussion(teamId, {
       userText: request, attachments, triggerMessageId: sourceMessageId, discussionId: run.id,
+      conversationId,
       forcedMemberIds: run.steps.map((step) => step.employeeId), runSteps: run.steps, maxRounds: run.steps.length, runId: run.id, workspaceId: run.workspaceId,
       extraSystemContext,
     }, 120);
@@ -1766,7 +1791,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const extraSystemContext = [layeredMemoryContext, skillBundle.context, taskRunContextPrompt(resumedWithSkills)].filter(Boolean).join('\n\n');
       const nativeResult = await startNativeTaskExecution(resumedWithSkills, extraSystemContext);
       if (!nativeResult) {
-        enqueueDiscussion(workerRun.teamId, { userText: workerRun.request, triggerMessageId: workerRun.sourceMessageId, discussionId: workerRun.id, forcedMemberIds: pending, runSteps: workerPendingSteps, maxRounds: workerPendingSteps.length, runId, workspaceId: workerRun.workspaceId, extraSystemContext }, 50);
+        enqueueDiscussion(workerRun.teamId, { userText: workerRun.request, triggerMessageId: workerRun.sourceMessageId, discussionId: workerRun.id, conversationId: workerRun.conversationId, forcedMemberIds: pending, runSteps: workerPendingSteps, maxRounds: workerPendingSteps.length, runId, workspaceId: workerRun.workspaceId, extraSystemContext }, 50);
       } else if (!nativeResult.ok) {
         dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(resumedWithSkills, (next) => {
           next.status = 'failed'; next.phase = 'blocked'; next.lastError = nativeResult.error || '主进程执行器恢复失败';
@@ -1813,12 +1838,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const clearTeamExecution = (targetTeamId: string) => dispatch({ type: 'CLEAR_TEAM_EXECUTION', teamId: targetTeamId });
 
-  const buildTeamTaskRequest = (team: Team, content: string): string => {
+  const buildTeamTaskRequest = (team: Team, content: string, conversationId: string): string => {
     const current = content.trim();
     const needsPriorContext = current.length < 120
       || /拉团队|组建团队|拉群|开始执行|继续执行|按刚才|按照上面|这个任务|该项目/u.test(current);
     if (!needsPriorContext) return current;
     const prior = team.chatMessages
+      .filter((message) => messageBelongsToConversation(message, conversationId, `team:${team.id}`))
       .filter((message) => message.roleId === 'human')
       .slice(-6)
       .map((message) => message.content.trim())
@@ -1832,6 +1858,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     employeeId: string,
     content: string,
     sourceMessageId: string,
+    conversationId: string,
     attachments?: import('./data/hermesClient').Attachment[],
     inReplyToMessageId?: string,
   ) => {
@@ -1841,7 +1868,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const discussionId = `mention-${sourceMessageId}-${employee.id}`;
     dispatch({ type: 'UPDATE_EMPLOYEE', id: employee.id, partial: { isWorking: true, currentTask: '正在回复团队点名' } });
     try {
-      const liveTeam = stateRef.current.teams.find((item) => item.id === team.id) ?? team;
+      const unfilteredTeam = stateRef.current.teams.find((item) => item.id === team.id) ?? team;
+      const liveTeam = { ...unfilteredTeam, chatMessages: unfilteredTeam.chatMessages.filter((message) => messageBelongsToConversation(message, conversationId, `team:${team.id}`)) };
       const result = await runTeamMentionReply(liveTeam, stateRef.current.employees, {
         employeeId: employee.id,
         userText: content,
@@ -1867,7 +1895,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           discussionId,
           triggeredBy: 'message',
           inReplyToMessageId: inReplyToMessageId ?? sourceMessageId,
+          conversationId,
         }],
+        conversationId,
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -1883,41 +1913,45 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           mentions: [], timestamp: Date.now(), kind: 'text',
           discussionId, triggeredBy: 'message',
           inReplyToMessageId: inReplyToMessageId ?? sourceMessageId,
+          conversationId,
         }],
+        conversationId,
       });
     } finally {
       dispatch({ type: 'UPDATE_EMPLOYEE', id: employee.id, partial: { isWorking: false, currentTask: undefined } });
     }
   };
 
-  const relayAssistantMentions = async (team: Team, supervisorResult: { reply: string; messageId: string } | undefined) => {
+  const relayAssistantMentions = async (team: Team, supervisorResult: { reply: string; messageId: string } | undefined, conversationId: string) => {
     if (!supervisorResult?.reply) return;
     const mentionedEmployees = resolveMentionedEmployees(supervisorResult.reply, stateRef.current.employees)
       .filter((employee) => team.memberIds.includes(employee.id) && supervisorResult.reply.includes(`@${employee.name}`));
     if (!mentionedEmployees.length || classifyTeamMention(supervisorResult.reply, { assistantRelay: true }) !== 'reply') return;
     for (const employee of mentionedEmployees) {
-      await runDirectEmployeeReply(team, employee.id, `助理在团队消息中@你：${supervisorResult.reply}`, supervisorResult.messageId, undefined, supervisorResult.messageId);
+      await runDirectEmployeeReply(team, employee.id, `助理在团队消息中@你：${supervisorResult.reply}`, supervisorResult.messageId, conversationId, undefined, supervisorResult.messageId);
     }
   };
 
-  const enqueueAutoDiscussion = (teamId: string, messageId: string, content: string, mentions: string[], attachments?: import('./data/hermesClient').Attachment[], skillRefs: import('./types').SkillReference[] = []) => {
+  const enqueueAutoDiscussion = (teamId: string, messageId: string, content: string, mentions: string[], attachments?: import('./data/hermesClient').Attachment[], skillRefs: import('./types').SkillReference[] = [], conversationId = ensureActiveChatSession(`team:${teamId}`)) => {
     const current = stateRef.current;
     const team = current.teams.find((item) => item.id === teamId);
     if (!team) return;
+    const runBelongsToConversation = (run: TaskRun) => run.conversationId === conversationId
+      || (!run.conversationId && conversationId === legacyConversationId(`team:${teamId}`));
     void (async () => {
       const directMentions = mentions.filter((id) => team.memberIds.includes(id));
       const supervisorMentioned = mentions.includes('assistant');
       const directControl = getDirectExecutionControl(content);
       if (directControl) {
-        const activeRuns = current.taskRuns.filter((run) => run.teamId === teamId && (run.status === 'queued' || run.status === 'running'));
-        const latestPaused = [...current.taskRuns].reverse().find((run) => run.teamId === teamId && run.status === 'paused');
+        const activeRuns = current.taskRuns.filter((run) => run.teamId === teamId && runBelongsToConversation(run) && (run.status === 'queued' || run.status === 'running'));
+        const latestPaused = [...current.taskRuns].reverse().find((run) => run.teamId === teamId && runBelongsToConversation(run) && run.status === 'paused');
         if (directControl === 'resume') {
           if (latestPaused) resumeTaskRun(latestPaused.id);
         } else {
           activeRuns.forEach((run) => directControl === 'stop' ? stopTaskRun(run.id) : pauseTaskRun(run.id));
         }
         dispatch({
-          type: 'APPEND_CHAT', teamId,
+          type: 'APPEND_CHAT', teamId, conversationId,
           msgs: [{
             id: `msg-direct-control-${Date.now()}`, authorId: 'assistant', roleId: 'custom',
             content: directControl === 'resume'
@@ -1933,7 +1967,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const localOfficeQuery = classifyLocalOfficeQuery(content);
       if (localOfficeQuery) {
         dispatch({
-          type: 'APPEND_CHAT', teamId,
+          type: 'APPEND_CHAT', teamId, conversationId,
           msgs: [{
             id: `msg-office-fact-${Date.now()}`, authorId: 'assistant', roleId: 'custom',
             content: formatLocalOfficeAnswer(localOfficeQuery, current.employees, current.teams),
@@ -1950,7 +1984,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         } else {
           const alreadyMembers = mentionedEmployees.filter((employee) => team.memberIds.includes(employee.id));
           dispatch({
-            type: 'APPEND_CHAT', teamId,
+            type: 'APPEND_CHAT', teamId, conversationId,
             msgs: [{
               id: `msg-member-add-help-${Date.now()}`, authorId: 'assistant', roleId: 'custom',
               content: alreadyMembers.length
@@ -1971,7 +2005,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
         if (pauseRequested) {
           current.taskRuns
-            .filter((run) => run.teamId === teamId && (run.status === 'queued' || run.status === 'running'))
+            .filter((run) => run.teamId === teamId && runBelongsToConversation(run) && (run.status === 'queued' || run.status === 'running'))
             .forEach((run) => pauseTaskRun(run.id));
           targets.forEach((employee) => dispatch({ type: 'UPDATE_EMPLOYEE', id: employee.id, partial: { isWorking: false } }));
         }
@@ -1992,7 +2026,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             mentions: [], timestamp: now + index + 1, kind: 'text',
           }));
         }
-        if (messages.length) dispatch({ type: 'APPEND_CHAT', teamId, msgs: messages });
+        if (messages.length) dispatch({ type: 'APPEND_CHAT', teamId, msgs: messages, conversationId });
         return;
       }
       // A direct employee mention is not automatically a new task. Keep
@@ -2002,39 +2036,39 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const route = classifyTeamMention(content);
         if (route === 'reply') {
           for (const employeeId of directMentions) {
-            await runDirectEmployeeReply(team, employeeId, content, messageId, attachments);
+            await runDirectEmployeeReply(team, employeeId, content, messageId, conversationId, attachments);
           }
           return;
         }
         if (route === 'task') {
-          void startTaskRun(teamId, buildTeamTaskRequest(team, content), directMentions, messageId, attachments, skillRefs);
+          void startTaskRun(teamId, buildTeamTaskRequest(team, content, conversationId), directMentions, messageId, attachments, skillRefs, undefined, conversationId);
           return;
         }
       }
       if (shouldHoldTaskForFeedback(content)) {
         current.taskRuns
-          .filter((run) => run.teamId === teamId && (run.status === 'queued' || run.status === 'running'))
+          .filter((run) => run.teamId === teamId && runBelongsToConversation(run) && (run.status === 'queued' || run.status === 'running'))
           .forEach((run) => pauseTaskRun(run.id));
-        const supervisorResult = await enqueueAssistantSupervisor(team, content, false);
-        await relayAssistantMentions(team, supervisorResult);
+        const supervisorResult = await enqueueAssistantSupervisor(team, content, false, conversationId);
+        await relayAssistantMentions(team, supervisorResult, conversationId);
         return;
       }
       if (isConversationOnlyMessage(content)) {
-        const supervisorResult = await enqueueAssistantSupervisor(team, content, false);
-        await relayAssistantMentions(team, supervisorResult);
+        const supervisorResult = await enqueueAssistantSupervisor(team, content, false, conversationId);
+        await relayAssistantMentions(team, supervisorResult, conversationId);
         return;
       }
-      const activeRun = [...current.taskRuns].reverse().find((run) => run.teamId === teamId && (run.status === 'queued' || run.status === 'running'));
+      const activeRun = [...current.taskRuns].reverse().find((run) => run.teamId === teamId && runBelongsToConversation(run) && (run.status === 'queued' || run.status === 'running'));
       if (activeRun && (client.loadSettings().followUpMode ?? 'steer') === 'steer' && window.electronAPI?.taskExecutionSteer) {
         const steered = await window.electronAPI.taskExecutionSteer({ taskId: activeRun.id, message: content });
         if (steered.ok) {
-          await enqueueAssistantSupervisor(team, content, false);
+          await enqueueAssistantSupervisor(team, content, false, conversationId);
           return;
         }
       }
-      const taskRequest = buildTeamTaskRequest(team, content);
+      const taskRequest = buildTeamTaskRequest(team, content, conversationId);
       const taskDecision = await client.compileTaskDecision([
-        ...team.chatMessages.slice(-8).map((message) => ({
+        ...team.chatMessages.filter((message) => messageBelongsToConversation(message, conversationId, `team:${team.id}`)).slice(-8).map((message) => ({
           role: message.roleId === 'human' ? 'user' as const : 'assistant' as const,
           content: message.content,
         })),
@@ -2050,7 +2084,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return `${step.order}. @${employee?.name ?? step.employeeId}：${step.assignment}`;
         }).join('\n');
         dispatch({
-          type: 'APPEND_CHAT', teamId,
+          type: 'APPEND_CHAT', teamId, conversationId,
           msgs: [{
             id: `msg-dispatch-plan-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             authorId: 'assistant', roleId: 'custom',
@@ -2059,14 +2093,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }],
         });
       }
-      const supervisorResult = await enqueueAssistantSupervisor(team, content, mayDelegate);
-      await relayAssistantMentions(team, supervisorResult);
+      const supervisorResult = await enqueueAssistantSupervisor(team, content, mayDelegate, conversationId);
+      await relayAssistantMentions(team, supervisorResult, conversationId);
       if (!mayDelegate) return;
       if (requestedMemberIds.length > 0) {
         const sequence = planned.map((step) => `${step.order}. ${step.title}`).join(' → ');
         dispatch({
           type: 'APPEND_CHAT',
           teamId,
+          conversationId,
           msgs: [{
             id: `msg-dispatch-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             authorId: 'assistant', roleId: 'custom',
@@ -2076,7 +2111,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         });
       }
       if (!requestedMemberIds.length) return;
-      void startTaskRun(teamId, taskRequest, requestedMemberIds, messageId, attachments, skillRefs, taskDecision.decision);
+      void startTaskRun(teamId, taskRequest, requestedMemberIds, messageId, attachments, skillRefs, taskDecision.decision, conversationId);
     })();
   };
 
@@ -2085,16 +2120,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const team = current.teams.find((item) => item.id === teamId);
     if (!team) return;
     const settings = client.loadSettings();
+    const conversationId = opts?.conversationId ?? ensureActiveChatSession(`team:${teamId}`);
     const triggerText = opts?.userText?.trim() || '请团队协作讨论当前事项';
     const input: DiscussionTriggerInput = {
       teamId, messageId: opts?.triggerMessageId ?? `manual-${Date.now()}`, userText: triggerText,
-      mentions: [], hasAttachments: !!opts?.attachments?.length, recentMessages: team.chatMessages.slice(-12),
+      mentions: [], hasAttachments: !!opts?.attachments?.length, recentMessages: team.chatMessages.filter((message) => messageBelongsToConversation(message, conversationId, `team:${teamId}`)).slice(-12),
       activeTaskCount: (team.tasks ?? []).filter((task) => task.lane !== 'DONE').length,
       manual: true, now: Date.now(),
     };
     const decision = evaluateDiscussionTrigger(input, settings, team.memberIds);
     if (!decision.shouldStart) return;
-    void startTaskRun(teamId, triggerText, opts?.forcedMemberIds ?? decision.forcedMemberIds, opts?.triggerMessageId, opts?.attachments);
+    void startTaskRun(teamId, triggerText, opts?.forcedMemberIds ?? decision.forcedMemberIds, opts?.triggerMessageId, opts?.attachments, [], undefined, conversationId);
   };
 
   return (

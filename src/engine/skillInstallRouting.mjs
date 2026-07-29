@@ -10,11 +10,27 @@ function httpsUrls(text) {
     .map((match) => match[0].replace(/[,.!?;:]+$/u, ''));
 }
 
-function normalizeSkillHubSlug(value) {
+export function normalizeSkillHubSlug(value) {
   const candidate = clean(value, 160).replace(/^[`'"“”]+|[`'"“”。，、；：!?！?]+$/gu, '');
   if (!candidate) return '';
   if (/^@[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,79}$/iu.test(candidate)) return candidate;
   return /^[a-z0-9][a-z0-9._-]{0,79}$/iu.test(candidate) ? candidate : '';
+}
+
+export function skillHubSlugFromUrl(value) {
+  try {
+    const parsed = new URL(clean(value));
+    const host = parsed.hostname.toLocaleLowerCase();
+    if (host === SKILLHUB_API_HOST && parsed.pathname === '/api/v1/download') {
+      return normalizeSkillHubSlug(parsed.searchParams.get('slug'));
+    }
+    if (!SKILLHUB_INSTALL_HOSTS.has(host)) return '';
+    const detail = parsed.pathname.match(/^\/skills\/(.+?)\/?$/iu)?.[1];
+    if (!detail) return '';
+    try { return normalizeSkillHubSlug(decodeURIComponent(detail)); } catch { return ''; }
+  } catch {
+    return '';
+  }
 }
 
 export function skillHubDownloadUrl(slug) {
@@ -42,10 +58,67 @@ export function skillHubSlugFromRequest(text) {
     /(?:技能|skill|插件)\s*[`'"“”]?(@?[a-z0-9][a-z0-9._-]{0,63}(?:\/[a-z0-9][a-z0-9._-]{0,79})?)[`'"“”]?\s*(?:安装|装上|装好)/iu,
   ];
   for (const pattern of patterns) {
-    const slug = normalizeSkillHubSlug(source.match(pattern)?.[1]);
-    if (slug && !['skill', 'skills', 'plugin', 'install'].includes(slug.toLocaleLowerCase())) return slug;
+    const raw = source.match(pattern)?.[1] || '';
+    const slug = normalizeSkillHubSlug(raw);
+    if (slug
+        && raw === raw.toLocaleLowerCase()
+        && !['skill', 'skills', 'plugin', 'install', 'ui', 'ux', 'pro', 'max'].includes(slug.toLocaleLowerCase())) return slug;
   }
   return '';
+}
+
+/**
+ * Normalize every supported install entry into one atomic native-install request.
+ * The model may provide a slug, a SkillHub page, the SkillHub instruction page,
+ * or a direct HTTPS package. Runtime code must not require it to hand-craft the
+ * final download URL.
+ */
+export function resolveSkillInstallInput(input = {}, requestText = '') {
+  const rawSource = clean(input?.sourceUrl ?? input?.url, 2048);
+  const request = requestText ? resolveSkillInstallRequest(requestText) : undefined;
+  let slug = normalizeSkillHubSlug(input?.slug)
+    || skillHubSlugFromUrl(rawSource)
+    || (!rawSource ? normalizeSkillHubSlug(input?.name) : '')
+    || normalizeSkillHubSlug(request?.slug);
+  let sourceUrl = rawSource || clean(request?.sourceUrl, 2048);
+  const name = clean(input?.name, 160) || clean(request?.name, 160) || slug;
+
+  if (sourceUrl && !/^https:\/\//iu.test(sourceUrl)) {
+    const sourceSlug = normalizeSkillHubSlug(sourceUrl);
+    if (!sourceSlug) return { error: 'Skill 来源必须是 HTTPS 地址或有效的 SkillHub slug。' };
+    slug = slug || sourceSlug;
+    sourceUrl = skillHubDownloadUrl(slug);
+  }
+
+  if (sourceUrl) {
+    let parsed;
+    try { parsed = new URL(sourceUrl); } catch { return { error: 'Skill 来源不是有效地址。' }; }
+    if (parsed.protocol !== 'https:') return { error: 'Skill 来源必须使用 HTTPS。' };
+    const host = parsed.hostname.toLocaleLowerCase();
+    if (SKILLHUB_INSTALL_HOSTS.has(host)) {
+      const isInstruction = /^\/install\/skillhub\.md\/?$/iu.test(parsed.pathname);
+      const pageSlug = skillHubSlugFromUrl(sourceUrl);
+      slug = slug || pageSlug;
+      if (isInstruction || pageSlug) {
+        if (!slug) return { error: '已识别 SkillHub 安装说明，但没有识别出要安装的技能名。' };
+        sourceUrl = skillHubDownloadUrl(slug);
+      }
+    } else if (host === SKILLHUB_API_HOST && parsed.pathname === '/api/v1/download') {
+      slug = slug || normalizeSkillHubSlug(parsed.searchParams.get('slug'));
+      if (!slug) return { error: 'SkillHub 下载地址缺少有效 slug。' };
+      sourceUrl = skillHubDownloadUrl(slug);
+    }
+  } else if (slug) {
+    sourceUrl = skillHubDownloadUrl(slug);
+  }
+
+  if (!sourceUrl) return { error: '请提供 SkillHub slug、技能名或官方 HTTPS 来源地址。' };
+  return {
+    sourceUrl,
+    name: name || slug || undefined,
+    slug: slug || undefined,
+    provider: slug ? 'skillhub' : 'direct',
+  };
 }
 
 export function resolveSkillInstallRequest(text) {
@@ -64,7 +137,7 @@ export function resolveSkillInstallRequest(text) {
   if (instructionUrl) {
     const slug = skillHubSlugFromRequest(source);
     if (!slug) return { instructionUrl, error: '已识别 SkillHub 安装说明，但没有识别出要安装的技能名。' };
-    return { instructionUrl, sourceUrl: skillHubDownloadUrl(slug), name: slug, provider: 'skillhub', slug };
+    return { instructionUrl, ...resolveSkillInstallInput({ sourceUrl: instructionUrl, slug, name: slug }) };
   }
   const directUrl = urls.find((value) => {
     try {
@@ -73,17 +146,16 @@ export function resolveSkillInstallRequest(text) {
         /\.zip$/iu.test(parsed.pathname)
         || /(?:^|\/)SKILL\.md$/iu.test(parsed.pathname)
         || parsed.hostname.toLocaleLowerCase() === 'github.com'
+        || (SKILLHUB_INSTALL_HOSTS.has(parsed.hostname.toLocaleLowerCase()) && /^\/skills\//iu.test(parsed.pathname))
         || isSkillHubDownloadUrl(value)
       );
     } catch {
       return false;
     }
   });
-  if (!directUrl) return undefined;
-  const slug = isSkillHubDownloadUrl(directUrl)
-    ? normalizeSkillHubSlug(new URL(directUrl).searchParams.get('slug'))
-    : '';
-  return { sourceUrl: directUrl, name: slug || undefined, provider: slug ? 'skillhub' : 'direct', slug: slug || undefined };
+  const slug = skillHubSlugFromRequest(source) || skillHubSlugFromUrl(directUrl);
+  if (!directUrl && !slug) return undefined;
+  return resolveSkillInstallInput({ sourceUrl: directUrl, slug, name: slug || undefined });
 }
 
 export function isSkillInstallOnlyRequest(text) {

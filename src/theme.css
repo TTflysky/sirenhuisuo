@@ -3187,6 +3187,13 @@ body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
 .chat-input { min-height: 58px; padding: 9px 11px; border-color: var(--hairline-strong); border-radius: 7px; background: var(--bg-deep); color: var(--text); line-height: 1.5; }
 .chat-input:focus { border-color: color-mix(in srgb, var(--apple-accent) 60%, var(--hairline)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--apple-accent) 10%, transparent); }
 .composer-icon-btn { width: 30px; padding: 0; justify-content: center; }
+.chat-composer-toolbar { display: flex; min-width: 0; align-items: center; gap: 6px; margin-bottom: 4px; }
+.chat-composer-toolbar > * { flex-shrink: 0; }
+.chat-composer-toolbar-spacer { flex: 1 1 8px; min-width: 8px; }
+.dm-composer-toolbar { flex-wrap: wrap; }
+.dm-composer-toolbar .btn { white-space: nowrap; }
+.dm-composer-toolbar .assistant-chat-history-select { width: 108px; max-width: 108px; }
+.dm-composer-toolbar .model-selector { margin-left: auto; }
 .assistant-chat-history-select { max-width: 128px; height: 28px; padding: 0 22px 0 8px; border: 1px solid var(--hairline-strong); border-radius: 6px; outline: 0; background: var(--bg-deep); color: var(--text-secondary); font: inherit; font-size: 10px; }
 .assistant-chat-history-select:focus { border-color: color-mix(in srgb, var(--apple-accent) 60%, var(--hairline)); box-shadow: 0 0 0 2px color-mix(in srgb, var(--apple-accent) 10%, transparent); }
 .chat-composer .btn { box-shadow: none; }
@@ -3464,3 +3471,28 @@ body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
 .project-approval-output { margin-top: 10px; color: var(--text-muted); font-size: 11px; }
 .project-approval-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 15px; }
 @media (max-width: 680px) { .project-approval-card { margin-left: 0; } }
+
+/* v2.0.1: explicit chat-session boundaries and truthful team activity. */
+.chat-new-session-btn { display: inline-flex; min-width: 94px; align-items: center; justify-content: center; gap: 5px; white-space: nowrap; }
+.chat-new-session-btn > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.team-member-status.waiting { background: #f5a524; }
+.team-member-info .is-waiting { color: #c47b00; }
+.team-live-progress { flex-wrap: wrap; gap: 8px 14px; background: color-mix(in srgb, var(--apple-accent) 6%, var(--surface)); }
+.team-live-event-stream { display: grid; width: 100%; gap: 3px; padding: 7px 0 0 22px; border-top: 1px solid var(--hairline); }
+.team-live-event-stream > div { display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; align-items: center; gap: 8px; color: var(--text-muted); font-size: 12px; line-height: 1.5; }
+.team-live-event-stream i { width: 5px; height: 5px; border-radius: 50%; background: var(--text-muted); }
+.team-live-event-stream span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-live-event-stream time { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.team-live-event-stream .is-current { color: var(--text-secondary); }
+.team-live-event-stream .is-current i { background: var(--apple-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--apple-accent) 18%, transparent); animation: team-live-pulse 1.3s ease-in-out infinite; }
+@keyframes team-live-pulse { 0%, 100% { opacity: .45; } 50% { opacity: 1; } }
+.team-waiting-banner { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 8px; padding: 9px 14px; border-bottom: 1px solid color-mix(in srgb, #f5a524 42%, var(--hairline)); background: color-mix(in srgb, #f5a524 8%, var(--surface)); }
+.team-waiting-banner > div { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
+.team-waiting-banner strong { color: var(--text); font-size: 12px; }
+.team-waiting-banner span { overflow: hidden; color: var(--text-secondary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 760px) {
+  .chat-new-session-btn { min-width: 32px; }
+  .chat-new-session-btn > span:last-child { display: none; }
+  .team-waiting-banner { grid-template-columns: minmax(0, 1fr) auto; }
+  .team-waiting-banner .btn-danger { display: none; }
+}

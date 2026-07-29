@@ -20,7 +20,8 @@ import type { ConnectorProtocolResult } from './connectorProtocol.mjs';
 import { createFileArtifactEvidence, createReviewSubmissionEvidence, createToolExecutionEvidence } from './executionEvidence.mjs';
 import type { FileArtifactEvidence, ReviewSubmissionEvidence, ToolExecutionEvidence } from './executionEvidence.mjs';
 import { buildToolRegistry, discoverTools, preflightToolCall } from './toolRegistry.mjs';
-import { formatSkillHubResults, isSkillDiscoveryRequest, searchSkillHub } from './skillHubSearch.mjs';
+import { formatSkillHubResults, searchSkillHub } from './skillHubSearch.mjs';
+import { resolveSkillInstallInput } from './skillInstallRouting.mjs';
 export type { FileArtifactEvidence, ReviewSubmissionEvidence, ToolExecutionEvidence } from './executionEvidence.mjs';
 
 // ===== Tool Schema（OpenAI function-calling 格式）=====
@@ -134,7 +135,7 @@ export const TOOLS: ToolDef[] = [
     type: 'function',
     function: {
       name: 'search_skills',
-      description: '检索本机技能库。开始处理任务前使用，根据任务目标搜索可用 Skill，返回技能 ID、名称和说明。',
+      description: '同时检索本机技能库和 SkillHub 官方市场，返回本机 ID 或市场 slug、详情页和真实下载地址。',
       parameters: {
         type: 'object',
         properties: { query: { type: 'string', description: '任务目标或技能关键词，例如“短视频脚本创作”' } },
@@ -158,15 +159,16 @@ export const TOOLS: ToolDef[] = [
     type: 'function',
     function: {
       name: 'install_skill',
-      description: '从官方 HTTPS 地址安装 Skill。支持 SKILL.md、GitHub 仓库/目录和包含 SKILL.md 的 ZIP 技能包；安装后必须再读取 Skill 说明并按其中要求配置、执行和验证。',
+      description: '使用客户端原生安装器安装完整 Skill。可传 SkillHub slug、技能名、商城详情页、安装说明页、GitHub、SKILL.md 或 ZIP；安装器会自动回读验证，禁止改用 skillhub 命令。',
       parameters: {
         type: 'object',
         properties: {
-          sourceUrl: { type: 'string', description: '从官方说明中确认的 SKILL.md、GitHub 或 ZIP 下载地址' },
-          name: { type: 'string', description: '可选，技能显示名称' },
+          sourceUrl: { type: 'string', description: '可选：官方来源、SkillHub 详情页或下载地址' },
+          slug: { type: 'string', description: '可选：search_skills 返回的 SkillHub 精确 slug' },
+          name: { type: 'string', description: '可选：技能名；名称符合 slug 格式时可直接安装' },
           connector: { type: 'string', description: '可选，要关联的连接器 ID 或名称' },
         },
-        required: ['sourceUrl'],
+        required: [],
       },
     },
   },
@@ -713,32 +715,35 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         if (!query) return { toolCallId: id, name, success: false, output: '技能检索关键词不能为空' };
         const { listSkills, matchSkills } = await import('../data/skills');
         const [all, matched] = await Promise.all([listSkills(), matchSkills(query, 8)]);
-        if (isSkillDiscoveryRequest(query)) {
-          const market = await searchSkillHub(query);
-          const localRows = matched.map((ref) => {
-            const skill = all.find((item) => item.id === ref.id);
-            return `- ${ref.id} | ${ref.name} | ${skill?.description || 'no description'} | source: ${skill?.source || 'unknown'}`;
-          });
-          if (!market.ok) {
-            return {
-              toolCallId: id,
-              name,
-              success: false,
-              output: `SkillHub official search failed: ${market.error}\nLocal matches are not a substitute for the requested market search.${localRows.length ? `\nLocal matches:\n${localRows.join('\n')}` : ''}`,
-            };
-          }
+        const localRows = matched.map((ref) => {
+          const skill = all.find((item) => item.id === ref.id);
+          return `- ${ref.id} | ${ref.name} | ${skill?.description || '无说明'} | 来源: ${skill?.source || '未知'}`;
+        });
+        const api = getFsApi();
+        const market = api?.skillsSearchMarket
+          ? await api.skillsSearchMarket(query)
+          : await searchSkillHub(query);
+        const explicitlyRequestedMarket = /skillhub|技能商城|第三方技能|外部技能/iu.test(query);
+        if (!market.ok) {
+          const output = `SkillHub 官方检索失败：${market.error}\n\n本机已安装匹配：\n${localRows.join('\n') || '- 没有'}`;
+          return { toolCallId: id, name, success: !explicitlyRequestedMarket && localRows.length > 0, output };
+        }
+        if (market.results?.length) {
           return {
             toolCallId: id,
             name,
-            success: Boolean(market.results?.length),
-            output: `SkillHub official market results (query: ${market.query}):\n${formatSkillHubResults(market)}\n\nThese are candidates only; they are not installed or verified until read_skill/install_skill completes.${localRows.length ? `\n\nLocal installed matches (separate source):\n${localRows.join('\n')}` : ''}`,
+            success: true,
+            output: `SkillHub 官方市场结果（查询：${market.query}）：\n${formatSkillHubResults(market)}\n\n以上是候选，只有 install_skill 自动回读验证通过后才算安装完成。\n\n本机已安装匹配：\n${localRows.join('\n') || '- 没有'}`,
           };
         }
-        const rows = matched.map((ref) => {
-          const skill = all.find((item) => item.id === ref.id);
-          return `- ID: ${ref.id}\n  名称: ${ref.name}\n  说明: ${skill?.description || '无说明'}\n  来源: ${skill?.source || '未知'}`;
-        });
-        return { toolCallId: id, name, success: true, output: rows.length ? `为「${query}」找到 ${rows.length} 个技能：\n${rows.join('\n')}` : `没有找到与「${query}」直接匹配的技能，可继续使用通用工具完成。` };
+        return {
+          toolCallId: id,
+          name,
+          success: localRows.length > 0,
+          output: localRows.length
+            ? `SkillHub 没有直接匹配项。\n\n本机已安装匹配：\n${localRows.join('\n')}`
+            : `SkillHub 和本机技能库都没有找到与“${market.query}”直接匹配的 Skill。`,
+        };
       }
 
       case 'read_skill': {
@@ -751,17 +756,15 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
       }
 
       case 'install_skill': {
-        const sourceUrl = (args.sourceUrl ?? '').trim();
-        let parsed: URL;
-        try { parsed = new URL(sourceUrl); } catch { return { toolCallId: id, name, success: false, output: 'Skill 下载地址无效。' }; }
-        if (parsed.protocol !== 'https:') return { toolCallId: id, name, success: false, output: 'Skill 必须从 HTTPS 地址安装。' };
+        const resolved = resolveSkillInstallInput(args);
+        if (resolved.error || !resolved.sourceUrl) return { toolCallId: id, name, success: false, output: resolved.error || 'Skill 来源无效。' };
         const policy = getExecutionPolicy();
-        if (policy.approvalMode !== 'full' && !approvalPrompt('需要你的审核', `助手准备从以下地址下载并安装 Skill：\n${parsed.toString()}\n\n安装后仍会读取说明并做真实验证。`, policy)) {
+        if (policy.approvalMode !== 'full' && !approvalPrompt('需要你的审核', `助手准备从以下地址下载并安装 Skill：\n${resolved.sourceUrl}\n\n安装器会在写入后自动回读并检查完整性。`, policy)) {
           return { toolCallId: id, name, success: false, output: 'Skill 安装没有获得批准，因此没有下载或写入任何文件。' };
         }
         const api = getFsApi();
         if (!api?.skillsInstall) return { toolCallId: id, name, success: false, output: '当前环境不支持安装 Skill，请使用桌面客户端。' };
-        const result = await api.skillsInstall({ sourceUrl: parsed.toString(), name: args.name?.trim() || undefined });
+        const result = await api.skillsInstall(resolved);
         const { BUS_CHANNELS, sendBus } = await import('../ipcBus');
         if (result?.ok && result.skill) sendBus(BUS_CHANNELS.SKILLS_CHANGED, { action: 'installed', skillId: result.skill.id });
         if (!result?.ok || !result.skill) return { toolCallId: id, name, success: false, output: `Skill 安装失败：${result?.error ?? '安装器没有返回有效结果'}` };
@@ -770,12 +773,12 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
           const query = args.connector.trim().toLocaleLowerCase();
           const connector = loadConnectors().find((item) => item.id.toLocaleLowerCase() === query || item.label.toLocaleLowerCase() === query || item.mcpServerName?.toLocaleLowerCase() === query);
           if (connector) {
-            updateConnector(connector.id, { installedSkillId: result.skill.id, skillSourceUrl: parsed.toString(), status: 'unknown', error: undefined });
+            updateConnector(connector.id, { installedSkillId: result.skill.id, skillSourceUrl: resolved.sourceUrl, status: 'unknown', error: undefined });
             const { BUS_CHANNELS, sendBus } = await import('../ipcBus');
             sendBus(BUS_CHANNELS.CONNECTORS_CHANGED, { connectorId: connector.id, reason: 'skill-installed' });
           }
         }
-        return { toolCallId: id, name, success: true, output: `Skill 已安装到本机技能库。\nID: ${result.skill.id}\n名称: ${result.skill.name}\n来源: ${result.resolvedUrl ?? parsed.toString()}\n健康状态: ${result.skill.health ?? '尚未检查'}\n\n下一步必须调用 read_skill 读取这个 ID，按真实说明配置依赖和凭据，并执行其中的验证步骤；仅安装文件不代表外部服务已经可用。` };
+        return { toolCallId: id, name, success: true, output: `Skill 已安装并完成自动回读验证。\nID: ${result.skill.id}\n名称: ${result.skill.name}\nSlug: ${result.slug ?? resolved.slug ?? ''}\n来源: ${result.resolvedUrl ?? resolved.sourceUrl}\n健康状态: ${result.verification?.health ?? result.skill.health ?? 'ready'}\n已回读文档: ${result.verification?.documentCount ?? 0}\n\n如果该 Skill 还依赖账号、外部软件或连接器，再按说明配置并做实际调用验证；纯安装任务到这里已经完成。` };
       }
 
       case 'inspect_connectors': {

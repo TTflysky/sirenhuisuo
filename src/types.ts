@@ -164,6 +164,8 @@ export interface DiscussionParticipantPlan {
 
 export interface ChatMessage {
   id: string;
+  /** Stable boundary for chat history, model context and execution projection. */
+  conversationId?: string;
   authorId: string;
   roleId: RoleId;
   content: string;
@@ -322,6 +324,10 @@ export interface TaskWorkerLease {
   ownerSessionId?: string;
   acquiredAt?: number;
   heartbeatAt?: number;
+  /** Last real model/tool/step progress. Heartbeats alone must not advance it. */
+  progressAt?: number;
+  /** Plain-language description of the real operation currently in flight. */
+  activity?: string;
   expiresAt?: number;
   releasedAt?: number;
   expiredAt?: number;
@@ -342,6 +348,8 @@ export interface TaskWorkerLease {
 export interface TaskRun {
   id: string;
   teamId: string;
+  /** Chat session that created this task. Old runs without it belong to the legacy session. */
+  conversationId?: string;
   /** 任务专属真实工作区，相同任务的恢复执行会继续使用此目录。 */
   workspaceId?: string;
   /** Git 代码任务可选的独立 Worktree。普通任务不创建。 */

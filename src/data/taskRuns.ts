@@ -322,7 +322,7 @@ export function taskRunContextPrompt(run: TaskRun): string {
   }));
 }
 
-export function createTaskRun(team: Team, employees: Employee[], request: string, plan: TaskPlanStep[], sourceMessageId?: string, skillRefs?: SkillReference[], workspaceId?: string, taskDecision?: TaskDecision): TaskRun {
+export function createTaskRun(team: Team, employees: Employee[], request: string, plan: TaskPlanStep[], sourceMessageId?: string, skillRefs?: SkillReference[], workspaceId?: string, taskDecision?: TaskDecision, conversationId?: string): TaskRun {
   const now = Date.now();
   const id = `run-${now}-${Math.random().toString(36).slice(2, 7)}`;
   const teamMembers = team.memberIds
@@ -359,6 +359,7 @@ export function createTaskRun(team: Team, employees: Employee[], request: string
   const baseRun: TaskRun = {
     id,
     teamId: team.id,
+    conversationId,
     workspaceId: workspaceId ?? `tasks/team/${team.id}/run-${id}`,
     executionSessionId: getExecutionSessionId(),
     title: request.slice(0, 48) || '团队任务',

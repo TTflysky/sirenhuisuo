@@ -35,6 +35,8 @@ function normalizeStep(input, index) {
     compensateStepId: text(input?.compensateStepId || input?.compensate_step, 160) || undefined,
     compensationOnly: input?.compensationOnly === true,
     approvalRequired: input?.approvalRequired === true,
+    kind: text(input?.kind, 40) || undefined,
+    deliverableType: ['answer', 'file', 'connection', 'operation', 'decision', 'mixed'].includes(input?.deliverableType) ? input.deliverableType : undefined,
     status: 'queued',
     attempts: 0,
     events: [{ ts: Date.now(), type: 'status', detail: '任务步骤已创建，等待执行' }],
@@ -49,6 +51,9 @@ function normalizeTaskInput(input = {}) {
     ? input.steps.map(normalizeStep)
     : [normalizeStep({ title: '完成用户目标', assignment: goal }, 0)];
   const requiresWorktree = input.requiresWorktree === true || /代码|编程|开发|脚本|构建|编译|测试|修复|bug|coding|software|repository/iu.test(goal);
+  const taskDecision = input.taskDecision && typeof input.taskDecision === 'object' && !Array.isArray(input.taskDecision)
+    ? clone(input.taskDecision)
+    : undefined;
   return {
     id: text(input.id, 180) || id('task'),
     taskType,
@@ -63,6 +68,7 @@ function normalizeTaskInput(input = {}) {
     phase: 'preflight',
     acceptanceCriteria: list(input.acceptanceCriteria, ['完成用户目标', '留下真实可观察结果', '完成必要验收']),
     constraints: list(input.constraints),
+    taskDecision,
     memberSnapshot: Array.isArray(input.memberSnapshot) ? clone(input.memberSnapshot) : undefined,
     steps,
     artifacts: [],
@@ -148,19 +154,22 @@ function taskTreeNode(task, depth, children) {
 async function attachFormalPlan(task) {
   const projectRoot = path.resolve(__dirname, '..');
   const planEngine = await import(pathToFileURL(path.join(projectRoot, 'src/engine/taskPlan.mjs')).href);
+  const incomingDecision = task.taskDecision || {};
+  const primaryRoute = task.taskType === 'team' ? 'team_dispatch' : text(incomingDecision.primaryRoute, 80) || 'general_tools';
   const contract = planEngine.createTaskContract({
     contractId: `contract-${task.id}`,
     sourceRequest: task.request,
     scope: `task:${task.id}`,
     decision: {
+      ...incomingDecision,
       mode: 'execute',
       goal: task.goal,
-      primaryRoute: task.taskType === 'team' ? 'team_dispatch' : 'general_tools',
-      acceptanceCriteria: task.acceptanceCriteria,
-      requiredConstraints: task.constraints,
+      primaryRoute,
+      acceptanceCriteria: list(incomingDecision.acceptanceCriteria, task.acceptanceCriteria),
+      requiredConstraints: list(incomingDecision.requiredConstraints, task.constraints),
       requiresEvidence: true,
-      source: 'rules',
-      confidence: 1,
+      source: incomingDecision.source === 'model' ? 'model' : 'rules',
+      confidence: Number.isFinite(incomingDecision.confidence) ? incomingDecision.confidence : 1,
     },
     teamPolicy: {
       requiresTeam: task.taskType === 'team',
@@ -181,7 +190,7 @@ async function attachFormalPlan(task) {
       retryPolicy: { maxRetries: 3, backoffMs: 1000, maxBackoffMs: 30000 },
       idempotencyKey: `task-${task.id}-${step.id}`,
       sideEffect: true,
-      metadata: { taskServiceVersion: TASK_SERVICE_VERSION },
+      metadata: { taskServiceVersion: TASK_SERVICE_VERSION, deliverableType: step.deliverableType || contract.deliverableType },
     })),
   });
   const validation = planEngine.validatePlan(plan, { allowInlineApproval: true });

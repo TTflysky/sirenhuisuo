@@ -28,6 +28,24 @@ async function main() {
     assert.equal(duplicate.idempotent, true);
     assert.equal(duplicate.task.id, created.task.id);
 
+    const skillTask = await service.create({
+      taskType: 'assistant',
+      goal: '请根据 https://skillhub.cn/install/skillhub.md，安装 diagram-builder。',
+      idempotencyKey: 'skill-contract-001',
+      taskDecision: {
+        mode: 'execute', primaryRoute: 'install_skill', deliverableType: 'operation',
+        acceptanceCriteria: ['安装并回读目标 Skill'], requiredConstraints: [],
+        deliverables: [{ label: '已验证的 diagram-builder', format: 'operation', type: 'operation', required: true }],
+        requiresEvidence: true, needsUser: false, missingUserCondition: '', searchQuery: '',
+        decisionReason: '显式技能安装任务', confidence: 1, source: 'rules',
+      },
+      steps: [{ id: 'install', title: '安装技能', deliverableType: 'operation' }],
+    });
+    assert.equal(skillTask.task.contract.primaryRoute, 'install_skill', 'TaskService 不得覆盖语义决策路线');
+    assert.equal(skillTask.task.contract.deliverableType, 'operation', '技能安装必须保持操作型交付');
+    assert.equal(skillTask.task.contract.deliverables[0].type, 'operation');
+    assert.equal(skillTask.task.steps[0].deliverableType, 'operation');
+
     const taskId = created.task.id;
     const attempt = await service.recordToolAttempt(taskId, {
       stepId: 'research', toolName: 'search_skills', status: 'succeeded',
@@ -87,7 +105,7 @@ async function main() {
     assert.equal(restarted.runs[0].heartbeat.state, 'act');
     assert.equal(restarted.runs[0].heartbeat.leaseExpiresAt, 1700000090000);
     const all = await createTaskService(restartedStore).read({});
-    assert.equal(all.runs.length, 2);
+    assert.equal(all.runs.length, 3);
     assert.equal(all.integrity.ok, true);
     console.log('verify-task-service: PASS');
   } finally {

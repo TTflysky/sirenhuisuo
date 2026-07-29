@@ -161,6 +161,74 @@ async function main() {
   assert.equal(delegatedStatus.active[0].employeeId, 'reviewer');
   assert.equal((await store.read()).runs.find((item) => item.id === pausedRun.id).steps.some((step) => step.delegationId === delegatedWhilePaused.delegation.id), true);
 
+  const stalledToolRuntime = {
+    ...toolRuntime,
+    definitions: [...toolRuntime.definitions, {
+      type: 'function',
+      function: { name: 'hang_tool', description: '模拟永不返回的外部工具', parameters: { type: 'object', properties: {} } },
+    }],
+    async execute(name, args, context) {
+      if (name === 'hang_tool') return new Promise(() => {});
+      return toolRuntime.execute(name, args, context);
+    },
+  };
+  const stalledAdapter = createNativeExecutionAdapter({
+    projectRoot: path.resolve(__dirname, '..'), store, worker, toolRuntime: stalledToolRuntime,
+    sessionId: 'native-test-session', toolCallTimeoutMs: 100, modelRequestTimeoutMs: 1000,
+    fetchImpl: async () => modelResponse({ role: 'assistant', content: null, tool_calls: [{
+      id: 'hang-call', type: 'function', function: { name: 'hang_tool', arguments: '{}' },
+    }] }),
+  });
+  const stalledRun = singleStepRun('native-stalled-tool', '调用外部工具并等待真实结果');
+  await stalledAdapter.start({
+    taskId: stalledRun.id,
+    run: stalledRun,
+    members: stalledRun.memberSnapshot.map((member) => ({ ...member, modelConfig: { apiHost: 'https://mock.invalid/v1', model: 'mock-model' } })),
+  });
+  const stalledSnapshot = await waitFor(async () => {
+    const current = (await store.read()).runs.find((item) => item.id === stalledRun.id);
+    return current?.status === 'paused' ? current : null;
+  });
+  assert.equal(stalledSnapshot.worker.state, 'paused', '停滞保护必须同步暂停 Worker');
+  assert.match(stalledSnapshot.handoff.blocked, /没有返回|安全暂停/u);
+  assert.match(stalledSnapshot.handoff.nextAction, /继续执行/u);
+  assert(stalledAdapter.events(stalledRun.id).events.some((event) => event.type === 'tool_started'), '缺少真实工具开始事件');
+  assert(stalledAdapter.events(stalledRun.id).events.some((event) => event.type === 'execution_paused_after_stall'), '停滞后没有明确暂停事件');
+
+  const uncooperativeAdapter = createNativeExecutionAdapter({
+    projectRoot: path.resolve(__dirname, '..'), store, worker, toolRuntime,
+    sessionId: 'native-test-session', modelRequestTimeoutMs: 100, retryDelays: [0],
+    fetchImpl: async () => new Promise(() => {}),
+  });
+  const uncooperativeRun = singleStepRun('native-uncooperative-model', '验证模型请求不会无限挂起');
+  await uncooperativeAdapter.start({
+    taskId: uncooperativeRun.id,
+    run: uncooperativeRun,
+    members: uncooperativeRun.memberSnapshot.map((member) => ({ ...member, modelConfig: { apiHost: 'https://mock.invalid/v1', model: 'mock-model' } })),
+  });
+  const boundedModelRun = await waitFor(async () => {
+    const current = (await store.read()).runs.find((item) => item.id === uncooperativeRun.id);
+    return current?.status === 'failed' ? current : null;
+  });
+  assert.match(boundedModelRun.lastError, /没有返回|超时/u, '不响应的模型必须在边界内返回明确错误');
+
+  const stalledBodyAdapter = createNativeExecutionAdapter({
+    projectRoot: path.resolve(__dirname, '..'), store, worker, toolRuntime,
+    sessionId: 'native-test-session', modelRequestTimeoutMs: 100, retryDelays: [0],
+    fetchImpl: async () => ({ ok: true, status: 200, text: async () => new Promise(() => {}) }),
+  });
+  const stalledBodyRun = singleStepRun('native-stalled-model-body', '验证模型响应正文不会无限挂起');
+  await stalledBodyAdapter.start({
+    taskId: stalledBodyRun.id,
+    run: stalledBodyRun,
+    members: stalledBodyRun.memberSnapshot.map((member) => ({ ...member, modelConfig: { apiHost: 'https://mock.invalid/v1', model: 'mock-model' } })),
+  });
+  const boundedBodyRun = await waitFor(async () => {
+    const current = (await store.read()).runs.find((item) => item.id === stalledBodyRun.id);
+    return current?.status === 'failed' ? current : null;
+  });
+  assert.match(boundedBodyRun.lastError, /没有返回|超时/u, '模型响应正文必须受同一个硬截止保护');
+
   let queueFirstStarted = false;
   let queueSecondStarted = false;
   const queuedFetch = async (_url, options) => {
@@ -505,6 +573,9 @@ async function main() {
 
   adapter.stopAll();
   pauseAdapter.stopAll();
+  stalledAdapter.stopAll();
+  uncooperativeAdapter.stopAll();
+  stalledBodyAdapter.stopAll();
   queueAdapter.stopAll();
   waitingAdapter.stopAll();
   steeringAdapter.stopAll();

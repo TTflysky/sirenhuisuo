@@ -127,6 +127,8 @@ export interface NativeExecutionJob {
   waitingFor?: string;
   startedAt?: number;
   updatedAt: number;
+  lastProgressAt?: number;
+  currentActivity?: string;
   finishedAt?: number;
   currentStepId?: string;
   currentMember?: { id: string; name: string; title?: string; role?: string; model?: string };
@@ -341,7 +343,21 @@ export interface OpenToolResult { ok: boolean; reused?: boolean; error?: string;
 export interface SkillListResult { ok: boolean; skills?: import('./types').Skill[]; error?: string; }
 export interface SkillReadResult { ok: boolean; skill?: { id: string; name: string; content: string; documents?: Array<{ path: string; content: string }> }; error?: string; }
 export interface SkillDeleteResult { ok: boolean; error?: string; }
-export interface SkillInstallResult { ok: boolean; skill?: import('./types').Skill; resolvedUrl?: string; error?: string; }
+export interface SkillInstallResult {
+  ok: boolean;
+  skill?: import('./types').Skill;
+  resolvedUrl?: string;
+  requestedSourceUrl?: string;
+  slug?: string;
+  verification?: { verified: boolean; manifestReadable: boolean; skillId: string; health?: string; documentCount: number; checkedAt: string };
+  error?: string;
+}
+export interface SkillMarketSearchResult {
+  ok: boolean;
+  query?: string;
+  results?: Array<{ slug: string; name: string; description?: string; category?: string; downloads?: number; installs?: number; version?: string; homepage?: string }>;
+  error?: string;
+}
 export interface SkillSourceInspection {
   name: string;
   description: string;
@@ -451,7 +467,8 @@ declare global {
     skillsList: () => Promise<SkillListResult>;
     skillsRead: (id: string) => Promise<SkillReadResult>;
     skillsDelete: (id: string) => Promise<SkillDeleteResult>;
-    skillsInstall: (input: { sourceUrl: string; name?: string }) => Promise<SkillInstallResult>;
+    skillsInstall: (input: { sourceUrl?: string; slug?: string; name?: string; requestText?: string }) => Promise<SkillInstallResult>;
+    skillsSearchMarket: (query: string) => Promise<SkillMarketSearchResult>;
     skillsInspectSource: (sourceUrl: string) => Promise<SkillInspectResult>;
     skillsRepair: (id: string) => Promise<SkillInstallResult>;
     skillDrafts: () => Promise<{ ok: boolean; drafts?: SkillDraft[]; error?: string }>;

@@ -7,6 +7,7 @@ const officeParser = require('officeparser');
 const { AlignmentType, Document, HeadingLevel, Packer, Paragraph, TextRun } = require('docx');
 const { initAutoUpdater } = require('./autoUpdate.cjs');
 const { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill, inspectSkillSource, repairSkill, createSkillDraft, listSkillDrafts, reviewSkillDraft } = require('./skills.cjs');
+const { searchSkillHub } = require('./skillHubSearch.cjs');
 const { testObsidianVault, searchObsidianVault, readObsidianNote, fetchKnowledgeUrl, searchWeb } = require('./knowledge.cjs');
 const { version: APP_VERSION } = require('../package.json');
 const { sanitizeInjectedEnv, redactInjectedValues } = require('./secretSafety.cjs');
@@ -947,6 +948,10 @@ function createWindow() {
   ipcMain.handle('skills:install', async (_event, input) => {
     try { return await installSkill(path.resolve(__dirname, '..'), input, { fetchImpl: (url, options) => net.fetch(url, options) }); }
     catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+  ipcMain.handle('skills:searchMarket', async (_event, query) => {
+    try { return await searchSkillHub(String(query || ''), (url, options) => net.fetch(url, options)); }
+    catch (e) { return { ok: false, results: [], error: String(e?.message ?? e) }; }
   });
   ipcMain.handle('skills:inspectSource', async (_event, sourceUrl) => {
     try { return { ok: true, inspection: await inspectSkillSource(sourceUrl, { fetchImpl: (url, options) => net.fetch(url, options) }) }; }

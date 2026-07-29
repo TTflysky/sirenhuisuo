@@ -57,6 +57,7 @@ import {
   type TaskDecision,
 } from '../engine/taskDecisionKernel.mjs';
 import { assessTaskCompletion } from '../engine/taskFidelity.mjs';
+import { resolveSkillInstallInput } from '../engine/skillInstallRouting.mjs';
 import { buildTaskLearningContext, recordTaskLearning } from '../engine/taskLearningMemory';
 import {
   buildTaskSummaryMaterial,
@@ -1608,6 +1609,21 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         toolCallsThisPhase += 1;
         const normalizedCall = normalizeTurnToolCall(tc.name, tc.arguments);
         let effectiveArguments = normalizedCall.ok ? normalizedCall.argumentsText! : tc.arguments;
+        let effectiveCallOk = normalizedCall.ok;
+        let effectiveCallError = normalizedCall.error;
+        if (tc.name === 'install_skill') {
+          const modelArgs = normalizedCall.ok && normalizedCall.args && typeof normalizedCall.args === 'object'
+            ? normalizedCall.args
+            : {};
+          const resolvedInstall = resolveSkillInstallInput(modelArgs, originalUserText);
+          if (!resolvedInstall.error) {
+            effectiveArguments = JSON.stringify({ ...modelArgs, ...resolvedInstall });
+            effectiveCallOk = true;
+            effectiveCallError = undefined;
+          } else {
+            effectiveCallError = resolvedInstall.error;
+          }
+        }
         const cacheKey = canonicalToolCallKey(tc.name, effectiveArguments);
         const routeGate = canExecuteRoute(executionState, { toolName: tc.name, routeKey: executionRouteKey(tc.name, effectiveArguments) });
         const controllerRetry = executionState.decision.kind === 'retry' && executionState.decision.routeId === routeGate.routeId;
@@ -1622,8 +1638,8 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
           : tc.name === 'read_file' ? (connectorSetupTask ? 4 : 12) : Number.POSITIVE_INFINITY;
         const toolLimitReached = toolCallCount > getToolCallLimit(tc.name, connectorSetupTask);
         const resourceLimitReached = Boolean(resourceKey) && resourceReadCount >= resourceLimit;
-        const blockedReason = !normalizedCall.ok
-          ? normalizedCall.error ?? '工具参数无效，模型需要修正后再调用。'
+        const blockedReason = !effectiveCallOk
+          ? effectiveCallError ?? '工具参数无效，模型需要修正后再调用。'
           : !routeGate.allowed
           ? routeGate.reason ?? '执行控制器已阻止重复或无效路线，必须换一种方法。'
           : repeatedFailedSkillRead
@@ -1661,7 +1677,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         const observedResult = observeTurnToolResult(turnRuntime, {
           toolCallId: tc.id,
           name: tc.name,
-          args: normalizedCall.ok ? normalizedCall.args : effectiveArguments,
+          args: (() => { try { return JSON.parse(effectiveArguments); } catch { return effectiveArguments; } })(),
           success: resultSuccess,
           useful: newEvidence,
           output: result.output,
@@ -2074,4 +2090,9 @@ export function appendDm(empId: string, msgs: ChatMessage[]): void {
   } catch (e) {
     console.warn('[hermesClient] Failed to append dm:', e);
   }
+}
+
+export function replaceDm(empId: string, msgs: ChatMessage[]): void {
+  try { localStorage.setItem(`${LS_DM_PREFIX}${empId}`, JSON.stringify(cleanChatMessages(msgs).slice(-MAX_CHAT))); }
+  catch (e) { console.warn('[hermesClient] Failed to replace dm:', e); }
 }

@@ -1,5 +1,6 @@
 const fs = require('fs/promises');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const { searchSkillHub, formatSkillHubResults } = require('./skillHubSearch.cjs');
 
 const NATIVE_TOOL_DEFINITIONS = [
@@ -15,9 +16,11 @@ const NATIVE_TOOL_DEFINITIONS = [
   tool('read_web_page', '读取指定 HTTP/HTTPS 网页正文。', { url: stringField('完整网页地址') }, ['url']),
   tool('search_skills', '搜索可用 Skill；技能发现请求会同时检索 SkillHub 官方市场。', { query: stringField('任务或技能关键词') }, ['query']),
   tool('read_skill', '读取已安装 Skill 的完整说明。', { id: stringField('Skill ID') }, ['id']),
-  tool('install_skill', '使用客户端原生安装器从可信 HTTPS、GitHub、SkillHub 或 ZIP 来源安装完整 Skill；禁止改用 skillhub 命令。', {
-    sourceUrl: stringField('官方来源地址'), name: stringField('可选名称'),
-  }, ['sourceUrl']),
+  tool('install_skill', '使用客户端原生安装器安装完整 Skill。可直接传 SkillHub slug、技能名、商城详情页、安装说明页、GitHub、SKILL.md 或 ZIP；禁止改用 skillhub 命令。', {
+    sourceUrl: stringField('可选：官方来源、SkillHub 详情页或下载地址'),
+    slug: stringField('可选：SkillHub 返回的精确 slug'),
+    name: stringField('可选：技能名；仅名称符合 slug 格式时可直接安装'),
+  }, []),
   tool('inspect_connectors', '检查已配置连接器的真实状态，不返回密钥。', { query: stringField('可选服务名') }, []),
   tool('test_connector', '对已配置连接器执行最小真实验证。', { connector: stringField('连接器 ID 或名称') }, ['connector']),
   tool('prepare_connector', '报告连接器配置所需字段。需用户填写密钥时必须明确等待用户。', {
@@ -278,14 +281,17 @@ function createNativeToolRuntime(options) {
         const localOutput = matches.length
           ? matches.map((skill) => `- ${skill.id} | ${skill.name} | ${skill.health || 'unknown'} | ${skill.description || ''}`).join('\n')
           : '本机没有直接匹配的 Skill。';
-        if (!/(?:\bskills?\b|技能|技能源|技能库)/iu.test(query) || !/(?:找|搜索|检索|查找|发现|推荐|有没有|适合|爆款|安装|更新)/u.test(query)) {
-          return succeeded(name, `${localOutput}\n来源范围：本机已安装技能。`);
-        }
         const market = await searchSkillHub(query, options.fetchImpl);
-        if (!market.ok) return failed(name, `SkillHub 官方检索失败：${market.error}\n本机结果不能替代市场结果。`);
+        const explicitlyRequestedMarket = /skillhub|技能商城|第三方技能|外部技能/iu.test(query);
+        if (!market.ok) {
+          const output = `SkillHub 官方检索失败：${market.error}\n\n本机已安装匹配：\n${localOutput}`;
+          return explicitlyRequestedMarket || !matches.length ? failed(name, output) : succeeded(name, output);
+        }
         return market.results?.length
           ? succeeded(name, `SkillHub 官方市场结果（查询：${market.query}）：\n${formatSkillHubResults(market)}\n\n候选尚未安装或验证。\n\n本机已安装匹配：\n${localOutput}`)
-          : failed(name, `SkillHub 没有找到与“${market.query}”直接匹配的 Skill。\n${localOutput}`);
+          : matches.length
+            ? succeeded(name, `SkillHub 没有找到与“${market.query}”直接匹配的 Skill。\n\n本机已安装匹配：\n${localOutput}`)
+            : failed(name, `SkillHub 和本机技能库都没有找到与“${market.query}”直接匹配的 Skill。`);
       }
       if (name === 'read_skill') {
         const skill = await options.readSkill(projectRoot, String(args.id || ''));
@@ -295,14 +301,16 @@ function createNativeToolRuntime(options) {
         });
       }
       if (name === 'install_skill') {
-        if (!/^https:\/\//iu.test(String(args.sourceUrl || ''))) return failed(name, '只允许从 HTTPS 来源安装 Skill');
+        const routing = await import(pathToFileURL(path.join(projectRoot, 'src/engine/skillInstallRouting.mjs')).href);
+        const resolved = routing.resolveSkillInstallInput(args, context.goal);
+        if (resolved.error) return failed(name, resolved.error);
         if (context.executionPolicy?.approvalMode !== 'full') {
-          return failed(name, `等待用户批准安装 Skill：${String(args.sourceUrl).slice(0, 500)}`, { awaitingApproval: true });
+          return failed(name, `等待用户批准安装 Skill：${String(resolved.sourceUrl).slice(0, 500)}`, { awaitingApproval: true });
         }
-        const result = await options.installSkill(projectRoot, { sourceUrl: args.sourceUrl, name: args.name });
+        const result = await options.installSkill(projectRoot, resolved);
         return result.ok
-          ? succeeded(name, `Skill 已安装。\nID: ${result.skill?.id || ''}\n名称: ${result.skill?.name || args.name || args.sourceUrl}\n来源: ${result.resolvedUrl || args.sourceUrl}`, {
-            skill: { id: result.skill?.id, name: result.skill?.name || args.name, sourceUrl: result.resolvedUrl || args.sourceUrl, verified: true },
+          ? succeeded(name, `Skill 已安装并完成自动回读验证。\nID: ${result.skill?.id || ''}\n名称: ${result.skill?.name || resolved.name || resolved.slug}\n来源: ${result.resolvedUrl || resolved.sourceUrl}\n健康状态: ${result.verification?.health || result.skill?.health || 'ready'}\n已回读文档: ${result.verification?.documentCount ?? 0}`, {
+            skill: { id: result.skill?.id, name: result.skill?.name || resolved.name, slug: result.slug || resolved.slug, sourceUrl: result.resolvedUrl || resolved.sourceUrl, verified: result.verification?.verified === true },
           })
           : failed(name, result.error || 'Skill 安装失败');
       }

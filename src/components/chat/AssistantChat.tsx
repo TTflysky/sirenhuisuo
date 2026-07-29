@@ -45,6 +45,19 @@ import { referenceClarification, referencesFromToolResult, resolveConversationRe
 import { createChatTaskBridge } from '../../engine/taskServiceBridge';
 import type { ConversationReferenceResolution } from '../../engine/conversationReferences.mjs';
 import {
+  activateChatSession,
+  createChatSession,
+  ensureActiveChatSession,
+  listChatSessions,
+  messageBelongsToConversation,
+  normalizeConversationMessages,
+  registerChatSession,
+  syncChatSessionsFromMessages,
+  titleFromMessages,
+  touchChatSession,
+  type ChatSessionScope,
+} from '../../data/chatSessions';
+import {
   CopyOutlined,
   DeleteOutlined,
   ExportOutlined,
@@ -70,7 +83,7 @@ interface PendingAssistantRequest {
   alreadyDisplayed?: boolean;
 }
 
-interface AssistantChatArchive {
+interface LegacyAssistantChatArchive {
   id: string;
   title: string;
   messages: ChatMessage[];
@@ -85,40 +98,38 @@ function isDialogMessage(m: ChatMessage): boolean {
 }
 
 function loadHistory(): ChatMessage[] {
+  const scope: ChatSessionScope = 'assistant';
+  const activeConversationId = ensureActiveChatSession(scope);
+  let messages: ChatMessage[] = [];
   try {
     const raw = localStorage.getItem(LS_KEY);
-    if (raw) return (JSON.parse(raw) as ChatMessage[]).filter(isDialogMessage).map((message) => (
+    if (raw) messages = (JSON.parse(raw) as ChatMessage[]).filter(isDialogMessage).map((message) => (
       message.roleId === 'human' ? message : { ...message, content: simplifyLegacyAssistantContent(message.content) }
     ));
   } catch {}
-  return [];
+  const normalized = normalizeConversationMessages(messages, scope);
+  try {
+    const legacyArchives = JSON.parse(localStorage.getItem(LS_CHAT_ARCHIVES) ?? '[]') as LegacyAssistantChatArchive[];
+    for (const archive of legacyArchives) {
+      if (!archive?.id || !Array.isArray(archive.messages)) continue;
+      registerChatSession({ id: archive.id, scope, title: archive.title || '历史对话', createdAt: archive.updatedAt, updatedAt: archive.updatedAt });
+      for (const message of archive.messages) {
+        if (!normalized.some((item) => item.id === message.id)) normalized.push({ ...message, conversationId: archive.id });
+      }
+    }
+    localStorage.removeItem(LS_CHAT_ARCHIVES);
+  } catch {}
+  if (!normalized.some((message) => message.conversationId === activeConversationId) && messages.length) {
+    normalized.forEach((message) => { if (!message.conversationId) message.conversationId = activeConversationId; });
+  }
+  syncChatSessionsFromMessages(scope, normalized);
+  saveHistory(normalized);
+  return normalized;
 }
 function saveHistory(msgs: ChatMessage[]): void {
   try {
-    localStorage.setItem(LS_KEY, JSON.stringify(msgs.slice(-300)));
+    localStorage.setItem(LS_KEY, JSON.stringify(msgs.slice(-2400)));
   } catch {}
-}
-
-function loadChatArchives(): AssistantChatArchive[] {
-  try {
-    const raw = localStorage.getItem(LS_CHAT_ARCHIVES);
-    if (raw) return (JSON.parse(raw) as AssistantChatArchive[]).filter((item) => item.id && Array.isArray(item.messages)).slice(0, 20);
-  } catch {}
-  return [];
-}
-
-function saveChatArchives(archives: AssistantChatArchive[]): void {
-  try { localStorage.setItem(LS_CHAT_ARCHIVES, JSON.stringify(archives.slice(0, 20))); } catch {}
-}
-
-function archiveFromMessages(messages: ChatMessage[]): AssistantChatArchive {
-  const firstUser = messages.find((message) => message.roleId === 'human')?.content.trim();
-  return {
-    id: `chat-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-    title: (firstUser || '未命名对话').replace(/\s+/g, ' ').slice(0, 32),
-    messages: messages.slice(-300),
-    updatedAt: Date.now(),
-  };
 }
 
 const EXPLICIT_TEAM_DISPATCH_RE = /(?:拉(?:个|起|一个)?团队|拉群|组建团队|组队|召集.{0,12}(?:员工|成员|团队)|叫.{0,12}(?:员工|成员).{0,12}(?:来|去|做|负责)|安排.{0,12}(?:员工|成员).{0,12}(?:做|负责|开发|设计))/u;
@@ -140,8 +151,14 @@ function resolveDispatchRequest(current: string, recentUserMessages: string[]): 
 
 export default function AssistantChat() {
   const { state, createProjectDraft, approveProject, rejectProject, addTeamMembers, setProjectMembers } = useStore();
-  const [msgs, setMsgs] = useState<ChatMessage[]>(() => loadHistory());
-  const [chatArchives, setChatArchives] = useState<AssistantChatArchive[]>(() => loadChatArchives());
+  const sessionScope: ChatSessionScope = 'assistant';
+  const [conversationId, setConversationId] = useState(() => ensureActiveChatSession(sessionScope));
+  const conversationIdRef = useRef(conversationId);
+  conversationIdRef.current = conversationId;
+  const [allMsgs, setAllMsgs] = useState<ChatMessage[]>(() => loadHistory());
+  const msgs = allMsgs.filter((message) => messageBelongsToConversation(message, conversationId, sessionScope));
+  const chatSessions = listChatSessions(sessionScope).filter((session) => session.id !== conversationId);
+  const [pendingNewChat, setPendingNewChat] = useState(false);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('');
@@ -191,9 +208,10 @@ export default function AssistantChat() {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [msgs.length, status]);
 
-  const push = useCallback((m: ChatMessage) => {
-    setMsgs((prev) => {
-      const next = [...prev, m];
+  const push = useCallback((m: ChatMessage, targetConversationId?: string) => {
+    const sessionId = targetConversationId ?? conversationIdRef.current;
+    setAllMsgs((prev) => {
+      const next = [...prev, { ...m, conversationId: sessionId }];
       saveHistory(next);
       return next;
     });
@@ -209,6 +227,7 @@ export default function AssistantChat() {
     const content = (contentOverride ?? text).trim();
     const atts = externalRequest ? [] : attachments;
     if (!content && atts.length === 0) return;
+    touchChatSession(sessionScope, conversationIdRef.current, content || atts[0]?.name || '新对话');
     // A chat window can remain open while the office window adds or edits an
     // employee. Read the shared profile store at dispatch time, not only from
     // the last React render, before choosing project members.
@@ -789,36 +808,64 @@ ${employeeDirectory}
   };
 
   const handleClearHistory = () => {
-    if (!confirm('清空所有对话？')) return;
-    setMsgs([]);
-    localStorage.removeItem(LS_KEY);
+    if (busy || !confirm('清空当前对话？历史中的其他对话不会删除。')) return;
+    setAllMsgs((previous) => {
+      const next = previous.filter((message) => !messageBelongsToConversation(message, conversationIdRef.current, sessionScope));
+      saveHistory(next);
+      return next;
+    });
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
+  const resetConversationRuntime = () => {
+    setSkillRefs([]);
+    setAttachments([]);
+    setText('');
+    setPendingRequest(null);
+    setCompletedActionCount(0);
+    setLiveActivities([]);
+    setLiveExecutionSteps([]);
+    steeringMessagesRef.current.splice(0);
+    queuedFollowUpsRef.current.splice(0);
+    activeWorkspaceIdRef.current = undefined;
+    localStorage.removeItem(LS_PENDING_REQUEST);
+    executionControl.reset();
+  };
+
+  const openFreshChat = () => {
+    if (msgs.length) touchChatSession(sessionScope, conversationIdRef.current, titleFromMessages(msgs, '助理对话'));
+    const session = createChatSession(sessionScope);
+    setConversationId(session.id);
+    resetConversationRuntime();
     window.requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
   const handleStartNewChat = () => {
-    if (busy) return;
-    if (msgs.length) {
-      const nextArchives = [archiveFromMessages(msgs), ...chatArchives].slice(0, 20);
-      setChatArchives(nextArchives);
-      saveChatArchives(nextArchives);
+    if (busy) {
+      if (!confirm('当前任务还在运行。是否安全停止它，并在停止后自动新建聊天？')) return;
+      setPendingNewChat(true);
+      steeringMessagesRef.current.splice(0);
+      queuedFollowUpsRef.current.splice(0);
+      executionControl.stop();
+      setStatus('正在停止旧任务，随后会自动开启新聊天…');
+      return;
     }
-    setMsgs([]);
-    setSkillRefs([]);
-    setAttachments([]);
-    localStorage.removeItem(LS_KEY);
-    window.requestAnimationFrame(() => textareaRef.current?.focus());
+    openFreshChat();
   };
 
+  useEffect(() => {
+    if (!pendingNewChat || busy) return;
+    setPendingNewChat(false);
+    openFreshChat();
+    // openFreshChat intentionally consumes the latest visible conversation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy, pendingNewChat]);
+
   const handleRestoreArchive = (archiveId: string) => {
-    if (!archiveId || busy) return;
-    const target = chatArchives.find((archive) => archive.id === archiveId);
-    if (!target) return;
-    const remaining = chatArchives.filter((archive) => archive.id !== archiveId);
-    const nextArchives = msgs.length ? [archiveFromMessages(msgs), ...remaining].slice(0, 20) : remaining;
-    setChatArchives(nextArchives);
-    saveChatArchives(nextArchives);
-    setMsgs(target.messages);
-    saveHistory(target.messages);
+    if (!archiveId || busy || !activateChatSession(sessionScope, archiveId)) return;
+    touchChatSession(sessionScope, conversationIdRef.current, titleFromMessages(msgs, '助理对话'));
+    setConversationId(archiveId);
+    resetConversationRuntime();
     window.requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
@@ -943,11 +990,11 @@ ${employeeDirectory}
           <div className={`chat-composer ${fileDrop.dragActive ? 'is-file-dragging' : ''}`} {...fileDrop.dropProps}>
             {fileDrop.dragActive && <div className="chat-file-drop-overlay"><strong>松开添加文件</strong><span>文件将真实写入本次聊天工作区</span></div>}
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-              <button className="btn btn-sm composer-icon-btn" onClick={handleStartNewChat} disabled={busy} title={busy ? '请先暂停或停止当前任务' : '保存当前对话并开启空白上下文'} aria-label="新对话"><PlusOutlined /></button>
-              {chatArchives.length > 0 && (
-                <select className="assistant-chat-history-select" value="" onChange={(event) => handleRestoreArchive(event.target.value)} disabled={busy} aria-label="历史对话">
+              <button className="btn btn-sm chat-new-session-btn" onClick={handleStartNewChat} title={busy ? '安全停止当前任务并新建聊天' : '保存当前对话并开启空白上下文'} aria-label="新建聊天"><PlusOutlined /><span>{pendingNewChat ? '正在新建…' : '新建聊天'}</span></button>
+              {chatSessions.length > 0 && (
+                <select className="assistant-chat-history-select" value="" onChange={(event) => handleRestoreArchive(event.target.value)} disabled={busy || pendingNewChat} aria-label="历史对话">
                   <option value="">历史对话</option>
-                  {chatArchives.map((archive) => <option key={archive.id} value={archive.id}>{archive.title}</option>)}
+                  {chatSessions.map((session) => <option key={session.id} value={session.id}>{session.title}</option>)}
                 </select>
               )}
               <button

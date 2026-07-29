@@ -70,7 +70,7 @@ export const TASK_DECISION_TOOL = {
         deliverables: {
           type: 'array', maxItems: 12,
           items: { type: 'object', additionalProperties: false, required: ['label'], properties: {
-            label: { type: 'string' }, format: { type: 'string' }, category: { type: 'string', enum: ['final', 'working', 'reference'] }, required: { type: 'boolean' },
+            label: { type: 'string' }, format: { type: 'string' }, type: { type: 'string', enum: ['answer', 'file', 'connection', 'operation', 'decision', 'mixed'] }, category: { type: 'string', enum: ['final', 'working', 'reference'] }, required: { type: 'boolean' },
           } },
         },
         requiredCapabilities: { type: 'array', maxItems: 12, items: { type: 'string' } },
@@ -126,13 +126,30 @@ function routeForGoal(goal, availableTools) {
 }
 
 function deliverableTypeForGoal(goal, route, provided) {
-  if (['answer', 'file', 'connection', 'operation', 'decision', 'mixed'].includes(provided)) return provided;
-  if (route === 'write_file' || /(?:文件|文档|代码|网页|word|excel|ppt|pdf|markdown|安装包)/iu.test(goal)) return 'file';
+  if (route === 'write_file') return 'file';
   if (route === 'inspect_connectors' || route === 'connector') return 'connection';
   if (['install_skill', 'run_command'].includes(route)) return 'operation';
   if (route === 'direct_answer' || route === 'web_search' || route === 'read_file' || route === 'list_files') return 'answer';
+  if (['answer', 'file', 'connection', 'operation', 'decision', 'mixed'].includes(provided)) return provided;
+  if (/(?:文件|文档|代码|网页|word|excel|ppt|pdf|markdown|安装包)/iu.test(goal)) return 'file';
   if (/选择|判断|比较|建议|分析|规划/u.test(goal)) return 'decision';
   return 'mixed';
+}
+
+function normalizedDeliverables(candidate, route, deliverableType) {
+  const fixedLabels = {
+    install_skill: '已安装并完成回读验证的 Skill',
+    inspect_connectors: '已保存并通过真实测试的连接',
+    write_file: '已落盘并验证可打开的文件',
+  };
+  if (fixedLabels[route]) {
+    return [{ label: fixedLabels[route], format: deliverableType, type: deliverableType, category: 'final', required: true }];
+  }
+  if (!Array.isArray(candidate)) return undefined;
+  return candidate.slice(0, 12).map((item) => ({
+    ...item,
+    type: ['answer', 'file', 'connection', 'operation', 'decision', 'mixed'].includes(item?.type) ? item.type : deliverableType,
+  }));
 }
 
 export function createFallbackTaskDecision(input = {}) {
@@ -229,6 +246,7 @@ export function normalizeTaskDecision(candidate, input = {}) {
   const requiredConstraints = taskRequirementLabels(goal);
   const protectedCriteria = defaultAcceptance(primaryRoute, goal);
   const acceptanceCriteria = [...new Set([...protectedCriteria, ...criteria])].slice(0, 8);
+  const deliverableType = deliverableTypeForGoal(goal, primaryRoute, candidate.deliverableType);
   const missingUserCondition = clean(candidate.missingUserCondition, 300);
   const genuinelyNeedsUser = mode === 'execute'
     && Boolean(candidate.needsUser)
@@ -238,10 +256,10 @@ export function normalizeTaskDecision(candidate, input = {}) {
     mode,
     goal,
     primaryRoute,
-    deliverableType: deliverableTypeForGoal(goal, primaryRoute, candidate.deliverableType),
+    deliverableType,
     acceptanceCriteria,
     requiredConstraints,
-    deliverables: Array.isArray(candidate.deliverables) ? candidate.deliverables.slice(0, 12) : fallback.deliverables,
+    deliverables: normalizedDeliverables(candidate.deliverables, primaryRoute, deliverableType) ?? fallback.deliverables,
     requiredCapabilities: Array.isArray(candidate.requiredCapabilities) ? candidate.requiredCapabilities.map((item) => clean(item, 120)).filter(Boolean).slice(0, 12) : fallback.requiredCapabilities,
     riskLevel: ['low', 'normal', 'high'].includes(candidate.riskLevel) ? candidate.riskLevel : fallback.riskLevel,
     teamPolicy: candidate.teamPolicy && typeof candidate.teamPolicy === 'object' ? candidate.teamPolicy : fallback.teamPolicy,

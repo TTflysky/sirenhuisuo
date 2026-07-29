@@ -32,6 +32,7 @@ export interface TeamDiscussionOptions {
   participantPlan?: DiscussionParticipantPlan[];
   triggerMessageId?: string;
   discussionId?: string;
+  conversationId?: string;
   maxRounds?: number;
   forcedMemberIds?: string[];
   runId?: string;

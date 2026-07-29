@@ -75,6 +75,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   skillsRead: (id) => ipcRenderer.invoke('skills:read', id),
   skillsDelete: (id) => ipcRenderer.invoke('skills:delete', id),
   skillsInstall: (input) => ipcRenderer.invoke('skills:install', input),
+  skillsSearchMarket: (query) => ipcRenderer.invoke('skills:searchMarket', query),
   skillsInspectSource: (sourceUrl) => ipcRenderer.invoke('skills:inspectSource', sourceUrl),
   skillsRepair: (id) => ipcRenderer.invoke('skills:repair', id),
   skillDrafts: () => ipcRenderer.invoke('skills:drafts'),

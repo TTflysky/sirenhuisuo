@@ -1,5 +1,17 @@
 # 更新日志
 
+## v2.0.1 (Truthful progress and isolated conversations)
+
+- Rebuilt Skill installation as one verified path for SkillHub names and slugs, SkillHub detail/API URLs, GitHub repositories or directories, ZIP packages, and direct `SKILL.md` sources. The installer now rescans, reads back, and health-checks the installed package before reporting success.
+- Added explicit New Chat and restorable chat history to assistant, employee direct-message, and team windows. Messages, model context, queued follow-ups, retries, task runs, native execution messages, and dynamically delegated children retain their originating conversation ID so late background results cannot contaminate a new chat.
+- Fixed task continuation ordering. A parent now resumes durable descendant tasks before re-entering its own execution loop, preventing the Continue button from immediately falling back into a paused-child wait state.
+- Separated process heartbeat from real execution progress. Native tasks persist the current model/tool activity and last real-progress time; a heartbeat only proves the process is alive and can no longer make a stalled task appear productive.
+- Added hard deadlines around model requests and tool calls, including providers that ignore abort signals. An unresponsive operation produces a plain-language, resumable paused handoff instead of spinning forever or repeating an uncertain side effect.
+- Expanded the team live panel with current activity, real-progress age, heartbeat age, readable 12 px event text, pause/resume/stop controls, and honest employee states for queued, running, waiting, paused, and failed work.
+- Fixed the employee direct-message composer at narrow window widths. Secondary actions now use stable icon controls, the toolbar wraps without crushing Chinese labels vertically, and theme colors remain inherited from the shared design tokens.
+- Added `verify:chat-controls-ui`, which opens the real Electron assistant, employee, and team windows, clicks New Chat in all three, verifies a stalled task exposes a working Continue control with immediate feedback, and captures UI screenshots.
+- Added `verify:chat-session-isolation` and extended native execution and Worker regressions for non-advancing heartbeats, uncooperative model requests, stalled tools, parent-child resume order, and conversation-bound background delivery. The complete `verify:v2-core-gate` passes.
+
 ## v2.0.0 (Unified autonomous runtime)
 
 - Added one Turn Runtime for assistant chat, employee chat, and native team execution. Every model response and real tool result now becomes a structured observation, decision, evidence record, recovery decision, or finalization instead of passing through unrelated topic-specific loops.

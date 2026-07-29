@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { ArrowLeftOutlined, EditOutlined, HistoryOutlined, PauseCircleOutlined, PlayCircleOutlined, RobotOutlined, SearchOutlined, StopOutlined, UserAddOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, EditOutlined, HistoryOutlined, PauseCircleOutlined, PlayCircleOutlined, PlusOutlined, RobotOutlined, SearchOutlined, StopOutlined, UserAddOutlined } from '@ant-design/icons';
 import type { Team, Employee, TaskRun, ThoughtChainStep } from '../../types';
 import { useStore } from '../../storeContext';
 import { type Attachment } from '../../data/hermesClient';
@@ -24,6 +24,17 @@ import { getTaskLedgerEvents, getTaskLedgerIntegrity, readTaskLedger } from '../
 import type { TaskLedgerEvent, TaskLedgerIntegrity, TaskWorkerCommandRecord } from '../../electron';
 import { cleanExecutionDisplay } from '../../engine/executionDisplay.mjs';
 import ThoughtChainView from './ThoughtChainView';
+import {
+  activateChatSession,
+  createChatSession,
+  ensureActiveChatSession,
+  legacyConversationId,
+  listChatSessions,
+  messageBelongsToConversation,
+  titleFromMessages,
+  touchChatSession,
+  type ChatSessionScope,
+} from '../../data/chatSessions';
 
 interface Props {
   teamId: string;
@@ -59,6 +70,10 @@ export default function TeamChatApp({ teamId }: Props) {
     publishTask, claimTask, advanceTask, triggerDiscussion, pauseTaskRun, resumeTaskRun, stopTaskRun, closeTaskRun, clearTeamExecution,
   } = useStore();
   const team = state.teams.find((t: Team) => t.id === teamId);
+  const sessionScope: ChatSessionScope = `team:${teamId}`;
+  const [conversationId, setConversationId] = useState(() => ensureActiveChatSession(sessionScope));
+  const conversationIdRef = useRef(conversationId);
+  conversationIdRef.current = conversationId;
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -109,15 +124,26 @@ export default function TeamChatApp({ teamId }: Props) {
 
   const progress = state.status.progress;
   const myProgress = progress && progress.teamId === teamId ? progress : null;
-  const taskRuns = state.taskRuns.filter((run) => run.teamId === teamId).reverse();
+  const visibleMessages = (team?.chatMessages ?? []).filter((message) => messageBelongsToConversation(message, conversationId, sessionScope));
+  const taskRuns = state.taskRuns.filter((run) => run.teamId === teamId && (
+    run.conversationId === conversationId || (!run.conversationId && conversationId === legacyConversationId(sessionScope))
+  )).reverse();
   const activeTaskRuns = taskRuns.filter((run) => run.status !== 'completed' && run.status !== 'stopped');
   const completedTaskRuns = taskRuns.filter((run) => run.status === 'completed' || run.status === 'stopped');
   const availableOutputs = loadOutputsByScope(`team:${teamId}`);
-  const jumpMessages = (team?.chatMessages ?? []).filter((message) => message.kind !== 'execution').slice(-24);
+  const jumpMessages = visibleMessages.filter((message) => message.kind !== 'execution').slice(-24);
+  const chatSessions = listChatSessions(sessionScope).filter((session) => session.id !== conversationId);
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
+  const [resumingRunIds, setResumingRunIds] = useState<Set<string>>(() => new Set());
   const [taskAudits, setTaskAudits] = useState<Record<string, TaskAudit>>({});
   const [progressNow, setProgressNow] = useState(Date.now());
-  const executionIsLive = Boolean(myProgress) || activeTaskRuns.some((run) => run.status === 'queued' || run.status === 'running');
+  const currentLiveRun = activeTaskRuns.find((run) => run.status === 'running' || run.status === 'queued');
+  const currentLiveStep = currentLiveRun?.steps.find((step) => step.status === 'running')
+    ?? currentLiveRun?.steps.find((step) => step.status === 'queued');
+  const currentLiveEmployee = currentLiveStep ? state.employees.find((employee) => employee.id === currentLiveStep.employeeId) : undefined;
+  const currentLiveEvents = currentLiveStep?.events.slice(-4) ?? [];
+  const executionIsLive = Boolean(myProgress) || Boolean(currentLiveRun);
+  const waitingRun = !currentLiveRun ? activeTaskRuns.find((run) => run.status === 'awaiting_user' || run.status === 'paused' || run.status === 'failed') : undefined;
   const historyMatches = useMemo(() => taskHistoryQuery.trim()
     ? searchTaskRunHistory(state.taskRuns, taskHistoryQuery, { teams: state.teams, limit: 12 })
     : [], [taskHistoryQuery, state.taskRuns, state.teams]);
@@ -183,6 +209,18 @@ export default function TeamChatApp({ teamId }: Props) {
     .map((id) => state.employees.find((e) => e.id === id))
     .filter((e): e is Employee => !!e);
 
+  const memberDisplayState = (employee: Employee): { kind: 'working' | 'waiting' | 'idle' | 'offline'; label: string } => {
+    if (!employee.isOnline) return { kind: 'offline', label: '离线' };
+    const relatedRuns = taskRuns.filter((run) => run.steps.some((step) => step.employeeId === employee.id && step.status !== 'completed' && step.status !== 'stopped'));
+    const running = relatedRuns.find((run) => (run.status === 'running' || run.status === 'queued')
+      && run.steps.some((step) => step.employeeId === employee.id && (step.status === 'running' || step.status === 'queued')));
+    if (running) return { kind: 'working', label: running.status === 'queued' ? '排队中' : '工作中' };
+    const waiting = relatedRuns.find((run) => run.status === 'awaiting_user' || run.status === 'paused' || run.status === 'failed');
+    if (waiting) return { kind: 'waiting', label: waiting.status === 'awaiting_user' ? '等待你' : waiting.status === 'paused' ? '已暂停' : '待恢复' };
+    if (employee.isWorking && !employee.currentTask?.startsWith('执行：')) return { kind: 'working', label: '工作中' };
+    return { kind: 'idle', label: '在线' };
+  };
+
   const mentionCandidates = useMemo(() => {
     const allCandidates = [supervisorMention, ...teamMembers];
     if (!mentionQuery) return allCandidates;
@@ -194,13 +232,23 @@ export default function TeamChatApp({ teamId }: Props) {
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [team?.chatMessages.length, myProgress?.step]);
+  }, [visibleMessages.length, myProgress?.step]);
 
   useEffect(() => {
-    if (!myProgress) return;
+    if (!executionIsLive) return;
     const timer = window.setInterval(() => setProgressNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
-  }, [myProgress]);
+  }, [executionIsLive]);
+
+  useEffect(() => {
+    setResumingRunIds((previous) => {
+      const next = new Set([...previous].filter((runId) => {
+        const run = state.taskRuns.find((item) => item.id === runId);
+        return run?.status === 'paused' || run?.status === 'failed' || run?.status === 'awaiting_user';
+      }));
+      return next.size === previous.size ? previous : next;
+    });
+  }, [state.taskRuns]);
 
   if (!team) return <div style={{ padding: 20 }}>团队不存在</div>;
 
@@ -229,9 +277,38 @@ export default function TeamChatApp({ teamId }: Props) {
     }
     // 展示：文本 + 附件名；图片也存到消息上用于展示
     const display = [content, ...attachments.map((a) => `[📎 ${a.name}]`)].filter(Boolean).join('\n');
-    sendMessage(teamId, 'emp-me', 'human', display, mentions, attachments, refs);
+    touchChatSession(sessionScope, conversationIdRef.current, content || attachments[0]?.name || team.name);
+    sendMessage(teamId, 'emp-me', 'human', display, mentions, attachments, refs, conversationIdRef.current);
     setText('');
     setAttachments([]);
+  };
+
+  const handleStartNewChat = () => {
+    const running = activeTaskRuns.filter((run) => run.status === 'queued' || run.status === 'running');
+    if (running.length && !confirm(`当前有 ${running.length} 个任务正在执行。新建聊天会安全停止这些任务并保留已完成内容，是否继续？`)) return;
+    running.forEach((run) => stopTaskRun(run.id));
+    if (visibleMessages.length) touchChatSession(sessionScope, conversationIdRef.current, titleFromMessages(visibleMessages, team.name));
+    const session = createChatSession(sessionScope);
+    setConversationId(session.id);
+    setText('');
+    setAttachments([]);
+    setSkillRefs([]);
+    setMentionOpen(false);
+    setReplayTaskId(null);
+    setShowTaskList(false);
+    window.requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
+  const handleRestoreChat = (targetConversationId: string) => {
+    if (!targetConversationId || !activateChatSession(sessionScope, targetConversationId)) return;
+    if (visibleMessages.length) touchChatSession(sessionScope, conversationIdRef.current, titleFromMessages(visibleMessages, team.name));
+    setConversationId(targetConversationId);
+    setText('');
+    setAttachments([]);
+    setSkillRefs([]);
+    setMentionOpen(false);
+    setReplayTaskId(null);
+    setShowTaskList(false);
   };
 
   const insertMention = (emp: Employee) => {
@@ -304,13 +381,13 @@ export default function TeamChatApp({ teamId }: Props) {
 
   const handleCopyMsg = async (content: string) => { await copyToClipboard(content); };
   const handleCopyAll = async () => {
-    await copyToClipboard((team.chatMessages ?? []).map((m: any) => {
+    await copyToClipboard(visibleMessages.map((m: any) => {
       const a = state.employees.find((e) => e.id === m.authorId);
       return `[${a?.name ?? m.roleId}] ${m.content}`;
     }).join('\n\n'));
   };
   const handleExport = () => {
-    const msgs = team.chatMessages ?? [];
+    const msgs = visibleMessages;
     const md = messagesToMarkdown(msgs.map((m: any) => {
       const a = state.employees.find((e) => e.id === m.authorId);
       return { role: a?.title ?? m.roleId, author: a?.name ?? m.roleId, content: m.content, time: new Date(m.timestamp).toLocaleString('zh-CN') };
@@ -353,6 +430,16 @@ export default function TeamChatApp({ teamId }: Props) {
     return result;
   };
 
+  const handleResumeTaskRun = (runId: string) => {
+    setResumingRunIds((previous) => new Set(previous).add(runId));
+    resumeTaskRun(runId);
+    window.setTimeout(() => setResumingRunIds((previous) => {
+      const next = new Set(previous);
+      next.delete(runId);
+      return next;
+    }), 8_000);
+  };
+
   const renderTaskRunCard = (run: TaskRun) => {
     const expanded = expandedRunIds.has(run.id);
     const completed = run.steps.filter((step) => step.status === 'completed').length;
@@ -381,7 +468,12 @@ export default function TeamChatApp({ teamId }: Props) {
         </div>}
         <div className="task-run-goal"><strong>目标</strong><span>{run.goal ?? run.request}</span></div>
         {!!run.preflight?.length && <div className="task-run-preflight"><strong>前置检查</strong>{run.preflight.map((item) => <span key={item.label} className={`is-${item.status}`} title={item.detail}>{item.status === 'passed' ? '✓' : item.status === 'blocked' ? '!' : '·'} {item.label}</span>)}</div>}
-        {run.worker && <div className={`task-run-worker worker-${run.worker.state}`}><strong>后台 Worker</strong><span>{run.worker.state === 'running' ? '已领取执行租约' : run.worker.state === 'paused' ? '已暂停并保留租约记录' : run.worker.state === 'expired' ? '租约失效，已安全暂停' : run.worker.state === 'released' ? '执行租约已释放' : run.worker.state === 'stopped' ? '已停止' : '等待执行适配器领取'}</span><small>{run.worker.adapter ?? '未指定适配器'}{run.worker.heartbeatAt ? ` · 心跳 ${new Date(run.worker.heartbeatAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : ''}</small>{run.worker.lastCheckpoint && <small className="task-run-worker-checkpoint">检查点 #{run.worker.lastCheckpoint.sequence} · {run.worker.lastCheckpoint.summary || run.worker.lastCheckpoint.kind}</small>}</div>}
+        {run.worker && <div className={`task-run-worker worker-${run.worker.state}`}>
+          <strong>后台 Worker</strong>
+          <span>{run.worker.state === 'running' ? (run.worker.activity || '已领取任务，等待真实动作') : run.worker.state === 'paused' ? (run.worker.activity || '已暂停并保留现场') : run.worker.state === 'expired' ? '进程心跳失效，已安全暂停' : run.worker.state === 'released' ? '执行租约已释放' : run.worker.state === 'stopped' ? '已停止' : '等待执行适配器领取'}</span>
+          <small>{run.worker.progressAt ? `真实进展 ${new Date(run.worker.progressAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : '尚无真实进展'}{run.worker.heartbeatAt ? ` · 进程心跳 ${new Date(run.worker.heartbeatAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : ''}</small>
+          {run.worker.lastCheckpoint && <small className="task-run-worker-checkpoint">检查点 #{run.worker.lastCheckpoint.sequence} · {run.worker.lastCheckpoint.summary || run.worker.lastCheckpoint.kind}</small>}
+        </div>}
         {!!run.skillRefs?.length && <div className="task-run-skills"><strong>Skills</strong>{run.skillRefs.map((skill) => <span key={skill.id}>{skill.name}</span>)}</div>}
         {!!run.skillEvidence?.length && <div className="task-run-skills task-run-skill-evidence"><strong>Skill 证据</strong>{run.skillEvidence.slice(-8).map((item, index) => <span key={`${item.ts}-${item.skillId ?? item.toolName}-${index}`} title={item.detail ?? item.reason}>{item.action === 'read-failed' ? '!' : item.action === 'read' || item.action === 'called' ? '✓' : '·'} {item.skillName ?? item.skillId ?? item.toolName ?? 'Skill'} · {item.action}</span>)}</div>}
         {connectorEvidence.length > 0 && <div className="task-run-connector-evidence"><strong>连接器证据</strong>{connectorEvidence.map((item, index) => {
@@ -419,7 +511,7 @@ export default function TeamChatApp({ teamId }: Props) {
         <div className="task-run-actions">
           <button className="btn btn-sm" onClick={() => setReplayTaskId(run.id)} title="只读回放任务"><HistoryOutlined />回放</button>
           {active && <button className="btn btn-sm" onClick={() => pauseTaskRun(run.id)}><PauseCircleOutlined />暂停</button>}
-          {(run.status === 'paused' || run.status === 'failed' || run.status === 'awaiting_user') && <button className="btn btn-sm btn-primary" onClick={() => resumeTaskRun(run.id)}><PlayCircleOutlined />继续执行</button>}
+          {(run.status === 'paused' || run.status === 'failed' || run.status === 'awaiting_user') && <button className="btn btn-sm btn-primary" disabled={resumingRunIds.has(run.id)} onClick={() => handleResumeTaskRun(run.id)}><PlayCircleOutlined />{resumingRunIds.has(run.id) ? '正在继续…' : '继续执行'}</button>}
           {(active || run.status === 'paused' || run.status === 'failed' || run.status === 'awaiting_user') && <button className="btn btn-sm btn-danger" onClick={() => stopTaskRun(run.id)}><StopOutlined />停止</button>}
         </div>
       </div>}
@@ -467,37 +559,52 @@ export default function TeamChatApp({ teamId }: Props) {
                 </span>
               </div>
               <button key={supervisorMention.id} className="team-member-item team-supervisor-item" onClick={() => insertMention(supervisorMention)} title={`@${supervisorMention.name}`}><SupervisorAvatar size={34} /><span className="team-member-info"><strong>{supervisorMention.name}</strong><small>{supervisorMention.title}</small><small className="is-working">随时可联系</small></span></button>
-              {teamMembers.map((emp) => <button key={emp.id} className="team-member-item" onClick={() => insertMention(emp)} title={`@${emp.name}`}><span className="team-member-avatar"><AgentAvatar employee={emp} size={34} /><span className={`team-member-status ${!emp.isOnline ? 'offline' : emp.isWorking ? 'working' : 'idle'}`} /></span><span className="team-member-info"><strong>{emp.name}</strong><small style={{ color: emp.statusColor }}>{emp.title}</small><small className={emp.isWorking ? 'is-working' : ''}>{emp.isWorking ? '工作中' : emp.isOnline ? '在线' : '离线'}</small></span></button>)}
+              {teamMembers.map((emp) => {
+                const displayState = memberDisplayState(emp);
+                return <button key={emp.id} className="team-member-item" onClick={() => insertMention(emp)} title={`@${emp.name}`}><span className="team-member-avatar"><AgentAvatar employee={emp} size={34} /><span className={`team-member-status ${displayState.kind}`} /></span><span className="team-member-info"><strong>{emp.name}</strong><small style={{ color: emp.statusColor }}>{emp.title}</small><small className={displayState.kind === 'working' ? 'is-working' : displayState.kind === 'waiting' ? 'is-waiting' : ''}>{displayState.label}</small></span></button>;
+              })}
             </aside>
             <div className="team-chat-content">
-          {/* 实时进度条（讨论中） */}
-          {myProgress && (
-            <div className="chat-progress">
+          {/* 团队讨论和后台原生任务共用同一条实时进度。 */}
+          {executionIsLive && (
+            <div className="chat-progress team-live-progress" role="status" aria-live="polite">
               <div className="chat-progress-left">
                 <div className="progress-spinner" />
                 <div>
                   <div className="chat-progress-title">
-                    {myProgress.currentEmpName ? `${myProgress.currentEmpName} 正在思考…` : '准备中…'}
+                    {myProgress
+                      ? myProgress.currentEmpName ? `${myProgress.currentEmpName} 正在思考…` : '团队正在准备…'
+                      : currentLiveRun?.worker?.activity || (currentLiveEmployee ? `${currentLiveEmployee.name} · ${currentLiveStep?.title ?? '正在执行'}` : currentLiveRun?.status === 'queued' ? '任务已进入后台队列' : '团队正在执行')}
                   </div>
                   <div className="chat-progress-sub">
-                    正在调用 <strong>{myProgress.model ?? '模型'}</strong> · 团队 {myProgress.teamName}
-                    · 已用 {Math.max(1, Math.floor((progressNow - myProgress.startedAt) / 1000))}s
-                    · 预计 {Math.ceil(myProgress.estimatedMs / 1000)}s
+                    {myProgress
+                      ? <>正在调用 <strong>{myProgress.model ?? '模型'}</strong> · 团队 {myProgress.teamName} · 已用 {Math.max(1, Math.floor((progressNow - myProgress.startedAt) / 1000))}s</>
+                      : <>后台 Worker {currentLiveRun?.worker?.state === 'running' ? '进程在线' : '正在领取任务'} · 已用 {Math.max(1, Math.floor((progressNow - (currentLiveRun?.createdAt ?? progressNow)) / 1000))}s · 真实进展 {Math.max(0, Math.floor((progressNow - (currentLiveRun?.worker?.progressAt ?? currentLiveRun?.updatedAt ?? progressNow)) / 1000))}s 前{currentLiveRun?.worker?.heartbeatAt ? ` · 心跳 ${Math.max(0, Math.floor((progressNow - currentLiveRun.worker.heartbeatAt) / 1000))}s 前` : ''}</>}
                   </div>
                 </div>
               </div>
               <div className="chat-progress-right">
-                <div className="chat-progress-step">{myProgress.step}/{myProgress.totalSteps}</div>
+                <div className="chat-progress-step">{myProgress ? `${myProgress.step}/${myProgress.totalSteps}` : `${currentLiveRun?.steps.filter((step) => step.status === 'completed').length ?? 0}/${currentLiveRun?.steps.length ?? 1}`}</div>
                 <div className="progress-bar" style={{ width: 100 }}>
-                  <div className="progress-bar-fill" style={{ width: `${(myProgress.step / myProgress.totalSteps) * 100}%` }} />
+                  <div className="progress-bar-fill" style={{ width: `${myProgress
+                    ? (myProgress.step / Math.max(1, myProgress.totalSteps)) * 100
+                    : ((currentLiveRun?.steps.filter((step) => step.status === 'completed').length ?? 0) / Math.max(1, currentLiveRun?.steps.length ?? 1)) * 100}%` }} />
                 </div>
               </div>
+              {!myProgress && currentLiveRun && <div className="team-live-event-stream">
+                {(currentLiveEvents.length ? currentLiveEvents : [{ ts: currentLiveRun.updatedAt, type: 'status' as const, detail: currentLiveRun.status === 'queued' ? '任务已排队，等待后台执行器领取' : '后台执行器正在处理当前步骤' }]).map((event, index, events) => <div key={`${event.ts}-${index}`} className={index === events.length - 1 ? 'is-current' : ''}><i /> <span>{cleanExecutionDisplay(event.detail, 180)}</span><time>{new Date(event.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time></div>)}
+              </div>}
             </div>
           )}
+          {!executionIsLive && waitingRun && <div className="team-waiting-banner" role="status">
+            <div><strong>{waitingRun.status === 'awaiting_user' ? '任务正在等你处理' : waitingRun.status === 'paused' ? '任务已暂停' : '任务需要恢复'}</strong><span>{waitingRun.handoff?.blocked || waitingRun.lastError || waitingRun.recoveryContext?.summary || '已完成内容和工作区都已保留。'}</span></div>
+            <button type="button" className="btn btn-sm btn-primary" disabled={resumingRunIds.has(waitingRun.id)} onClick={() => handleResumeTaskRun(waitingRun.id)}><PlayCircleOutlined />{resumingRunIds.has(waitingRun.id) ? '正在继续…' : '继续执行'}</button>
+            <button type="button" className="btn btn-sm btn-danger" onClick={() => stopTaskRun(waitingRun.id)}><StopOutlined />停止</button>
+          </div>}
 
           {/* 消息流 */}
           <div className="chat-messages">
-            {(team.chatMessages ?? []).length === 0 ? (
+            {visibleMessages.length === 0 ? (
               /* 空状态：显示团队成员 */
               <div style={{
                 display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
@@ -526,7 +633,7 @@ export default function TeamChatApp({ teamId }: Props) {
                 )}
                 <div style={{ fontSize: 11, marginTop: 8 }}>💬 在下方输入消息开始团队协作</div>
               </div>
-            ) : (team.chatMessages ?? []).map((msg, messageIndex, allMessages) => {
+            ) : visibleMessages.map((msg, messageIndex, allMessages) => {
               const author = state.employees.find((e: Employee) => e.id === msg.authorId)
                 ?? (msg.authorId === supervisorMention.id ? supervisorMention : undefined);
               const isHuman = msg.roleId === 'human';
@@ -626,6 +733,7 @@ export default function TeamChatApp({ teamId }: Props) {
                         discussionId: `resume-${msg.id}`,
                         forcedMemberIds: [msg.authorId],
                         maxRounds: 1,
+                        conversationId,
                       })}
                     >
                       继续执行
@@ -639,13 +747,15 @@ export default function TeamChatApp({ teamId }: Props) {
 
           {/* 工具栏 */}
           <div className="chat-toolbar" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', padding: '6px 14px' }}>
+            <button className="btn btn-sm chat-new-session-btn" onClick={handleStartNewChat} title="保存当前记录并开启不继承旧任务的新聊天"><PlusOutlined /><span>新建聊天</span></button>
+            {chatSessions.length > 0 && <select className="assistant-chat-history-select" value="" onChange={(event) => handleRestoreChat(event.target.value)} aria-label="历史对话"><option value="">历史对话</option>{chatSessions.map((session) => <option key={session.id} value={session.id}>{session.title}</option>)}</select>}
             <button className="btn btn-sm" onClick={handleCopyAll} title="复制全部对话">📋</button>
             <button className="btn btn-sm" onClick={handleExport} title="导出为 markdown">📤</button>
             <button className="btn btn-sm" onClick={() => fileInputRef.current?.click()} title="上传文件/图片">📎</button>
             <SkillPickerButton selected={skillRefs} onSelectedChange={setSkillRefs} />
             <button
               className="btn btn-sm"
-              onClick={() => triggerDiscussion(teamId)}
+              onClick={() => triggerDiscussion(teamId, { conversationId })}
               disabled={state.status.demoRunning}
               title="让团队 AI 成员就当前讨论话题展开协作"
             >
@@ -665,7 +775,7 @@ export default function TeamChatApp({ teamId }: Props) {
               📁{showOutputs ? ' ✕' : ''}
             </button>
             <div style={{ flex: 1 }} />
-            <ModelSelector scene="team" messages={team.chatMessages ?? []} />
+            <ModelSelector scene="team" messages={visibleMessages} />
             <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
               {state.status.backendOnline ? '🟢 默认模型可用' : '🔴 默认模型不可用'}
             </span>

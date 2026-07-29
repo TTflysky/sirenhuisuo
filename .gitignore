@@ -27,6 +27,7 @@ outputs
 .edge-cdp/
 .test-data/
 .tmp-e2e-*/
+.test-user-data-*/
 *.local
 
 # Editor directories and files

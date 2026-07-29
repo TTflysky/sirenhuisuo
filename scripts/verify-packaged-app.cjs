@@ -56,7 +56,7 @@ for (const marker of ['正在选择可验证动作', '正在对照最初目标�
   assert.match(rendererSource, new RegExp(marker), `ExecutionController marker missing from packaged renderer: ${marker}`);
 }
 
-for (const marker of ['后台 Worker', 'Worker 命令记录', '已领取执行租约']) {
+for (const marker of ['后台 Worker', 'Worker 命令记录', '真实进展', '进程心跳', '新建聊天', '任务已暂停', '正在继续']) {
   assert.match(rendererSource, new RegExp(marker), `Worker marker missing from packaged renderer: ${marker}`);
 }
 

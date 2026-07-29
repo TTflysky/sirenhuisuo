@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
-import { CloseOutlined, PauseCircleOutlined, PlayCircleOutlined, ReloadOutlined, SettingOutlined, StopOutlined } from '@ant-design/icons';
+import { CloseOutlined, CopyOutlined, ExportOutlined, PaperClipOutlined, PauseCircleOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined, SettingOutlined, StopOutlined } from '@ant-design/icons';
 import type { ChatMessage, ConversationReference, SkillUsageEvidence, ThoughtChainStep } from '../../types';
 import { useStore } from '../../storeContext';
-import { loadDm, appendDm, runAgentLoop, resolveApiBase, extractUserInsights, getEmployeeModel, loadSettings, type ChatTurn, type Attachment, type ContextUsage } from '../../data/hermesClient';
+import { loadDm, appendDm, replaceDm, runAgentLoop, resolveApiBase, extractUserInsights, getEmployeeModel, loadSettings, type ChatTurn, type Attachment, type ContextUsage } from '../../data/hermesClient';
 import AgentAvatar from '../office/AgentAvatar';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
 import ChatMessageText from './ChatMessageText';
@@ -34,6 +34,18 @@ import {
 import { buildLayeredMemoryContext } from '../../data/layeredMemory';
 import { referenceClarification, referencesFromToolResult, resolveConversationReferences } from '../../engine/conversationReferences.mjs';
 import { createChatTaskBridge } from '../../engine/taskServiceBridge';
+import {
+  activateChatSession,
+  createChatSession,
+  ensureActiveChatSession,
+  listChatSessions,
+  messageBelongsToConversation,
+  normalizeConversationMessages,
+  syncChatSessionsFromMessages,
+  titleFromMessages,
+  touchChatSession,
+  type ChatSessionScope,
+} from '../../data/chatSessions';
 
 interface Props {
   empId: string;
@@ -56,6 +68,7 @@ interface DmRetryJob {
   nextRetryAt?: number;
   lastError: string;
   controllerState?: ExecutionControllerSnapshot;
+  conversationId: string;
 }
 
 const DM_RETRY_SETTINGS_KEY = 'hermes_office_dm_retry_settings_v1';
@@ -80,6 +93,13 @@ function loadRetryJob(empId: string): DmRetryJob | null {
 }
 function saveRetryJob(empId: string, job: DmRetryJob | null) {
   try { if (job) localStorage.setItem(retryJobKey(empId), JSON.stringify(job)); else localStorage.removeItem(retryJobKey(empId)); } catch {}
+}
+
+function loadDmMessages(empId: string, scope: ChatSessionScope): ChatMessage[] {
+  const messages = normalizeConversationMessages(loadDm(empId), scope);
+  syncChatSessionsFromMessages(scope, messages);
+  replaceDm(empId, messages);
+  return messages;
 }
 
 // 本地剧本回落（无 API 或调用失败时用）
@@ -118,7 +138,14 @@ function craftReply(role: string, userText: string): string {
 export default function DmChatApp({ empId }: Props) {
   const { state, dispatch } = useStore();
   const emp = state.employees.find((e) => e.id === empId);
-  const [msgs, setMsgs] = useState<ChatMessage[]>(() => loadDm(empId));
+  const sessionScope: ChatSessionScope = `dm:${empId}`;
+  const [conversationId, setConversationId] = useState(() => ensureActiveChatSession(sessionScope));
+  const conversationIdRef = useRef(conversationId);
+  conversationIdRef.current = conversationId;
+  const [allMsgs, setAllMsgs] = useState<ChatMessage[]>(() => loadDmMessages(empId, sessionScope));
+  const msgs = allMsgs.filter((message) => messageBelongsToConversation(message, conversationId, sessionScope));
+  const chatSessions = listChatSessions(sessionScope).filter((session) => session.id !== conversationId);
+  const [pendingNewChat, setPendingNewChat] = useState(false);
   const [text, setText] = useState('');
   const [typing, setTyping] = useState(false);
   const [status, setStatus] = useState('');
@@ -132,12 +159,15 @@ export default function DmChatApp({ empId }: Props) {
   const [skillRefs, setSkillRefs] = useState<SkillReference[]>([]);
   const [retrySettings, setRetrySettings] = useState<DmRetrySettings>(() => loadRetrySettings());
   const [showRetrySettings, setShowRetrySettings] = useState(false);
-  const [retryJob, setRetryJob] = useState<DmRetryJob | null>(() => loadRetryJob(empId));
+  const [retryJob, setRetryJob] = useState<DmRetryJob | null>(() => {
+    const job = loadRetryJob(empId);
+    return job ? { ...job, conversationId: job.conversationId ?? ensureActiveChatSession(`dm:${empId}`) } : null;
+  });
   const [retryNow, setRetryNow] = useState(Date.now());
   const runJobRef = useRef<(job: DmRetryJob) => Promise<void>>(async () => {});
   const steeringMessagesRef = useRef<string[]>([]);
   const activeWorkspaceIdRef = useRef<string | undefined>(undefined);
-  const queuedFollowUpsRef = useRef<Array<{ userText: string; attachments: Attachment[]; skillContext: string; skillRefs: SkillReference[]; skillEvidence: SkillUsageEvidence[]; referenceContext?: string; referenceSourceUrl?: string }>>([]);
+  const queuedFollowUpsRef = useRef<Array<{ userText: string; attachments: Attachment[]; skillContext: string; skillRefs: SkillReference[]; skillEvidence: SkillUsageEvidence[]; referenceContext?: string; referenceSourceUrl?: string; conversationId: string }>>([]);
   const msgsRef = useRef(msgs);
   const previousExecutionStateRef = useRef<'running' | 'paused' | 'stopping'>('running');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -182,11 +212,39 @@ export default function DmChatApp({ empId }: Props) {
     return () => { window.clearTimeout(timer); window.clearInterval(ticker); };
   }, [retryJob]);
 
-  const push = (m: ChatMessage) => {
-    msgsRef.current = [...msgsRef.current, m];
-    setMsgs(msgsRef.current);
-    appendDm(empId, [m]);
+  const push = (m: ChatMessage, targetConversationId = conversationIdRef.current) => {
+    const message = { ...m, conversationId: targetConversationId };
+    setAllMsgs((previous) => [...previous, message]);
+    if (targetConversationId === conversationIdRef.current) msgsRef.current = [...msgsRef.current, message];
+    appendDm(empId, [message]);
   };
+
+  useEffect(() => {
+    msgsRef.current = msgs;
+  }, [msgs]);
+
+  useEffect(() => {
+    if (!pendingNewChat || typing) return;
+    setPendingNewChat(false);
+    if (msgs.length) touchChatSession(sessionScope, conversationIdRef.current, titleFromMessages(msgs, '员工私聊'));
+    const session = createChatSession(sessionScope);
+    setConversationId(session.id);
+    setText('');
+    setAttachments([]);
+    setSkillRefs([]);
+    setCompletedActionCount(0);
+    setLiveActivities([]);
+    setLiveExecutionSteps([]);
+    setStatus('');
+    setRetryJob(null);
+    saveRetryJob(empId, null);
+    steeringMessagesRef.current.splice(0);
+    queuedFollowUpsRef.current.splice(0);
+    activeWorkspaceIdRef.current = undefined;
+    executionControl.reset();
+    // This effect intentionally performs a complete runtime reset after stop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingNewChat, typing]);
 
   useEffect(() => {
     const previous = previousExecutionStateRef.current;
@@ -215,6 +273,8 @@ export default function DmChatApp({ empId }: Props) {
     const content = text.trim();
     if (!content && attachments.length === 0) return;
     const atts = attachments;
+    const requestConversationId = conversationIdRef.current;
+    touchChatSession(sessionScope, requestConversationId, content || atts[0]?.name || `与 ${emp.name} 的对话`);
     const referenceResolution = resolveConversationReferences({ input: content, history: msgs, selectedSkillRefs: skillRefs });
     const refs = skillRefs.length ? skillRefs : referenceResolution.skillRefs;
     const skillResolution = await resolveSkillContextWithEvidence(refs);
@@ -290,7 +350,7 @@ export default function DmChatApp({ empId }: Props) {
         executionControl.interruptForSteering();
         setStatus(holdForFeedback ? '已挂起原任务，正在回答你的反馈…' : '正在优先处理你刚刚说的话…');
       } else {
-        queuedFollowUpsRef.current.push({ userText: content, attachments: atts, skillContext, skillRefs: refs, skillEvidence, referenceContext: referenceResolution.context, referenceSourceUrl: referenceResolution.references[0]?.sourceUrl });
+        queuedFollowUpsRef.current.push({ userText: content, attachments: atts, skillContext, skillRefs: refs, skillEvidence, referenceContext: referenceResolution.context, referenceSourceUrl: referenceResolution.references[0]?.sourceUrl, conversationId: requestConversationId });
         push({
           id: `dm-${Date.now()}-${empId}-ack`, authorId: empId, roleId: emp.role,
           content: '收到。这条要求已经排到当前任务之后，不会混进正在执行的步骤。',
@@ -302,7 +362,7 @@ export default function DmChatApp({ empId }: Props) {
     }
 
     const history: ChatTurn[] = msgs.slice(-8).map((m) => ({ role: m.roleId === 'human' ? 'user' : 'assistant', content: m.content }));
-    void runDmJob({ id: `dm-retry-${Date.now()}`, workspaceId: createTaskWorkspaceId('dm', empId), userText: content, attachments: atts, skillContext, skillRefs: refs, skillEvidence, referenceContext: referenceResolution.context, referenceSourceUrl: referenceResolution.references[0]?.sourceUrl, history, attempt: 0, status: 'waiting', lastError: '' });
+    void runDmJob({ id: `dm-retry-${Date.now()}`, workspaceId: createTaskWorkspaceId('dm', empId), userText: content, attachments: atts, skillContext, skillRefs: refs, skillEvidence, referenceContext: referenceResolution.context, referenceSourceUrl: referenceResolution.references[0]?.sourceUrl, history, attempt: 0, status: 'waiting', lastError: '', conversationId: requestConversationId });
 
     // 自动提炼用户洞察（每 3 条用户消息触发一次）
     const userMsgCount = msgs.filter(m => m.roleId === 'human').length;
@@ -352,9 +412,10 @@ export default function DmChatApp({ empId }: Props) {
           saveRetryJob(empId, { ...job, controllerState });
         },
         taskBridge,
+        job.conversationId,
       );
       setStatus('正在整理清晰的结果…');
-      push({ id: `dm-${Date.now()}-${empId}`, authorId: empId, roleId: emp.role, content: reply, mentions: [], timestamp: Date.now(), kind: 'text', tokens: usage, contextUsage, thoughtChain, skillRefs: job.skillRefs.length ? job.skillRefs : undefined, skillEvidence: skillEvidence?.length ? skillEvidence : undefined, references: references?.length ? references : undefined });
+      push({ id: `dm-${Date.now()}-${empId}`, authorId: empId, roleId: emp.role, content: reply, mentions: [], timestamp: Date.now(), kind: 'text', tokens: usage, contextUsage, thoughtChain, skillRefs: job.skillRefs.length ? job.skillRefs : undefined, skillEvidence: skillEvidence?.length ? skillEvidence : undefined, references: references?.length ? references : undefined }, job.conversationId);
       setRetryJob(null);
       saveRetryJob(empId, null);
     } catch (error) {
@@ -393,6 +454,7 @@ export default function DmChatApp({ empId }: Props) {
           attempt: 0,
           status: 'waiting',
           lastError: '',
+          conversationId: queued.conversationId,
         }), 0);
       }
     }
@@ -414,7 +476,7 @@ export default function DmChatApp({ empId }: Props) {
   };
 
   // 优先真调 OpenAI 兼容模型（带员工提示词），失败/未配置则回落本地剧本
-  const generateReply = async (userText: string, atts: Attachment[] = [], skillContext = '', skillEvidence: SkillUsageEvidence[] = [], historyOverride?: ChatTurn[], workspaceId?: string, initialExecutionState?: ExecutionControllerSnapshot, referenceContext = '', referenceSourceUrl = '', onExecutionState?: (state: ExecutionControllerSnapshot) => void, taskBridge?: ReturnType<typeof createChatTaskBridge>): Promise<{ text: string; usage?: number; contextUsage?: ContextUsage; thoughtChain?: ThoughtChainStep[]; skillEvidence?: SkillUsageEvidence[]; references?: ConversationReference[]; executionState?: ExecutionControllerSnapshot }> => {
+  const generateReply = async (userText: string, atts: Attachment[] = [], skillContext = '', skillEvidence: SkillUsageEvidence[] = [], historyOverride?: ChatTurn[], workspaceId?: string, initialExecutionState?: ExecutionControllerSnapshot, referenceContext = '', referenceSourceUrl = '', onExecutionState?: (state: ExecutionControllerSnapshot) => void, taskBridge?: ReturnType<typeof createChatTaskBridge>, targetConversationId = conversationIdRef.current): Promise<{ text: string; usage?: number; contextUsage?: ContextUsage; thoughtChain?: ThoughtChainStep[]; skillEvidence?: SkillUsageEvidence[]; references?: ConversationReference[]; executionState?: ExecutionControllerSnapshot }> => {
     // 文本类附件：直接拼进用户文本作为上下文
     let enriched = userText;
     const textAtts = atts.filter((a) => a.kind === 'text' && a.dataUrl);
@@ -469,7 +531,7 @@ export default function DmChatApp({ empId }: Props) {
           id: `dm-${Date.now()}-${empId}-steering`, authorId: empId, roleId: emp.role,
           content, mentions: [], timestamp: Date.now(), kind: 'text',
           tokens: usage.totalTokens || undefined, contextUsage,
-        });
+        }, targetConversationId);
         setStatus('已结合新要求重新判断…');
       },
       onToolCall(name, args) {
@@ -546,6 +608,50 @@ export default function DmChatApp({ empId }: Props) {
       time: new Date(m.timestamp).toLocaleString('zh-CN'),
     })), `与 ${emp.name} 私聊记录`);
     downloadTextFile(`私聊-${emp.name}-${new Date().toISOString().slice(0, 10)}.md`, md);
+  };
+
+  const resetConversationRuntime = () => {
+    setText('');
+    setAttachments([]);
+    setSkillRefs([]);
+    setCompletedActionCount(0);
+    setLiveActivities([]);
+    setLiveExecutionSteps([]);
+    setStatus('');
+    setRetryJob(null);
+    saveRetryJob(empId, null);
+    steeringMessagesRef.current.splice(0);
+    queuedFollowUpsRef.current.splice(0);
+    activeWorkspaceIdRef.current = undefined;
+    executionControl.reset();
+  };
+
+  const openFreshChat = () => {
+    if (msgs.length) touchChatSession(sessionScope, conversationIdRef.current, titleFromMessages(msgs, `与 ${emp.name} 的对话`));
+    const session = createChatSession(sessionScope);
+    setConversationId(session.id);
+    resetConversationRuntime();
+  };
+
+  const handleStartNewChat = () => {
+    if (typing) {
+      if (!confirm(`当前任务还在运行。是否安全停止 ${emp.name} 的任务，并在停止后自动新建聊天？`)) return;
+      setPendingNewChat(true);
+      steeringMessagesRef.current.splice(0);
+      queuedFollowUpsRef.current.splice(0);
+      executionControl.stop();
+      setStatus('正在停止旧任务，随后会自动开启新聊天…');
+      return;
+    }
+    if (retryJob && !confirm('当前有一个待重试任务。新建聊天会取消这次重试，是否继续？')) return;
+    openFreshChat();
+  };
+
+  const handleRestoreChat = (targetConversationId: string) => {
+    if (!targetConversationId || typing || !activateChatSession(sessionScope, targetConversationId)) return;
+    if (msgs.length) touchChatSession(sessionScope, conversationIdRef.current, titleFromMessages(msgs, `与 ${emp.name} 的对话`));
+    setConversationId(targetConversationId);
+    resetConversationRuntime();
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -682,14 +788,16 @@ export default function DmChatApp({ empId }: Props) {
               <label>间隔 <input type="number" min={3} max={60} value={retrySettings.intervalSeconds} onChange={(event) => updateRetrySettings({ intervalSeconds: Math.max(3, Math.min(60, Number(event.target.value) || 10)) })} /> 秒</label>
               <label>机会 <input type="number" min={1} max={10} value={retrySettings.maxAttempts} onChange={(event) => updateRetrySettings({ maxAttempts: Math.max(1, Math.min(10, Number(event.target.value) || 5)) })} /> 次</label>
             </div>}
-            <div style={{ display: 'flex', gap: 6, marginBottom: 4, alignItems: 'center' }}>
-              <button className="btn btn-sm" onClick={handleCopyAll} disabled={msgs.length === 0}>📋 复制全部</button>
-              <button className="btn btn-sm" onClick={handleExport} disabled={msgs.length === 0}>📤 导出</button>
-              <button className="btn btn-sm" onClick={() => fileInputRef.current?.click()} title="上传文件/图片">📎</button>
+            <div className="chat-composer-toolbar dm-composer-toolbar">
+              <button className="btn btn-sm chat-new-session-btn" onClick={handleStartNewChat} title={typing ? '安全停止当前任务并新建聊天' : '新建独立聊天'}><PlusOutlined /><span>{pendingNewChat ? '正在新建…' : '新建聊天'}</span></button>
+              {chatSessions.length > 0 && <select className="assistant-chat-history-select" value="" onChange={(event) => handleRestoreChat(event.target.value)} disabled={typing || pendingNewChat} aria-label="历史对话"><option value="">历史对话</option>{chatSessions.map((session) => <option key={session.id} value={session.id}>{session.title}</option>)}</select>}
+              <button className="btn btn-sm composer-icon-btn" onClick={handleCopyAll} disabled={msgs.length === 0} title="复制全部对话" aria-label="复制全部对话"><CopyOutlined /></button>
+              <button className="btn btn-sm composer-icon-btn" onClick={handleExport} disabled={msgs.length === 0} title="导出对话" aria-label="导出对话"><ExportOutlined /></button>
+              <button className="btn btn-sm composer-icon-btn" onClick={() => fileInputRef.current?.click()} title="上传文件或图片" aria-label="上传文件或图片"><PaperClipOutlined /></button>
               <SkillPickerButton selected={skillRefs} onSelectedChange={setSkillRefs} disabled={!!retryJob} />
               <ExecutionPolicyControl />
-              <button className={`btn btn-sm ${showRetrySettings ? 'btn-primary' : ''}`} onClick={() => setShowRetrySettings((value) => !value)} title="模型重试设置"><SettingOutlined />重试</button>
-              <div style={{ flex: 1 }} />
+              <button className={`btn btn-sm composer-icon-btn ${showRetrySettings ? 'btn-primary' : ''}`} onClick={() => setShowRetrySettings((value) => !value)} title="模型重试设置" aria-label="模型重试设置"><SettingOutlined /></button>
+              <div className="chat-composer-toolbar-spacer" />
               <ModelSelector scene="dm" employeeId={empId} modelConfig={getEmployeeModel(emp)} messages={msgs} />
             </div>
             {/* 附件预览 */}

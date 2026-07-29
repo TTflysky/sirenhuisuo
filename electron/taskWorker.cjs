@@ -224,6 +224,8 @@ function createTaskWorker(options) {
           ownerSessionId: command.sessionId,
           acquiredAt: now,
           heartbeatAt: now,
+          progressAt: Math.min(now, Number(command.payload.progressAt) || now),
+          activity: String(command.payload.activity || 'Worker 已领取任务').slice(0, 500),
           expiresAt: now + leaseMs,
           lastCommandId: command.commandId,
         };
@@ -244,6 +246,8 @@ function createTaskWorker(options) {
           checkpointSequence: checkpoint.sequence,
           lastCheckpoint: checkpoint,
           heartbeatAt: now,
+          progressAt: Math.max(Number(worker.progressAt) || 0, Number(checkpoint.occurredAt) || now),
+          activity: String(checkpoint.summary || worker.activity || '已写入执行检查点').slice(0, 500),
           expiresAt: now + leaseMs,
           lastCommandId: command.commandId,
         };
@@ -251,7 +255,16 @@ function createTaskWorker(options) {
       }
       if (command.type === 'heartbeat') {
         if (!isActiveLease(worker) || worker.leaseId !== command.payload.leaseId) throw new Error('Worker 心跳租约不匹配');
-        run.worker = { ...worker, state: 'running', heartbeatAt: now, expiresAt: now + leaseMs, lastCommandId: command.commandId };
+        const reportedProgressAt = Math.min(now, Number(command.payload.progressAt) || 0);
+        run.worker = {
+          ...worker,
+          state: 'running',
+          heartbeatAt: now,
+          progressAt: Math.max(Number(worker.progressAt) || 0, reportedProgressAt),
+          activity: String(command.payload.activity || worker.activity || '后台任务正在执行').slice(0, 500),
+          expiresAt: now + leaseMs,
+          lastCommandId: command.commandId,
+        };
         return;
       }
       if (command.type === 'release') {
@@ -268,7 +281,7 @@ function createTaskWorker(options) {
             step.events.push({ ts: now, type: 'status', detail: 'Worker 已暂停任务' });
           }
         });
-        run.worker = { ...worker, state: 'paused', releasedAt: now, expiresAt: undefined, lastCommandId: command.commandId };
+        run.worker = { ...worker, state: 'paused', activity: '任务已暂停', releasedAt: now, expiresAt: undefined, lastCommandId: command.commandId };
         if (run.recoveryContext) run.recoveryContext.summary = '任务已暂停，工作区和上下文均已保留。';
         return;
       }
@@ -278,8 +291,8 @@ function createTaskWorker(options) {
         run.phase = 'preflight';
         run.lastError = undefined;
         run.handoff = undefined;
-        run.steps.forEach((step) => { if (step.status === 'paused' || step.status === 'failed') step.status = 'queued'; });
-        run.worker = { ...worker, state: 'idle', leaseId: undefined, ownerSessionId: undefined, expiresAt: undefined, releasedAt: now, lastCommandId: command.commandId };
+        run.steps.forEach((step) => { if (step.status === 'paused' || step.status === 'failed' || step.status === 'running') step.status = 'queued'; });
+        run.worker = { ...worker, state: 'idle', activity: '等待重新领取任务', progressAt: now, leaseId: undefined, ownerSessionId: undefined, expiresAt: undefined, releasedAt: now, lastCommandId: command.commandId };
         if (run.recoveryContext) {
           run.recoveryContext.summary = 'Worker 已接收继续命令，等待执行适配器领取任务。';
           run.recoveryContext.interruptedAt = undefined;

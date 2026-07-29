@@ -96,9 +96,14 @@ function assertJournalChain(records) {
     assert.equal(duplicate.ok, true);
     assert.equal(duplicate.idempotencyHit, true);
 
-    const heartbeat = await workerA.dispatch({ commandId: 'heartbeat-1', taskId: 'worker-task', type: 'heartbeat', payload: { leaseId } });
+    const progressAt = Date.now();
+    const heartbeat = await workerA.dispatch({ commandId: 'heartbeat-1', taskId: 'worker-task', type: 'heartbeat', payload: { leaseId, progressAt, activity: '正在等待模型返回' } });
     assert.equal(heartbeat.ok, true);
     assert.equal(heartbeat.run.worker.leaseId, leaseId);
+    assert.equal(heartbeat.run.worker.progressAt, progressAt);
+    assert.equal(heartbeat.run.worker.activity, '正在等待模型返回');
+    const heartbeatOnly = await workerA.dispatch({ commandId: 'heartbeat-2', taskId: 'worker-task', type: 'heartbeat', payload: { leaseId } });
+    assert.equal(heartbeatOnly.run.worker.progressAt, progressAt, '单纯续租不能伪装成真实进展');
 
     const paused = await workerA.dispatch({ commandId: 'pause-1', taskId: 'worker-task', type: 'pause' });
     assert.equal(paused.run.status, 'paused');

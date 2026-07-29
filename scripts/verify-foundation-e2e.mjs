@@ -79,6 +79,11 @@ async function loadStandaloneTypeScript(relativePath) {
     ['../engine/taskRunner.mjs', dataUrl(taskRunnerSource)],
     ['../engine/taskContext.mjs', taskContextUrl],
     ['../engine/taskContextRouter.mjs', dataUrl(taskContextRouterSource)],
+    ['../engine/taskHandoff.mjs', dataUrl(await fs.readFile('src/engine/taskHandoff.mjs', 'utf8'))],
+    ['../engine/taskStateMachine.mjs', dataUrl(await fs.readFile('src/engine/taskStateMachine.mjs', 'utf8'))],
+    ['../engine/teamExecutionProtocol.mjs', dataUrl(await fs.readFile('src/engine/teamExecutionProtocol.mjs', 'utf8'))],
+    ['../engine/capabilityGraph.mjs', dataUrl(await fs.readFile('src/engine/capabilityGraph.mjs', 'utf8'))],
+    ['../engine/turnRuntime.mjs', dataUrl(await fs.readFile('src/engine/turnRuntime.mjs', 'utf8'))],
   ]);
   for (const [specifier, url] of moduleUrls) source = source.replaceAll(specifier, url);
   const transpiled = ts.transpileModule(source, {
@@ -197,9 +202,9 @@ try {
       count: document.querySelectorAll('.diagnostic-item').length,
       titles: [...document.querySelectorAll('.diagnostic-item strong')].map((item) => item.textContent.trim())
     }))()`);
-    return result.count === 7 ? result : null;
-  }, '诊断中心没有完成七项检查');
-  assert.deepEqual(diagnostics.titles, ['AI 模型', '连接器与知识库', 'Skill 健康', '工具注册中心', '任务内核与恢复', '任务工作区', '安全与审批']);
+    return result.count === 8 ? result : null;
+  }, '诊断中心没有完成八项检查');
+  assert.deepEqual(diagnostics.titles, ['AI 模型', '连接器与知识库', 'Skill 健康', '工具注册中心', '任务内核与恢复', '记忆与任务复盘', '任务工作区', '安全与审批']);
 
   const cognitiveMemory = await settings.evaluate(`(() => {
     const button = [...document.querySelectorAll('.settings-nav-section button')].find((item) => item.textContent.includes('记忆'));
