@@ -9,14 +9,14 @@
 - 子任务继承父任务已验证产物、引用、生命周期退出状态和恢复胶囊，不继承未验证的口头完成声明。暂停、等待用户、检查点、停止和失败都有独立结局与继续条件。
 - 详细源码映射：`docs/HERMES_RUNTIME_ALIGNMENT_V2.1.md`。专项回归：`npm.cmd run verify:turn-lifecycle`。
 - 已通过：`verify:v2-core-gate`、`verify:v1-core-gate`、`verify:v1-fault-injection`、`verify:turn-lifecycle`、`verify:task-service`、`verify:native-execution`、`build`、`lint` 和 `verify:package`。
-- Windows 安装包：`release/taiji-office-setup-2.1.0.exe`，大小 `174349843` 字节，SHA-256：`EF27766D8AED9D5D5A28321BB7AE6EE5E0EF278738E762112F75DFA42F9B16E9`。`latest.yml` 与安装包版本、大小一致，包内 6 款字体、内置 Skill 和 16 项必需运行文件均已验证。
+- Windows 安装包：`release/taiji-office-setup-2.1.0.exe`，大小 `174349843` 字节，最终发布资产 SHA-256：`90EF3F096CFFF8F0CDFB3787ABD11ED1088B3F459E4293F0AA3DC15AEC678F44`。`latest.yml` 与安装包版本、大小一致，包内 6 款字体、内置 Skill 和 16 项必需运行文件均已验证。
 - 本机真实 Electron UI 自动化未完成：Electron 33 的 GPU 子进程仍以系统错误 `-1073741515` 在渲染前退出，即使使用独立用户目录和 `--disable-gpu` 也相同。核心、组件合同、构建和包内验证均通过；`verify:foundation-ui` 与 `verify:chat-controls-ui` 留给图形运行环境正常的电脑补跑，不能记录为已通过。
-- GitHub 发布状态：等待本轮提交后执行 `npm.cmd run publish:release`；发布完成后必须再核对远端 `main`、`v2.1.0` tag、安装包大小和 digest。
+- GitHub 发布状态：已发布并由发布脚本核对远端 `main`、`v2.1.0` tag、安装包大小和 digest。Release：`https://github.com/TTflysky/sirenhuisuo/releases/tag/v2.1.0`；功能提交：`d392e5dd0e01a8bdd57ec785cedd8f7bd27bb2be`。
 
 ### 当前问题与下一步
 
 - 办公室电脑先补跑 `npm.cmd run verify:foundation-ui` 和 `npm.cmd run verify:chat-controls-ui`；本机 GPU 环境失败不能通过修改业务代码或跳过断言伪装解决。
-- 提交并推送 `main`、创建 `v2.1.0` Release、核对远端资产大小和 digest；若网络失败，保留本地提交与安装包并在本节记录真实阻塞。
+- 后续发布脚本不应在记录 SHA-256 后再次无条件重打包；Electron Builder 会写入新的发布时间，二次构建会改变哈希。交接文档必须记录最后一次实际上传并经远端校验的资产值。
 - 助手和员工聊天进一步迁移到完全由主进程托管的长期后台队列属于后续增量，不在本版伪报完成；当前原生团队 Worker 已由主进程托管。
 
 ### 已踩过的坑

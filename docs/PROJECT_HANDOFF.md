@@ -13,7 +13,7 @@
 
 源码级四层映射、未照搬边界和后续保留项见 `docs/HERMES_RUNTIME_ALIGNMENT_V2.1.md`。专项回归为 `npm.cmd run verify:turn-lifecycle`，并已进入 `verify:v2-core-gate` 与正式发布脚本。
 
-本地 `v2.1.0` 安装包为 `release/taiji-office-setup-2.1.0.exe`，大小 `174349843` 字节，SHA-256 为 `EF27766D8AED9D5D5A28321BB7AE6EE5E0EF278738E762112F75DFA42F9B16E9`。`verify:v2-core-gate`、`verify:v1-core-gate` 与 `verify:package` 已通过。本机 Electron 33 的 GPU 子进程仍以系统错误 `-1073741515` 在渲染前退出，因此真实窗口 UI 回归需在图形环境正常的办公室电脑补跑，不能写成已通过。
+`v2.1.0` 安装包为 `release/taiji-office-setup-2.1.0.exe`，大小 `174349843` 字节，最终发布资产 SHA-256 为 `90EF3F096CFFF8F0CDFB3787ABD11ED1088B3F459E4293F0AA3DC15AEC678F44`。`verify:v2-core-gate`、`verify:v1-core-gate` 与 `verify:package` 已通过，GitHub Release 为 `https://github.com/TTflysky/sirenhuisuo/releases/tag/v2.1.0`。本机 Electron 33 的 GPU 子进程仍以系统错误 `-1073741515` 在渲染前退出，因此真实窗口 UI 回归需在图形环境正常的办公室电脑补跑，不能写成已通过。
 
 ## v2.0 统一智能体运行时
 
