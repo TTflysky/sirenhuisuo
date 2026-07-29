@@ -1,19 +1,9 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
-import ts from 'typescript';
 import { requiresFreshWebResearch } from '../src/engine/agentGuardrails.mjs';
 
-async function importTypescript(path) {
-  const source = await fs.readFile(path, 'utf8');
-  const transpiled = ts.transpileModule(source, {
-    compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext },
-    fileName: path,
-  }).outputText;
-  return import(`data:text/javascript;base64,${Buffer.from(transpiled).toString('base64')}`);
-}
-
-const matcher = await importTypescript('src/engine/taskMatcher.ts');
-const directory = await importTypescript('src/engine/officeDirectory.ts');
+const matcher = await import('../src/engine/taskMatcher.ts');
+const directory = await import('../src/engine/officeDirectory.ts');
 const employees = [
   { id: 'iron', name: '铁柱', title: '行政助理', role: 'custom', stationIndex: 0, isOnline: true },
   { id: 'teacher', name: '小林', title: '幼师', role: 'custom', prompt: '儿童活动设计', stationIndex: 1, isOnline: true },

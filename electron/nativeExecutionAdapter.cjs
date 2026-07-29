@@ -3,16 +3,16 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { ADAPTER_PROTOCOL_VERSION } = require('./executionAdapterProtocol.cjs');
 
-const NATIVE_ADAPTER_VERSION = 1;
-const MAX_TOOL_CALLS_PER_STEP = 36;
-const MAX_MODEL_ROUNDS_PER_STEP = 36;
-const MODEL_ROUNDS_PER_STAGE = 12;
+const NATIVE_ADAPTER_VERSION = 2;
+const MAX_TOOL_CALLS_PER_STEP = 24;
+const MAX_MODEL_ROUNDS_PER_STEP = 12;
+const MODEL_ROUNDS_PER_STAGE = 6;
 const MAX_PREPARATION_STREAK = 4;
 const ACTIVE_JOB_STATES = new Set(['queued', 'running']);
 
 const ROLE_DUTY = {
-  pm: '你是团队协调者。把目标拆解成可执行、可验收的结果，必须将当前步骤写成真实文件。',
-  planner: '你是规划者和架构师。先读取前续产出，再形成可交接的真实方案文件。',
+  pm: '你是团队协调者。把目标拆解成可执行、可验收的结果，并按任务合同选择回答、文件、连接、操作或决策证据。',
+  planner: '你是规划者和架构师。先读取已有真实证据，再形成与当前交付类型一致的可验收结果。',
   coder: '你是实现工程师。读取上游方案，写入完整可运行代码，并在需要时用命令验证。',
   checker: '你是审查者。必须读取或运行真实产出，然后调用 submit_review 提交 PASS 或 REJECT。',
   custom: '你是团队成员。使用真实工具完成当前责任步骤，并留下可验收结果。',
@@ -31,7 +31,7 @@ function stable(value) {
   return Object.fromEntries(Object.keys(value).sort().map((key) => [key, stable(value[key])]));
 }
 function toolKey(name, args) { return `${name}:${JSON.stringify(stable(args || {}))}`.toLowerCase(); }
-function isPreparationTool(name) { return ['inspect_connectors', 'list_files', 'read_file', 'read_skill', 'read_web_page', 'search_skills', 'web_search'].includes(name); }
+function isPreparationTool(name) { return ['inspect_connectors', 'list_files', 'read_file', 'read_skill', 'read_web_page', 'search_skills', 'web_search', 'search_tools', 'describe_tool'].includes(name); }
 function isVerifiedArtifact(artifact) {
   return artifact?.verified === true
     && artifact?.persistence === 'disk'
@@ -217,7 +217,12 @@ function createNativeExecutionAdapter(options) {
         import(pathToFileURL(path.join(projectRoot, 'src/engine/taskContextRouter.mjs')).href),
         import(pathToFileURL(path.join(projectRoot, 'src/engine/taskDelegation.mjs')).href),
         import(pathToFileURL(path.join(projectRoot, 'src/engine/teamExecutionProtocol.mjs')).href),
-      ]).then(([fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol]) => ({ fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol }));
+        import(pathToFileURL(path.join(projectRoot, 'src/engine/turnRuntime.mjs')).href),
+        import(pathToFileURL(path.join(projectRoot, 'src/engine/moaRuntime.mjs')).href),
+        import(pathToFileURL(path.join(projectRoot, 'src/engine/capabilityGraph.mjs')).href),
+      ]).then(([fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol, turnRuntime, moaRuntime, capabilityGraph]) => ({
+        fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol, turnRuntime, moaRuntime, capabilityGraph,
+      }));
     }
     return engineModulesPromise;
   }
@@ -322,7 +327,7 @@ function createNativeExecutionAdapter(options) {
     job.leaseId = undefined;
   }
 
-  function buildSystem(run, step, member, job) {
+  function buildSystem(run, step, member, job, runtimeGuidance = '', advisorGuidance = '') {
     const prior = (run.executionMessages || []).filter((message) => message.kind === 'text').slice(-8)
       .map((message) => `${message.authorName || message.authorId}：${text(message.content, 2000)}`).join('\n\n');
     const dependencies = run.steps.filter((item) => step.dependsOnStepIds.includes(item.id))
@@ -334,7 +339,9 @@ function createNativeExecutionAdapter(options) {
       member.soul,
       ROLE_DUTY[member.role] || ROLE_DUTY.custom,
       '你正在太极主进程原生执行 Adapter 中工作。必须自主判断、调用真实工具、读取结果、更换失败路线并核对验收条件。工具有返回值不等于目标完成。',
-      '工作步骤在最终回答前必须用 write_file 产生并校验真实文件。审查步骤必须调用 submit_review。',
+      '只在任务合同要求文件交付时使用 write_file 并校验磁盘文件；回答、连接、操作和决策任务使用各自对应的真实证据。审查步骤必须调用 submit_review。',
+      runtimeGuidance,
+      advisorGuidance,
       job.compensating ? '当前处于补偿阶段：只执行当前补偿责任以撤销或降低已发生副作用，留下真实工具证据；不要继续原任务或虚构补偿完成。' : '',
       `用户原始目标：\n${run.goal || run.request}`,
       `当前步骤：${step.title}\n责任：${step.assignment}`,
@@ -354,11 +361,13 @@ function createNativeExecutionAdapter(options) {
   }
 
   async function callModel(job, member, messages, tools) {
+    const { turnRuntime } = await loadEngineModules();
     const config = member.modelConfig || {};
     const endpoint = resolveEndpoint(config);
     const headers = { Accept: 'application/json', 'Content-Type': 'application/json' };
     if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;
     let lastError;
+    const recoveryAttempts = new Map();
     for (let attempt = 0; attempt < retryDelays.length; attempt += 1) {
       await assertCanContinue(job);
       if (retryDelays[attempt]) await sleep(retryDelays[attempt]);
@@ -368,7 +377,12 @@ function createNativeExecutionAdapter(options) {
       try {
         const response = await options.fetchImpl(endpoint, {
           method: 'POST', headers, signal: controller.signal,
-          body: JSON.stringify({ model: modelName(config), messages, tools, tool_choice: 'auto', stream: false }),
+          body: JSON.stringify({
+            model: modelName(config),
+            messages,
+            ...(Array.isArray(tools) && tools.length ? { tools, tool_choice: 'auto' } : {}),
+            stream: false,
+          }),
         });
         const raw = await response.text();
         if (!response.ok) {
@@ -387,8 +401,18 @@ function createNativeExecutionAdapter(options) {
         }
         if (job.control) throw new ExecutionControlSignal(job.control, error?.message);
         lastError = error;
-        emit(job, 'model_retry', { stepId: job.currentStepId, attempt: attempt + 1, maxAttempts: retryDelays.length, error: text(error?.message || error, 500) });
-        if (error?.retryable === false || /(?:401|403|invalid.?key|unauthorized|forbidden)/iu.test(String(error?.message))) break;
+        const classified = turnRuntime.classifyExecutionError(error);
+        const used = recoveryAttempts.get(classified.type) || 0;
+        const limit = Number(turnRuntime.TAIJI_RECOVERY_LIMITS[classified.type] ?? 1);
+        emit(job, 'model_retry', {
+          stepId: job.currentStepId,
+          attempt: used + 1,
+          maxAttempts: limit + 1,
+          errorType: classified.type,
+          error: text(error?.message || error, 500),
+        });
+        if (error?.retryable === false || !classified.retryable || classified.needsUser || used >= limit) break;
+        recoveryAttempts.set(classified.type, used + 1);
       } finally {
         clearTimeout(timer);
         if (job.abortController === controller) job.abortController = undefined;
@@ -486,6 +510,59 @@ function createNativeExecutionAdapter(options) {
     });
   }
 
+  function sanitizedRuntime(runtime) {
+    const safe = clone(runtime);
+    for (const evidence of safe?.evidence || []) evidence.arguments = options.toolRuntime.redact(evidence.arguments);
+    for (const decision of safe?.decisions || []) {
+      for (const call of decision.toolCalls || []) call.args = options.toolRuntime.redact(call.args);
+    }
+    return safe;
+  }
+
+  async function persistTurnRuntime(job, runtime, finalization, detail) {
+    const safe = sanitizedRuntime(runtime);
+    await updateRun(job.taskId, (next) => {
+      next.turnRuntime = safe;
+      if (finalization) next.turnFinalization = clone(finalization);
+      if (next.recoveryContext) {
+        next.recoveryContext.summary = finalization?.summary
+          || `Turn Runtime 已记录 ${safe.round} 轮决策和 ${safe.evidence.length} 条结构化证据。`;
+      }
+    }, detail);
+  }
+
+  async function consultStepAdvisors(job, run, step, actingMember, moaRuntime, currentEvidence) {
+    const contract = run.contract || {};
+    const advisors = [...job.members.values()].filter((member) => member.id !== actingMember.id && member.modelConfig?.apiHost).slice(0, 2);
+    if (!moaRuntime.shouldConsultAdvisors({
+      memberCount: job.members.size,
+      riskLevel: contract.riskLevel,
+      stepKind: step.kind,
+      requiredCapabilities: contract.requiredCapabilities,
+    }) || !advisors.length) return '';
+    const messages = moaRuntime.buildAdvisorMessages({
+      goal: run.goal || run.request,
+      assignment: step.assignment,
+      evidence: currentEvidence,
+    });
+    const results = [];
+    for (const advisor of advisors) {
+      try {
+        const response = await callModel(job, advisor, messages, undefined);
+        results.push({ label: advisor.name, content: response.message?.content, success: true });
+      } catch (error) {
+        results.push({ label: advisor.name, content: '', success: false, error: text(error?.message || error, 500) });
+      }
+    }
+    const aggregate = moaRuntime.aggregateAdvisorGuidance(results);
+    emit(job, 'moa_consulted', {
+      stepId: step.id,
+      advisorCount: aggregate.used,
+      failedAdvisorCount: results.filter((item) => item.success === false).length,
+    });
+    return aggregate.guidance;
+  }
+
   async function delegateSubtask(job, run, step, args) {
     const { runner, taskDelegation } = await loadEngineModules();
     const current = await readRun(job.taskId);
@@ -576,7 +653,13 @@ function createNativeExecutionAdapter(options) {
   }
 
   async function executeStep(job, run, step, member, executionOptions = {}) {
-    const { fidelity, toolRegistry, contextRouter } = await loadEngineModules();
+    const { fidelity, toolRegistry, contextRouter, turnRuntime, moaRuntime } = await loadEngineModules();
+    let runtime = turnRuntime.createTurnRuntime({
+      taskId: job.taskId,
+      scope: `team:${run.teamId}`,
+      goal: run.goal || run.request,
+      contract: run.contract || { goal: run.goal || run.request, deliverableType: step.deliverableType },
+    });
     const layeredMemory = options.memoryManager
       ? await options.memoryManager.context({ query: run.goal || run.request, teamId: run.teamId, employeeId: member.id, limit: 16 }).catch(() => ({ context: '' }))
       : { context: '' };
@@ -584,15 +667,18 @@ function createNativeExecutionAdapter(options) {
       ...run,
       steps: run.steps.filter((item) => item.status === 'completed' || item.id === step.id),
     });
+    const advisorGuidance = executionOptions.compensation
+      ? ''
+      : await consultStepAdvisors(job, run, step, member, moaRuntime, run.evidence || []);
     const messages = [
-      { role: 'system', content: `${buildSystem(run, step, member, job)}${layeredMemory.context ? `\n\n## 太极分层热记忆\n${layeredMemory.context}\n\n以上记忆只作为可复用背景；与老板当前明确要求冲突时，以当前要求为准。` : ''}${buildChildTaskContext(run)}\n\n${stepRecoveryPrompt}` },
+      { role: 'system', content: `${buildSystem(run, step, member, job, turnRuntime.buildTurnGuidance(runtime), advisorGuidance)}${layeredMemory.context ? `\n\n## 太极分层热记忆\n${layeredMemory.context}\n\n以上记忆只作为可复用背景；与老板当前明确要求冲突时，以当前要求为准。` : ''}${buildChildTaskContext(run)}\n\n${stepRecoveryPrompt}` },
       buildUserTurn(run, step, job),
     ];
     const registry = toolRegistry.buildToolRegistry([...options.toolRuntime.definitions, ...(job.connectorTools || [])]);
     const tools = registry.definitions;
     emit(job, 'tool_registry_ready', {
       stepId: step.id,
-      protocolVersion: registry.protocolVersion,
+      registryProtocolVersion: registry.protocolVersion,
       ready: registry.ready,
       blocked: registry.blocked,
       collisions: registry.collisions,
@@ -636,16 +722,53 @@ function createNativeExecutionAdapter(options) {
       }
       if (job.steering.length > appliedSteering) {
         const updates = job.steering.slice(appliedSteering);
+        runtime = turnRuntime.applySteering(runtime, updates);
         messages.push({ role: 'system', content: `老板在执行中补充了要求。先结合原目标判断影响，再调整当前路线：\n${updates.join('\n')}` });
+        messages.push({ role: 'system', content: turnRuntime.buildTurnGuidance(runtime) });
         appliedSteering = job.steering.length;
       }
       job.modelRounds += 1;
       const modelMember = step.kind === 'review' && job.reviewModelConfig
         ? { ...member, modelConfig: job.reviewModelConfig }
         : member;
-      const response = await callModel(job, modelMember, messages, tools);
+      let response;
+      try {
+        response = await callModel(job, modelMember, messages, tools);
+      } catch (error) {
+        if (error instanceof ExecutionControlSignal) throw error;
+        const observed = turnRuntime.observeToolResult(runtime, {
+          toolCallId: `model-${job.taskId}-${step.id}-${round + 1}`,
+          name: 'model_request',
+          args: { model: modelName(modelMember.modelConfig), round: round + 1 },
+          success: false,
+          useful: false,
+          output: error?.message || String(error),
+          kind: 'model',
+        });
+        runtime = observed.runtime;
+        const recovery = turnRuntime.decideRecovery(runtime, observed.error || error);
+        runtime = recovery.runtime;
+        const terminalStatus = recovery.decision.action === 'waiting_user' ? 'waiting_user' : 'failed';
+        const finalContent = recovery.decision.userMessage || recovery.decision.message || '模型请求失败';
+        const finalized = turnRuntime.finalizeTurn(runtime, {
+          status: terminalStatus,
+          content: finalContent,
+          waitingFor: terminalStatus === 'waiting_user' ? finalContent : '',
+        });
+        runtime = finalized.runtime;
+        await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 收尾模型请求异常');
+        if (terminalStatus === 'waiting_user') throw new ExecutionControlSignal('awaiting_user', finalContent);
+        throw error;
+      }
       const message = response.message;
       const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
+      runtime = turnRuntime.observeModelDecision(runtime, {
+        content: message.content,
+        toolCalls: toolCalls.map((call) => ({
+          name: call?.function?.name,
+          arguments: call?.function?.arguments,
+        })),
+      }).runtime;
       liveBudget = contextRouter.recordContextUsage({
         ...liveBudget,
         contextWindowTokens: Number(modelMember.modelConfig?.contextWindowTokens) || liveBudget.contextWindowTokens,
@@ -656,26 +779,27 @@ function createNativeExecutionAdapter(options) {
           modelRounds: 1,
           progress: toolCalls.length > 0,
       });
-      await updateRun(job.taskId, (next) => {
-        if (!next.recoveryContext) return;
-        next.recoveryContext.budget = liveBudget;
-        next.recoveryCapsule = contextRouter.createRecoveryCapsule(next, { reason: '模型轮次用量检查点' });
-      }, '记录原生模型上下文用量');
+      if (toolCalls.length > 0 || (round + 1) % 3 === 0 || round === MAX_MODEL_ROUNDS_PER_STEP - 1) {
+        await updateRun(job.taskId, (next) => {
+          if (!next.recoveryContext) return;
+          next.recoveryContext.budget = liveBudget;
+          next.recoveryCapsule = contextRouter.createRecoveryCapsule(next, { reason: '模型轮次用量检查点' });
+        }, '记录原生模型上下文用量');
+      }
       if (toolCalls.length) {
         messages.push({ role: 'assistant', content: message.content || null, tool_calls: toolCalls });
         for (const call of toolCalls) {
           await assertCanContinue(job);
           if (callLog.length >= MAX_TOOL_CALLS_PER_STEP) throw new Error(`当前步骤达到 ${MAX_TOOL_CALLS_PER_STEP} 次工具预算，已停止重复路线`);
-          const name = String(call?.function?.name || '');
-          let args = {};
-          try { args = JSON.parse(call?.function?.arguments || '{}'); } catch {}
-          if (name === 'web_search') args.query = run.goal || run.request;
-          const gate = fidelity.validateToolCallAgainstGoal(run.goal || run.request, name, JSON.stringify(args));
+          const rawName = String(call?.function?.name || '');
+          const normalizedCall = turnRuntime.normalizeToolCall(rawName, call?.function?.arguments || '{}');
+          const name = normalizedCall.name || rawName;
+          const args = normalizedCall.args || {};
           let result;
           const key = toolKey(name, args);
           const preflight = toolRegistry.preflightToolCall(registry, name, args, { approvalGranted: true });
-          if (!preflight.ok) result = { name, success: false, output: `工具预检未通过：${preflight.message}` };
-          else if (!gate.allowed) result = { name, success: false, output: `${gate.reason}当前调用与原始目标不一致，已在主进程拦截。` };
+          if (!normalizedCall.ok) result = { name, success: false, output: normalizedCall.error || '工具参数无效' };
+          else if (!preflight.ok) result = { name, success: false, output: `工具预检未通过：${preflight.message}` };
           else if (cache.has(key)) result = { name, success: false, output: '完全相同的工具调用已执行，不能重复消耗算力，必须更换路线。' };
           else if (name === 'delegate_subtask') result = await delegateSubtask(job, run, step, args);
           else if (name === 'prepare_git_worktree' || name === 'checkpoint_git_worktree') result = await executeWorktreeTool(job, run, name, args);
@@ -688,8 +812,49 @@ function createNativeExecutionAdapter(options) {
           if (result.structuredEvidence?.review) review = result.structuredEvidence.review;
           preparationStreak = result.success && isPreparationTool(name) ? preparationStreak + 1 : result.success ? 0 : preparationStreak;
           await recordTool(job, run, step, member, name, args, result);
+          const resultReference = result.structuredEvidence?.artifacts?.[0]?.diskPath
+            || result.structuredEvidence?.artifacts?.[0]?.path
+            || '';
+          const observed = turnRuntime.observeToolResult(runtime, {
+            toolCallId: call.id,
+            name,
+            args,
+            success: result.success === true,
+            useful: result.success === true,
+            output: result.output,
+            resultRef: resultReference,
+            kind: result.structuredEvidence?.artifacts?.length
+              ? 'file'
+              : result.structuredEvidence?.connection ? 'connection'
+                : result.structuredEvidence?.review ? 'review' : 'tool',
+          });
+          runtime = observed.runtime;
+          await persistTurnRuntime(job, runtime, undefined, `${member.name}记录 Turn Runtime 工具证据`);
           messages.push({ role: 'tool', tool_call_id: call.id, content: result.output.slice(0, 12000) });
-          if (result.awaitingUser || result.awaitingApproval) throw new ExecutionControlSignal('awaiting_user', result.output);
+          if (result.awaitingUser || result.awaitingApproval) {
+            const finalized = turnRuntime.finalizeTurn(runtime, { status: 'waiting_user', content: result.output, waitingFor: result.output });
+            runtime = finalized.runtime;
+            await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 等待用户条件');
+            throw new ExecutionControlSignal('awaiting_user', result.output);
+          }
+          if (observed.error) {
+            const recovery = turnRuntime.decideRecovery(runtime, observed.error);
+            runtime = recovery.runtime;
+            if (recovery.decision.action === 'retry') cache.delete(key);
+            messages.push({ role: 'system', content: `${turnRuntime.buildTurnGuidance(runtime)}\n\n失败类型：${recovery.decision.errorType}；下一恢复动作：${recovery.decision.action}。不要原样重复无效路线。` });
+            if (recovery.decision.action === 'waiting_user') {
+              const finalized = turnRuntime.finalizeTurn(runtime, { status: 'waiting_user', content: recovery.decision.userMessage, waitingFor: recovery.decision.message });
+              runtime = finalized.runtime;
+              await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 等待用户条件');
+              throw new ExecutionControlSignal('awaiting_user', recovery.decision.userMessage);
+            }
+            if (recovery.decision.action === 'checkpoint') {
+              const finalized = turnRuntime.finalizeTurn(runtime, { status: 'checkpointed', content: recovery.decision.message });
+              runtime = finalized.runtime;
+              await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 失败恢复检查点');
+              throw new ExecutionControlSignal('checkpoint', recovery.decision.message || '同类恢复已经达到上限');
+            }
+          }
           if (preparationStreak >= MAX_PREPARATION_STREAK) {
             messages.push({ role: 'system', content: `已连续 ${preparationStreak} 次只读取或检查，没有产生可验收结果。必须立即执行真实写入、运行、连接验证或明确交接唯一外部阻塞。` });
           }
@@ -707,7 +872,9 @@ function createNativeExecutionAdapter(options) {
         messages.push({ role: 'system', content: '补偿步骤尚未形成真实工具执行证据。必须调用已注册工具完成声明的补偿动作，不能只用文字说明。' });
         continue;
       }
-      if (!executionOptions.compensation && step.kind !== 'review' && !hasFile) {
+      const fileEvidenceRequired = runtime.deliverableType === 'file'
+        || turnRuntime.requiresFileEvidence(run.contract || { goal: run.goal || run.request }, step);
+      if (!executionOptions.compensation && step.kind !== 'review' && fileEvidenceRequired && !hasFile) {
         forceActionCount += 1;
         messages.push({ role: 'assistant', content: finalContent || '当前步骤说明' });
         messages.push({ role: 'system', content: forceActionCount <= 2
@@ -724,7 +891,10 @@ function createNativeExecutionAdapter(options) {
         continue;
       }
       if (executionOptions.compensation) {
-        return { content: finalContent || '补偿步骤已完成真实工具执行。', review, callLog, usageModel: response.model };
+        const finalized = turnRuntime.finalizeTurn(runtime, { status: 'completed', content: finalContent || '补偿步骤已完成真实工具执行。' });
+        runtime = finalized.runtime;
+        await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 完成补偿步骤');
+        return { content: finalContent || '补偿步骤已完成真实工具执行。', review, callLog, usageModel: response.model, turnRuntime: runtime, turnFinalization: finalized.finalization };
       }
       const acceptance = fidelity.assessTaskCompletion(run.goal || run.request, finalContent, callLog);
       if (!acceptance.passed) {
@@ -736,10 +906,16 @@ function createNativeExecutionAdapter(options) {
         continue;
       }
       if (!finalContent) finalContent = '当前步骤已完成工具执行与真实结果验证。';
-      return { content: finalContent, review, callLog, usageModel: response.model };
+      const finalized = turnRuntime.finalizeTurn(runtime, { status: 'completed', content: finalContent });
+      runtime = finalized.runtime;
+      await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 完成团队步骤');
+      return { content: finalContent, review, callLog, usageModel: response.model, turnRuntime: runtime, turnFinalization: finalized.finalization };
     }
     await options.store.createRecoveryPoint({ taskId: job.taskId, label: '模型轮次预算恢复点' }).catch(() => {});
     if (run.worktree && options.worktreeManager) await options.worktreeManager.checkpoint(job.taskId, { label: '模型轮次预算恢复点' }).catch(() => {});
+    const finalized = turnRuntime.finalizeTurn(runtime, { status: 'checkpointed', content: `当前步骤经过 ${MAX_MODEL_ROUNDS_PER_STEP} 轮仍未形成可验收结果。` });
+    runtime = finalized.runtime;
+    await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 模型轮次预算检查点');
     throw new ExecutionControlSignal('checkpoint', `当前步骤经过 ${MAX_MODEL_ROUNDS_PER_STEP} 轮仍未形成可验收结果。系统已保存目标、证据、未决问题和当前步骤，没有判定失败；可从恢复点继续或更换模型后继续。`);
   }
 
@@ -750,7 +926,7 @@ function createNativeExecutionAdapter(options) {
       input: { assignment: step.assignment, employeeId: step.employeeId }, expectedOutputSchema: { type: 'object' },
       dependsOn: step.dependsOnStepIds || [], retryPolicy: { maxRetries: 3, backoffMs: 1000, maxBackoffMs: 30000 },
       idempotencyKey: review ? '' : `run-${runId}-${step.id}`, sideEffect: step.sideEffect !== false && !review, compensateStepId: step.compensateStepId || '', approvalRequired: false,
-      metadata: { legacyStepId: step.id, employeeId: step.employeeId, kind: step.kind, revisionOfStepId: step.revisionOfStepId, compensationOnly: step.compensationOnly === true },
+      metadata: { legacyStepId: step.id, employeeId: step.employeeId, kind: step.kind, deliverableType: step.deliverableType, revisionOfStepId: step.revisionOfStepId, compensationOnly: step.compensationOnly === true },
     };
   }
 

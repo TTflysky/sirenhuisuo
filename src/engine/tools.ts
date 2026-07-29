@@ -19,7 +19,7 @@ import { classifySensitiveAction, containsInlineSecret, redactToolArgsObject } f
 import type { ConnectorProtocolResult } from './connectorProtocol.mjs';
 import { createFileArtifactEvidence, createReviewSubmissionEvidence, createToolExecutionEvidence } from './executionEvidence.mjs';
 import type { FileArtifactEvidence, ReviewSubmissionEvidence, ToolExecutionEvidence } from './executionEvidence.mjs';
-import { buildToolRegistry, preflightToolCall } from './toolRegistry.mjs';
+import { buildToolRegistry, discoverTools, preflightToolCall } from './toolRegistry.mjs';
 import { formatSkillHubResults, isSkillDiscoveryRequest, searchSkillHub } from './skillHubSearch.mjs';
 export type { FileArtifactEvidence, ReviewSubmissionEvidence, ToolExecutionEvidence } from './executionEvidence.mjs';
 
@@ -77,6 +77,30 @@ export const TOOLS: ToolDef[] = [
           filter: { type: 'string', description: '可选的文件名过滤关键词，如 ".md" 只看 markdown' },
         },
         required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'search_tools',
+      description: '按目标搜索太极统一工具注册中心。仅在不确定应使用哪个工具时调用，返回真实工具名、能力、风险和简短说明。',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string', description: '需要完成的能力或动作' } },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'describe_tool',
+      description: '读取统一工具注册中心中某个工具的完整参数 Schema、风险和审批信息。',
+      parameters: {
+        type: 'object',
+        properties: { name: { type: 'string', description: 'search_tools 返回的准确工具名' } },
+        required: ['name'],
       },
     },
   },
@@ -582,6 +606,45 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         }
         const merged = [...lines, ...outFiles];
         return { toolCallId: id, name, success: true, output: `${source}目录（${merged.length} 项）：\n${merged.join('\n')}` };
+      }
+
+      case 'search_tools': {
+        const query = (args.query ?? '').trim();
+        if (!query) return { toolCallId: id, name, success: false, output: '工具搜索目标不能为空。' };
+        const { getConnectorTools } = await import('./connectorTools');
+        const registry = buildToolRegistry([...TOOLS, ...getConnectorTools()]);
+        const found = discoverTools(registry, query).slice(0, 12);
+        return {
+          toolCallId: id,
+          name,
+          success: found.length > 0,
+          output: found.length
+            ? `统一工具注册中心找到 ${found.length} 个候选：\n${found.map((record) => `- ${record.name}｜能力=${record.capability}｜风险=${record.risk}｜${record.definition.function.description}`).join('\n')}\n\n需要参数细节时调用 describe_tool。`
+            : `统一工具注册中心没有找到与“${query}”匹配的可用工具。请换一种能力描述，或基于现有工具重新规划。`,
+        };
+      }
+
+      case 'describe_tool': {
+        const toolName = (args.name ?? '').trim();
+        const { getConnectorTools } = await import('./connectorTools');
+        const registry = buildToolRegistry([...TOOLS, ...getConnectorTools()]);
+        const record = registry.records.find((item) => item.name === toolName);
+        if (!record) return { toolCallId: id, name, success: false, output: `工具“${toolName}”未注册或当前不可用。` };
+        return {
+          toolCallId: id,
+          name,
+          success: true,
+          output: JSON.stringify({
+            name: record.name,
+            description: record.definition.function.description,
+            parameters: record.definition.function.parameters,
+            capability: record.capability,
+            source: record.source,
+            risk: record.risk,
+            approval: record.approval,
+            health: record.health,
+          }, null, 2),
+        };
       }
 
       case 'web_search': {

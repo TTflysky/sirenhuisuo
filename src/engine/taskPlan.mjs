@@ -40,6 +40,7 @@ function normalizeDeliverables(value, goal) {
     return {
       label,
       format: deliverableFormat(typeof item === 'string' ? item : item?.format ?? label),
+      type: ['answer', 'file', 'connection', 'operation', 'decision', 'mixed'].includes(item?.type) ? item.type : undefined,
       category: ['final', 'working', 'reference'].includes(item?.category) ? item.category : 'final',
       required: item?.required !== false,
     };
@@ -49,6 +50,7 @@ function normalizeDeliverables(value, goal) {
   return [{
     label: inferredFormat === 'source' ? '可运行代码或明确的修改文件' : '可交接且可验证的任务结果',
     format: inferredFormat,
+    type: inferredFormat === 'text' ? 'answer' : 'file',
     category: 'final',
     required: true,
   }];
@@ -102,6 +104,9 @@ export function createTaskContract(input = {}) {
     sourceRequest: sourceRequest || goal,
     goal,
     primaryRoute,
+    deliverableType: ['answer', 'file', 'connection', 'operation', 'decision', 'mixed'].includes(decision.deliverableType)
+      ? decision.deliverableType
+      : undefined,
     deliverables: normalizeDeliverables(
       decision.deliverables ?? input.deliverables ?? input.expectedOutputs,
       `${goal} ${acceptanceCriteria.join(' ')} ${requiredConstraints.join(' ')}`,

@@ -1,5 +1,17 @@
 # 更新日志
 
+## v2.0.0 (Unified autonomous runtime)
+
+- Added one Turn Runtime for assistant chat, employee chat, and native team execution. Every model response and real tool result now becomes a structured observation, decision, evidence record, recovery decision, or finalization instead of passing through unrelated topic-specific loops.
+- Restored the correct responsibility boundary: the model understands the goal and chooses business actions with exact parameters; the runtime validates tool availability, Schema, permissions, approval, safety, repetition, and budget without rewriting search terms or inventing business routes.
+- Replaced keyword-heavy team selection with a stable capability graph. Explicit members remain authoritative, UI/UX design and frontend implementation are distinct capabilities, reviewers are added for verifiable delivery, and unrelated online employees no longer win by list order.
+- Added MoA-style private advisors for complex team steps. Advisors cannot call tools, change task state, or announce completion; the action owner receives their bounded guidance and remains responsible for execution and evidence.
+- Added typed delivery contracts for answers, files, connections, operations, decisions, and mixed work. File evidence is required only for file delivery; connection and operation tasks require their own real verification instead of a placeholder document.
+- Removed hidden pre-loop Skill, Connector, forced-search, and forced-file branches. Explicit Skill packages still use the atomic native installer, while tool discovery uses the shared `search_tools` and `describe_tool` capabilities.
+- Added classified recovery for authentication, authorization, billing, transient network errors, context overflow, invalid arguments, missing dependencies, result mismatch, and verification failure. Recovery is bounded; exhausted work produces a resumable checkpoint or plain-language handoff instead of an unbounded loop.
+- Preserved tool-call IDs, exact arguments, results, result references, unresolved issues, user steering, and context-budget checkpoints through compression and restart recovery. Running user messages return to the observation stage before work continues.
+- Passed the new v2 trajectory gate, the complete v1 core gate, v1 fault injection, native execution E2E, dispatch, delegation, context-pair, task-plan, runner, evidence, tool-registry, build, and lint checks.
+
 ## v1.0.2 (Readable execution details)
 
 - Raised execution-step titles, summaries, parameters, and raw results from 9-10 px utility text to the same configurable content-size system used by chat messages. Long results scroll inside their own region, while parameters preserve their original layout with horizontal scrolling.

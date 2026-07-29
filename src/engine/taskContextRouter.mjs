@@ -173,12 +173,24 @@ function summarizeAtomicUnit(unit) {
   if (unit.kind !== 'tool-group') return unit.messages.map((message) => `${message.role}：${text(messageText(message), 260)}`);
   const assistant = unit.messages[0];
   const calls = Array.isArray(assistant.tool_calls) ? assistant.tool_calls : [];
-  const results = new Map(unit.messages.slice(1).map((message) => [String(message.tool_call_id || ''), text(messageText(message), 260)]));
+  const results = new Map(unit.messages.slice(1).map((message) => [String(message.tool_call_id || ''), {
+    result: text(messageText(message), 1200),
+    resultRef: text(message.result_ref || message.resultRef, 800),
+  }]));
   return calls.map((call) => {
     const id = String(call?.id || '');
     const name = text(call?.function?.name || 'unknown_tool', 100);
-    const result = results.get(id);
-    return `工具证据：${name}（${result ? `已有结果：${result}` : '结果尚未返回'}）`;
+    const rawArguments = text(call?.function?.arguments || '{}', 1800);
+    let argumentsSummary = rawArguments;
+    try { argumentsSummary = JSON.stringify(JSON.parse(rawArguments)); } catch {}
+    const outcome = results.get(id);
+    return [
+      `工具证据：${name}`,
+      `调用ID=${id || '未记录'}`,
+      `参数=${text(argumentsSummary, 1000)}`,
+      outcome ? `结果=${outcome.result}` : '状态=结果尚未返回（未决）',
+      outcome?.resultRef ? `结果引用=${outcome.resultRef}` : '',
+    ].filter(Boolean).join('；');
   });
 }
 

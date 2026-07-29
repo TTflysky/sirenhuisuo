@@ -9,7 +9,8 @@ export interface TaskContract {
   sourceRequest: string;
   goal: string;
   primaryRoute: TaskPlanRoute;
-  deliverables: Array<{ label: string; format: string; category: 'final' | 'working' | 'reference'; required: boolean }>;
+  deliverableType?: 'answer' | 'file' | 'connection' | 'operation' | 'decision' | 'mixed';
+  deliverables: Array<{ label: string; format: string; type?: 'answer' | 'file' | 'connection' | 'operation' | 'decision' | 'mixed'; category: 'final' | 'working' | 'reference'; required: boolean }>;
   requiredCapabilities: string[];
   riskLevel: 'low' | 'normal' | 'high';
   teamPolicy: { requiresTeam: boolean; explicitMemberIds: string[]; allowDynamicDelegation: boolean };

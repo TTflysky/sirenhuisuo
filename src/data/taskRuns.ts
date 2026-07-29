@@ -8,6 +8,9 @@ import { createContextBudget, createRecoveryCapsule, verifyRecoveryCapsule } fro
 import { normalizeTaskHandoff } from '../engine/taskHandoff.mjs';
 import { assertTaskRunTransition } from '../engine/taskStateMachine.mjs';
 import { createTeamExecutionProtocol, restoreTeamExecutionProtocol } from '../engine/teamExecutionProtocol.mjs';
+import { inferCapabilityIds } from '../engine/capabilityGraph.mjs';
+import { inferDeliverableType } from '../engine/turnRuntime.mjs';
+import type { TaskDecision } from '../engine/taskDecisionKernel.mjs';
 import type { TaskLedgerEvent, TaskLedgerIntegrity, TaskWorkerCommand, TaskWorkerCommandResult, TaskWorkerStatusResult } from '../electron';
 
 const LS_TASK_RUNS = 'hermes_office_task_runs_v1';
@@ -33,7 +36,7 @@ export function formalPlanStepForRun(runId: string, step: TaskRunStep | TaskPlan
     sideEffect: type !== 'review',
     compensateStepId: '',
     approvalRequired: false,
-    metadata: { legacyStepId: step.id, employeeId: step.employeeId, kind: step.kind, revisionOfStepId: step.revisionOfStepId },
+    metadata: { legacyStepId: step.id, employeeId: step.employeeId, kind: step.kind, deliverableType: step.deliverableType, revisionOfStepId: step.revisionOfStepId },
   };
 }
 
@@ -43,6 +46,8 @@ function formalPlanForRun(run: Pick<TaskRun, 'id' | 'request' | 'goal' | 'steps'
     scope: `team-run:${run.id}`,
     decision: {
       mode: 'execute', goal: run.goal ?? run.request, primaryRoute: 'team_dispatch',
+      deliverableType: run.steps.find((step) => step.kind !== 'review')?.deliverableType
+        ?? inferDeliverableType(undefined, run.goal ?? run.request),
       acceptanceCriteria: DEFAULT_ACCEPTANCE,
       requiredConstraints: ['每一步必须留下真实结果', '后续步骤等待前置步骤完成'],
       requiresEvidence: true, source: 'rules', confidence: 1,
@@ -317,7 +322,7 @@ export function taskRunContextPrompt(run: TaskRun): string {
   }));
 }
 
-export function createTaskRun(team: Team, employees: Employee[], request: string, plan: TaskPlanStep[], sourceMessageId?: string, skillRefs?: SkillReference[], workspaceId?: string): TaskRun {
+export function createTaskRun(team: Team, employees: Employee[], request: string, plan: TaskPlanStep[], sourceMessageId?: string, skillRefs?: SkillReference[], workspaceId?: string, taskDecision?: TaskDecision): TaskRun {
   const now = Date.now();
   const id = `run-${now}-${Math.random().toString(36).slice(2, 7)}`;
   const teamMembers = team.memberIds
@@ -327,13 +332,30 @@ export function createTaskRun(team: Team, employees: Employee[], request: string
     id: employee.id, name: employee.name, title: employee.title, role: employee.role,
     prompt: employee.prompt, soul: employee.soul,
     model: employee.modelConfig?.model ?? employee.modelConfig?.refModelId,
+    capabilities: employee.capabilities,
   }));
   const steps: TaskRunStep[] = plan.map((item) => ({
     ...item,
+    deliverableType: item.kind === 'review'
+      ? 'decision'
+      : taskDecision?.deliverableType ?? item.deliverableType,
     status: 'queued',
     attempts: 0,
     events: [{ ts: now, type: 'status', detail: '等待执行' }],
   }));
+  const deliverableType = taskDecision?.deliverableType
+    ?? plan.find((step) => step.kind !== 'review')?.deliverableType
+    ?? inferDeliverableType(undefined, request);
+  const inferredAcceptanceCriteria = deliverableType === 'file'
+    ? ['生成用户要求的真实文件', '文件已经落盘并通过读取、打开或运行验证', '审查真实产出后再宣布完成']
+    : deliverableType === 'connection'
+      ? ['完成目标连接配置', '通过真实连接测试后再宣布可用']
+      : deliverableType === 'operation'
+        ? ['执行用户要求的真实操作', '保留运行结果或状态证据']
+        : ['直接完成用户要求', '结论与真实证据一致，不强制生成文件'];
+  const acceptanceCriteria = taskDecision?.acceptanceCriteria?.filter(Boolean).length
+    ? taskDecision.acceptanceCriteria.filter(Boolean)
+    : inferredAcceptanceCriteria;
   const baseRun: TaskRun = {
     id,
     teamId: team.id,
@@ -343,7 +365,7 @@ export function createTaskRun(team: Team, employees: Employee[], request: string
     request,
     goal: request,
     phase: 'preflight',
-    acceptanceCriteria: ['完成用户要求的工作', '留下可观察的结果或文件', '由执行者或审查步骤确认结果'],
+    acceptanceCriteria,
     preflight: [
       { label: '确认任务目标', status: 'passed', detail: request.slice(0, 120) },
       { label: '初始化独立工作区', status: 'pending', detail: '每个任务使用独立目录，恢复执行继续沿用此目录' },
@@ -358,7 +380,7 @@ export function createTaskRun(team: Team, employees: Employee[], request: string
     steps,
     skillRefs,
     skillEvidence: [],
-    context: createTaskContext({ taskId: id, goal: request, acceptanceCriteria: ['完成用户要求的工作', '留下可观察的结果或文件', '由执行者或审查步骤确认结果'], createdAt: now }),
+    context: createTaskContext({ taskId: id, goal: request, acceptanceCriteria, createdAt: now }),
     sourceMessageId,
     revisionCount: 0,
     maxRevisions: 2,
@@ -378,13 +400,23 @@ export function createTaskRun(team: Team, employees: Employee[], request: string
     request,
     scope: `team-run:${id}`,
     expectedOutputs: plan.filter((step) => step.kind !== 'review').map((step) => step.title),
-    requiredCapabilities: ['team_coordination'],
+    requiredCapabilities: taskDecision?.requiredCapabilities?.filter(Boolean).length
+      ? taskDecision.requiredCapabilities
+      : inferCapabilityIds(request),
     teamPolicy: { requiresTeam: true, explicitMemberIds: steps.map((step) => step.employeeId), allowDynamicDelegation: true },
     decision: {
       mode: 'execute', goal: request, primaryRoute: 'team_dispatch',
+      deliverableType,
       acceptanceCriteria: baseRun.acceptanceCriteria,
-      requiredConstraints: ['每一步必须留下真实结果', '后续步骤必须等待前置步骤完成'],
-      requiresEvidence: true, source: 'rules', confidence: 1,
+      deliverables: taskDecision?.deliverables,
+      requiredConstraints: taskDecision?.requiredConstraints?.filter(Boolean).length
+        ? taskDecision.requiredConstraints
+        : ['每一步必须留下真实结果', '后续步骤必须等待前置步骤完成'],
+      riskLevel: taskDecision?.riskLevel,
+      requiresEvidence: taskDecision?.requiresEvidence !== false,
+      source: taskDecision?.source ?? 'rules',
+      confidence: taskDecision?.confidence ?? 1,
+      decisionReason: taskDecision?.decisionReason,
     },
   });
   baseRun.contract = contract;

@@ -2,12 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import ts from 'typescript';
 
-const matcherSource = await fs.readFile('src/engine/taskMatcher.ts', 'utf8');
-const matcherTranspiled = ts.transpileModule(matcherSource, {
-  compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext },
-  fileName: 'src/engine/taskMatcher.ts',
-}).outputText;
-const matcherUrl = `data:text/javascript;base64,${Buffer.from(matcherTranspiled).toString('base64')}`;
+const matcherUrl = new URL('../src/engine/taskMatcher.ts', import.meta.url).href;
 const source = await fs.readFile('src/engine/teamMembership.ts', 'utf8');
 const transpiled = ts.transpileModule(source, {
   compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext },

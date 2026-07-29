@@ -4,6 +4,7 @@ export interface TaskDecision {
   mode: TaskDecisionMode;
   goal: string;
   primaryRoute: TaskPrimaryRoute;
+  deliverableType: 'answer' | 'file' | 'connection' | 'operation' | 'decision' | 'mixed';
   acceptanceCriteria: string[];
   requiredConstraints: string[];
   deliverables?: Array<{ label: string; format?: string; category?: 'final' | 'working' | 'reference'; required?: boolean }>;

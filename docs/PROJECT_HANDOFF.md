@@ -1,9 +1,17 @@
 # 项目交接手册
 
 > 最后整理：2026-07-29
-> 当前源码版本：`v1.0.2`
+> 当前源码版本：`v2.0.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+
+## v2.0 统一智能体运行时
+
+`v2.0.0` 在现有产品和持久化基础设施上统一了认知闭环，没有推翻 UI、TaskService、Worker、员工、团队、聊天、人格、记忆、Skill、Connector 或本地数据。核心链路为：模型理解目标并选择精确动作 -> 运行时校验工具、Schema、安全、权限、审批和预算 -> 原样执行参数 -> 真实结果回注模型 -> 模型重新判断 -> 按交付类型验收 -> 统一收尾或恢复交接。
+
+新内核位于 `src/engine/turnRuntime.mjs`、`capabilityGraph.mjs` 和 `moaRuntime.mjs`，并同时接入 `src/data/hermesClient.ts` 与 `electron/nativeExecutionAdapter.cjs`。团队调度不再按整段文本词频凑人；模型生成的交付类型、验收标准和所需能力会完整进入 TaskRun 合同。发布门禁为 `npm.cmd run verify:v2-core-gate`，完整旧版回归仍使用 `npm.cmd run verify:v1-core-gate`。
+
+详细责任边界、轨迹与恢复规则见 `docs/V2_RUNTIME_ARCHITECTURE.md`。
 
 ## v1.0 发布基线
 
@@ -48,7 +56,7 @@
 7. 每次功能交付必须升级版本、构建 Windows 安装包并计算 SHA-256；补丁版本只做本地安装验收，功能大版本验收通过后才提交、推送 `main` 并创建 GitHub Release。
 8. 面向用户的最终回答必须先说清楚成功、失败或进行中；原始工具名、命令、参数、退出码和日志只放在折叠执行过程中，不能在消息正文重复展示。
 9. 工具审批和命令沙盒必须同时覆盖助手、员工私聊和团队聊天。审批被拒绝时必须返回“未执行”的真实结果，不能把取消、权限不足或沙盒拦截描述成完成。
-10. 所有执行入口必须先通过 `taskDecisionKernel` 还原真实目标、首选路线和完成标准，再由 `taskFidelity` 固定不可丢失条件，最后通过统一 `ExecutionController` 观察结果、分类失败、决定重试或换路线并重新验收；不得重新引入按回复文案、关键词猜测或“工具返回内容就算成功”的分支。
+10. 所有执行入口必须先通过 `taskDecisionKernel` 还原真实目标、首选路线和完成标准，再进入统一 Turn Runtime。模型负责业务路线和精确工具参数；确定性层只校验工具、Schema、安全、权限、审批、重复和预算。结果返回后由模型重新判断，最终通过任务合同与真实证据验收；不得重新引入主题关键词强制路线或“工具返回内容就算成功”的分支。
 11. 所有动态连接器 Action 必须经过 `ConnectorProtocol`；输入、权限、dry-run、真实调用、输出验证、脱敏和幂等不可在单个连接器中自行绕过，UI 只认客户端协议证据。
 12. 文件与审查必须产生 `ToolExecutionEvidence`；审查退回必须扩展正式 TaskPlan/Runner 并绑定责任步骤，不能重新退化为解析聊天文案或只改界面步骤。
 13. 分层记忆的 JSON 状态是唯一事实源，Markdown 只是可重建投影；真实验收经验可自动沉淀，模型推断必须先审批，任何后台复盘都不得改写内置或手动安装的 Skill。

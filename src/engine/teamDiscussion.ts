@@ -44,19 +44,11 @@ export interface TeamDiscussionOptions {
 
 // 角色在讨论中的职责描述（系统提示词扩展）
 const ROLE_DUTY: Record<string, string> = {
-  pm: `你是团队协调者（PM）。你的工具：write_file(输出文档)、read_file(读已有文件)、list_files(查看产出物)、web_search(搜索资料)。PM 的需求拆解和计划用 category=working，只有用户明确要交付的项目说明才用 final。
-使用方式：需要产出文件时调 write_file，需要查资料时调 web_search。
-典型流程：接到任务 → web_search 查资料 → write_file 输出需求文档/PRD → @相关成员。
-发言简洁，像真实同事对话。每次工具调用后会立刻得到结果供你参考。`,
-  planner: `你是规划者（Planner/架构师）。你的工具：read_file(读PM的需求文档)、web_search(查技术方案)、write_file(输出架构方案)。内部架构草案用 category=working，用户要求的正式方案用 final，外部资料整理用 reference。
-使用方式：先 read_file 看有没有已有文档，再 write_file 输出技术方案（.md文件）、架构图说明或接口定义。
-发言务实，给出清晰的实现步骤，让编码者能直接照着写。`,
-  coder: `你是编码者（Coder/实现工程师）。你的工具：write_file(写代码文件)、read_file(读方案文档)、list_files(查看项目目录)、web_search(查API文档)。可运行代码和必要配置都用 category=final；临时测试或诊断文件用 working。
-使用方式：read_file 读方案 → write_file 输出代码文件（.html/.js/.tsx等）→ 告知审查者验收。
-代码文件是真正可运行的，写完整、可执行。`,
-  checker: `你是审查者（Checker/QA）。你的工具：read_file(读代码审查)、list_files(查看文件)、web_search(查安全标准)。
-使用方式：read_file 读代码 → 审查正确性/安全/性能 → 给出验收结论。严谨、具体。`,
-  custom: '你是团队的一员。可用工具包括 write_file/read_file/list_files/web_search。根据自己的身份牌职责参与协作。',
+  pm: '你是团队协调者（PM）。根据任务合同组织步骤、依赖和验收，只在交付类型确实需要文件时写文档。',
+  planner: '你是规划者和架构师。读取已有真实证据，形成当前责任所需的方案、决策或文件，不套用固定流程。',
+  coder: '你是实现工程师。需要代码交付时写完整可运行文件并验证；其他任务按合同选择正确工具和证据。',
+  checker: '你是审查者。检查真实产出、运行或连接结果，使用结构化审查结论，不用口头通过替代验收。',
+  custom: '你是团队成员。根据身份牌能力和任务合同自主选择工具，保留可验收的真实结果。',
 };
 
 function memberByRole(team: Team, employees: Employee[], role: string): Employee | undefined {
@@ -100,7 +92,7 @@ async function memberSpeak(
 
   const duty = ROLE_DUTY[emp.role] ?? ROLE_DUTY.custom;
   const persona = emp.prompt?.trim() || `你是「${emp.name}」，${emp.title}。`;
-  const system = `${persona}\n\n${duty}\n\n你正在团队群聊中协作。先判断任务是否需要专业 Skill：只有当 Skill 能明显提高质量或提供必要流程时，才调用 search_skills；比较候选后只读取最匹配的 Skill。没有合适 Skill 时直接使用通用能力和其他工具，不要为了留下调用记录而强行调用。若工具失败，说明失败原因并选择重试、替代工具或继续执行。${requireFileOutput ? '\n\n本步骤是交付步骤：在最终回复前必须调用 write_file 保存可交接的真实文件。没有成功写入文件就不算完成，禁止用“收到”“跟进”“已完成”代替产出。' : ''}${requireReviewDecision ? '\n\n本步骤是正式审查：必须先用 list_files/read_file 或运行工具检查真实交付物，再调用 submit_review 提交 PASS 或 REJECT。聊天中的口头结论不进入任务状态；REJECT 时尽量填写责任步骤或责任员工。' : ''}\n\n完成后简短总结实际结果，注明已写入或读取的文件名，便于队友接续。\n\n${BEGINNER_RESPONSE_GUIDE}`;
+  const system = `${persona}\n\n${duty}\n\n你正在团队群聊中协作。先判断任务是否需要专业 Skill：只有当 Skill 能明显提高质量或提供必要流程时，才调用 search_skills；比较候选后只读取最匹配的 Skill。没有合适 Skill 时直接使用通用能力和其他工具，不要为了留下调用记录而强行调用。若工具失败，说明失败原因并选择重试、替代工具或继续执行。${requireFileOutput ? '\n\n本步骤的交付类型是文件：在最终回复前必须调用 write_file 保存可交接的真实文件。没有成功写入并验证文件就不算完成。' : '\n\n本步骤不强制生成文件；按任务合同提供回答、连接、操作或决策证据，不要为了过门禁写无意义文件。'}${requireReviewDecision ? '\n\n本步骤是正式审查：必须先用 list_files/read_file 或运行工具检查真实交付物，再调用 submit_review 提交 PASS 或 REJECT。聊天中的口头结论不进入任务状态；REJECT 时尽量填写责任步骤或责任员工。' : ''}\n\n完成后简短总结实际结果和验收证据，便于队友接续。\n\n${BEGINNER_RESPONSE_GUIDE}`;
 
   // 多模态：把图片附件拼到用户指令上
   const imageParts = (attachments ?? [])
@@ -356,7 +348,7 @@ export async function runTeamDiscussion(
       const reviewResponsibilityIndex = step.kind === 'review'
         ? `\n\n可退回的责任步骤：\n${completedWorkSteps.map((item) => `- 步骤 ${item.id}；员工 ${item.employeeId}；${item.title}`).join('\n') || '- 暂无已完成工作步骤'}\nsubmit_review 退回时优先原样填写 responsibleStepId 和 responsibleEmployeeId。`
         : '';
-      const assignment = `${step.assignment}${reviewResponsibilityIndex}\n\n执行规则：先判断是否需要专业 Skill；需要时自主搜索、比较并读取最合适的 Skill，不需要时直接推进。使用文件、搜索或命令工具完成实际工作，禁止只口头描述安排。`;
+      const assignment = `${step.assignment}${reviewResponsibilityIndex}\n\n执行规则：先判断是否需要专业 Skill；需要时自主搜索、比较并读取最合适的 Skill，不需要时直接推进。按交付类型选择真实工具或可核对回答，禁止只口头描述尚未执行的安排。`;
       const r = await memberSpeak(emp, team, employees, contextMessages,
         task
           ? `团队接到新任务「${task.title}」${task.description ? `：${task.description}` : ''}。如有必要，可调工具产出文件或用 web_search 查资料。`
@@ -370,7 +362,7 @@ export async function runTeamDiscussion(
         opts.extraSystemContext,
         opts.workspaceId,
         control?.shouldStop,
-        step.kind !== 'review',
+        step.deliverableType === 'file' || step.deliverableType === 'mixed',
         step.kind === 'review',
         control?.consumeSteeringMessages,
         control?.getModelRequestSignal,

@@ -28,6 +28,7 @@ function sourceFor(name) {
 }
 
 function capabilityFor(name) {
+  if (name === 'search_tools' || name === 'describe_tool') return 'tool.discovery';
   if (name === 'write_file') return 'workspace.write';
   if (name === 'read_file' || name === 'list_files') return 'workspace.read';
   if (name === 'web_search' || name === 'read_web_page') return 'web.research';

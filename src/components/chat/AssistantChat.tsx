@@ -129,20 +129,6 @@ function shouldExplicitlyDispatchTeam(content: string): boolean {
   return EXPLICIT_TEAM_DISPATCH_RE.test(content);
 }
 
-function findSpecialistMembers(content: string, employees: Employee[]) {
-  if (!SPECIALIST_DOMAIN_RE.test(content) || !DELIVERABLE_ACTION_RE.test(content)) return [];
-  return matchProjectMembers(employees, content)
-    .map((member) => employees.find((employee) => employee.id === member.employeeId))
-    .filter((employee): employee is Employee => !!employee && employee.isOnline)
-    .filter((employee) => {
-      const profile = `${employee.name} ${employee.title} ${employee.prompt ?? ''} ${employee.soul ?? ''}`;
-      return SPECIALIST_DOMAIN_RE.test(`${content} ${profile}`) && (
-        /前端|后端|全栈|网页|网站|UI|界面|视觉/u.test(content) ? /前端|后端|全栈|网页|网站|UI|界面|视觉|交互|设计/u.test(profile)
-          : /代码|开发|编程|脚本|文案|视频|分镜|报告|方案|编剧|策划/u.test(profile)
-      );
-    });
-}
-
 function resolveDispatchRequest(current: string, recentUserMessages: string[]): string {
   const text = current.trim();
   const refersToPreviousGoal = /(?:这个|那个|刚才|刚刚|上面|前面|之前)(?:的)?(?:任务|需求|事情|项目)?|按(?:刚才|上面|之前)|继续(?:刚才|上面|之前)/u.test(text);
@@ -379,14 +365,12 @@ export default function AssistantChat() {
     }
 
     const explicitTeamDispatch = shouldExplicitlyDispatchTeam(enriched);
-    const specialistMembers = findSpecialistMembers(enriched, liveEmployees);
-    const shouldAutoDispatchSpecialist = !explicitTeamDispatch && specialistMembers.length > 0;
     let taskDecisionCompilation: Awaited<ReturnType<typeof compileTaskDecision>> | undefined;
-    if (busy && (explicitTeamDispatch || shouldAutoDispatchSpecialist)) {
+    if (busy && explicitTeamDispatch) {
       executionControl.stop();
       steeringMessagesRef.current.splice(0);
     }
-    if (!busy || explicitTeamDispatch || shouldAutoDispatchSpecialist) {
+    if (!busy || explicitTeamDispatch) {
       setBusy(true);
       setStatus('正在理解当前需求…');
       const decisionTurns: ChatTurn[] = [
@@ -405,7 +389,7 @@ export default function AssistantChat() {
 
     // The model understands the request first; this control-plane executor then
     // builds a reviewable team proposal without granting the model direct access.
-    if (explicitTeamDispatch || shouldAutoDispatchSpecialist || semanticTeamDispatch) {
+    if (explicitTeamDispatch || semanticTeamDispatch) {
       if (busy) setStatus('已停止当前路线，正在建立团队任务草案…');
       const recentUserMessages = msgs
         .filter((message) => message.roleId === 'human')

@@ -1,3 +1,5 @@
+import { capabilityCoverage, capabilityLabel, inferCapabilityIds, selectCapabilityTeam } from './capabilityGraph.mjs';
+
 const DELEGATION_VERSION = 1;
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 const DELEGATION_TRANSITIONS = {
@@ -7,28 +9,17 @@ const DELEGATION_TRANSITIONS = {
   failed: new Set(['failed', 'queued', 'cancelled']),
   cancelled: new Set(['cancelled']),
 };
-const ROLE_TERMS = {
-  pm: ['协调', '拆解', '计划', '验收', '沟通'],
-  planner: ['方案', '架构', '规划', '分析', '设计'],
-  coder: ['代码', '开发', '实现', '脚本', '构建', '修复'],
-  checker: ['审查', '测试', '验证', '检查', '质量'],
-  custom: [],
-};
 
 function text(value, max = 1600) { return String(value ?? '').trim().slice(0, max); }
 function clone(value) { return value === undefined ? undefined : JSON.parse(JSON.stringify(value)); }
 function list(value, max = 12) { return Array.isArray(value) ? value.map((item) => text(item, 500)).filter(Boolean).slice(0, max) : []; }
 function id(prefix) { return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`; }
-function memberProfile(member) { return `${member.name ?? ''} ${member.title ?? ''} ${member.role ?? ''} ${member.prompt ?? ''} ${member.soul ?? ''}`.toLowerCase(); }
-function profileTerms(query) {
-  const terms = [...new Set(query.match(/[\p{Script=Han}]{2,6}|[a-z][a-z0-9_-]{2,}/gu) ?? [])];
-  return [...new Set([...terms, ...terms.flatMap((term) => term.length > 2 ? [term.slice(0, 2), term.slice(-2)] : [])])];
-}
 function selectionReason(member, assignment) {
-  const profile = memberProfile(member);
-  const matched = ROLE_TERMS[member.role]?.filter((term) => assignment.includes(term)) ?? [];
-  const profileMatch = assignment.split(/\s+/u).find((term) => term.length > 1 && profile.includes(term));
-  return matched.length ? `职责关键词匹配：${matched.slice(0, 3).join('、')}` : profileMatch ? `员工资料匹配：${profileMatch}` : '团队候选成员中的默认可用人选';
+  const required = inferCapabilityIds(assignment);
+  const covered = capabilityCoverage(member, required).covered;
+  return covered.length
+    ? `能力覆盖：${covered.map(capabilityLabel).join('、')}`
+    : '当前团队中可用的协调责任人';
 }
 
 export function selectDelegate(members, assignment, options = {}) {
@@ -36,15 +27,21 @@ export function selectDelegate(members, assignment, options = {}) {
   const requested = text(options.employeeId, 160);
   if (requested) return candidates.find((member) => member.id === requested) ?? null;
   const query = `${text(assignment)} ${text(options.title)}`.toLowerCase();
-  return candidates
-    .map((member, index) => ({
-      member,
-      score: (ROLE_TERMS[member.role] ? ROLE_TERMS[member.role].reduce((score, term) => score + (query.includes(term) ? 4 : 0), 0) : 0)
-        + profileTerms(query).reduce((score, term) => score + (memberProfile(member).includes(term) ? (term.length >= 3 ? 8 : 3) : 0), 0)
-        + (member.isOnline === false ? -12 : 0) + (member.isWorking === true ? -2 : 0),
+  const requiredCapabilities = inferCapabilityIds(query, options.requiredCapabilities);
+  const selection = selectCapabilityTeam(candidates, {
+    request: query,
+    requiredCapabilities,
+    requiresTeam: true,
+  });
+  const selectedId = selection.selected
+    .map((selected, index) => ({
+      ...selected,
       index,
+      primaryScore: /审查|审核|验收|检查|质检|校对/u.test(query) && selected.capabilities.includes('review') ? 20 : 0,
+      coverageScore: capabilityCoverage(candidates.find((member) => member.id === selected.employeeId), requiredCapabilities).covered.length * 10,
     }))
-    .sort((left, right) => right.score - left.score || left.index - right.index)[0]?.member ?? null;
+    .sort((left, right) => right.primaryScore - left.primaryScore || right.coverageScore - left.coverageScore || left.index - right.index)[0]?.employeeId;
+  return candidates.find((member) => member.id === selectedId) ?? null;
 }
 
 export function createDelegation(run, input = {}) {

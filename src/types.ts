@@ -37,6 +37,8 @@ export interface Employee {
   useCustomModel?: boolean; // 显式开启后才使用员工独立模型；旧数据缺省时兼容 modelConfig
   modelConfig?: ModelConfig;  // 独立模型配置（留空则用全局设置）
   showThoughtChain?: boolean; // 是否显示思维链（可视化推理过程）
+  /** 稳定能力 ID；旧数据缺省时从职位和提示词推导。 */
+  capabilities?: string[];
 }
 
 // ===== 团队 =====
@@ -270,6 +272,7 @@ export interface TaskPlanStep {
   kind: TaskStepKind;
   title: string;
   assignment: string;
+  deliverableType?: 'answer' | 'file' | 'connection' | 'operation' | 'decision' | 'mixed';
   dependsOnStepIds: string[];
   revisionOfStepId?: string;
 }
@@ -282,6 +285,7 @@ export interface TaskRunMemberSnapshot {
   prompt?: string;
   soul?: string;
   model?: string;
+  capabilities?: string[];
 }
 
 export interface TaskRunStep {
@@ -291,6 +295,7 @@ export interface TaskRunStep {
   order: number;
   kind: TaskStepKind;
   assignment: string;
+  deliverableType?: 'answer' | 'file' | 'connection' | 'operation' | 'decision' | 'mixed';
   dependsOnStepIds: string[];
   revisionOfStepId?: string;
   /** 由运行中动态委派创建的子任务记录。 */
@@ -390,6 +395,9 @@ export interface TaskRun {
   contract?: TaskContract;
   plan?: TaskPlan;
   runner?: TaskRunnerSnapshot;
+  /** v2 每轮模型决策、工具证据和恢复状态；持久化前已脱敏。 */
+  turnRuntime?: import('./engine/turnRuntime.mjs').TurnRuntimeState;
+  turnFinalization?: Record<string, unknown>;
   /** Unified team execution contract shared by assistant, worker and chat windows. */
   executionProtocol?: import('./engine/teamExecutionProtocol.mjs').TeamExecutionProtocol;
   /** 主进程原生 Adapter 写入的团队聊天投影；凭据和原始模型请求不会持久化。 */

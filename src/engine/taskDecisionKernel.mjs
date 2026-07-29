@@ -27,6 +27,7 @@ export const TASK_DECISION_TOOL = {
         'goal',
         'primaryRoute',
         'acceptanceCriteria',
+        'deliverableType',
         'requiresEvidence',
         'needsUser',
         'missingUserCondition',
@@ -59,6 +60,7 @@ export const TASK_DECISION_TOOL = {
           maxItems: 6,
           items: { type: 'string' },
         },
+        deliverableType: { type: 'string', enum: ['answer', 'file', 'connection', 'operation', 'decision', 'mixed'] },
         requiredConstraints: {
           type: 'array',
           maxItems: 8,
@@ -123,6 +125,16 @@ function routeForGoal(goal, availableTools) {
   return 'general_tools';
 }
 
+function deliverableTypeForGoal(goal, route, provided) {
+  if (['answer', 'file', 'connection', 'operation', 'decision', 'mixed'].includes(provided)) return provided;
+  if (route === 'write_file' || /(?:文件|文档|代码|网页|word|excel|ppt|pdf|markdown|安装包)/iu.test(goal)) return 'file';
+  if (route === 'inspect_connectors' || route === 'connector') return 'connection';
+  if (['install_skill', 'run_command'].includes(route)) return 'operation';
+  if (route === 'direct_answer' || route === 'web_search' || route === 'read_file' || route === 'list_files') return 'answer';
+  if (/选择|判断|比较|建议|分析|规划/u.test(goal)) return 'decision';
+  return 'mixed';
+}
+
 export function createFallbackTaskDecision(input = {}) {
   const latestMessage = clean(input.latestMessage);
   const previousUserMessage = clean(input.previousUserMessage);
@@ -139,6 +151,7 @@ export function createFallbackTaskDecision(input = {}) {
   if (control === 'stop' || control === 'pause' || feedbackOnly) {
     return {
       mode: 'conversation', goal: latestMessage, primaryRoute: 'direct_answer',
+      deliverableType: 'answer',
       acceptanceCriteria: ['回应用户当前控制指令或反馈，不偷跑旧任务'],
       requiredConstraints,
       requiresEvidence: false, needsUser: false, missingUserCondition: '', searchQuery: '',
@@ -150,6 +163,7 @@ export function createFallbackTaskDecision(input = {}) {
     const primaryRoute = routeForGoal(goal, input.availableTools);
     return {
       mode: 'execute', goal, primaryRoute,
+      deliverableType: deliverableTypeForGoal(goal, primaryRoute),
       acceptanceCriteria: defaultAcceptance(primaryRoute, goal),
       requiredConstraints,
       requiresEvidence: requiresObservableExecutionEvidence(goal) || primaryRoute !== 'direct_answer',
@@ -164,6 +178,7 @@ export function createFallbackTaskDecision(input = {}) {
     mode: /[？?]|为什么|怎么|是什么|能否|可以吗|对么/u.test(latestMessage) ? 'answer' : 'conversation',
     goal: latestMessage,
     primaryRoute: 'direct_answer',
+    deliverableType: 'answer',
     acceptanceCriteria: defaultAcceptance('direct_answer', latestMessage),
     requiredConstraints,
     requiresEvidence: false, needsUser: false, missingUserCondition: '', searchQuery: '',
@@ -199,10 +214,15 @@ export function normalizeTaskDecision(candidate, input = {}) {
   const goal = fallback.goal;
   let primaryRoute = ROUTES.has(candidate.primaryRoute) ? candidate.primaryRoute : fallback.primaryRoute;
   if (mode !== 'execute') primaryRoute = 'direct_answer';
-  if (requiresFreshWebResearch(goal)) primaryRoute = 'web_search';
-  if (isSkillDiscoveryRequest(goal) && fallback.primaryRoute === 'search_skills') primaryRoute = 'search_skills';
-  if (fallback.primaryRoute === 'inspect_connectors') primaryRoute = 'inspect_connectors';
-  if (fallback.primaryRoute === 'install_skill') primaryRoute = 'install_skill';
+  if (capabilityCorrection && mode === 'execute') primaryRoute = fallback.primaryRoute;
+  // An explicit Skill package or repository is a typed install operation. Keep
+  // the model in charge of deciding whether installation is needed, while the
+  // runtime guarantees that an accepted source uses the atomic native installer
+  // instead of an improvised shell command.
+  const explicitSkillInstall = mode === 'execute' ? resolveSkillInstallRequest(goal) : undefined;
+  if (explicitSkillInstall?.sourceUrl && (input.availableTools ?? []).includes('install_skill')) {
+    primaryRoute = 'install_skill';
+  }
   const criteria = Array.isArray(candidate.acceptanceCriteria)
     ? candidate.acceptanceCriteria.map((item) => clean(item, 240)).filter(Boolean).slice(0, 6)
     : [];
@@ -218,6 +238,7 @@ export function normalizeTaskDecision(candidate, input = {}) {
     mode,
     goal,
     primaryRoute,
+    deliverableType: deliverableTypeForGoal(goal, primaryRoute, candidate.deliverableType),
     acceptanceCriteria,
     requiredConstraints,
     deliverables: Array.isArray(candidate.deliverables) ? candidate.deliverables.slice(0, 12) : fallback.deliverables,
@@ -227,9 +248,10 @@ export function normalizeTaskDecision(candidate, input = {}) {
     requiresEvidence: mode === 'execute' && (Boolean(candidate.requiresEvidence) || fallback.requiresEvidence),
     needsUser: genuinelyNeedsUser,
     missingUserCondition: genuinelyNeedsUser ? missingUserCondition : '',
-    // Search parameters are derived from the authoritative goal. A model-proposed
-    // shorter query previously dropped places and subjects such as “全椒县天气”.
-    searchQuery: primaryRoute === 'web_search' ? buildFreshWebQuery(goal) : '',
+    // Preserve the model's semantic query. The runtime validates it but never
+    // replaces it with the full user request; a failed result is observed and
+    // the model chooses the next query.
+    searchQuery: primaryRoute === 'web_search' ? clean(candidate.searchQuery, 1200) || fallback.searchQuery : '',
     decisionReason: clean(candidate.decisionReason, 240) || fallback.decisionReason,
     confidence: Math.max(0, Math.min(1, Number(candidate.confidence) || fallback.confidence)),
     source: 'model',
@@ -251,6 +273,7 @@ export function buildTaskDecisionMessages(input = {}) {
 - acceptanceCriteria 描述最终可验收结果，不能把“调用了工具”“尝试了”当作完成。
 - requiredConstraints 必须保留用户原话中的对象、地点、时间、指定工具和交付格式，不得为了缩短任务而删除条件。
 - primaryRoute 只选第一条最有效路线；Skill 是可选能力，不是所有任务的必经步骤。
+- deliverableType 必须按最终结果选择：普通回答 answer、真实文件 file、连接验证 connection、实际动作 operation、方案判断 decision，混合任务 mixed。不要把所有执行任务都标记成 file。
 - decisionReason 只写一句可展示依据，不输出隐藏思维过程。`,
     },
     {
@@ -276,6 +299,7 @@ export function buildTaskContract(decision, taskExperience = '') {
 模式：${decision.mode}
 真实目标：${decision.goal}
 首选路线：${decision.primaryRoute}
+交付类型：${decision.deliverableType || 'mixed'}
 不可丢失条件：
 ${constraints || '1. 以用户原始请求的完整语义为准'}
 完成标准：

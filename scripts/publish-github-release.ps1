@@ -87,6 +87,8 @@ if (-not $SkipTests) {
     'lint',
     'verify:execution-controller',
     'verify:execution-evidence',
+    'verify:unified-turn-runtime',
+    'verify:agent-trajectory-suite',
     'verify:agent-kernel',
     'verify:dispatch-intelligence',
     'verify:foundation',

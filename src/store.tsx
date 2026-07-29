@@ -49,6 +49,7 @@ import { buildLayeredMemoryContext } from './data/layeredMemory';
 import { classifyTeamMention } from './engine/teamMentionRouting.mjs';
 import { cleanExecutionDisplay } from './engine/executionDisplay.mjs';
 import { classifyLocalOfficeQuery, formatLocalOfficeAnswer } from './engine/officeDirectory';
+import { getRegisteredTools } from './engine/toolCatalog';
 
 // ===== Action =====
 type Action =
@@ -1606,7 +1607,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [state.taskRuns, state.employees, dispatch]);
 
-  const startTaskRun = async (teamId: string, request: string, employeeIds: string[], sourceMessageId?: string, attachments?: import('./data/hermesClient').Attachment[], explicitSkillRefs: import('./types').SkillReference[] = []) => {
+  const startTaskRun = async (teamId: string, request: string, employeeIds: string[], sourceMessageId?: string, attachments?: import('./data/hermesClient').Attachment[], explicitSkillRefs: import('./types').SkillReference[] = [], taskDecision?: import('./engine/taskDecisionKernel.mjs').TaskDecision) => {
     const current = stateRef.current;
     const team = current.teams.find((item) => item.id === teamId);
     if (!team) return;
@@ -1614,7 +1615,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const skillRefs = explicitSkillRefs.length ? explicitSkillRefs : await matchSkills(request);
     const skillBundle = await buildSkillContextWithEvidence(skillRefs);
     const skillContext = skillBundle.context;
-    const run = createTaskRun(team, current.employees, request, plan, sourceMessageId, skillRefs);
+    const run = createTaskRun(team, current.employees, request, plan, sourceMessageId, skillRefs, undefined, taskDecision);
     const historyMatches = searchTaskRunHistory(current.taskRuns, request, { teams: current.teams, limit: 4 });
     const historyContext = buildTaskHistoryPrompt(historyMatches);
     const layeredMemoryContext = await buildLayeredMemoryContext({ query: request, teamId, limit: 18 });
@@ -2031,17 +2032,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return;
         }
       }
-      const recentSupervisorPlan = team.chatMessages.slice(-6).some((message) =>
-        message.authorId === 'assistant' && /交给|分派|安排|负责|编剧|推进/.test(message.content),
-      );
-      const continuesSupervisorPlan = recentSupervisorPlan && /^(再|继续|按|那就|开始|出一)/.test(content.trim());
-      // A roll-call/status request is harmless coordination and should be
-      // actioned immediately by the supervisor without a second confirmation.
-      const teamCheckRequested = /报数|报个数|数数|汇报.*(?:职责|职能|状态)|(?:职责|职能).*汇报|在线情况/u.test(content);
-      const actionableRequest = /帮|请|安排|制作|起草|重写|改写|重新|写|生成|开发|设计|分析|优化|修复|检查|审核|测试|整理|调研|创建|完成|执行|做|出一份|产出|输出|脚本|剧本|文案|方案|报告|各位/u.test(content);
-      const mayDelegate = teamCheckRequested || continuesSupervisorPlan || actionableRequest;
       const taskRequest = buildTeamTaskRequest(team, content);
-      const requestedMemberIds = mayDelegate ? matchTeamMembers(team, current.employees, taskRequest, directMentions) : [];
+      const taskDecision = await client.compileTaskDecision([
+        ...team.chatMessages.slice(-8).map((message) => ({
+          role: message.roleId === 'human' ? 'user' as const : 'assistant' as const,
+          content: message.content,
+        })),
+        { role: 'user', content },
+      ], getRegisteredTools(), client.getAssistantModel());
+      const mayDelegate = taskDecision.decision.mode === 'execute';
+      const selectionRequest = [taskRequest, ...(taskDecision.decision.requiredCapabilities ?? [])].filter(Boolean).join('\n所需能力：');
+      const requestedMemberIds = mayDelegate ? matchTeamMembers(team, current.employees, selectionRequest, directMentions) : [];
       const planned = requestedMemberIds.length > 0 ? buildTaskPlan(team, current.employees, taskRequest, requestedMemberIds) : [];
       if (planned.length > 0) {
         const planText = planned.map((step) => {
@@ -2075,7 +2076,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         });
       }
       if (!requestedMemberIds.length) return;
-      void startTaskRun(teamId, taskRequest, requestedMemberIds, messageId, attachments, skillRefs);
+      void startTaskRun(teamId, taskRequest, requestedMemberIds, messageId, attachments, skillRefs, taskDecision.decision);
     })();
   };
 
