@@ -4,7 +4,7 @@ const PLAN_VERSION = 1;
 const MODES = new Set(['conversation', 'answer', 'execute']);
 const ROUTES = new Set([
   'direct_answer', 'web_search', 'inspect_connectors', 'read_file', 'list_files',
-  'search_skills', 'write_file', 'run_command', 'team_dispatch', 'general_tools',
+  'search_skills', 'install_skill', 'write_file', 'run_command', 'team_dispatch', 'general_tools',
 ]);
 const STEP_TYPES = new Set(['tool', 'connector', 'review', 'approval', 'human', 'composite']);
 

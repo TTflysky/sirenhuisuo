@@ -1,6 +1,6 @@
 const assert = require('assert/strict');
 const { spawnSync } = require('child_process');
-const { verifyConnectorAdapter, verifyIma, IMA_ENDPOINT } = require('../electron/connectorAdapters.cjs');
+const { invokeIma, verifyConnectorAdapter, verifyIma, IMA_ENDPOINT } = require('../electron/connectorAdapters.cjs');
 const { buildPowerShellCommand } = require('../electron/commandShell.cjs');
 
 function response(status, body) {
@@ -26,6 +26,25 @@ async function run() {
   assert.equal(JSON.stringify(success).includes('client-secret-value'), false);
   assert.equal(JSON.stringify(success).includes('api-secret-value'), false);
   assert.equal(JSON.stringify(success).includes('must-not-leak'), false);
+
+  let actionRequest;
+  const action = await invokeIma('search_knowledge', { query: '项目规范', knowledgeBaseId: 'kb-1' }, { clientId: 'client-secret-value', apiKey: 'api-secret-value' }, {
+    retryDelaysMs: [0],
+    fetchImpl: async (url, options) => {
+      actionRequest = { url, options };
+      return response(200, { code: 0, msg: 'success', data: { info_list: [{ media_id: 'm-1', title: '规范', headers: { Authorization: 'private' } }] } });
+    },
+  });
+  assert.equal(action.ok, true);
+  assert.equal(action.action, 'search_knowledge');
+  assert.equal(actionRequest.url, 'https://ima.qq.com/openapi/wiki/v1/search_knowledge');
+  assert.deepEqual(JSON.parse(actionRequest.options.body), { query: '项目规范', cursor: '', knowledge_base_id: 'kb-1' });
+  assert.equal(action.data.info_list[0].headers, '[已脱敏]');
+  assert.equal(JSON.stringify(action).includes('api-secret-value'), false);
+
+  const missingActionArg = await invokeIma('search_knowledge', { query: '项目规范' }, { clientId: 'client', apiKey: 'secret' }, { retryDelaysMs: [0] });
+  assert.equal(missingActionArg.stage, 'configuration');
+  assert.match(missingActionArg.error, /知识库 ID/u);
 
   let attempts = 0;
   const retried = await verifyIma({ clientId: 'client', apiKey: 'secret' }, {

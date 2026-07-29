@@ -14,7 +14,7 @@ const NATIVE_TOOL_DEFINITIONS = [
   tool('read_web_page', '读取指定 HTTP/HTTPS 网页正文。', { url: stringField('完整网页地址') }, ['url']),
   tool('search_skills', '搜索已安装 Skill。', { query: stringField('任务或技能关键词') }, ['query']),
   tool('read_skill', '读取已安装 Skill 的完整说明。', { id: stringField('Skill ID') }, ['id']),
-  tool('install_skill', '从可信 HTTPS/GitHub/ZIP 来源安装完整 Skill。', {
+  tool('install_skill', '使用客户端原生安装器从可信 HTTPS、GitHub、SkillHub 或 ZIP 来源安装完整 Skill；禁止改用 skillhub 命令。', {
     sourceUrl: stringField('官方来源地址'), name: stringField('可选名称'),
   }, ['sourceUrl']),
   tool('inspect_connectors', '检查已配置连接器的真实状态，不返回密钥。', { query: stringField('可选服务名') }, []),
@@ -287,7 +287,11 @@ function createNativeToolRuntime(options) {
           return failed(name, `等待用户批准安装 Skill：${String(args.sourceUrl).slice(0, 500)}`, { awaitingApproval: true });
         }
         const result = await options.installSkill(projectRoot, { sourceUrl: args.sourceUrl, name: args.name });
-        return result.ok ? succeeded(name, `Skill 已安装：${result.skill?.name || result.skill?.id || args.name || args.sourceUrl}`) : failed(name, result.error || 'Skill 安装失败');
+        return result.ok
+          ? succeeded(name, `Skill 已安装。\nID: ${result.skill?.id || ''}\n名称: ${result.skill?.name || args.name || args.sourceUrl}\n来源: ${result.resolvedUrl || args.sourceUrl}`, {
+            skill: { id: result.skill?.id, name: result.skill?.name || args.name, sourceUrl: result.resolvedUrl || args.sourceUrl, verified: true },
+          })
+          : failed(name, result.error || 'Skill 安装失败');
       }
       if (name === 'inspect_connectors') {
         const rows = (context.connectors || []).filter((item) => connectorMatches(item, args.query)).map((connector) => {
@@ -343,6 +347,7 @@ function createNativeToolRuntime(options) {
       if (name === 'run_command') {
         const command = String(args.cmd || '').trim();
         if (!command) return failed(name, '命令不能为空');
+        if (isSkillHubCliCommand(command)) return failed(name, 'SkillHub CLI 路线已停用：Windows 的 skillhub.bat 可能依赖不可用的 python3。请直接调用客户端原生 install_skill，安装不依赖终端命令。');
         if (containsSensitiveLiteral(command)) return failed(name, '命令中包含疑似明文密钥、Token 或密码，已拒绝执行。请改用连接器凭据或受限环境变量。');
         const policy = context.executionPolicy || {};
         if (policy.approvalMode === 'ask' || (policy.approvalMode !== 'full' && !isRoutineCommand(command))) {
@@ -371,7 +376,8 @@ function createNativeToolRuntime(options) {
 function connectionEvidence(connector, action, ok) {
   return { connection: { connectorId: connector.id, connectorLabel: connector.label, action, ok, verified: ok, checkedAt: Date.now() } };
 }
+function isSkillHubCliCommand(command) { return /(?:^|[;&|]\s*)skillhub(?:\.bat)?\s+(?:install|update)\b/iu.test(String(command || '').trim()); }
 function succeeded(name, output, structuredEvidence) { return { name, success: true, output: String(output || ''), structuredEvidence }; }
 function failed(name, output, metadata) { return { name, success: false, output: String(output || ''), ...metadata }; }
 
-module.exports = { NATIVE_TOOL_DEFINITIONS, createNativeToolRuntime, redact, isRoutineCommand, containsSensitiveLiteral };
+module.exports = { NATIVE_TOOL_DEFINITIONS, createNativeToolRuntime, redact, isRoutineCommand, containsSensitiveLiteral, isSkillHubCliCommand };

@@ -10,7 +10,7 @@ const { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill,
 const { testObsidianVault, searchObsidianVault, readObsidianNote, fetchKnowledgeUrl, searchWeb } = require('./knowledge.cjs');
 const { version: APP_VERSION } = require('../package.json');
 const { sanitizeInjectedEnv, redactInjectedValues } = require('./secretSafety.cjs');
-const { verifyConnectorAdapter } = require('./connectorAdapters.cjs');
+const { invokeConnectorAdapter, verifyConnectorAdapter } = require('./connectorAdapters.cjs');
 const { buildPowerShellCommand } = require('./commandShell.cjs');
 const { createTaskRuntimeStore } = require('./taskRuntimeStore.cjs');
 const { createTaskWorker } = require('./taskWorker.cjs');
@@ -62,7 +62,7 @@ const nativeToolRuntime = createNativeToolRuntime({
   fetchImpl: (url, options) => net.fetch(url, options),
   listSkills,
   readSkill,
-  installSkill,
+  installSkill: (projectRoot, input) => installSkill(projectRoot, input, { fetchImpl: (url, options) => net.fetch(url, options) }),
   verifyConnectorAdapter,
   testObsidianVault,
   searchObsidianVault,
@@ -942,11 +942,11 @@ function createWindow() {
     catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
   });
   ipcMain.handle('skills:install', async (_event, input) => {
-    try { return await installSkill(path.resolve(__dirname, '..'), input); }
+    try { return await installSkill(path.resolve(__dirname, '..'), input, { fetchImpl: (url, options) => net.fetch(url, options) }); }
     catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
   });
   ipcMain.handle('skills:inspectSource', async (_event, sourceUrl) => {
-    try { return { ok: true, inspection: await inspectSkillSource(sourceUrl) }; }
+    try { return { ok: true, inspection: await inspectSkillSource(sourceUrl, { fetchImpl: (url, options) => net.fetch(url, options) }) }; }
     catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
   });
   ipcMain.handle('skills:repair', async (_event, id) => {
@@ -1062,6 +1062,11 @@ function createWindow() {
   ipcMain.handle('connector:verifyPreset', async (_event, input) => {
     const result = await verifyConnectorAdapter(input, { fetchImpl: (url, options) => net.fetch(url, options) });
     log.info(`[connectorAdapter] adapter=${result.adapter ?? input?.adapter ?? 'unknown'} stage=${result.stage} ok=${result.ok} attempts=${result.attempts ?? 0} latencyMs=${result.latencyMs ?? 0} http=${result.httpStatus ?? 0}`);
+    return result;
+  });
+  ipcMain.handle('connector:invokePreset', async (_event, input) => {
+    const result = await invokeConnectorAdapter(input, { fetchImpl: (url, options) => net.fetch(url, options) });
+    log.info(`[connectorAdapter] adapter=${result.adapter ?? input?.adapter ?? 'unknown'} action=${result.action ?? input?.action ?? 'unknown'} stage=${result.stage} ok=${result.ok} attempts=${result.attempts ?? 0} latencyMs=${result.latencyMs ?? 0} http=${result.httpStatus ?? 0}`);
     return result;
   });
   ipcMain.handle('knowledge:searchWeb', async (_event, query) => {

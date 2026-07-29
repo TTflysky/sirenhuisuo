@@ -22,6 +22,10 @@ export interface ConnectorPresetVerificationResult {
   message?: string;
   error?: string;
 }
+export interface ConnectorPresetActionResult extends ConnectorPresetVerificationResult {
+  action?: string;
+  data?: unknown;
+}
 
 export interface FsEntry {
   name: string;
@@ -442,6 +446,7 @@ declare global {
     // 连接器 API 调用（主进程代理 HTTP 请求）
     connectorCall: (opts: ConnectorCallOpts) => Promise<ConnectorCallResult>;
     connectorVerifyPreset: (input: { adapter: string; credentials?: Record<string, string> }) => Promise<ConnectorPresetVerificationResult>;
+    connectorInvokePreset: (input: { adapter: string; action: string; args?: Record<string, string>; credentials?: Record<string, string> }) => Promise<ConnectorPresetActionResult>;
     knowledgePickObsidian: () => Promise<KnowledgeVaultResult & { canceled?: boolean }>;
     knowledgeTestObsidian: (root: string) => Promise<KnowledgeVaultResult>;
     knowledgeSearchObsidian: (root: string, query: string) => Promise<{ ok: boolean; results?: Array<{ path: string; title: string; snippet: string }>; scanned?: number; error?: string }>;

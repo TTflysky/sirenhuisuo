@@ -1,5 +1,13 @@
 # 更新日志
 
+## v0.30.0 (2026-07-29)
+
+### Skill installation and IMA connector reliability
+- Added a client-native SkillHub installation route. Explicit SkillHub requests no longer fall through to `skillhub.bat` or an unavailable `python3` executable.
+- Added SkillHub download URL handling, atomic ZIP installation, post-install read-back verification, and clear failure stage reporting.
+- Added native IMA knowledge-base and note actions with bounded retries, latency evidence, business-error reporting, and secret redaction.
+- Added regression coverage for the native Skill route, IMA actions, retry behavior, malformed responses, and shell exit-code propagation.
+
 ## v0.29.0 (2026-07-29)
 
 ### 分层记忆与双重经验

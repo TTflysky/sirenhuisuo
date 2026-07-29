@@ -924,6 +924,9 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
       case 'run_command': {
         const cmd = (args.cmd ?? '').trim();
         if (!cmd) return { toolCallId: id, name, success: false, output: '命令不能为空' };
+        if (/(?:^|[;&|]\s*)skillhub(?:\.bat)?\s+(?:install|update)\b/iu.test(cmd)) {
+          return { toolCallId: id, name, success: false, output: 'SkillHub CLI 路线已停用：当前 Windows 包装脚本可能依赖不可用的 python3。请直接调用客户端原生 install_skill；不要要求用户修改命令权限。' };
+        }
         if (containsInlineSecret(cmd)) {
           return { toolCallId: id, name, success: false, output: '命令中包含疑似明文密钥、Token 或密码，已阻止执行。请把凭据保存到连接器配置，再通过 connector 参数以临时环境变量注入；密钥不会进入聊天和日志。' };
         }

@@ -75,9 +75,10 @@ export interface ConnectorAction {
   permission?: 'read' | 'write' | 'admin';
   sideEffect?: boolean;
   outputSchema?: Record<string, unknown>;
-  source?: 'preset-http' | 'mcp-discovered' | 'knowledge-local';
+  source?: 'preset-http' | 'preset-adapter' | 'mcp-discovered' | 'knowledge-local';
   mcpToolName?: string;
-  local?: 'knowledge-fetch-url' | 'obsidian-search' | 'obsidian-read';
+  local?: 'knowledge-fetch-url' | 'obsidian-search' | 'obsidian-read' | 'preset-adapter';
+  adapterAction?: string;
   /** HTTP 请求配置 */
   http?: {
     method: 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH';
@@ -182,7 +183,50 @@ export const CONNECTOR_PRESETS: ConnectorPreset[] = [
       { key: 'apiKey', label: 'API Key', required: true, secret: true, envName: 'IMA_API_KEY', placeholder: '从 IMA 官方页面获取' },
       { key: 'clientId', label: 'Client ID', required: true, secret: false, envName: 'IMA_CLIENT_ID', placeholder: '从同一凭据窗口获取' },
     ],
-    actions: [],
+    actions: [
+      {
+        name: 'search_knowledge_base', description: '列出或按名称搜索 IMA 知识库，返回知识库 ID 供后续检索',
+        permission: 'read', sideEffect: false, source: 'preset-adapter', local: 'preset-adapter', adapterAction: 'search_knowledge_base',
+        parameters: { type: 'object', properties: {
+          query: { type: 'string', description: '知识库名称关键词；留空列出可见知识库' },
+          cursor: { type: 'string', description: '可选，翻页游标' }, limit: { type: 'string', description: '可选，1-20，默认 20' },
+        }, required: [] },
+      },
+      {
+        name: 'search_knowledge', description: '在指定 IMA 知识库中搜索文件、网页、笔记或文件夹',
+        permission: 'read', sideEffect: false, source: 'preset-adapter', local: 'preset-adapter', adapterAction: 'search_knowledge',
+        parameters: { type: 'object', properties: {
+          knowledgeBaseId: { type: 'string', description: 'search_knowledge_base 返回的知识库 ID' },
+          query: { type: 'string', description: '搜索关键词' }, cursor: { type: 'string', description: '可选，翻页游标' },
+        }, required: ['knowledgeBaseId', 'query'] },
+      },
+      {
+        name: 'get_knowledge_list', description: '浏览指定 IMA 知识库或文件夹中的内容列表',
+        permission: 'read', sideEffect: false, source: 'preset-adapter', local: 'preset-adapter', adapterAction: 'get_knowledge_list',
+        parameters: { type: 'object', properties: {
+          knowledgeBaseId: { type: 'string', description: '知识库 ID' }, folderId: { type: 'string', description: '可选，文件夹 ID' },
+          cursor: { type: 'string', description: '可选，翻页游标' }, limit: { type: 'string', description: '可选，1-50，默认 20' },
+        }, required: ['knowledgeBaseId'] },
+      },
+      {
+        name: 'get_media_info', description: '读取 IMA 知识条目的媒体类型和可访问地址',
+        permission: 'read', sideEffect: false, source: 'preset-adapter', local: 'preset-adapter', adapterAction: 'get_media_info',
+        parameters: { type: 'object', properties: { mediaId: { type: 'string', description: '搜索或列表结果中的媒体 ID' } }, required: ['mediaId'] },
+      },
+      {
+        name: 'search_note', description: '按标题或正文搜索当前 IMA 账号中的笔记',
+        permission: 'read', sideEffect: false, source: 'preset-adapter', local: 'preset-adapter', adapterAction: 'search_note',
+        parameters: { type: 'object', properties: {
+          query: { type: 'string', description: '搜索关键词' }, searchType: { type: 'string', description: 'title 或 content', enum: ['title', 'content'] },
+          start: { type: 'string', description: '可选，起始序号，默认 0' },
+        }, required: ['query'] },
+      },
+      {
+        name: 'get_note_content', description: '读取本人 IMA 笔记的纯文本内容',
+        permission: 'read', sideEffect: false, source: 'preset-adapter', local: 'preset-adapter', adapterAction: 'get_note_content',
+        parameters: { type: 'object', properties: { noteId: { type: 'string', description: '搜索结果中的笔记 ID' } }, required: ['noteId'] },
+      },
+    ],
   },
   {
     key: 'qq-mail',
@@ -627,6 +671,19 @@ export async function executeConnectorAction(
     const result = await window.electronAPI?.knowledgeReadObsidian?.(connector.localPath, args.path ?? '');
     if (!result?.ok) throw new Error(result?.error ?? 'Obsidian 笔记读取失败');
     return `笔记：${result.path}\n\n${result.content ?? ''}`.slice(0, 50000);
+  }
+  if (action.local === 'preset-adapter') {
+    const adapter = connector.mcpServerName === 'ima-skill' ? 'ima' : connector.id;
+    const actionName = action.adapterAction || action.name;
+    const result = await window.electronAPI?.connectorInvokePreset?.({ adapter, action: actionName, args, credentials: connector.credentials });
+    if (!result?.ok) throw new Error(`${connector.label}调用失败（${result?.stage ?? 'adapter'}）：${result?.error ?? '服务没有返回可用结果'}`);
+    return [
+      `${connector.label}真实调用成功`,
+      `操作：${actionName}`,
+      `耗时：${result.latencyMs ?? 0}ms；尝试：${result.attempts ?? 1} 次`,
+      '',
+      JSON.stringify(result.data ?? {}, null, 2),
+    ].join('\n').slice(0, 50000);
   }
   if (!action.http) {
     if (connector.type !== 'mcp' || !connector.baseUrl || !action.mcpToolName) {

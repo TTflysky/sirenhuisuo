@@ -37,6 +37,11 @@ function dryRunConnector(connector: Connector, action: ConnectorAction): Record<
     if (!runtime) throw new Error('Obsidian 读取运行时不可用');
     return { runtime: 'obsidian', operation: action.local };
   }
+  if (action.local === 'preset-adapter') {
+    if (!window.electronAPI?.connectorInvokePreset) throw new Error('客户端连接器适配器不可用');
+    if (!action.adapterAction) throw new Error('连接器操作没有绑定适配器 Action');
+    return { runtime: 'preset-adapter', operation: action.adapterAction };
+  }
   if (action.http) {
     if (!connector.baseUrl) throw new Error('连接器服务地址未配置');
     try { new URL(connector.baseUrl); } catch { throw new Error('连接器服务地址格式无效'); }

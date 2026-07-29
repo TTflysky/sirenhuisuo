@@ -60,6 +60,7 @@ import {
 } from '../engine/taskDecisionKernel.mjs';
 import { assessTaskCompletion, validateToolCallAgainstGoal } from '../engine/taskFidelity.mjs';
 import { buildTaskLearningContext, recordTaskLearning } from '../engine/taskLearningMemory';
+import { isSkillInstallOnlyRequest, resolveSkillInstallRequest } from '../engine/skillInstallRouting.mjs';
 import {
   buildTaskSummaryMaterial,
   restoreTaskContext,
@@ -1279,6 +1280,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     && originalUserText !== latestUserText
     && isActionableCapabilityCorrection(latestUserText);
   const isInstallationTask = /安装|装好|装上|安装包|部署/u.test(originalUserText);
+  const resolvedSkillInstall = resolveSkillInstallRequest(originalUserText);
   const connectorTask = isConnectorTask(originalUserText) || taskDecision.primaryRoute === 'inspect_connectors';
   const connectorSetupTask = isConnectorSetupRequest(originalUserText) || taskDecision.primaryRoute === 'inspect_connectors';
   const isSkillInstallation = isInstallationTask && !connectorTask && /skill|技能|插件/iu.test(originalUserText);
@@ -1372,6 +1374,62 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     }));
   };
   onExecutionState?.(executionState);
+
+  // Explicit Skill installation requests are executed by the client before the
+  // model loop. This prevents instruction pages from diverting Windows clients
+  // into a broken Python/CLI route and gives every chat surface the same result.
+  if (!conversationOnly && resolvedSkillInstall?.sourceUrl && tools.some((tool) => tool?.function?.name === 'install_skill')) {
+    const { executeTool } = await import('../engine/tools');
+    const runRequiredSkillTool = async (name: 'install_skill' | 'read_skill', args: Record<string, string>) => {
+      const argumentsText = JSON.stringify(args);
+      onToolCall?.(name, argumentsText);
+      const result = await executeTool({
+        id: `required-skill-${name}-${Date.now()}`,
+        name,
+        args,
+        scope,
+        workspaceId: opts.workspaceId,
+      });
+      const useful = isUsefulToolOutcome(name, result.success, result.output, originalUserText);
+      observeToolOutcome(name, argumentsText, result.output, useful, name === 'install_skill' ? 'skill_install' : 'skill_read');
+      onToolResult?.(name, argumentsText, result.output, useful, result.protocolEvidence, result.structuredEvidence);
+      callLog.push({ name, args: argumentsText, result: result.output.slice(0, 1200), success: useful });
+      toolResultCache.set(canonicalToolCallKey(name, argumentsText), { output: result.output.slice(0, 6000), success: useful });
+      toolCallsThisPhase += 1;
+      totalToolAttempts += 1;
+      return { result, useful };
+    };
+    const installed = await runRequiredSkillTool('install_skill', {
+      sourceUrl: resolvedSkillInstall.sourceUrl,
+      ...(resolvedSkillInstall.name ? { name: resolvedSkillInstall.name } : {}),
+    });
+    const installedId = installed.result.output.match(/(?:^|\n)ID:\s*([^\r\n]+)/u)?.[1]?.trim();
+    const readBack = installed.useful && installedId
+      ? await runRequiredSkillTool('read_skill', { id: installedId })
+      : undefined;
+    const verified = installed.useful && Boolean(readBack?.useful);
+    const directResult = verified
+      ? `已经安装好了。\n\nSkill：${resolvedSkillInstall.name || installedId}\n安装位置：太极的“我的技能”\n验收结果：客户端已重新读取完整规则，技能可以被助理、员工单聊和团队任务检索使用。`
+      : installed.useful
+        ? `还没有完成验收。\n\n技能文件已经写入，但客户端没有成功重新读取规则：${readBack?.result.output || '安装器没有返回可读取的技能 ID'}。现有文件已保留。`
+        : `还没有安装好。\n\n客户端原生安装器已经实际执行，但失败在下载或写入阶段：${installed.result.output}`;
+    primaryRoutePending = false;
+    currentTurns.push({
+      role: 'system',
+      content: `## 客户端强制 Skill 安装结果\n${directResult}\n\n禁止改用 skillhub 命令、python3 或 run_command 重复安装。后续只能依据这个真实结果继续。`,
+    });
+    if (isSkillInstallOnlyRequest(originalUserText) || !installed.useful) {
+      publishExecutionState(evaluateExecutionConclusion(executionState, { content: directResult, reviewed: true }));
+      return {
+        content: directResult,
+        usage: totalUsage,
+        contextUsage: latestContextUsage,
+        model: 'client-skill-installer',
+        executionState,
+        taskDecision,
+      };
+    }
+  }
 
   // Connector setup and verification have client-enforced gates. The model receives
   // the evidence after the checks; it cannot replace them with a narrated checklist.

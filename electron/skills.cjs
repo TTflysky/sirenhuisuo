@@ -14,6 +14,18 @@ const MAX_SKILL_ARCHIVE_BYTES = 12 * 1024 * 1024;
 const MAX_SKILL_EXPANDED_BYTES = 16 * 1024 * 1024;
 const SKILL_DRAFT_SCHEMA = 1;
 
+function isSkillHubDownloadUrl(value) {
+  try {
+    const parsed = new URL(String(value || ''));
+    return parsed.protocol === 'https:'
+      && parsed.hostname.toLocaleLowerCase() === 'api.skillhub.cn'
+      && parsed.pathname === '/api/v1/download'
+      && /^@?[a-z0-9][a-z0-9._-]{0,63}(?:\/[a-z0-9][a-z0-9._-]{0,79})?$/iu.test(parsed.searchParams.get('slug') || '');
+  } catch {
+    return false;
+  }
+}
+
 function uniqueRoots(projectRoot) {
   const userProfile = process.env.USERPROFILE || process.env.HOME || '';
   return [...new Set([
@@ -262,13 +274,13 @@ function githubDirectoryCandidate(inputUrl) {
   return `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo.replace(/\.git$/i, ''))}/contents/${skillPath.map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(branch)}`;
 }
 
-async function downloadSkillDirectory(sourceUrl, targetDir) {
+async function downloadSkillDirectory(sourceUrl, targetDir, fetchImpl = globalThis.fetch) {
   const rootUrl = githubDirectoryCandidate(sourceUrl);
   if (!rootUrl) return { installMode: 'single-file', files: 1 };
   let totalBytes = 0;
   let fileCount = 0;
   const download = async (directoryUrl, relativeDir = '') => {
-    const response = await fetch(directoryUrl, {
+    const response = await fetchImpl(directoryUrl, {
       headers: { 'User-Agent': 'Taiji-Skill-Installer/1.0', Accept: 'application/vnd.github+json' },
       signal: AbortSignal.timeout(SKILL_DOWNLOAD_TIMEOUT_MS),
     });
@@ -283,7 +295,7 @@ async function downloadSkillDirectory(sourceUrl, targetDir) {
       if (!target.startsWith(`${targetDir}${path.sep}`)) throw new Error('技能目录包含不安全路径');
       if (entry.type === 'dir') { await download(entry.url, relative); continue; }
       if (entry.type !== 'file' || !entry.download_url) continue;
-      const fileResponse = await fetch(entry.download_url, { signal: AbortSignal.timeout(SKILL_DOWNLOAD_TIMEOUT_MS) });
+      const fileResponse = await fetchImpl(entry.download_url, { signal: AbortSignal.timeout(SKILL_DOWNLOAD_TIMEOUT_MS) });
       if (!fileResponse.ok) throw new Error(`无法下载技能文件：${entry.name}`);
       const content = Buffer.from(await fileResponse.arrayBuffer());
       totalBytes += content.length;
@@ -298,14 +310,14 @@ async function downloadSkillDirectory(sourceUrl, targetDir) {
   return { installMode: 'directory', files: fileCount };
 }
 
-async function downloadSkillMarkdown(sourceUrl) {
+async function downloadSkillMarkdown(sourceUrl, fetchImpl = globalThis.fetch) {
   let parsed;
   try { parsed = new URL(sourceUrl); } catch { throw new Error('技能地址不是有效 URL'); }
   if (parsed.protocol !== 'https:') throw new Error('技能地址必须使用 HTTPS');
   let lastError = '下载失败';
   for (const candidate of githubCandidates(parsed.toString())) {
     try {
-      const response = await fetch(candidate, {
+      const response = await fetchImpl(candidate, {
         headers: { 'User-Agent': 'Hermes-Office-Skill-Installer/1.0', Accept: 'application/vnd.github.raw+json,text/markdown,text/plain,*/*' },
         signal: AbortSignal.timeout(SKILL_DOWNLOAD_TIMEOUT_MS),
       });
@@ -475,8 +487,8 @@ async function createSkillStage(skillsRoot, slug) {
   return fs.mkdtemp(path.join(skillsRoot, `.install-${slug}-`));
 }
 
-async function installZipSkill(projectRoot, sourceUrl, requestedName) {
-  const response = await fetch(sourceUrl, {
+async function installZipSkill(projectRoot, sourceUrl, requestedName, fetchImpl = globalThis.fetch) {
+  const response = await fetchImpl(sourceUrl, {
     headers: { 'User-Agent': 'Taiji-Skill-Installer/1.0', Accept: 'application/zip,application/octet-stream,*/*' },
     signal: AbortSignal.timeout(SKILL_DOWNLOAD_TIMEOUT_MS * 2),
   });
@@ -535,15 +547,19 @@ async function installZipSkill(projectRoot, sourceUrl, requestedName) {
   }
 }
 
-async function installSkill(projectRoot, input) {
+async function installSkill(projectRoot, input, options = {}) {
   const sourceUrl = typeof input?.sourceUrl === 'string' ? input.sourceUrl.trim() : '';
   const requestedName = typeof input?.name === 'string' ? input.name.trim().slice(0, 80) : '';
   if (!sourceUrl || sourceUrl.length > 2048) throw new Error('请填写有效的技能地址');
   let parsedSource;
   try { parsedSource = new URL(sourceUrl); } catch { throw new Error('技能地址不是有效 URL'); }
   if (parsedSource.protocol !== 'https:') throw new Error('技能地址必须使用 HTTPS');
-  if (/\.zip$/i.test(parsedSource.pathname)) return installZipSkill(projectRoot, parsedSource.toString(), requestedName);
-  const { content, resolvedUrl } = await downloadSkillMarkdown(sourceUrl);
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
+  if (typeof fetchImpl !== 'function') throw new Error('当前环境没有可用的技能下载运行时');
+  if (/\.zip$/i.test(parsedSource.pathname) || isSkillHubDownloadUrl(parsedSource.toString())) {
+    return installZipSkill(projectRoot, parsedSource.toString(), requestedName, fetchImpl);
+  }
+  const { content, resolvedUrl } = await downloadSkillMarkdown(sourceUrl, fetchImpl);
   const frontmatter = parseFrontmatter(content);
   const fallbackName = path.basename(new URL(resolvedUrl).pathname, '.md') || 'installed-skill';
   const name = requestedName || frontmatter.name || fallbackName;
@@ -558,7 +574,7 @@ async function installSkill(projectRoot, input) {
   await fs.mkdir(skillsRoot, { recursive: true });
   const stageDir = await createSkillStage(skillsRoot, slug);
   try {
-    const bundle = await downloadSkillDirectory(sourceUrl, stageDir);
+    const bundle = await downloadSkillDirectory(sourceUrl, stageDir, fetchImpl);
     if (bundle.installMode === 'single-file') await fs.writeFile(path.join(stageDir, 'SKILL.md'), content, 'utf8');
     await fs.writeFile(path.join(stageDir, '.taiji-skill.json'), JSON.stringify({
       schema: 1,
@@ -578,14 +594,14 @@ async function installSkill(projectRoot, input) {
   return { ok: true, skill: installed ? (({ _path, ...item }) => item)(installed) : { name, source: slug }, resolvedUrl };
 }
 
-async function inspectSkillSource(sourceUrl) {
+async function inspectSkillSource(sourceUrl, options = {}) {
   if (typeof sourceUrl !== 'string' || !sourceUrl.trim() || sourceUrl.length > 2048) throw new Error('请填写有效的技能地址');
   const parsed = new URL(sourceUrl.trim());
   if (parsed.protocol !== 'https:') throw new Error('技能地址必须使用 HTTPS');
-  if (/\.zip$/i.test(parsed.pathname)) {
+  if (/\.zip$/i.test(parsed.pathname) || isSkillHubDownloadUrl(parsed.toString())) {
     return { name: path.basename(parsed.pathname, '.zip') || 'ZIP Skill', description: 'ZIP 技能包会在安装前检查路径、文件数和解压大小。', installMode: 'zip', requirements: { environmentVariables: [], externalSoftware: [], accountRequired: false, referencedFiles: [], missingFiles: [] } };
   }
-  const { content, resolvedUrl } = await downloadSkillMarkdown(parsed.toString());
+  const { content, resolvedUrl } = await downloadSkillMarkdown(parsed.toString(), options.fetchImpl || globalThis.fetch);
   const frontmatter = parseFrontmatter(content);
   return {
     name: frontmatter.name || path.basename(new URL(resolvedUrl).pathname, '.md') || 'Skill',
@@ -742,4 +758,4 @@ async function reviewSkillDraft(projectRoot, draftId, decision, note = '') {
   return { ok: true, action: proposal.action === 'create' ? 'created' : 'patched', draft: proposal };
 }
 
-module.exports = { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill, inspectSkillSource, repairSkill, createSkillDraft, listSkillDrafts, reviewSkillDraft, validateZipArchive, validateStagedSkill, replaceSkillDirectoryAtomically, MAX_BODY_BYTES };
+module.exports = { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill, inspectSkillSource, repairSkill, createSkillDraft, listSkillDrafts, reviewSkillDraft, validateZipArchive, validateStagedSkill, replaceSkillDirectoryAtomically, isSkillHubDownloadUrl, MAX_BODY_BYTES };

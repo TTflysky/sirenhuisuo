@@ -23,6 +23,12 @@ import {
   normalizeTaskDecision,
 } from '../src/engine/taskDecisionKernel.mjs';
 import {
+  isSkillHubDownloadUrl,
+  isSkillInstallOnlyRequest,
+  resolveSkillInstallRequest,
+  skillHubDownloadUrl,
+} from '../src/engine/skillInstallRouting.mjs';
+import {
   assessEvidenceAlignment,
   assessTaskCompletion,
   extractTaskRequirements,
@@ -30,7 +36,7 @@ import {
   validateToolCallAgainstGoal,
 } from '../src/engine/taskFidelity.mjs';
 
-const allToolNames = ['web_search', 'inspect_connectors', 'read_file', 'list_files', 'search_skills', 'write_file', 'run_command'];
+const allToolNames = ['web_search', 'inspect_connectors', 'read_file', 'list_files', 'search_skills', 'install_skill', 'write_file', 'run_command'];
 
 const webDecision = createFallbackTaskDecision({
   latestMessage: '查一下今天的抖音热度榜，然后给我',
@@ -59,6 +65,27 @@ const outputDecision = createFallbackTaskDecision({
   availableTools: allToolNames,
 });
 assert.equal(outputDecision.primaryRoute, 'write_file');
+
+const skillHubPrompt = '请根据 https://skillhub.cn/install/skillhub.md，安装 grill-me。';
+const skillInstall = resolveSkillInstallRequest(skillHubPrompt);
+assert.deepEqual(skillInstall, {
+  instructionUrl: 'https://skillhub.cn/install/skillhub.md',
+  sourceUrl: 'https://api.skillhub.cn/api/v1/download?slug=grill-me',
+  name: 'grill-me',
+  provider: 'skillhub',
+  slug: 'grill-me',
+});
+assert.equal(skillHubDownloadUrl('grill-me'), skillInstall.sourceUrl);
+assert.equal(isSkillHubDownloadUrl(skillInstall.sourceUrl), true);
+assert.equal(isSkillInstallOnlyRequest(skillHubPrompt), true);
+const skillInstallDecision = createFallbackTaskDecision({ latestMessage: skillHubPrompt, availableTools: allToolNames });
+assert.equal(skillInstallDecision.mode, 'execute');
+assert.equal(skillInstallDecision.primaryRoute, 'install_skill');
+const protectedSkillRoute = normalizeTaskDecision({
+  mode: 'execute', goal: skillHubPrompt, primaryRoute: 'run_command', acceptanceCriteria: ['运行 skillhub 命令'],
+  requiresEvidence: true, needsUser: false, missingUserCondition: '', searchQuery: '', decisionReason: '误走 CLI', confidence: 0.9,
+}, { latestMessage: skillHubPrompt, availableTools: allToolNames });
+assert.equal(protectedSkillRoute.primaryRoute, 'install_skill', 'Explicit Skill URLs must use the native installer');
 
 const chatDecision = createFallbackTaskDecision({
   latestMessage: '我今天有点累，先陪我聊两句',
@@ -210,6 +237,8 @@ assert.match(clientSource, /maxTotalToolAttempts = connectorSetupTask \? 24 : 96
 assert.match(clientSource, /export function isConnectorSetupRequest/u);
 assert.match(clientSource, /export function isConnectorVerificationOnlyRequest/u);
 assert.match(clientSource, /model: 'client-connector-adapter'/u);
+assert.match(clientSource, /model: 'client-skill-installer'/u);
+assert.match(clientSource, /required-skill-/u);
 assert.match(clientSource, /客户端已自动阅读/u);
 assert.match(clientSource, /isResearchDeliveryDeflection/u);
 assert.match(clientSource, /验证\|测试\|检查\|诊断\|连通\|可用\|能不能用/u);
@@ -231,7 +260,10 @@ assert.doesNotMatch(connectorModalSource, /调用 run_command 执行该命令/u)
 assert.doesNotMatch(connectorModalSource, /调用 read_skill，读取/u);
 assert.match(connectorModalSource, /不要再次调用 inspect_connectors、test_connector 或 read_skill/u);
 const skillsSource = await fs.readFile(new URL('../electron/skills.cjs', import.meta.url), 'utf8');
+const nativeToolSource = await fs.readFile(new URL('../electron/nativeToolRuntime.cjs', import.meta.url), 'utf8');
 assert.match(skillsSource, /referencedPaths/u);
+assert.match(skillsSource, /isSkillHubDownloadUrl/u);
+assert.match(nativeToolSource, /SkillHub CLI 路线已停用/u);
 assert.match(skillsSource, /documents\.push\(\{ path:/u);
 assert.match(toolsSource, /skillInstructionText/u);
 assert.match(clientSource, /respondToSteering/u);

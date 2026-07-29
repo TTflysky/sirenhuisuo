@@ -3,7 +3,7 @@ const crypto = require('crypto');
 const fs = require('fs/promises');
 const os = require('os');
 const path = require('path');
-const { listSkills, readSkill, replaceSkillDirectoryAtomically, validateStagedSkill } = require('../electron/skills.cjs');
+const { inspectSkillSource, isSkillHubDownloadUrl, listSkills, readSkill, replaceSkillDirectoryAtomically, validateStagedSkill } = require('../electron/skills.cjs');
 
 async function writeSkill(directory, { body, mode = 'directory', references = {}, hash } = {}) {
   await fs.mkdir(directory, { recursive: true });
@@ -58,6 +58,12 @@ async function run() {
 
     const leftovers = (await fs.readdir(root)).filter((name) => name.startsWith('.backup-'));
     assert.deepEqual(leftovers, []);
+
+    const skillHubUrl = 'https://api.skillhub.cn/api/v1/download?slug=grill-me';
+    assert.equal(isSkillHubDownloadUrl(skillHubUrl), true);
+    assert.equal(isSkillHubDownloadUrl('https://skillhub.cn/install/skillhub.md'), false);
+    const skillHubInspection = await inspectSkillSource(skillHubUrl);
+    assert.equal(skillHubInspection.installMode, 'zip');
 
     const projectRoot = path.join(root, 'project');
     const bundledSkill = path.join(projectRoot, 'skills', 'ima-test');

@@ -1,5 +1,5 @@
 export type TaskDecisionMode = 'conversation' | 'answer' | 'execute';
-export type TaskPrimaryRoute = 'direct_answer' | 'web_search' | 'inspect_connectors' | 'read_file' | 'list_files' | 'search_skills' | 'write_file' | 'run_command' | 'team_dispatch' | 'general_tools';
+export type TaskPrimaryRoute = 'direct_answer' | 'web_search' | 'inspect_connectors' | 'read_file' | 'list_files' | 'search_skills' | 'install_skill' | 'write_file' | 'run_command' | 'team_dispatch' | 'general_tools';
 export interface TaskDecision {
   mode: TaskDecisionMode;
   goal: string;

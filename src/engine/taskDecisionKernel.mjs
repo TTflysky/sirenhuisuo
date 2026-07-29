@@ -9,6 +9,7 @@ import {
   shouldHoldTaskForFeedback,
 } from './agentGuardrails.mjs';
 import { taskRequirementLabels } from './taskFidelity.mjs';
+import { resolveSkillInstallRequest } from './skillInstallRouting.mjs';
 
 export const TASK_DECISION_TOOL_NAME = 'compile_task_decision';
 
@@ -44,6 +45,7 @@ export const TASK_DECISION_TOOL = {
             'read_file',
             'list_files',
             'search_skills',
+            'install_skill',
             'write_file',
             'run_command',
             'team_dispatch',
@@ -86,6 +88,7 @@ function defaultAcceptance(route, goal) {
   if (route === 'write_file') return ['生成真实文件并登记为产出物', '验证文件可以打开且内容符合要求'];
   if (route === 'run_command') return ['执行实际操作', '根据运行或测试结果验收，不把命令发出等同于完成'];
   if (route === 'search_skills') return ['找到适用能力或确认无需 Skill', '继续完成原始目标，不停在搜索步骤'];
+  if (route === 'install_skill') return ['通过客户端原生安装器写入正确的技能目录', '重新读取已安装 Skill 并确认规则完整'];
   if (route === 'team_dispatch') return ['选择真实存在且合适的成员', '成员产出经过汇总和验收'];
   if (route === 'direct_answer') return ['直接回应当前问题', '结论清楚且不虚构事实'];
   return [`围绕“${clean(goal, 120)}”产生可验证结果`, '对照原始目标复核后再宣布完成'];
@@ -93,6 +96,7 @@ function defaultAcceptance(route, goal) {
 
 function routeForGoal(goal, availableTools) {
   const tools = new Set(availableTools ?? []);
+  if (resolveSkillInstallRequest(goal)?.sourceUrl && tools.has('install_skill')) return 'install_skill';
   if (requiresFreshWebResearch(goal) && tools.has('web_search')) return 'web_search';
   if (/连接器|知识库|MCP|Obsidian|Vault|(?:^|[^a-z])ima(?:[^a-z]|$)/iu.test(goal)
       && /配置|安装|接入|连接|关联|验证|测试|检查|诊断/iu.test(goal)
@@ -184,6 +188,7 @@ export function normalizeTaskDecision(candidate, input = {}) {
   if (mode !== 'execute') primaryRoute = 'direct_answer';
   if (requiresFreshWebResearch(goal)) primaryRoute = 'web_search';
   if (fallback.primaryRoute === 'inspect_connectors') primaryRoute = 'inspect_connectors';
+  if (fallback.primaryRoute === 'install_skill') primaryRoute = 'install_skill';
   const criteria = Array.isArray(candidate.acceptanceCriteria)
     ? candidate.acceptanceCriteria.map((item) => clean(item, 240)).filter(Boolean).slice(0, 6)
     : [];
