@@ -6,6 +6,10 @@ export interface TaskDecision {
   primaryRoute: TaskPrimaryRoute;
   acceptanceCriteria: string[];
   requiredConstraints: string[];
+  deliverables?: Array<{ label: string; format?: string; category?: 'final' | 'working' | 'reference'; required?: boolean }>;
+  requiredCapabilities?: string[];
+  riskLevel?: 'low' | 'normal' | 'high';
+  teamPolicy?: { requiresTeam?: boolean; explicitMemberIds?: string[]; allowDynamicDelegation?: boolean };
   requiresEvidence: boolean;
   needsUser: boolean;
   missingUserCondition: string;

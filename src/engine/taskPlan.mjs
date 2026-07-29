@@ -1,12 +1,13 @@
-const CONTRACT_VERSION = 1;
+const CONTRACT_VERSION = 2;
 const PLAN_VERSION = 1;
 
 const MODES = new Set(['conversation', 'answer', 'execute']);
 const ROUTES = new Set([
   'direct_answer', 'web_search', 'inspect_connectors', 'read_file', 'list_files',
-  'search_skills', 'install_skill', 'write_file', 'run_command', 'team_dispatch', 'general_tools',
+  'search_skills', 'install_skill', 'write_file', 'run_command', 'connector', 'team_dispatch', 'general_tools',
 ]);
 const STEP_TYPES = new Set(['tool', 'connector', 'review', 'approval', 'human', 'composite']);
+const RISK_LEVELS = new Set(['low', 'normal', 'high']);
 
 function text(value, max = 2000) {
   return String(value ?? '').trim().slice(0, max);
@@ -18,6 +19,59 @@ function list(value, max = 12) {
 
 function object(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function deliverableFormat(value) {
+  const textValue = text(value, 80).toLowerCase();
+  if (/markdown|\.md\b/u.test(textValue)) return 'markdown';
+  if (/word|\.docx\b/u.test(textValue)) return 'docx';
+  if (/excel|xlsx|\.csv\b/u.test(textValue)) return 'spreadsheet';
+  if (/ppt|powerpoint|\.pptx\b/u.test(textValue)) return 'presentation';
+  if (/pdf/u.test(textValue)) return 'pdf';
+  if (/code|源码|代码|脚本|程序/u.test(textValue)) return 'source';
+  return 'text';
+}
+
+function normalizeDeliverables(value, goal) {
+  const source = Array.isArray(value) ? value : [];
+  const normalized = source.map((item) => {
+    const label = typeof item === 'string' ? text(item, 500) : text(item?.label ?? item?.name ?? item?.title, 500);
+    if (!label) return undefined;
+    return {
+      label,
+      format: deliverableFormat(typeof item === 'string' ? item : item?.format ?? label),
+      category: ['final', 'working', 'reference'].includes(item?.category) ? item.category : 'final',
+      required: item?.required !== false,
+    };
+  }).filter(Boolean).slice(0, 12);
+  if (normalized.length) return normalized;
+  const inferredFormat = deliverableFormat(goal);
+  return [{
+    label: inferredFormat === 'source' ? '可运行代码或明确的修改文件' : '可交接且可验证的任务结果',
+    format: inferredFormat,
+    category: 'final',
+    required: true,
+  }];
+}
+
+function inferCapabilities(goal, route, provided) {
+  const capabilities = list(provided, 12);
+  const routeCapability = {
+    direct_answer: 'reasoning', web_search: 'web_research', connector: 'connector_access', inspect_connectors: 'connector_access',
+    read_file: 'workspace_read', list_files: 'workspace_read', search_skills: 'skill_selection',
+    install_skill: 'skill_installation', write_file: 'file_output', run_command: 'command_execution',
+    team_dispatch: 'team_coordination', general_tools: 'general_tool_use',
+  }[route];
+  if (routeCapability) capabilities.push(routeCapability);
+  if (/代码|编程|开发|修复|构建|测试|脚本/u.test(goal)) capabilities.push('coding');
+  if (/调度|团队|员工|分工|协作/u.test(goal)) capabilities.push('team_coordination');
+  if (/skill|技能/u.test(goal)) capabilities.push('skill_selection');
+  return [...new Set(capabilities)].slice(0, 12);
+}
+
+function inferRisk(goal, provided) {
+  if (RISK_LEVELS.has(provided)) return provided;
+  return /删除|发送|发布|部署|安装|支付|提交|执行命令|外部服务|权限|密钥/u.test(goal) ? 'high' : 'normal';
 }
 
 function issue(path, message) {
@@ -33,17 +87,32 @@ export function createTaskContract(input = {}) {
   const decision = input.decision ?? input;
   const mode = MODES.has(decision.mode) ? decision.mode : 'execute';
   const goal = text(decision.goal ?? input.goal);
+  const sourceRequest = text(input.sourceRequest ?? input.request ?? decision.sourceRequest ?? goal, 4000);
   const acceptanceCriteria = list(decision.acceptanceCriteria ?? input.acceptanceCriteria, 8);
   const requiredConstraints = list(decision.requiredConstraints ?? input.requiredConstraints, 8);
   const requiresEvidence = decision.requiresEvidence !== false;
   const needsUser = decision.needsUser === true;
+  const primaryRoute = ROUTES.has(decision.primaryRoute) ? decision.primaryRoute : 'general_tools';
+  const teamPolicyInput = object(input.teamPolicy ?? decision.teamPolicy);
 
   return {
     contractVersion: CONTRACT_VERSION,
     contractId: makeId('contract', input.contractId),
     mode,
+    sourceRequest: sourceRequest || goal,
     goal,
-    primaryRoute: ROUTES.has(decision.primaryRoute) ? decision.primaryRoute : 'general_tools',
+    primaryRoute,
+    deliverables: normalizeDeliverables(
+      decision.deliverables ?? input.deliverables ?? input.expectedOutputs,
+      `${goal} ${acceptanceCriteria.join(' ')} ${requiredConstraints.join(' ')}`,
+    ),
+    requiredCapabilities: inferCapabilities(goal, primaryRoute, decision.requiredCapabilities ?? input.requiredCapabilities),
+    riskLevel: inferRisk(goal, decision.riskLevel ?? input.riskLevel),
+    teamPolicy: {
+      requiresTeam: teamPolicyInput.requiresTeam === true || primaryRoute === 'team_dispatch',
+      explicitMemberIds: list(teamPolicyInput.explicitMemberIds, 24),
+      allowDynamicDelegation: teamPolicyInput.allowDynamicDelegation !== false,
+    },
     constraints: {
       required: requiredConstraints,
       acceptanceCriteria,
@@ -71,8 +140,15 @@ export function validateTaskContract(contract) {
   if (contract.contractVersion !== CONTRACT_VERSION) errors.push(issue('contractVersion', `must be ${CONTRACT_VERSION}`));
   if (!text(contract.contractId, 120)) errors.push(issue('contractId', 'is required'));
   if (!MODES.has(contract.mode)) errors.push(issue('mode', 'is invalid'));
+  if (!text(contract.sourceRequest, 4000)) errors.push(issue('sourceRequest', 'is required'));
   if (!text(contract.goal)) errors.push(issue('goal', 'is required'));
   if (!ROUTES.has(contract.primaryRoute)) errors.push(issue('primaryRoute', 'is invalid'));
+  if (!Array.isArray(contract.deliverables) || contract.deliverables.length === 0) errors.push(issue('deliverables', 'must contain at least one item'));
+  if (!Array.isArray(contract.requiredCapabilities)) errors.push(issue('requiredCapabilities', 'must be an array'));
+  if (!RISK_LEVELS.has(contract.riskLevel)) errors.push(issue('riskLevel', 'is invalid'));
+  if (!contract.teamPolicy || typeof contract.teamPolicy !== 'object' || !Array.isArray(contract.teamPolicy.explicitMemberIds)) {
+    errors.push(issue('teamPolicy', 'must contain explicitMemberIds'));
+  }
   const constraints = object(contract.constraints);
   if (!Array.isArray(constraints.acceptanceCriteria) || constraints.acceptanceCriteria.length === 0) {
     errors.push(issue('constraints.acceptanceCriteria', 'must contain at least one criterion'));

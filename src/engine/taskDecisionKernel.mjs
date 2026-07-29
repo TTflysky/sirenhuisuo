@@ -64,6 +64,17 @@ export const TASK_DECISION_TOOL = {
           items: { type: 'string' },
           description: '从用户原话中识别的不可丢失条件，例如对象、地点、时间、指定工具和交付格式。',
         },
+        deliverables: {
+          type: 'array', maxItems: 12,
+          items: { type: 'object', additionalProperties: false, required: ['label'], properties: {
+            label: { type: 'string' }, format: { type: 'string' }, category: { type: 'string', enum: ['final', 'working', 'reference'] }, required: { type: 'boolean' },
+          } },
+        },
+        requiredCapabilities: { type: 'array', maxItems: 12, items: { type: 'string' } },
+        riskLevel: { type: 'string', enum: ['low', 'normal', 'high'] },
+        teamPolicy: { type: 'object', additionalProperties: false, properties: {
+          requiresTeam: { type: 'boolean' }, explicitMemberIds: { type: 'array', items: { type: 'string' } }, allowDynamicDelegation: { type: 'boolean' },
+        } },
         requiresEvidence: { type: 'boolean' },
         needsUser: { type: 'boolean' },
         missingUserCondition: { type: 'string' },
@@ -206,6 +217,10 @@ export function normalizeTaskDecision(candidate, input = {}) {
     primaryRoute,
     acceptanceCriteria,
     requiredConstraints,
+    deliverables: Array.isArray(candidate.deliverables) ? candidate.deliverables.slice(0, 12) : fallback.deliverables,
+    requiredCapabilities: Array.isArray(candidate.requiredCapabilities) ? candidate.requiredCapabilities.map((item) => clean(item, 120)).filter(Boolean).slice(0, 12) : fallback.requiredCapabilities,
+    riskLevel: ['low', 'normal', 'high'].includes(candidate.riskLevel) ? candidate.riskLevel : fallback.riskLevel,
+    teamPolicy: candidate.teamPolicy && typeof candidate.teamPolicy === 'object' ? candidate.teamPolicy : fallback.teamPolicy,
     requiresEvidence: mode === 'execute' && (Boolean(candidate.requiresEvidence) || fallback.requiresEvidence),
     needsUser: genuinelyNeedsUser,
     missingUserCondition: genuinelyNeedsUser ? missingUserCondition : '',
@@ -252,6 +267,8 @@ export function buildTaskDecisionMessages(input = {}) {
 export function buildTaskContract(decision, taskExperience = '') {
   const criteria = (decision.acceptanceCriteria ?? []).map((item, index) => `${index + 1}. ${item}`).join('\n');
   const constraints = (decision.requiredConstraints ?? []).map((item, index) => `${index + 1}. ${item}`).join('\n');
+  const deliverables = (decision.deliverables ?? []).map((item, index) => `${index + 1}. ${typeof item === 'string' ? item : item.label}`).join('\n');
+  const capabilities = (decision.requiredCapabilities ?? []).join('、');
   return `## 太极任务合同
 模式：${decision.mode}
 真实目标：${decision.goal}
@@ -260,6 +277,10 @@ export function buildTaskContract(decision, taskExperience = '') {
 ${constraints || '1. 以用户原始请求的完整语义为准'}
 完成标准：
 ${criteria || '1. 直接、准确地满足用户当前目标'}
+预期交付物：
+${deliverables || '1. 与原始目标一致的可验证结果'}
+所需能力：${capabilities || '由执行器根据目标选择'}
+风险等级：${decision.riskLevel || 'normal'}
 是否必须有真实证据：${decision.requiresEvidence ? '是' : '否'}
 ${decision.needsUser ? `已确认缺少的用户条件：${decision.missingUserCondition}` : '当前不应先向用户索要条件；先自行检查并行动。'}
 决策依据：${decision.decisionReason}

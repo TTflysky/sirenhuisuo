@@ -28,7 +28,7 @@ interface OnlinePixelAvatar {
   url: string;
 }
 
-const MAX_CUSTOM_AVATAR_BYTES = 500 * 1024;
+const MAX_CUSTOM_AVATAR_BYTES = 10 * 1024 * 1024;
 const ONLINE_PIXEL_COUNT = 24;
 const DICEBEAR_STYLE_URL = 'https://www.dicebear.com/styles/pixel-art/';
 const DICEBEAR_API_URL = 'https://api.dicebear.com/9.x/pixel-art/svg';
@@ -88,7 +88,7 @@ export default function EmployeeAvatarPicker({ avatar, avatarKind, onChange }: P
   const handleFile = (file?: File) => {
     if (!file) return;
     if (file.size > MAX_CUSTOM_AVATAR_BYTES) {
-      window.alert('图片过大，请压缩到 500KB 以内');
+      window.alert('头像文件不能超过 10MB');
       return;
     }
     const reader = new FileReader();
@@ -106,7 +106,7 @@ export default function EmployeeAvatarPicker({ avatar, avatarKind, onChange }: P
       const response = await fetch(item.url, { cache: 'force-cache' });
       if (!response.ok) throw new Error(`头像服务返回 ${response.status}`);
       const blob = await response.blob();
-      if (blob.size > MAX_CUSTOM_AVATAR_BYTES) throw new Error('头像文件超过 500KB');
+      if (blob.size > MAX_CUSTOM_AVATAR_BYTES) throw new Error('头像文件不能超过 10MB');
       const dataUrl = await readBlobAsDataUrl(blob);
       onChange(dataUrl, 'custom');
       setOpen(false);

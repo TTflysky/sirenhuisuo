@@ -10,6 +10,7 @@ export interface ToolRegistryRecord {
   health: string;
   healthMessage: string;
   schemaFingerprint: string;
+  protocol: import('./executionProtocol.mjs').ExecutionProtocol;
 }
 export interface ToolRegistry {
   protocolVersion: number;
@@ -22,5 +23,5 @@ export interface ToolRegistry {
 }
 export function buildToolRegistry(definitions?: any[], options?: { metadata?: Record<string, Partial<ToolRegistryRecord>> }): ToolRegistry;
 export function discoverTools(registry: ToolRegistry, query?: string): Array<ToolRegistryRecord & { score: number }>;
-export function preflightToolCall(registry: ToolRegistry, name: string, args: unknown, options?: { approvalGranted?: boolean; enforceApproval?: boolean }): { ok: boolean; protocolVersion: number; name: string; stage: string; category: string; message: string; record?: ToolRegistryRecord; requiresApproval?: boolean };
+export function preflightToolCall(registry: ToolRegistry, name: string, args: unknown, options?: { approvalGranted?: boolean; enforceApproval?: boolean }): { ok: boolean; protocolVersion: number; name: string; stage: string; category: string; message: string; record?: ToolRegistryRecord; requiresApproval?: boolean; executionProtocol?: import('./executionProtocol.mjs').ExecutionProtocol };
 export function toolRegistrySnapshot(registry: ToolRegistry): { protocolVersion: number; ready: number; blocked: number; collisions: string[]; invalid: Array<{ name: string; errors: string[] }>; tools: Array<Omit<ToolRegistryRecord, 'definition'>> };

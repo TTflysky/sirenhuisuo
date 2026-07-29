@@ -197,12 +197,82 @@ async function memberSpeak(
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-function parseMentionIds(content: string, team: Team, employees: Employee[]): string[] {
+export function parseMentionIds(content: string, team: Team, employees: Employee[]): string[] {
   const names = new Set(team.memberIds.map((id) => employees.find((employee) => employee.id === id)?.name).filter(Boolean));
   return [...content.matchAll(/@([^@\s，。！？!?：:；;、]+)/g)].map((match) => {
     const employee = employees.find((item) => names.has(item.name) && item.name === match[1]);
     return employee?.id;
   }).filter((id): id is string => !!id);
+}
+
+export interface TeamMentionReplyOptions {
+  employeeId: string;
+  userText: string;
+  triggerMessageId?: string;
+  discussionId?: string;
+  attachments?: import('../data/hermesClient').Attachment[];
+  workspaceId?: string;
+  extraSystemContext?: string;
+  onToolCall?: (toolName: string, toolArgs: string, result: string, success?: boolean, protocolEvidence?: ConnectorProtocolResult, structuredEvidence?: ToolExecutionEvidence) => void;
+}
+
+export interface TeamMentionReplyResult {
+  employee: Employee;
+  text: string;
+  mentions: string[];
+  tokens?: number;
+  contextUsage?: ContextUsage;
+  toolCalls: number;
+}
+
+/**
+ * Answer a direct @ mention without creating a task run. This is intentionally
+ * separate from the formal step runner: status questions and follow-ups must
+ * still work after a previous task has completed, and they must not be forced
+ * to create a file or enter the task acceptance pipeline.
+ */
+export async function runTeamMentionReply(
+  team: Team,
+  employees: Employee[],
+  opts: TeamMentionReplyOptions,
+): Promise<TeamMentionReplyResult> {
+  const employee = employees.find((item) => item.id === opts.employeeId && team.memberIds.includes(item.id));
+  if (!employee) throw new Error('被@的员工不在当前团队中');
+  const contextMessages = [...team.chatMessages];
+  if (opts.triggerMessageId && !contextMessages.some((message) => message.id === opts.triggerMessageId)) {
+    contextMessages.push({
+      id: opts.triggerMessageId,
+      authorId: 'human',
+      roleId: 'human',
+      content: opts.userText,
+      mentions: [employee.id],
+      timestamp: Date.now(),
+      kind: 'text',
+    });
+  }
+  let toolCalls = 0;
+  const result = await memberSpeak(
+    employee,
+    team,
+    employees,
+    contextMessages,
+    `这是一次普通的团队点名对话，不是新建正式任务。老板直接@了你，请结合上面的团队上下文直接回答当前问题。不要擅自创建任务、安排其他成员或生成文件；只有老板明确要求你执行具体工作时才说明下一步。回复简洁、具体，不要以“收到/好的/明白”开头。\n\n老板消息：\n「${opts.userText}」`,
+    (toolName, toolArgs, resultText, success, protocolEvidence, structuredEvidence) => {
+      toolCalls += 1;
+      opts.onToolCall?.(toolName, toolArgs, resultText, success, protocolEvidence, structuredEvidence);
+    },
+    opts.attachments,
+    opts.extraSystemContext ?? '',
+    opts.workspaceId,
+  );
+  return {
+    employee,
+    text: result.text.trim() || `我暂时没有可用的回复，请稍后再@我。`,
+    mentions: parseMentionIds(result.text, team, employees),
+    tokens: result.tokens,
+    contextUsage: result.contextUsage,
+    toolCalls,
+  };
 }
 
 export async function runTeamDiscussion(

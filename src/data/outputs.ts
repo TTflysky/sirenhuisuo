@@ -37,6 +37,85 @@ export interface OutputRecord {
   snippet?: string;             // 简短预览
   diskPath?: string;            // Electron 工作区中的真实文件路径
   category?: OutputCategory;    // 交付层级（旧数据读取时自动推断）
+  verified?: boolean;            // 只有真实落盘并通过回读校验的文件才进入产出物索引
+}
+
+export interface NativeArtifactInput {
+  path?: string;
+  filename?: string;
+  workspaceId?: string;
+  diskPath?: string;
+  bytes?: number;
+  category?: OutputCategory;
+  persistence?: string;
+  verification?: string;
+  verified?: boolean;
+  recordedAt?: number;
+}
+
+function isPersistedNativeArtifact(artifact: NativeArtifactInput): boolean {
+  return artifact.verified === true
+    && artifact.persistence === 'disk'
+    && typeof artifact.diskPath === 'string'
+    && artifact.diskPath.trim().length > 0
+    && typeof (artifact.path || artifact.filename) === 'string'
+    && String(artifact.path || artifact.filename).trim().length > 0;
+}
+
+/** 将 Electron 原生执行器的真实文件证据投影到所有聊天窗口共用的产出物索引。 */
+export async function syncNativeArtifacts(
+  artifacts: NativeArtifactInput[] | undefined,
+  meta: { teamId?: string; taskId?: string; workspaceId?: string; scope?: OutputScope } = {},
+): Promise<OutputRecord[]> {
+  if (!Array.isArray(artifacts) || !artifacts.length) return [];
+  const scope = meta.scope ?? (meta.teamId ? `team:${meta.teamId}` : 'global');
+  const synced: OutputRecord[] = [];
+  for (const artifact of artifacts) {
+    if (!isPersistedNativeArtifact(artifact)) continue;
+    const filename = String(artifact.path || artifact.filename).replace(/\\/g, '/');
+    const workspaceId = artifact.workspaceId || meta.workspaceId;
+    let content = `文件已保存到工作区：${filename}`;
+    if (workspaceId && window.electronAPI?.fsRead) {
+      try {
+        const read = await window.electronAPI.fsRead(`${workspaceId}/${filename}`);
+        if (read?.ok && typeof read.content === 'string') content = read.content;
+      } catch {
+        // 二进制文件或解析失败的文件仍保留真实磁盘路径，可直接用系统程序打开。
+      }
+    }
+    synced.push(addOutput({
+      filename,
+      kind: 'file',
+      title: filename.split('/').pop() || filename,
+      scope,
+      workspaceId,
+      teamId: meta.teamId,
+      taskId: meta.taskId,
+      content,
+      contentType: contentTypeFromFilename(filename),
+      language: languageFromFilename(filename),
+      bytes: Number(artifact.bytes) || undefined,
+      diskPath: artifact.diskPath,
+      category: artifact.category,
+      verified: true,
+    }));
+  }
+  return synced;
+}
+
+/** 在窗口重启或任务结果延迟到达时，从持久化任务账本恢复已验证文件。 */
+export async function syncNativeRunArtifacts(runs: Array<{ teamId?: string; id?: string; workspaceId?: string; evidence?: Array<{ artifact?: NativeArtifactInput }> }> | undefined): Promise<OutputRecord[]> {
+  if (!Array.isArray(runs)) return [];
+  const synced: OutputRecord[] = [];
+  for (const run of runs) {
+    const artifacts = (run.evidence || []).map((item) => item.artifact).filter((item): item is NativeArtifactInput => !!item);
+    synced.push(...await syncNativeArtifacts(artifacts, {
+      teamId: run.teamId,
+      taskId: run.id,
+      workspaceId: run.workspaceId,
+    }));
+  }
+  return synced;
 }
 
 // ===== 工具函数 =====

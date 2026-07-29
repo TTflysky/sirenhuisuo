@@ -1,7 +1,7 @@
 {
   "name": "hermes-office-pro",
   "private": true,
-  "version": "0.31.0",
+  "version": "0.39.0",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -47,6 +47,14 @@
     "verify:office-layout": "node scripts/verify-office-layout.mjs",
     "verify:office-scroll": "node scripts/verify-office-scroll.mjs",
     "verify:team-membership": "node scripts/verify-team-membership.mjs",
+    "verify:team-mentions": "node scripts/verify-team-mentions.mjs",
+    "verify:task-handoff": "node scripts/verify-task-handoff.mjs",
+    "verify:task-state-machine": "node scripts/verify-task-state-machine.mjs",
+    "verify:execution-protocol": "node scripts/verify-execution-protocol.mjs",
+    "verify:skill-evidence": "node scripts/verify-skill-evidence.mjs",
+    "verify:dynamic-delegation-v2": "node scripts/verify-dynamic-delegation-v2.mjs",
+    "verify:recovery-capsule-v2": "node scripts/verify-recovery-capsule-v2.mjs",
+    "verify:v039-release-gate": "node scripts/verify-v039-release-gate.mjs",
     "verify:team-window-layout": "node scripts/verify-team-window-layout.mjs",
     "verify:foundation-ui": "node scripts/verify-foundation-e2e.mjs",
     "dist:win": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1",
@@ -111,7 +119,7 @@
     ],
     "win": {
       "target": "nsis",
-      "icon": null
+    "icon": "build/icon.ico"
     }
   }
 }

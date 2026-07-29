@@ -25,7 +25,7 @@ import { ROLE_SCARF } from './types';
 import * as client from './data/hermesClient';
 import { runScript, cancelDemo as cancelScript, type ScriptHandlers } from './engine/simulationEngine';
 import { PROACTIVE_SCRIPT } from './engine/proactiveScript';
-import { runTeamDiscussion } from './engine/teamDiscussion';
+import { runTeamDiscussion, runTeamMentionReply } from './engine/teamDiscussion';
 import { evaluateDiscussionTrigger } from './engine/discussionTrigger';
 import { findFreeStation } from './data/hermesClient';
 import { isTeamMemberAdditionRequest, resolveMentionedEmployees } from './engine/teamMembership';
@@ -34,6 +34,7 @@ import { appendTaskRunContext, createTaskRun, formalPlanStepForRun, getExecution
 import { buildTaskPlan, matchProjectMembers, matchTeamMembers } from './engine/taskMatcher';
 import { buildSkillContextWithEvidence, listSkills, matchSkills } from './data/skills';
 import { attachmentWorkspaceContext, copyAttachmentsToWorkspace, initializeTaskWorkspace } from './utils/attachments';
+import { syncNativeArtifacts, syncNativeRunArtifacts } from './data/outputs';
 import { BEGINNER_RESPONSE_GUIDE } from './data/assistantPresentation';
 import { isToolResultSuccessful } from './data/assistantPresentation';
 import { getDirectExecutionControl, isConversationOnlyMessage, shouldHoldTaskForFeedback } from './engine/agentGuardrails.mjs';
@@ -45,6 +46,7 @@ import { buildTaskHistoryPrompt, searchTaskRunHistory } from './engine/taskHisto
 import { CONNECTOR_PRESETS, loadConnectors } from './data/connectors';
 import { getConnectorTools } from './engine/connectorTools';
 import { buildLayeredMemoryContext } from './data/layeredMemory';
+import { classifyTeamMention } from './engine/teamMentionRouting.mjs';
 
 // ===== Action =====
 type Action =
@@ -347,17 +349,31 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const appState = client.fetchInitial();
     dispatch({ type: 'INIT', state: appState });
-    void hydrateTaskRunsFromMainStore().then((runs) => {
-      if (runs) dispatch({ type: 'HYDRATE_TASK_RUNS', runs });
+    void hydrateTaskRunsFromMainStore().then(async (runs) => {
+      if (runs) {
+        await syncNativeRunArtifacts(runs);
+        dispatch({ type: 'HYDRATE_TASK_RUNS', runs });
+      }
     });
     const unsubscribeWorker = window.electronAPI?.onTaskWorkerChanged?.(() => {
       void hydrateTaskRunsFromMainStore().then((runs) => {
         if (runs) dispatch({ type: 'HYDRATE_TASK_RUNS', runs });
       });
     });
-    const unsubscribeExecution = window.electronAPI?.onTaskExecutionChanged?.(() => {
-      void hydrateTaskRunsFromMainStore().then((runs) => {
-        if (runs) dispatch({ type: 'HYDRATE_TASK_RUNS', runs });
+    const unsubscribeExecution = window.electronAPI?.onTaskExecutionChanged?.((event) => {
+      const nativeEvent = event as { type?: string; teamId?: string; taskId?: string; workspaceId?: string; artifacts?: import('./data/outputs').NativeArtifactInput[] };
+      if (nativeEvent.type === 'tool_result' && nativeEvent.artifacts?.length) {
+        void syncNativeArtifacts(nativeEvent.artifacts, {
+          teamId: nativeEvent.teamId,
+          taskId: nativeEvent.taskId,
+          workspaceId: nativeEvent.workspaceId,
+        });
+      }
+      void hydrateTaskRunsFromMainStore().then(async (runs) => {
+        if (runs) {
+          await syncNativeRunArtifacts(runs);
+          dispatch({ type: 'HYDRATE_TASK_RUNS', runs });
+        }
       });
     });
     // 后端探测
@@ -558,13 +574,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const createProjectDraft = (input: { title: string; request: string; steps?: string[]; expectedOutputs?: string[] }) => {
     const now = Date.now();
+    const latestEmployees = client.fetchInitial().employees;
     const project: Project = {
       id: `project-${now}-${Math.random().toString(36).slice(2, 7)}`,
       title: input.title.trim() || '未命名项目',
       request: input.request.trim(),
       steps: input.steps?.filter(Boolean) ?? [],
       expectedOutputs: input.expectedOutputs?.filter(Boolean) ?? [],
-      members: matchProjectMembers(stateRef.current.employees, input.request),
+      members: matchProjectMembers(latestEmployees, input.request),
       status: 'awaiting_approval', createdAt: now, updatedAt: now,
     };
     dispatch({ type: 'CREATE_PROJECT', project });
@@ -888,7 +905,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             triggeredBy: opts?.task ? 'task' : 'message',
             inReplyToMessageId,
           };
-          dispatch({ type: 'APPEND_CHAT', teamId, msgs: [msg] });
+          const stepSnapshot = stepId ? liveRun?.steps.find((item) => item.id === stepId) : undefined;
+          const toolEvents = stepSnapshot?.events
+            .filter((event) => event.type === 'tool')
+            .slice(-8) ?? [];
+          const executionSummary: ChatMessage | undefined = toolEvents.length > 0
+            ? {
+              id: `msg-execution-summary-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              authorId: emp.id,
+              authorName: emp.name,
+              roleId: emp.role,
+              content: `执行过程 · ${emp.name} · ${stepSnapshot?.title ?? '当前步骤'} · ${toolEvents.length} 项工具动作\n${toolEvents.map((event) => `- ${event.detail}`).join('\n')}`,
+              mentions: [], timestamp: Date.now(), kind: 'execution', discussionId: opts?.discussionId,
+            }
+            : undefined;
+          // Keep the chat readable: one expandable summary per completed step.
+          // Full tool evidence remains in the task run and replay panels.
+          dispatch({ type: 'APPEND_CHAT', teamId, msgs: executionSummary ? [executionSummary, msg] : [msg] });
           dispatch({ type: 'UPDATE_EMPLOYEE', id: emp.id, partial: { isWorking: false } });
           let reportedStepId: string | undefined;
           let reportedStepStatus: 'completed' | 'failed' | undefined;
@@ -974,17 +1007,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           dispatch({ type: 'ADVANCE_TASK', teamId, taskId, lane });
         },
         onToolCall(emp, toolName, toolArgs, result, stepId, success, protocolEvidence, structuredEvidence) {
-          // ⚠️ onToolCall 在工具执行前回调 arg=调用参数，执行后回调 arg=执行中。工具执行由 agentLoop 异步完成，结果在后续 onMessage 中体现。
-          const toolMsg = `🔧 **${emp.name}** 调用工具 **\`${toolName}\`**(${toolArgs || ''})\n⟳ ${result}`;
-          dispatch({
-            type: 'APPEND_CHAT', teamId,
-            msgs: [{
-              id: `msg-tool-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-              authorId: emp.id, roleId: emp.role,
-              content: toolMsg, mentions: [], timestamp: Date.now(),
-              kind: 'execution', discussionId: opts?.discussionId,
-            }],
-          });
+          // Tool calls update the structured task evidence below. They are not
+          // appended as individual chat bubbles; the step summary is emitted
+          // once in onMessage after the member has returned.
           updateRun((run) => {
             const step = run.steps.find((item) => item.id === stepId) ?? run.steps.find((item) => item.employeeId === emp.id && item.status === 'running');
             if (step) {
@@ -1350,7 +1375,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }, delay);
   };
 
-  const enqueueAssistantSupervisor = async (team: Team, content: string, mayDelegate: boolean): Promise<string | undefined> => {
+  const enqueueAssistantSupervisor = async (team: Team, content: string, mayDelegate: boolean): Promise<{ reply: string; messageId: string } | undefined> => {
     if (supervisorBusyRef.current.has(team.id)) return undefined;
     supervisorBusyRef.current.add(team.id);
     const sanitizeSupervisorReply = (reply: string) => {
@@ -1359,22 +1384,27 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       }
       return reply.replace(/^(?:收到|好的|明白)[，,。！!：:\s]*/u, '').trim() || reply.trim();
     };
-    const appendSupervisorMessage = (reply: string, tokens?: number) => {
+    const appendSupervisorMessage = (reply: string, tokens?: number): { reply: string; messageId: string } => {
       const visibleReply = sanitizeSupervisorReply(reply);
+      const messageId = `msg-supervisor-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const mentions = resolveMentionedEmployees(visibleReply, stateRef.current.employees)
+        .filter((employee) => team.memberIds.includes(employee.id))
+        .map((employee) => employee.id);
       dispatch({
         type: 'APPEND_CHAT',
         teamId: team.id,
         msgs: [{
-          id: `msg-supervisor-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          id: messageId,
           authorId: 'assistant',
           roleId: 'custom',
           content: visibleReply,
-          mentions: [],
+          mentions,
           timestamp: Date.now(),
           kind: 'text',
           tokens,
         }],
       });
+      return { reply: visibleReply, messageId };
     };
     const teamRoster = team.memberIds
       .map((id) => stateRef.current.employees.find((employee) => employee.id === id))
@@ -1403,21 +1433,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       ];
       if (!client.resolveApiBase(assistantModel)) {
         const reply = `⚠️ 驴狗蛋助手没有可用模型配置，无法进行真实对话或调度。请在设置中激活全局模型，或为助理选择模型后重试。`;
-        appendSupervisorMessage(reply);
-        return reply;
+        return appendSupervisorMessage(reply);
       }
       const result = await client.chatCompletion(turns, 'assistant-supervisor', `监工/${team.name}`, undefined, assistantModel);
       const reply = result.content?.trim().replace(/@Hermes(?:\s+助理)?|@章北海(?:\s+助理)?|@驴狗蛋(?:\s+助手)?/gu, '驴狗蛋助手');
       if (!reply) return undefined;
-      appendSupervisorMessage(reply, result.usage.totalTokens);
+      const supervisorResult = appendSupervisorMessage(reply, result.usage.totalTokens);
       client.extractUserInsights(`老板：${content}\n监工回复：${reply}`, `团队监工-${team.name}`).catch(() => {});
-      return reply;
+      return supervisorResult;
     } catch (error) {
       console.warn('[supervisor] reply failed:', error);
       const reason = error instanceof Error ? error.message : String(error);
       const reply = `⚠️ 驴狗蛋助手本次模型调用失败：${reason.slice(0, 180)}。任务没有被伪装为已执行；请检查模型连接后重试。`;
-      appendSupervisorMessage(reply);
-      return reply;
+      return appendSupervisorMessage(reply);
     } finally {
       supervisorBusyRef.current.delete(team.id);
     }
@@ -1700,6 +1728,93 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const clearTeamExecution = (targetTeamId: string) => dispatch({ type: 'CLEAR_TEAM_EXECUTION', teamId: targetTeamId });
 
+  const buildTeamTaskRequest = (team: Team, content: string): string => {
+    const current = content.trim();
+    const needsPriorContext = current.length < 120
+      || /拉团队|组建团队|拉群|开始执行|继续执行|按刚才|按照上面|这个任务|该项目/u.test(current);
+    if (!needsPriorContext) return current;
+    const prior = team.chatMessages
+      .filter((message) => message.roleId === 'human')
+      .slice(-6)
+      .map((message) => message.content.trim())
+      .filter(Boolean)
+      .join('\n');
+    return prior ? `${prior}\n\n老板最新要求：${current}` : current;
+  };
+
+  const runDirectEmployeeReply = async (
+    team: Team,
+    employeeId: string,
+    content: string,
+    sourceMessageId: string,
+    attachments?: import('./data/hermesClient').Attachment[],
+    inReplyToMessageId?: string,
+  ) => {
+    const current = stateRef.current;
+    const employee = current.employees.find((item) => item.id === employeeId && team.memberIds.includes(item.id));
+    if (!employee) return;
+    const discussionId = `mention-${sourceMessageId}-${employee.id}`;
+    dispatch({ type: 'UPDATE_EMPLOYEE', id: employee.id, partial: { isWorking: true, currentTask: '正在回复团队点名' } });
+    try {
+      const liveTeam = stateRef.current.teams.find((item) => item.id === team.id) ?? team;
+      const result = await runTeamMentionReply(liveTeam, stateRef.current.employees, {
+        employeeId: employee.id,
+        userText: content,
+        triggerMessageId: sourceMessageId,
+        discussionId,
+        attachments,
+        extraSystemContext: `当前是团队「${liveTeam.name}」中的点名回复。只回答老板本次问题，不把普通追问升级成正式任务。`,
+      });
+      dispatch({
+        type: 'APPEND_CHAT',
+        teamId: team.id,
+        msgs: [{
+          id: `msg-mention-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          authorId: result.employee.id,
+          authorName: result.employee.name,
+          roleId: result.employee.role,
+          content: result.text,
+          mentions: result.mentions,
+          timestamp: Date.now(),
+          kind: 'text',
+          tokens: result.tokens,
+          contextUsage: result.contextUsage,
+          discussionId,
+          triggeredBy: 'message',
+          inReplyToMessageId: inReplyToMessageId ?? sourceMessageId,
+        }],
+      });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      dispatch({
+        type: 'APPEND_CHAT',
+        teamId: team.id,
+        msgs: [{
+          id: `msg-mention-error-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          authorId: employee.id,
+          authorName: employee.name,
+          roleId: employee.role,
+          content: `⚠️ ${employee.name} 回复失败：${reason.slice(0, 240)}`,
+          mentions: [], timestamp: Date.now(), kind: 'text',
+          discussionId, triggeredBy: 'message',
+          inReplyToMessageId: inReplyToMessageId ?? sourceMessageId,
+        }],
+      });
+    } finally {
+      dispatch({ type: 'UPDATE_EMPLOYEE', id: employee.id, partial: { isWorking: false, currentTask: undefined } });
+    }
+  };
+
+  const relayAssistantMentions = async (team: Team, supervisorResult: { reply: string; messageId: string } | undefined) => {
+    if (!supervisorResult?.reply) return;
+    const mentionedEmployees = resolveMentionedEmployees(supervisorResult.reply, stateRef.current.employees)
+      .filter((employee) => team.memberIds.includes(employee.id) && supervisorResult.reply.includes(`@${employee.name}`));
+    if (!mentionedEmployees.length || classifyTeamMention(supervisorResult.reply, { assistantRelay: true }) !== 'reply') return;
+    for (const employee of mentionedEmployees) {
+      await runDirectEmployeeReply(team, employee.id, `助理在团队消息中@你：${supervisorResult.reply}`, supervisorResult.messageId, undefined, supervisorResult.messageId);
+    }
+  };
+
   const enqueueAutoDiscussion = (teamId: string, messageId: string, content: string, mentions: string[], attachments?: import('./data/hermesClient').Attachment[], skillRefs: import('./types').SkillReference[] = []) => {
     const current = stateRef.current;
     const team = current.teams.find((item) => item.id === teamId);
@@ -1783,15 +1898,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         if (messages.length) dispatch({ type: 'APPEND_CHAT', teamId, msgs: messages });
         return;
       }
+      // A direct employee mention is not automatically a new task. Keep
+      // ordinary follow-ups in the employee's own conversation, even when a
+      // previous TaskRun for this team has already finished.
+      if (directMentions.length > 0 && !supervisorMentioned) {
+        const route = classifyTeamMention(content);
+        if (route === 'reply') {
+          for (const employeeId of directMentions) {
+            await runDirectEmployeeReply(team, employeeId, content, messageId, attachments);
+          }
+          return;
+        }
+        if (route === 'task') {
+          void startTaskRun(teamId, buildTeamTaskRequest(team, content), directMentions, messageId, attachments, skillRefs);
+          return;
+        }
+      }
       if (shouldHoldTaskForFeedback(content)) {
         current.taskRuns
           .filter((run) => run.teamId === teamId && (run.status === 'queued' || run.status === 'running'))
           .forEach((run) => pauseTaskRun(run.id));
-        await enqueueAssistantSupervisor(team, content, false);
+        const supervisorResult = await enqueueAssistantSupervisor(team, content, false);
+        await relayAssistantMentions(team, supervisorResult);
         return;
       }
       if (isConversationOnlyMessage(content)) {
-        await enqueueAssistantSupervisor(team, content, false);
+        const supervisorResult = await enqueueAssistantSupervisor(team, content, false);
+        await relayAssistantMentions(team, supervisorResult);
         return;
       }
       const activeRun = [...current.taskRuns].reverse().find((run) => run.teamId === teamId && (run.status === 'queued' || run.status === 'running'));
@@ -1802,10 +1935,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           return;
         }
       }
-      if (directMentions.length > 0 && !supervisorMentioned) {
-        void startTaskRun(teamId, content, directMentions, messageId, attachments, skillRefs);
-        return;
-      }
       const recentSupervisorPlan = team.chatMessages.slice(-6).some((message) =>
         message.authorId === 'assistant' && /交给|分派|安排|负责|编剧|推进/.test(message.content),
       );
@@ -1814,12 +1943,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // actioned immediately by the supervisor without a second confirmation.
       const teamCheckRequested = /报数|报个数|数数|汇报.*(?:职责|职能|状态)|(?:职责|职能).*汇报|在线情况/u.test(content);
       const actionableRequest = /帮|请|安排|制作|起草|重写|改写|重新|写|生成|开发|设计|分析|优化|修复|检查|审核|测试|整理|调研|创建|完成|执行|做|出一份|产出|输出|脚本|剧本|文案|方案|报告|各位/u.test(content);
-      const mayDelegate = supervisorMentioned || directMentions.length > 0 || teamCheckRequested || continuesSupervisorPlan || actionableRequest;
-      const requestedMemberIds = mayDelegate ? matchTeamMembers(team, current.employees, content, directMentions) : [];
-      await enqueueAssistantSupervisor(team, content, mayDelegate);
+      const mayDelegate = teamCheckRequested || continuesSupervisorPlan || actionableRequest;
+      const taskRequest = buildTeamTaskRequest(team, content);
+      const requestedMemberIds = mayDelegate ? matchTeamMembers(team, current.employees, taskRequest, directMentions) : [];
+      const supervisorResult = await enqueueAssistantSupervisor(team, content, mayDelegate);
+      await relayAssistantMentions(team, supervisorResult);
       if (!mayDelegate) return;
       if (requestedMemberIds.length > 0) {
-        const planned = buildTaskPlan(team, current.employees, content, requestedMemberIds);
+        const planned = buildTaskPlan(team, current.employees, taskRequest, requestedMemberIds);
         const sequence = planned.map((step) => `${step.order}. ${step.title}`).join(' → ');
         dispatch({
           type: 'APPEND_CHAT',
@@ -1833,7 +1964,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         });
       }
       if (!requestedMemberIds.length) return;
-      void startTaskRun(teamId, content, requestedMemberIds, messageId, attachments, skillRefs);
+      void startTaskRun(teamId, taskRequest, requestedMemberIds, messageId, attachments, skillRefs);
     })();
   };
 

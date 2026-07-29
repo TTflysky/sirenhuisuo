@@ -104,6 +104,9 @@ export interface SkillUsageEvidence {
   reason?: string;
   detail?: string;
   verified?: boolean;
+  stage?: 'selection' | 'readback' | 'execution' | string;
+  score?: number;
+  source?: string;
 }
 
 export type DiscussionUrgency = 'low' | 'normal' | 'high' | 'critical';
@@ -357,7 +360,7 @@ export interface TaskRun {
   acceptanceCriteria?: string[];
   preflight?: Array<{ label: string; status: 'pending' | 'passed' | 'blocked'; detail?: string }>;
   evidence?: TaskEvidence[];
-  handoff?: { ts: number; completed: string[]; blocked: string; nextAction: string };
+  handoff?: import('./engine/taskHandoff.mjs').TaskHandoff;
   recoveryContext?: TaskRecoveryContext;
   /** 可校验的长期任务恢复胶囊，只保存目标、结构化证据、未决问题和预算，不保存凭据。 */
   recoveryCapsule?: import('./engine/taskContextRouter.mjs').TaskRecoveryCapsule;

@@ -1,4 +1,4 @@
-# 太极 AI 办公会所 v0.31.0
+# 太极 AI 办公会所 v0.39.0
 
 > 面向 Windows 的多模型 AI 虚拟办公室。创建员工、组建团队，让不同模型按照职责协作完成真实任务。
 
@@ -6,7 +6,7 @@
 
 ## 项目状态
 
-- 当前版本：`0.29.0`
+- 当前版本：`0.39.0`
 - 发布分支：`main`
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 33、React 19、TypeScript 6、Ant Design 6、Vite 8
@@ -182,15 +182,15 @@ npm run dev
 npm start
 ```
 
-### 固定发布与接手
+### 本地测试与大版本发布
 
-开发电脑完成版本更新并提交到干净的 `main` 后，只运行：
+补丁版本（例如 `0.31.1`）只在本地升级版本、构建安装包并安装验收，不运行发布流程，也不上传 GitHub。功能大版本（例如 `0.32.0`）在安装验收通过后，再提交并推送 `main`，最后运行：
 
 ```powershell
 npm.cmd run publish:release
 ```
 
-另一台电脑接手时只运行 `npm.cmd run sync:project`。发布命令自动完成回归、Windows 打包、推送、Release 三件套上传及远端 SHA-256 校验；两条命令都复用 Git Credential Manager 中已有的 GitHub 登录，不需要手动填写 Token。
+另一台电脑接手大版本时运行 `npm.cmd run sync:project`。发布命令自动完成回归、Windows 打包、推送、Release 三件套上传及远端 SHA-256 校验；本地测试只使用 `npm.cmd run dist:win` 和 `npm.cmd run verify:package`。
 
 ### 构建与打包
 

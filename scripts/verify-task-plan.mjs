@@ -25,6 +25,12 @@ const contract = createTaskContract({
   },
 });
 assert.equal(validateTaskContract(contract).valid, true);
+assert.equal(contract.contractVersion, 2);
+assert.equal(contract.sourceRequest, '查询销售数据并生成报告');
+assert.equal(contract.deliverables[0].format, 'pdf');
+assert(contract.requiredCapabilities.includes('connector_access'));
+assert.equal(contract.riskLevel, 'normal');
+assert.equal(contract.teamPolicy.requiresTeam, false);
 
 const plan = createPlan({
   planId: 'plan-test-1',

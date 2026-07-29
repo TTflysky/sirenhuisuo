@@ -32,6 +32,12 @@ function stable(value) {
 }
 function toolKey(name, args) { return `${name}:${JSON.stringify(stable(args || {}))}`.toLowerCase(); }
 function isPreparationTool(name) { return ['inspect_connectors', 'list_files', 'read_file', 'read_skill', 'read_web_page', 'search_skills', 'web_search'].includes(name); }
+function isVerifiedArtifact(artifact) {
+  return artifact?.verified === true
+    && artifact?.persistence === 'disk'
+    && Boolean(text(artifact?.diskPath, 1200))
+    && Boolean(text(artifact?.path || artifact?.filename, 800));
+}
 
 function resolveEndpoint(model) {
   const base = String(model?.apiHost || '').trim().replace(/\/+$/u, '');
@@ -347,7 +353,8 @@ function createNativeExecutionAdapter(options) {
     const now = Date.now();
     const evidence = [];
     for (const artifact of result.structuredEvidence?.artifacts || []) {
-      evidence.push({ ts: now, source: 'tool', kind: 'file', summary: `${artifact.filename || artifact.path} · ${artifact.bytes || 0} 字节 · ${artifact.verified ? '已验证' : '未验证'}`, verified: artifact.verified === true, artifact });
+      const verified = isVerifiedArtifact(artifact);
+      evidence.push({ ts: now, source: 'tool', kind: 'file', summary: `${artifact.filename || artifact.path} · ${artifact.bytes || 0} 字节 · ${verified ? '已验证' : '未验证'}`, verified, artifact });
     }
     if (result.structuredEvidence?.command) evidence.push({ ts: now, source: 'tool', kind: 'run', summary: `${name}：退出码 ${result.structuredEvidence.command.exitCode}`, verified: result.success === true });
     if (result.structuredEvidence?.connection) evidence.push({ ts: now, source: 'connector', kind: 'connection', summary: `${result.structuredEvidence.connection.connectorLabel}：${result.output.slice(0, 240)}`, verified: result.structuredEvidence.connection.verified === true });
@@ -378,7 +385,17 @@ function createNativeExecutionAdapter(options) {
     }, `${member.name}原生调用 ${name}`);
     const report = `**${member.name}** 调用 **${name}**\n${JSON.stringify(safeArgs)}\n\n${result.success ? '成功' : '失败'}：${safeResult.output}`;
     await appendExecutionMessage(job, run, member, report, 'execution', { name, args: safeArgs, success: result.success });
-    emit(job, 'tool_result', { stepId: step.id, member: publicMember(member), toolName: name, arguments: safeArgs, success: result.success, output: safeResult.output.slice(0, 1200) });
+    emit(job, 'tool_result', {
+      stepId: step.id,
+      teamId: run.teamId,
+      workspaceId: run.workspaceId,
+      member: publicMember(member),
+      toolName: name,
+      arguments: safeArgs,
+      success: result.success,
+      output: safeResult.output.slice(0, 1200),
+      artifacts: (safeResult.structuredEvidence?.artifacts || []).map((artifact) => ({ ...artifact })),
+    });
   }
 
   async function delegateSubtask(job, run, step, args) {
@@ -748,7 +765,7 @@ function createNativeExecutionAdapter(options) {
     const needsConnection = /连接器|知识库|mcp|obsidian|ima/iu.test(run.request);
     const evidence = run.evidence || [];
     const checks = [
-      { kind: 'file', label: '真实产出', passed: evidence.some((item) => item.kind === 'file' && item.verified), detail: '至少一个文件写入并校验成功' },
+      { kind: 'file', label: '真实产出', passed: evidence.some((item) => item.kind === 'file' && item.verified && isVerifiedArtifact(item.artifact)), detail: '至少一个文件真实落盘并通过回读校验' },
       ...(needsCommand ? [{ kind: 'run', label: '运行结果', passed: evidence.some((item) => item.kind === 'run' && item.verified), detail: '任务涉及代码或安装，必须有成功运行证据' }] : []),
       ...(needsConnection ? [{ kind: 'connection', label: '连接验证', passed: evidence.some((item) => item.kind === 'connection' && item.verified), detail: '任务涉及外部连接，必须有最小真实调用证据' }] : []),
       ...(run.steps.some((step) => step.kind === 'review') ? [{ kind: 'review', label: '责任审查', passed: evidence.some((item) => item.kind === 'review' && item.verified), detail: '审查步骤必须明确通过' }] : []),

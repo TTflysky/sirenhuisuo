@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { ChatMessage, ThoughtChainStep } from '../../types';
-import { runAgentLoop, resolveApiBase, resolveChatSettings, extractUserInsights, loadSettings, type ChatTurn, type Attachment } from '../../data/hermesClient';
+import { runAgentLoop, resolveApiBase, resolveChatSettings, extractUserInsights, fetchInitial, loadSettings, type ChatTurn, type Attachment } from '../../data/hermesClient';
 import { getRegisteredTools } from '../../engine/toolCatalog';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
 import ChatMessageText from './ChatMessageText';
@@ -11,6 +11,7 @@ import SkillMentionInput, { resolveSkillContext } from '../skills/SkillMentionIn
 import SkillPickerButton from '../skills/SkillPickerButton';
 import ExecutionPolicyControl from './ExecutionPolicyControl';
 import type { SkillReference } from '../../types';
+import type { Employee } from '../../types';
 import type { OutputRecord } from '../../data/outputs';
 import {
   fileToAttachment, attachmentsFromClipboard, attachmentWorkspaceContext, formatFileSize, persistAttachments,
@@ -24,6 +25,7 @@ import { BUS_CHANNELS, onBus, sendBus } from '../../ipcBus';
 import { getDirectExecutionControl, isExplicitPauseSteering, isExplicitResumeSteering, shouldHoldTaskForFeedback } from '../../engine/agentGuardrails.mjs';
 import { executionControllerStatus } from '../../engine/executionController.mjs';
 import { isTeamMemberAdditionRequest, resolveMentionedEmployees, resolveTargetTeam } from '../../engine/teamMembership';
+import { matchProjectMembers } from '../../engine/taskMatcher';
 import {
   BEGINNER_RESPONSE_GUIDE,
   getToolActivity,
@@ -78,6 +80,28 @@ function saveHistory(msgs: ChatMessage[]): void {
   try {
     localStorage.setItem(LS_KEY, JSON.stringify(msgs.slice(-300)));
   } catch {}
+}
+
+const EXPLICIT_TEAM_DISPATCH_RE = /(?:拉(?:个|起|一个)?团队|拉群|组建团队|组队|召集.{0,12}(?:员工|成员|团队)|叫.{0,12}(?:员工|成员).{0,12}(?:来|去|做|负责)|安排.{0,12}(?:员工|成员).{0,12}(?:做|负责|开发|设计))/u;
+const SPECIALIST_DOMAIN_RE = /前端|后端|全栈|网页|网站|UI|界面|视觉|代码|开发|编程|脚本|文案|视频|分镜|报告|方案/u;
+const DELIVERABLE_ACTION_RE = /做|制作|开发|设计|编写|写|生成|实现|创建|完成|修复|优化|重写|起草|改造/u;
+
+function shouldExplicitlyDispatchTeam(content: string): boolean {
+  return EXPLICIT_TEAM_DISPATCH_RE.test(content);
+}
+
+function findSpecialistMembers(content: string, employees: Employee[]) {
+  if (!SPECIALIST_DOMAIN_RE.test(content) || !DELIVERABLE_ACTION_RE.test(content)) return [];
+  return matchProjectMembers(employees, content)
+    .map((member) => employees.find((employee) => employee.id === member.employeeId))
+    .filter((employee): employee is Employee => !!employee && employee.isOnline)
+    .filter((employee) => {
+      const profile = `${employee.name} ${employee.title} ${employee.prompt ?? ''} ${employee.soul ?? ''}`;
+      return SPECIALIST_DOMAIN_RE.test(`${content} ${profile}`) && (
+        /前端|后端|全栈|网页|网站|UI|界面|视觉/u.test(content) ? /前端|后端|全栈|网页|网站|UI|界面|视觉|交互|设计/u.test(profile)
+          : /代码|开发|编程|脚本|文案|视频|分镜|报告|方案|编剧|策划/u.test(profile)
+      );
+    });
 }
 
 export default function AssistantChat() {
@@ -150,6 +174,10 @@ export default function AssistantChat() {
     const content = (contentOverride ?? text).trim();
     const atts = externalRequest ? [] : attachments;
     if (!content && atts.length === 0) return;
+    // A chat window can remain open while the office window adds or edits an
+    // employee. Read the shared profile store at dispatch time, not only from
+    // the last React render, before choosing project members.
+    const liveEmployees = fetchInitial().employees;
     const refs = externalRequest ? [] : skillRefs;
     const skillContext = await resolveSkillContext(refs);
     if (!externalRequest) {
@@ -210,6 +238,45 @@ export default function AssistantChat() {
         executionControl.interruptForSteering();
         setStatus('团队名单已更新，正在让当前任务采用新成员信息…');
       }
+      return;
+    }
+
+    // Team formation is a control-plane action. Handle it before the model loop
+    // so a supervisor cannot spend the task budget reading files instead.
+    const explicitTeamDispatch = shouldExplicitlyDispatchTeam(enriched);
+    const specialistMembers = findSpecialistMembers(enriched, liveEmployees);
+    const shouldAutoDispatchSpecialist = !explicitTeamDispatch && specialistMembers.length > 0;
+    if (explicitTeamDispatch || shouldAutoDispatchSpecialist) {
+      if (busy) {
+        executionControl.stop();
+        steeringMessagesRef.current.splice(0);
+        setStatus('已停止当前路线，正在建立团队任务草案…');
+      }
+      const recentUserContext = msgs
+        .filter((message) => message.roleId === 'human')
+        .slice(-4)
+        .map((message) => message.content)
+        .join('\n');
+      const dispatchRequest = explicitTeamDispatch && recentUserContext
+        ? `${recentUserContext}\n\n老板最新调度要求：${enriched}`
+        : enriched;
+      const existing = state.projects.find((project) => project.status === 'awaiting_approval' && project.request === dispatchRequest);
+      if (!existing) createProjectDraft({ title: (recentUserContext || content).slice(0, 40), request: dispatchRequest });
+      const members = specialistMembers.length && !explicitTeamDispatch
+        ? specialistMembers
+        : matchProjectMembers(liveEmployees, dispatchRequest)
+          .map((member) => liveEmployees.find((employee) => employee.id === member.employeeId))
+          .filter((employee): employee is Employee => !!employee);
+      const memberText = members.length
+        ? `已识别候选成员：${members.map((employee) => `${employee.name}（${employee.title}）`).join('、')}。`
+        : '当前没有匹配到在线专员，草案会标记为待补充成员。';
+      push({
+        id: `h-${Date.now()}-dispatch`, authorId: 'assistant', roleId: 'custom',
+        content: explicitTeamDispatch
+          ? `已识别为团队调度请求，已建立项目草案，不再自行读取工作区或消耗执行预算。${memberText}请到“自主办公”确认成员和步骤后批准。`
+          : `这个任务适合由专员完成，已停止助理直接产出并建立项目草案。${memberText}请到“自主办公”确认后组建团队。`,
+        mentions: members.map((employee) => employee.id), timestamp: Date.now(), kind: 'text',
+      });
       return;
     }
 
@@ -318,8 +385,8 @@ export default function AssistantChat() {
       // 思维链采集
       const settings = loadSettings();
       showCoT = settings.showThoughtChain !== false; // 默认开启
-      const employeeDirectory = state.employees.length > 0
-        ? state.employees.map((employee) => {
+      const employeeDirectory = liveEmployees.length > 0
+        ? liveEmployees.map((employee) => {
           const teams = state.teams.filter((team) => team.memberIds.includes(employee.id)).map((team) => team.name);
           return `- ${employee.name}｜${employee.title}｜${employee.isOnline ? '在线' : '离线'}｜${teams.length ? `团队：${teams.join('、')}` : '暂未加入团队'}｜员工ID：${employee.id}`;
         }).join('\n')
@@ -418,17 +485,6 @@ ${employeeDirectory}
         contextUsage: r.contextUsage,
         thoughtChain: showCoT && cotSteps.length > 0 ? cotSteps : undefined,
       });
-
-      // Explicit project-management requests create an approval-gated draft.
-      // The assistant may advise freely, but it cannot silently start people or spend model tokens.
-      if (/(?:安排|组建|拉|启动).{0,8}(?:团队|群|项目)|(?:项目|任务).{0,8}(?:组队|拉群|调度)/u.test(content)) {
-        createProjectDraft({ title: content.slice(0, 40), request: content });
-        push({
-          id: `h-${Date.now()}-project`, authorId: 'assistant', roleId: 'custom',
-          content: '我已根据你的需求生成待批准项目草案。请到“自主办公”查看成员选择、执行步骤和预期产出；批准后才会创建项目团队并开始调度。',
-          mentions: [], timestamp: Date.now(), kind: 'text',
-        });
-      }
 
       // 自动提炼用户洞察（每 2 次对话触发）
       const userMsgCount = msgs.filter(m => m.roleId === 'human' && isDialogMessage(m)).length;

@@ -1,5 +1,12 @@
 const DELEGATION_VERSION = 1;
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
+const DELEGATION_TRANSITIONS = {
+  queued: new Set(['queued', 'running', 'cancelled']),
+  running: new Set(['running', 'completed', 'failed', 'cancelled']),
+  completed: new Set(['completed']),
+  failed: new Set(['failed', 'queued', 'cancelled']),
+  cancelled: new Set(['cancelled']),
+};
 const ROLE_TERMS = {
   pm: ['协调', '拆解', '计划', '验收', '沟通'],
   planner: ['方案', '架构', '规划', '分析', '设计'],
@@ -12,6 +19,17 @@ function text(value, max = 1600) { return String(value ?? '').trim().slice(0, ma
 function clone(value) { return value === undefined ? undefined : JSON.parse(JSON.stringify(value)); }
 function list(value, max = 12) { return Array.isArray(value) ? value.map((item) => text(item, 500)).filter(Boolean).slice(0, max) : []; }
 function id(prefix) { return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`; }
+function memberProfile(member) { return `${member.name ?? ''} ${member.title ?? ''} ${member.role ?? ''} ${member.prompt ?? ''} ${member.soul ?? ''}`.toLowerCase(); }
+function profileTerms(query) {
+  const terms = [...new Set(query.match(/[\p{Script=Han}]{2,6}|[a-z][a-z0-9_-]{2,}/gu) ?? [])];
+  return [...new Set([...terms, ...terms.flatMap((term) => term.length > 2 ? [term.slice(0, 2), term.slice(-2)] : [])])];
+}
+function selectionReason(member, assignment) {
+  const profile = memberProfile(member);
+  const matched = ROLE_TERMS[member.role]?.filter((term) => assignment.includes(term)) ?? [];
+  const profileMatch = assignment.split(/\s+/u).find((term) => term.length > 1 && profile.includes(term));
+  return matched.length ? `职责关键词匹配：${matched.slice(0, 3).join('、')}` : profileMatch ? `员工资料匹配：${profileMatch}` : '团队候选成员中的默认可用人选';
+}
 
 export function selectDelegate(members, assignment, options = {}) {
   const candidates = (Array.isArray(members) ? members : []).filter((member) => member && member.id);
@@ -21,7 +39,9 @@ export function selectDelegate(members, assignment, options = {}) {
   return candidates
     .map((member, index) => ({
       member,
-      score: ROLE_TERMS[member.role] ? ROLE_TERMS[member.role].reduce((score, term) => score + (query.includes(term) ? 4 : 0), 0) : 0,
+      score: (ROLE_TERMS[member.role] ? ROLE_TERMS[member.role].reduce((score, term) => score + (query.includes(term) ? 4 : 0), 0) : 0)
+        + profileTerms(query).reduce((score, term) => score + (memberProfile(member).includes(term) ? (term.length >= 3 ? 8 : 3) : 0), 0)
+        + (member.isOnline === false ? -12 : 0) + (member.isWorking === true ? -2 : 0),
       index,
     }))
     .sort((left, right) => right.score - left.score || left.index - right.index)[0]?.member ?? null;
@@ -42,6 +62,9 @@ export function createDelegation(run, input = {}) {
   const title = text(input.title, 240) || `${employee.name} · 子任务`;
   const acceptanceCriteria = list(input.acceptanceCriteria, 8);
   const dependsOn = parent ? [parent.id] : list(input.dependsOnStepIds, 20);
+  const knownStepIds = new Set((run.steps || []).map((step) => step.id));
+  const unknownDependencies = dependsOn.filter((dependency) => !knownStepIds.has(dependency));
+  if (unknownDependencies.length) throw new Error(`委派依赖不存在：${unknownDependencies.join('、')}`);
   const delegation = {
     delegationVersion: DELEGATION_VERSION,
     id: delegationId,
@@ -55,6 +78,8 @@ export function createDelegation(run, input = {}) {
     acceptanceCriteria: acceptanceCriteria.length ? acceptanceCriteria : ['完成委派说明', '留下可验证的结果'],
     dependsOnStepIds: dependsOn,
     status: 'queued',
+    selectionReason: selectionReason(employee, assignment),
+    availability: employee.isOnline === false ? 'offline' : employee.isWorking ? 'busy' : 'available',
     createdAt: now,
     updatedAt: now,
   };
@@ -89,6 +114,7 @@ export function transitionDelegation(run, delegationId, status, input = {}) {
   const index = (next.delegations || []).findIndex((item) => item.id === delegationId);
   if (index < 0) throw new Error(`找不到委派：${delegationId}`);
   const current = next.delegations[index];
+  if (!DELEGATION_TRANSITIONS[current.status]?.has(status)) throw new Error(`非法委派状态迁移：${current.status} -> ${status}`);
   if (TERMINAL.has(current.status) && current.status !== status) throw new Error(`委派已处于终态：${current.status}`);
   const updated = {
     ...current,

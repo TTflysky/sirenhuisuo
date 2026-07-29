@@ -31,12 +31,18 @@ function scoreEmployee(employee: Employee, request: string): number {
 }
 
 export function matchTeamMembers(team: Team, employees: Employee[], request: string, explicitIds: string[] = []): string[] {
-  const online = team.memberIds.map((id) => employees.find((item) => item.id === id)).filter((item): item is Employee => !!item && item.isOnline);
-  const explicit = [...new Set(explicitIds)].filter((id) => online.some((item) => item.id === id));
+  const members = team.memberIds.map((id) => employees.find((item) => item.id === id)).filter((item): item is Employee => !!item);
+  const online = members.filter((item) => item.isOnline);
+  const explicit = [...new Set(explicitIds)].filter((id) => members.some((item) => item.id === id));
   if (explicit.length) return explicit;
   if (EVERYONE_RE.test(request)) return online.map((item) => item.id);
   const ranked = online.map((employee) => ({ employee, score: scoreEmployee(employee, request) })).sort((a, b) => b.score - a.score);
-  const best = ranked.filter((item) => item.score > 0).slice(0, 2).map((item) => item.employee.id);
+  // A name in the user's request is an explicit assignment, even when the
+  // employee's role metadata does not contain the task keywords.
+  const named = members.filter((employee) => request.includes(employee.name));
+  const rankedIds = ranked.filter((item) => item.score > 0).map((item) => item.employee.id);
+  const best = [...new Set([...named.map((employee) => employee.id), ...rankedIds])]
+    .slice(0, named.length > 0 ? named.length : 2);
   if (!best.length) {
     const lead = online.find((item) => item.role === 'pm') ?? online[0];
     if (lead) best.push(lead.id);
@@ -45,11 +51,13 @@ export function matchTeamMembers(team: Team, employees: Employee[], request: str
     const reviewer = online.find((item) => (item.role === 'checker' || /审查|审核|验收|测试|质检|校对/u.test(`${item.title} ${item.prompt ?? ''}`)) && !best.includes(item.id));
     if (reviewer) best.push(reviewer.id);
   }
-  return best.slice(0, 3);
+  return named.length > 0 ? best : best.slice(0, 3);
 }
 
 export function matchProjectMembers(employees: Employee[], request: string): ProjectMember[] {
-  const pool: Team = { id: 'project-match', name: '项目匹配', memberIds: employees.filter((item) => item.isOnline).map((item) => item.id), chatMessages: [], tasks: [] };
+  // Explicitly named employees remain selectable even when currently offline;
+  // the project UI can show that state and the execution preflight can report it.
+  const pool: Team = { id: 'project-match', name: '项目匹配', memberIds: employees.map((item) => item.id), chatMessages: [], tasks: [] };
   const selected = matchTeamMembers(pool, employees, request);
   return selected.map((employeeId, index) => {
     const employee = employees.find((item) => item.id === employeeId);

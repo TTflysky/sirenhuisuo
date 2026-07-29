@@ -1,10 +1,12 @@
 import type { Employee, SkillReference, TaskPlanStep, TaskRun, TaskRunMemberSnapshot, TaskRunStatus, TaskRunStep, Team } from '../types';
 import { createExecutionController } from '../engine/executionController.mjs';
-import { createTaskContract, createPlan } from '../engine/taskPlan.mjs';
+import { createTaskContract, createPlan, TASK_CONTRACT_VERSION } from '../engine/taskPlan.mjs';
 import type { TaskPlanStep as FormalTaskPlanStep } from '../engine/taskPlan.mjs';
 import { createTaskRunner, restoreTaskRunner } from '../engine/taskRunner.mjs';
 import { appendTaskContextEvent, buildTaskContextPrompt, createTaskContext, restoreTaskContext, type TaskContextEventInput } from '../engine/taskContext.mjs';
 import { createContextBudget, createRecoveryCapsule, verifyRecoveryCapsule } from '../engine/taskContextRouter.mjs';
+import { normalizeTaskHandoff } from '../engine/taskHandoff.mjs';
+import { assertTaskRunTransition } from '../engine/taskStateMachine.mjs';
 import type { TaskLedgerEvent, TaskLedgerIntegrity, TaskWorkerCommand, TaskWorkerCommandResult, TaskWorkerStatusResult } from '../electron';
 
 const LS_TASK_RUNS = 'hermes_office_task_runs_v1';
@@ -34,8 +36,8 @@ export function formalPlanStepForRun(runId: string, step: TaskRunStep | TaskPlan
   };
 }
 
-function formalPlanForRun(run: Pick<TaskRun, 'id' | 'request' | 'goal' | 'steps'>) {
-  const contract = createTaskContract({
+function formalPlanForRun(run: Pick<TaskRun, 'id' | 'request' | 'goal' | 'steps' | 'contract'>) {
+  const contract = run.contract?.contractVersion === TASK_CONTRACT_VERSION ? run.contract : createTaskContract({
     contractId: `contract-${run.id}`,
     scope: `team-run:${run.id}`,
     decision: {
@@ -44,6 +46,9 @@ function formalPlanForRun(run: Pick<TaskRun, 'id' | 'request' | 'goal' | 'steps'
       requiredConstraints: ['每一步必须留下真实结果', '后续步骤等待前置步骤完成'],
       requiresEvidence: true, source: 'rules', confidence: 1,
     },
+    sourceRequest: run.request,
+    expectedOutputs: run.steps.filter((step) => step.kind !== 'review').map((step) => step.title),
+    teamPolicy: { requiresTeam: true, explicitMemberIds: run.steps.map((step) => step.employeeId), allowDynamicDelegation: true },
   });
   const plan = createPlan({
     planId: `plan-${run.id}`, contract,
@@ -53,14 +58,15 @@ function formalPlanForRun(run: Pick<TaskRun, 'id' | 'request' | 'goal' | 'steps'
 }
 
 function addFormalExecutionState(run: TaskRun): TaskRun {
-  if (run.contract && run.plan && run.runner) return run;
+  const hasCurrentContract = run.contract?.contractVersion === TASK_CONTRACT_VERSION;
+  if (hasCurrentContract && run.plan && run.runner) return run;
   if (!run.steps?.length) return run;
   const { contract, plan } = formalPlanForRun(run);
   return {
     ...run,
-    contract: run.contract ?? contract,
-    plan: run.plan ?? plan,
-    runner: run.runner ?? createTaskRunner(plan, { traceId: run.id, createdAt: run.createdAt }),
+    contract: hasCurrentContract ? run.contract : contract,
+    plan: hasCurrentContract ? run.plan ?? plan : plan,
+    runner: hasCurrentContract ? run.runner ?? createTaskRunner(plan, { traceId: run.id, createdAt: run.createdAt }) : createTaskRunner(plan, { traceId: run.id, createdAt: run.createdAt }),
   };
 }
 
@@ -101,6 +107,7 @@ function normalizeTaskRuns(runs: TaskRun[]): TaskRun[] {
         acceptanceCriteria: run.acceptanceCriteria ?? ['完成用户目标', '产出可观察结果', '完成必要验证'],
         preflight: run.preflight ?? [{ label: '确认任务目标', status: 'passed' }, { label: '检查成员与模型', status: 'pending' }, { label: '确认验收方式', status: 'pending' }],
         evidence: run.evidence ?? [], revisionCount: run.revisionCount ?? 0, maxRevisions: run.maxRevisions ?? 2,
+        handoff: normalizeTaskHandoff(run.handoff, { taskId: run.id }),
         steps: (run.steps ?? []).map((step, index) => ({ ...step, evidence: step.evidence ?? [], order: step.order ?? index + 1, kind: step.kind ?? 'work', assignment: step.assignment ?? step.title, dependsOnStepIds: step.dependsOnStepIds ?? [] })),
         memberSnapshot: run.memberSnapshot ?? [],
         context: restoreTaskContext(run.context, {
@@ -356,8 +363,30 @@ export function createTaskRun(team: Team, employees: Employee[], request: string
       }),
     },
   };
-  const { contract, plan: formalPlan } = formalPlanForRun(baseRun);
-  const run = { ...baseRun, contract, plan: formalPlan, runner: createTaskRunner(formalPlan, { traceId: id, createdAt: now }) };
+  const contract = createTaskContract({
+    contractId: `contract-${id}`,
+    sourceRequest: request,
+    request,
+    scope: `team-run:${id}`,
+    expectedOutputs: plan.filter((step) => step.kind !== 'review').map((step) => step.title),
+    requiredCapabilities: ['team_coordination'],
+    teamPolicy: { requiresTeam: true, explicitMemberIds: steps.map((step) => step.employeeId), allowDynamicDelegation: true },
+    decision: {
+      mode: 'execute', goal: request, primaryRoute: 'team_dispatch',
+      acceptanceCriteria: baseRun.acceptanceCriteria,
+      requiredConstraints: ['每一步必须留下真实结果', '后续步骤必须等待前置步骤完成'],
+      requiresEvidence: true, source: 'rules', confidence: 1,
+    },
+  });
+  baseRun.contract = contract;
+  baseRun.acceptanceCriteria = contract.constraints.acceptanceCriteria;
+  baseRun.context = createTaskContext({ taskId: id, goal: request, acceptanceCriteria: contract.constraints.acceptanceCriteria, createdAt: now });
+  baseRun.recoveryContext = {
+    ...baseRun.recoveryContext!,
+    controller: createExecutionController({ goal: request, acceptanceCriteria: contract.constraints.acceptanceCriteria, requiresEvidence: contract.constraints.requiresEvidence }),
+  };
+  const formalized = formalPlanForRun(baseRun);
+  const run = { ...baseRun, contract: formalized.contract, plan: formalized.plan, runner: createTaskRunner(formalized.plan, { traceId: id, createdAt: now }) };
   run.recoveryCapsule = createRecoveryCapsule(run, { reason: '任务创建' });
   return run;
 }
@@ -365,6 +394,8 @@ export function createTaskRun(team: Team, employees: Employee[], request: string
 export function updateTaskRun(run: TaskRun, mutate: (current: TaskRun) => void): TaskRun {
   const next = structuredClone(run) as TaskRun;
   mutate(next);
+  if (next.status !== run.status) assertTaskRunTransition(run.status, next.status, { reason: next.lastError || '任务运行状态更新' });
+  if (next.handoff) next.handoff = normalizeTaskHandoff(next.handoff, { taskId: next.id });
   next.updatedAt = Date.now();
   return next;
 }

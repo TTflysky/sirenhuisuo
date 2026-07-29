@@ -75,7 +75,7 @@ async function main() {
     async execute(name) {
       if (name === 'write_file') {
         writeExecutions += 1;
-        return { name, success: true, output: 'report.md 已写入并读回校验', structuredEvidence: { artifacts: [{ path: 'report.md', filename: 'report.md', bytes: 128, verified: true }] } };
+        return { name, success: true, output: 'report.md 已写入并读回校验', structuredEvidence: { artifacts: [{ path: 'report.md', filename: 'report.md', bytes: 128, persistence: 'disk', diskPath: path.join(root, 'report.md'), verified: true }] } };
       }
       if (name === 'submit_review') {
         return { name, success: true, output: '审查通过', structuredEvidence: { review: { decision: 'pass', reason: '真实文件存在且内容完整', checkedArtifacts: ['report.md'], submittedAt: Date.now() } } };

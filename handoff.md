@@ -1,10 +1,16 @@
 # 太极项目当前交接
 
 > 更新时间：2026-07-29
-> 当前版本：`v0.31.0`
+> 当前版本：`v0.39.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 > Release：`v0.29.0` 为本轮分层记忆、异步复盘与学习闭环大版本
+
+## v0.39.0 收口状态
+
+- 当前版本已统一为 `0.39.0`，`package.json`、`package-lock.json`、README 和交接文档一致。
+- 已加入统一版本门禁 `npm.cmd run verify:v039-release-gate`，会实际执行构建、Lint 与核心内核回归。
+- 本轮只更新核心代码、回归脚本和说明，不打包 Windows 客户端，不发布 GitHub Release；后续大版本验收通过后再执行发布流程。
 
 `v0.29.0` 在现有架构上补齐双重记忆和学习闭环：团队共享经验与员工个人经验同时参与执行，真实验收路线自动沉淀，模型推断进入审批，重复流程只生成隔离 Skill 草案；没有替换现有任务内核、人格、员工、团队或聊天数据。
 
@@ -225,4 +231,4 @@ npm.cmd run verify:package
 2. 用真实团队任务验证：共享团队经验只进入同团队，员工经验只进入对应员工，客户端重启后复盘状态保持不倒退。
 3. 验收发现的问题按同层级入口统一修复，不再恢复逐个截图、逐个小版本的发布节奏。
 
-每次完成后先升级版本并更新本文件，提交到干净的 `main`，然后运行 `npm.cmd run publish:release` 一次完成预检、回归、打包、推送、Release 上传和远端哈希校验。
+补丁版本完成后升级版本并更新本文件，运行 `npm.cmd run dist:win` 和 `npm.cmd run verify:package`，只做本地安装验收；功能大版本在验收通过后提交到干净的 `main`，再运行 `npm.cmd run publish:release` 完成预检、回归、打包、推送、Release 上传和远端哈希校验。

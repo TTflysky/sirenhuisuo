@@ -6,8 +6,13 @@ export interface TaskContract {
   contractVersion: number;
   contractId: string;
   mode: TaskContractMode;
+  sourceRequest: string;
   goal: string;
   primaryRoute: TaskPlanRoute;
+  deliverables: Array<{ label: string; format: string; category: 'final' | 'working' | 'reference'; required: boolean }>;
+  requiredCapabilities: string[];
+  riskLevel: 'low' | 'normal' | 'high';
+  teamPolicy: { requiresTeam: boolean; explicitMemberIds: string[]; allowDynamicDelegation: boolean };
   constraints: {
     required: string[];
     acceptanceCriteria: string[];

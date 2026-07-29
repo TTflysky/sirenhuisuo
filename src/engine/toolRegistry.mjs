@@ -1,3 +1,5 @@
+import { createExecutionProtocol, validateExecutionInput } from './executionProtocol.mjs';
+
 export const TOOL_REGISTRY_PROTOCOL_VERSION = 1;
 
 const NAME_PATTERN = /^[a-z][a-z0-9_]{1,127}$/u;
@@ -105,6 +107,7 @@ export function buildToolRegistry(definitions = [], options = {}) {
       health: configured.health || 'ready',
       healthMessage: configured.healthMessage || '',
       schemaFingerprint: fingerprint(definition.function.parameters),
+      protocol: createExecutionProtocol({ name: validation.name, definition, risk, sideEffect: risk !== 'read', approvalRequired: (configured.approval || (risk === 'read' ? 'none' : 'policy')) !== 'none' }),
     });
   }
   const readyRecords = records.filter((record) => record.health === 'ready');
@@ -148,9 +151,11 @@ export function preflightToolCall(registry, nameInput, argsInput, options = {}) 
     const error = validateValue(value, schema.properties?.[key]);
     if (error) return { ok: false, protocolVersion: registry.protocolVersion, name, stage: 'arguments', category: 'invalid_type', message: `参数 ${key}${error}` };
   }
+  const protocolInput = validateExecutionInput(record.protocol, args);
+  if (!protocolInput.ok) return { ok: false, protocolVersion: registry.protocolVersion, name, stage: 'arguments', category: 'invalid_schema', message: protocolInput.errors.join('；'), record, requiresApproval: false };
   const requiresApproval = record.approval !== 'none' && options.approvalGranted !== true;
   if (requiresApproval && options.enforceApproval === true) return { ok: false, protocolVersion: registry.protocolVersion, name, stage: 'permission', category: 'approval_required', message: `工具 ${name} 需要按当前策略审批`, record, requiresApproval };
-  return { ok: true, protocolVersion: registry.protocolVersion, name, stage: 'ready', category: 'ready', message: '工具预检通过', record, requiresApproval };
+  return { ok: true, protocolVersion: registry.protocolVersion, name, stage: 'ready', category: 'ready', message: '工具预检通过', record, requiresApproval, executionProtocol: record.protocol };
 }
 
 export function toolRegistrySnapshot(registry) {

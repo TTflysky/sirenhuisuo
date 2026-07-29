@@ -1,5 +1,6 @@
 import type { Skill, SkillReference } from '../types';
 import { BUS_CHANNELS, sendBus } from '../ipcBus';
+import { appendSkillEvidence } from '../engine/skillEvidence.mjs';
 
 export interface ReadSkillResult {
   id: string;
@@ -111,17 +112,18 @@ export async function buildSkillContextWithEvidence(refs: SkillReference[]): Pro
 }> {
   const unique = refs.filter((ref, index) => refs.findIndex((item) => item.id === ref.id) === index).slice(0, 5);
   const matchedAt = Date.now();
-  const evidence: import('../types').SkillUsageEvidence[] = unique.map((ref) => ({
-    ts: matchedAt, skillId: ref.id, skillName: ref.name, action: 'matched',
-    reason: '调度器根据当前任务匹配 Skill', verified: true,
-  }));
+  let evidence: import('../types').SkillUsageEvidence[] = [];
+  for (const ref of unique) evidence = appendSkillEvidence(evidence, {
+    ts: matchedAt, skillId: ref.id, skillName: ref.name, action: 'matched', stage: 'selection',
+    reason: '调度器根据当前任务匹配 Skill', verified: true, source: 'scheduler',
+  });
   const bodies = await Promise.all(unique.map(async (ref) => {
     try {
       const skill = await readSkill(ref.id);
-      evidence.push({ ts: Date.now(), skillId: ref.id, skillName: skill.name, action: 'read', reason: '已读取 Skill 主规则和引用文档', verified: true });
+      evidence = appendSkillEvidence(evidence, { ts: Date.now(), skillId: ref.id, skillName: skill.name, action: 'read', stage: 'readback', reason: '已读取 Skill 主规则和引用文档', verified: true, source: 'client' });
       return skill;
     } catch (error) {
-      evidence.push({ ts: Date.now(), skillId: ref.id, skillName: ref.name, action: 'read-failed', reason: 'Skill 读取失败', detail: String(error).slice(0, 240), verified: false });
+      evidence = appendSkillEvidence(evidence, { ts: Date.now(), skillId: ref.id, skillName: ref.name, action: 'read-failed', stage: 'readback', reason: 'Skill 读取失败', detail: String(error).slice(0, 240), verified: false, source: 'client' });
       return null;
     }
   }));

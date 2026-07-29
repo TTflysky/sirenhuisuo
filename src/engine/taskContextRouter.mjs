@@ -219,11 +219,16 @@ export function createRecoveryCapsule(run, input = {}) {
     status: text(run?.status, 40),
     phase: text(run?.phase, 40),
     workspaceId: text(run?.workspaceId, 500),
+    contractVersion: Number(run?.contract?.contractVersion) || undefined,
+    planId: text(run?.plan?.planId, 180) || undefined,
+    planFingerprint: run?.contract || run?.plan ? checksum({ contract: run?.contract, plan: run?.plan }) : undefined,
     completedSteps: (run?.steps || []).filter((step) => step.status === 'completed').map((step) => ({ id: step.id, title: text(step.title, 240), evidence: (step.evidence || []).filter((item) => item.verified).slice(-5).map((item) => text(item.summary, 500)) })),
     pendingSteps: (run?.steps || []).filter((step) => step.status !== 'completed').map((step) => ({ id: step.id, title: text(step.title, 240), status: step.status, attempts: Number(step.attempts) || 0, dependsOnStepIds: step.dependsOnStepIds || [] })),
     verifiedFacts: context.summary.verifiedFacts.slice(-18),
     artifacts: context.summary.artifactPaths.slice(-20),
     unresolvedIssues: [...new Set([...(context.openIssues || []), ...(run?.recoveryContext?.unresolvedIssues || [])])].slice(-18),
+    handoff: clone(run?.handoff),
+    nextStepId: (run?.steps || []).find((step) => ['queued', 'paused', 'failed'].includes(step.status))?.id,
     steeringMessages: (run?.recoveryContext?.steeringMessages || []).slice(-20),
     budget: createContextBudget(run?.recoveryContext?.budget),
     lastCheckpoint: clone(run?.worker?.lastCheckpoint),
@@ -237,7 +242,8 @@ export function verifyRecoveryCapsule(capsule) {
   if (!capsule || capsule.recoveryVersion !== RECOVERY_VERSION || typeof capsule.checksum !== 'string') return false;
   const payload = { ...capsule };
   delete payload.checksum;
-  return checksum(payload) === capsule.checksum && Boolean(capsule.taskId && capsule.immutableGoal);
+  return checksum(payload) === capsule.checksum && Boolean(capsule.taskId && capsule.immutableGoal)
+    && (!capsule.planFingerprint || typeof capsule.planFingerprint === 'string');
 }
 
 export function routeTaskInput(run, message, input = {}) {
@@ -274,6 +280,9 @@ export function buildRecoveryPrompt(run, maxLength = 18000) {
     capsule.completedSteps.length ? `已完成步骤：${capsule.completedSteps.map((step) => step.title).join('；')}` : '已完成步骤：暂无',
     capsule.pendingSteps.length ? `未完成步骤：${capsule.pendingSteps.map((step) => `${step.title}(${step.status})`).join('；')}` : '未完成步骤：暂无',
     capsule.unresolvedIssues.length ? `未决问题：${capsule.unresolvedIssues.join('；')}` : '',
+    capsule.handoff?.nextAction ? `交接下一步：${capsule.handoff.nextAction}` : '',
+    capsule.handoff?.resumeCondition ? `恢复条件：${capsule.handoff.resumeCondition}` : '',
+    capsule.nextStepId ? `下一个候选步骤：${capsule.nextStepId}` : '',
     capsule.steeringMessages.length ? `用户最新补充：${capsule.steeringMessages.join('；')}` : '',
     '恢复后从第一个未完成且依赖满足的步骤继续。已完成步骤不得重做，除非新的用户纠错明确使其失效。',
   ].filter(Boolean).join('\n');
