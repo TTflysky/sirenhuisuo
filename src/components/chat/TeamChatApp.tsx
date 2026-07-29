@@ -7,6 +7,7 @@ import AgentAvatar from '../office/AgentAvatar';
 import { loadOutputsByScope, type OutputRecord } from '../../data/outputs';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
 import ChatMessageText from './ChatMessageText';
+import MessageSkillEvidence from './MessageSkillEvidence';
 import RenameTeamModal from '../sidebar/RenameTeamModal';
 import ManageTeamMembersModal from '../sidebar/ManageTeamMembersModal';
 import { copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../utils/clipboard';
@@ -604,6 +605,7 @@ export default function TeamChatApp({ teamId }: Props) {
                       <button className="msg-copy-btn" onClick={() => handleCopyMsg(msg.content)} title="复制">📋</button>
                     </div>
                   )}
+                  <MessageSkillEvidence refs={msg.skillRefs} evidence={msg.skillEvidence} />
                   {msg.tokens != null && (
                     <div className="msg-tokens">≈ {msg.tokens.toLocaleString()} tokens</div>
                   )}

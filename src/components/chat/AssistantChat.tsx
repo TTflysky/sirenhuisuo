@@ -1,14 +1,15 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
-import type { ChatMessage, ThoughtChainStep } from '../../types';
+import type { ChatMessage, ThoughtChainStep, SkillUsageEvidence } from '../../types';
 import { runAgentLoop, resolveApiBase, resolveChatSettings, extractUserInsights, fetchInitial, loadSettings, type ChatTurn, type Attachment } from '../../data/hermesClient';
 import { getRegisteredTools } from '../../engine/toolCatalog';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
 import ProjectApprovalCard from './ProjectApprovalCard';
+import MessageSkillEvidence from './MessageSkillEvidence';
 import ChatMessageText from './ChatMessageText';
 import ThoughtChainView from './ThoughtChainView';
 import { copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
-import SkillMentionInput, { resolveSkillContext } from '../skills/SkillMentionInput';
+import SkillMentionInput, { resolveSkillContextWithEvidence } from '../skills/SkillMentionInput';
 import SkillPickerButton from '../skills/SkillPickerButton';
 import ExecutionPolicyControl from './ExecutionPolicyControl';
 import type { SkillReference } from '../../types';
@@ -180,7 +181,12 @@ export default function AssistantChat() {
     // the last React render, before choosing project members.
     const liveEmployees = fetchInitial().employees;
     const refs = externalRequest ? [] : skillRefs;
-    const skillContext = await resolveSkillContext(refs);
+    const skillResolution = await resolveSkillContextWithEvidence(refs);
+    const skillContext = skillResolution.context;
+    const skillEvidence: SkillUsageEvidence[] = [...skillResolution.evidence];
+    const selectedSkillGuide = refs.length
+      ? `用户明确通过 @ 选择了以下 Skill：${refs.map((ref) => `${ref.name} (${ref.id})`).join('、')}。这些 Skill 规则优先于自动路由；先遵循已读取的 Skill 说明完成任务，需要查询时使用 Skill 指定的方式，不要无理由改用普通搜索。`
+      : '';
     if (!externalRequest) {
       setSkillRefs([]);
       setText('');
@@ -200,7 +206,7 @@ export default function AssistantChat() {
     if (!alreadyDisplayed) {
       push({
         id: `h-${Date.now()}-me`, authorId: 'me', roleId: 'human',
-        content: display, mentions: [], timestamp: Date.now(), kind: 'text', skillRefs: refs,
+        content: display, mentions: [], timestamp: Date.now(), kind: 'text', skillRefs: refs, skillEvidence,
         attachments: atts,
       });
     }
@@ -400,7 +406,7 @@ ${employeeDirectory}
 
       const r = await runAgentLoop({
         turns: [
-          { role: 'system', content: `${getAssistantPrompt()}\n\n${BEGINNER_RESPONSE_GUIDE}` },
+          { role: 'system', content: `${getAssistantPrompt()}\n\n${selectedSkillGuide}\n\n${BEGINNER_RESPONSE_GUIDE}` },
           ...history,
           { role: 'user', content: enriched },
         ],
@@ -410,7 +416,7 @@ ${employeeDirectory}
         scope: 'assistant',
         workspaceId,
         attachments: imageAtts,
-        extraSystemContext: [organizationContext, layeredMemoryContext, skillContext].filter(Boolean).join('\n\n'),
+        extraSystemContext: [organizationContext, layeredMemoryContext, selectedSkillGuide, skillContext].filter(Boolean).join('\n\n'),
         shouldStop: executionControl.shouldStop,
         waitIfPaused: executionControl.waitIfPaused,
         consumeSteeringMessages: () => steeringMessagesRef.current.splice(0),
@@ -435,6 +441,20 @@ ${employeeDirectory}
         onToolResult(name, args, result, success) {
           const matchKey = `${name}:${args}`;
           const resultSuccess = isToolResultSuccessful(result, success);
+          if (/^(search_skills|read_skill|install_skill)$/u.test(name)) {
+            let skillId = '';
+            try {
+              const parsed = JSON.parse(args || '{}') as { id?: string; installedSkillId?: string };
+              skillId = parsed.id ?? parsed.installedSkillId ?? '';
+            } catch {}
+            const selected = refs.find((ref) => ref.id === skillId);
+            skillEvidence.push({
+              ts: Date.now(), skillId: skillId || selected?.id, skillName: selected?.name,
+              action: name === 'search_skills' ? 'searched' : name === 'read_skill' ? (resultSuccess ? 'read' : 'read-failed') : 'called',
+              toolName: name, reason: resultSuccess ? '助理实际执行了技能工具' : '技能工具执行失败',
+              detail: result.slice(0, 240), verified: resultSuccess, stage: 'execution', source: 'assistant',
+            });
+          }
           if (name === 'web_search' && resultSuccess) {
             lastStage = '整理搜索结果';
             setStatus('正在阅读并整理搜索结果…');
@@ -482,6 +502,8 @@ ${employeeDirectory}
       push({
         id: `h-${ts}-ai`, authorId: 'assistant', roleId: 'custom',
         content: simplifyLegacyAssistantContent(r.content), mentions: [], timestamp: ts, kind: 'text',
+        skillRefs: refs.length ? refs : undefined,
+        skillEvidence: skillEvidence.length ? skillEvidence : undefined,
         tokens: r.usage.totalTokens,
         contextUsage: r.contextUsage,
         thoughtChain: showCoT && cotSteps.length > 0 ? cotSteps : undefined,
@@ -675,6 +697,7 @@ ${employeeDirectory}
                     </button>
                   </div>
                   {/* 思维链展示 */}
+                  <MessageSkillEvidence refs={msg.skillRefs} evidence={msg.skillEvidence} />
                   {msg.thoughtChain && msg.thoughtChain.length > 0 && (
                     <ThoughtChainView steps={msg.thoughtChain} />
                   )}

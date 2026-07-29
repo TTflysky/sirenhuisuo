@@ -3330,6 +3330,16 @@ body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
 .cot-step-args pre, .cot-step-result pre { margin: 0; max-height: 180px; overflow: auto; padding: 6px; border-radius: 4px; background: var(--bg-deep); color: var(--text-secondary); font: 9px/1.45 'Consolas', monospace; white-space: pre-wrap; word-break: break-word; }
 .cot-step-result { margin-top: 6px; }
 
+.msg-skill-evidence { display: flex; max-width: min(620px, 100%); flex-direction: column; gap: 6px; margin: 6px 0 4px 42px; padding: 7px 9px; border: 1px solid var(--border-light); border-radius: 8px; background: color-mix(in srgb, var(--surface) 88%, var(--apple-accent)); }
+.msg-skill-evidence-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-secondary); font-size: 10px; font-weight: 700; }
+.msg-skill-evidence-head small { color: var(--text-muted); font-size: 9px; font-weight: 400; }
+.msg-skill-evidence-list { display: flex; flex-wrap: wrap; gap: 5px; }
+.msg-skill-evidence-item { padding: 3px 6px; border-radius: 5px; background: var(--bg-deep); color: var(--text-secondary); font-size: 10px; }
+.msg-skill-evidence-item i { color: var(--apple-accent); font-style: normal; font-weight: 700; }
+.msg-skill-evidence-item.is-read-failed { color: var(--danger, #dc2626); }
+.msg-skill-evidence-item.is-read-failed i { color: var(--danger, #dc2626); }
+@media (max-width: 680px) { .msg-skill-evidence { margin-left: 0; } }
+
 /* v0.50.0 team hall */
 .team-hall {
   flex: 1;

@@ -165,6 +165,7 @@ export interface ChatMessage {
   contextUsage?: import('./data/hermesClient').ContextUsage;
   attachments?: import('./data/hermesClient').Attachment[]; // 用户上传/粘贴的附件
   skillRefs?: SkillReference[];
+  skillEvidence?: SkillUsageEvidence[];
   thoughtChain?: ThoughtChainStep[]; // 思维链步骤（AI 推理过程记录）
   /** 主进程后台执行消息可携带快照名称，员工被删除后仍可回放。 */
   authorName?: string;

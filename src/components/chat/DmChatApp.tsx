@@ -1,15 +1,16 @@
 import { useState, useRef, useEffect } from 'react';
 import { CloseOutlined, PauseCircleOutlined, PlayCircleOutlined, ReloadOutlined, SettingOutlined, StopOutlined } from '@ant-design/icons';
-import type { ChatMessage, ThoughtChainStep } from '../../types';
+import type { ChatMessage, SkillUsageEvidence, ThoughtChainStep } from '../../types';
 import { useStore } from '../../store';
 import { loadDm, appendDm, runAgentLoop, resolveApiBase, extractUserInsights, getEmployeeModel, loadSettings, type ChatTurn, type Attachment, type ContextUsage } from '../../data/hermesClient';
 import AgentAvatar from '../office/AgentAvatar';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
 import ChatMessageText from './ChatMessageText';
+import MessageSkillEvidence from './MessageSkillEvidence';
 import ThoughtChainView from './ThoughtChainView';
 import { copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
-import SkillMentionInput, { resolveSkillContext } from '../skills/SkillMentionInput';
+import SkillMentionInput, { resolveSkillContextWithEvidence } from '../skills/SkillMentionInput';
 import SkillPickerButton from '../skills/SkillPickerButton';
 import ExecutionPolicyControl from './ExecutionPolicyControl';
 import type { SkillReference } from '../../types';
@@ -42,6 +43,8 @@ interface DmRetryJob {
   userText: string;
   attachments: Attachment[];
   skillContext: string;
+  skillRefs: SkillReference[];
+  skillEvidence: SkillUsageEvidence[];
   history: ChatTurn[];
   attempt: number;
   status: 'waiting' | 'failed';
@@ -61,7 +64,12 @@ function loadRetryJob(empId: string): DmRetryJob | null {
     const raw = localStorage.getItem(retryJobKey(empId));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<DmRetryJob>;
-    const job = { ...parsed, workspaceId: parsed.workspaceId ?? createTaskWorkspaceId('dm', empId) } as DmRetryJob;
+    const job = {
+      ...parsed,
+      workspaceId: parsed.workspaceId ?? createTaskWorkspaceId('dm', empId),
+      skillRefs: parsed.skillRefs ?? [],
+      skillEvidence: parsed.skillEvidence ?? [],
+    } as DmRetryJob;
     return job.status === 'waiting' && !job.nextRetryAt ? { ...job, status: 'failed' } : job;
   } catch { return null; }
 }
@@ -124,7 +132,7 @@ export default function DmChatApp({ empId }: Props) {
   const runJobRef = useRef<(job: DmRetryJob) => Promise<void>>(async () => {});
   const steeringMessagesRef = useRef<string[]>([]);
   const activeWorkspaceIdRef = useRef<string | undefined>(undefined);
-  const queuedFollowUpsRef = useRef<Array<{ userText: string; attachments: Attachment[]; skillContext: string }>>([]);
+  const queuedFollowUpsRef = useRef<Array<{ userText: string; attachments: Attachment[]; skillContext: string; skillRefs: SkillReference[]; skillEvidence: SkillUsageEvidence[] }>>([]);
   const msgsRef = useRef(msgs);
   const previousExecutionStateRef = useRef<'running' | 'paused' | 'stopping'>('running');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -203,7 +211,9 @@ export default function DmChatApp({ empId }: Props) {
     if (!content && attachments.length === 0) return;
     const atts = attachments;
     const refs = skillRefs;
-    const skillContext = await resolveSkillContext(refs);
+    const skillResolution = await resolveSkillContextWithEvidence(refs);
+    const skillContext = skillResolution.context;
+    const skillEvidence = skillResolution.evidence;
     setSkillRefs([]);
     setText('');
     setAttachments([]);
@@ -218,6 +228,7 @@ export default function DmChatApp({ empId }: Props) {
       timestamp: Date.now(),
       kind: 'text',
       skillRefs: refs,
+      skillEvidence,
     });
 
     if (typing) {
@@ -259,7 +270,7 @@ export default function DmChatApp({ empId }: Props) {
         executionControl.interruptForSteering();
         setStatus(holdForFeedback ? '已挂起原任务，正在回答你的反馈…' : '正在优先处理你刚刚说的话…');
       } else {
-        queuedFollowUpsRef.current.push({ userText: content, attachments: atts, skillContext });
+        queuedFollowUpsRef.current.push({ userText: content, attachments: atts, skillContext, skillRefs: refs, skillEvidence });
         push({
           id: `dm-${Date.now()}-${empId}-ack`, authorId: empId, roleId: emp.role,
           content: '收到。这条要求已经排到当前任务之后，不会混进正在执行的步骤。',
@@ -271,7 +282,7 @@ export default function DmChatApp({ empId }: Props) {
     }
 
     const history: ChatTurn[] = msgs.slice(-8).map((m) => ({ role: m.roleId === 'human' ? 'user' : 'assistant', content: m.content }));
-    void runDmJob({ id: `dm-retry-${Date.now()}`, workspaceId: createTaskWorkspaceId('dm', empId), userText: content, attachments: atts, skillContext, history, attempt: 0, status: 'waiting', lastError: '' });
+    void runDmJob({ id: `dm-retry-${Date.now()}`, workspaceId: createTaskWorkspaceId('dm', empId), userText: content, attachments: atts, skillContext, skillRefs: refs, skillEvidence, history, attempt: 0, status: 'waiting', lastError: '' });
 
     // 自动提炼用户洞察（每 3 条用户消息触发一次）
     const userMsgCount = msgs.filter(m => m.roleId === 'human').length;
@@ -297,10 +308,11 @@ export default function DmChatApp({ empId }: Props) {
     try {
       await initializeTaskWorkspace(job.workspaceId, { kind: 'dm', label: `${emp.name} / ${job.userText.slice(0, 50) || '私聊任务'}`, taskId: job.id });
       await copyAttachmentsToWorkspace(`dm:${empId}`, job.workspaceId, job.attachments);
-      const { text: reply, usage, contextUsage, thoughtChain } = await generateReply(
+      const { text: reply, usage, contextUsage, thoughtChain, skillEvidence } = await generateReply(
         job.userText,
         job.attachments,
         job.skillContext,
+        job.skillEvidence,
         job.history,
         job.workspaceId,
         job.controllerState,
@@ -310,7 +322,7 @@ export default function DmChatApp({ empId }: Props) {
         },
       );
       setStatus('正在整理清晰的结果…');
-      push({ id: `dm-${Date.now()}-${empId}`, authorId: empId, roleId: emp.role, content: reply, mentions: [], timestamp: Date.now(), kind: 'text', tokens: usage, contextUsage, thoughtChain });
+      push({ id: `dm-${Date.now()}-${empId}`, authorId: empId, roleId: emp.role, content: reply, mentions: [], timestamp: Date.now(), kind: 'text', tokens: usage, contextUsage, thoughtChain, skillRefs: job.skillRefs.length ? job.skillRefs : undefined, skillEvidence: skillEvidence?.length ? skillEvidence : undefined });
       setRetryJob(null);
       saveRetryJob(empId, null);
     } catch (error) {
@@ -340,6 +352,8 @@ export default function DmChatApp({ empId }: Props) {
           userText: queued.userText,
           attachments: queued.attachments,
           skillContext: queued.skillContext,
+          skillRefs: queued.skillRefs,
+          skillEvidence: queued.skillEvidence,
           history,
           attempt: 0,
           status: 'waiting',
@@ -365,7 +379,7 @@ export default function DmChatApp({ empId }: Props) {
   };
 
   // 优先真调 OpenAI 兼容模型（带员工提示词），失败/未配置则回落本地剧本
-  const generateReply = async (userText: string, atts: Attachment[] = [], skillContext = '', historyOverride?: ChatTurn[], workspaceId?: string, initialExecutionState?: ExecutionControllerSnapshot, onExecutionState?: (state: ExecutionControllerSnapshot) => void): Promise<{ text: string; usage?: number; contextUsage?: ContextUsage; thoughtChain?: ThoughtChainStep[]; executionState?: ExecutionControllerSnapshot }> => {
+  const generateReply = async (userText: string, atts: Attachment[] = [], skillContext = '', skillEvidence: SkillUsageEvidence[] = [], historyOverride?: ChatTurn[], workspaceId?: string, initialExecutionState?: ExecutionControllerSnapshot, onExecutionState?: (state: ExecutionControllerSnapshot) => void): Promise<{ text: string; usage?: number; contextUsage?: ContextUsage; thoughtChain?: ThoughtChainStep[]; skillEvidence?: SkillUsageEvidence[]; executionState?: ExecutionControllerSnapshot }> => {
     // 文本类附件：直接拼进用户文本作为上下文
     let enriched = userText;
     const textAtts = atts.filter((a) => a.kind === 'text' && a.dataUrl);
@@ -386,13 +400,14 @@ export default function DmChatApp({ empId }: Props) {
       const t = emp.prompt
         ? `（按人设：${emp.prompt.slice(0, 30)}${emp.prompt.length > 30 ? '…' : ''}）${craftReply(emp.role, enriched)}`
         : craftReply(emp.role, enriched);
-      return { text: t };
+      return { text: t, skillEvidence };
     }
     const personaPrompt = emp.prompt?.trim() || `你是「${emp.name}」，一名${emp.title}。用简洁、专业的中文回复，语气贴合你的角色。需要产出文件时直接调用工具完成。`;
     const systemPrompt = `${personaPrompt}\n\n${BEGINNER_RESPONSE_GUIDE}`;
     const history = historyOverride ?? msgs.slice(-8).map((m): ChatTurn => ({ role: m.roleId === 'human' ? 'user' : 'assistant', content: m.content }));
     const thoughtChain: ThoughtChainStep[] = [];
     const showThoughtChain = loadSettings().showThoughtChain !== false;
+    const executionSkillEvidence = [...skillEvidence];
     const layeredMemoryContext = await buildLayeredMemoryContext({ query: enriched, employeeId: empId, limit: 16 });
     const r = await runAgentLoop({
       turns: [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content: enriched }],
@@ -426,6 +441,20 @@ export default function DmChatApp({ empId }: Props) {
       onToolResult(name, args, result, success) {
         const matchKey = `${name}:${args}`;
         const resultSuccess = isToolResultSuccessful(result, success);
+        if (/^(search_skills|read_skill|install_skill)$/u.test(name)) {
+          let skillId = '';
+          try {
+            const parsed = JSON.parse(args || '{}') as { id?: string; installedSkillId?: string };
+            skillId = parsed.id ?? parsed.installedSkillId ?? '';
+          } catch {}
+          const selected = skillEvidence.find((item) => item.skillId === skillId || item.skillName === skillId);
+          executionSkillEvidence.push({
+            ts: Date.now(), skillId: skillId || selected?.skillId, skillName: selected?.skillName,
+            action: name === 'search_skills' ? 'searched' : name === 'read_skill' ? (resultSuccess ? 'read' : 'read-failed') : 'called',
+            toolName: name, reason: resultSuccess ? `员工实际执行了 ${name}` : `${name} 执行失败`,
+            detail: result.slice(0, 240), verified: resultSuccess, stage: 'execution', source: 'employee',
+          });
+        }
         setCompletedActionCount((count) => count + 1);
         setLiveActivities((current) => {
           let index = -1;
@@ -451,7 +480,7 @@ export default function DmChatApp({ empId }: Props) {
         setLiveExecutionSteps((current) => [...current, step].slice(-50));
       },
     });
-    return { text: r.content ?? '（无回复）', usage: r.usage.totalTokens, contextUsage: r.contextUsage, thoughtChain: thoughtChain.length ? thoughtChain : undefined, executionState: r.executionState };
+    return { text: r.content ?? '（无回复）', usage: r.usage.totalTokens, contextUsage: r.contextUsage, thoughtChain: thoughtChain.length ? thoughtChain : undefined, skillEvidence: executionSkillEvidence, executionState: r.executionState };
   };
 
   const openOutputFromMessage = (output: OutputRecord) => {
@@ -545,6 +574,7 @@ export default function DmChatApp({ empId }: Props) {
                     <div className="msg-bubble"><ChatMessageText content={msg.content} scope={`dm:${empId}`} onOpenOutput={openOutputFromMessage} /></div>
                     <button className="msg-copy-btn" onClick={() => handleCopyMsg(msg.content)} title="复制">📋</button>
                   </div>
+                  <MessageSkillEvidence refs={msg.skillRefs} evidence={msg.skillEvidence} />
                   {msg.tokens != null && (
                     <div className="msg-tokens">≈ {msg.tokens.toLocaleString()} tokens</div>
                   )}

@@ -1,7 +1,7 @@
 {
   "name": "hermes-office-pro",
   "private": true,
-  "version": "0.50.0",
+  "version": "0.50.3",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -59,6 +59,7 @@
     "verify:team-execution-protocol": "node scripts/verify-team-execution-protocol.mjs",
     "verify:v049-release-gate": "node scripts/verify-v049-release-gate.mjs",
     "verify:v050-team-hall": "node scripts/verify-v050-team-hall.mjs",
+    "verify:skill-evidence-ui": "node scripts/verify-skill-evidence-ui.mjs",
     "verify:foundation-ui": "node scripts/verify-foundation-e2e.mjs",
     "dist:win": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1",
     "publish:release": "powershell -ExecutionPolicy Bypass -File scripts/publish-github-release.ps1",
