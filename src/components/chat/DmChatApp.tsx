@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { CloseOutlined, PauseCircleOutlined, PlayCircleOutlined, ReloadOutlined, SettingOutlined, StopOutlined } from '@ant-design/icons';
-import type { ChatMessage, SkillUsageEvidence, ThoughtChainStep } from '../../types';
-import { useStore } from '../../store';
+import type { ChatMessage, ConversationReference, SkillUsageEvidence, ThoughtChainStep } from '../../types';
+import { useStore } from '../../storeContext';
 import { loadDm, appendDm, runAgentLoop, resolveApiBase, extractUserInsights, getEmployeeModel, loadSettings, type ChatTurn, type Attachment, type ContextUsage } from '../../data/hermesClient';
 import AgentAvatar from '../office/AgentAvatar';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
@@ -10,7 +10,8 @@ import MessageSkillEvidence from './MessageSkillEvidence';
 import ThoughtChainView from './ThoughtChainView';
 import { copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
-import SkillMentionInput, { resolveSkillContextWithEvidence } from '../skills/SkillMentionInput';
+import SkillMentionInput from '../skills/SkillMentionInput';
+import { resolveSkillContextWithEvidence } from '../../engine/skillContext';
 import SkillPickerButton from '../skills/SkillPickerButton';
 import ExecutionPolicyControl from './ExecutionPolicyControl';
 import type { SkillReference } from '../../types';
@@ -31,6 +32,8 @@ import {
   isToolResultSuccessful,
 } from '../../data/assistantPresentation';
 import { buildLayeredMemoryContext } from '../../data/layeredMemory';
+import { referenceClarification, referencesFromToolResult, resolveConversationReferences } from '../../engine/conversationReferences.mjs';
+import { createChatTaskBridge } from '../../engine/taskServiceBridge';
 
 interface Props {
   empId: string;
@@ -45,6 +48,8 @@ interface DmRetryJob {
   skillContext: string;
   skillRefs: SkillReference[];
   skillEvidence: SkillUsageEvidence[];
+  referenceContext?: string;
+  referenceSourceUrl?: string;
   history: ChatTurn[];
   attempt: number;
   status: 'waiting' | 'failed';
@@ -132,7 +137,7 @@ export default function DmChatApp({ empId }: Props) {
   const runJobRef = useRef<(job: DmRetryJob) => Promise<void>>(async () => {});
   const steeringMessagesRef = useRef<string[]>([]);
   const activeWorkspaceIdRef = useRef<string | undefined>(undefined);
-  const queuedFollowUpsRef = useRef<Array<{ userText: string; attachments: Attachment[]; skillContext: string; skillRefs: SkillReference[]; skillEvidence: SkillUsageEvidence[] }>>([]);
+  const queuedFollowUpsRef = useRef<Array<{ userText: string; attachments: Attachment[]; skillContext: string; skillRefs: SkillReference[]; skillEvidence: SkillUsageEvidence[]; referenceContext?: string; referenceSourceUrl?: string }>>([]);
   const msgsRef = useRef(msgs);
   const previousExecutionStateRef = useRef<'running' | 'paused' | 'stopping'>('running');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -210,7 +215,8 @@ export default function DmChatApp({ empId }: Props) {
     const content = text.trim();
     if (!content && attachments.length === 0) return;
     const atts = attachments;
-    const refs = skillRefs;
+    const referenceResolution = resolveConversationReferences({ input: content, history: msgs, selectedSkillRefs: skillRefs });
+    const refs = skillRefs.length ? skillRefs : referenceResolution.skillRefs;
     const skillResolution = await resolveSkillContextWithEvidence(refs);
     const skillContext = skillResolution.context;
     const skillEvidence = skillResolution.evidence;
@@ -229,7 +235,21 @@ export default function DmChatApp({ empId }: Props) {
       kind: 'text',
       skillRefs: refs,
       skillEvidence,
+      references: referenceResolution.references,
     });
+
+    if (referenceResolution.status === 'ambiguous') {
+      push({ id: `dm-${Date.now()}-${empId}-reference-unclear`, authorId: empId, roleId: emp.role, content: referenceClarification(referenceResolution), mentions: [], timestamp: Date.now(), kind: 'text', references: referenceResolution.references });
+      return;
+    }
+    if (referenceResolution.status === 'resolved' && referenceResolution.action === 'share-link') {
+      const reference = referenceResolution.references[0];
+      const reply = reference.sourceUrl
+        ? `这是“${reference.label}”的真实来源链接：\n${reference.sourceUrl}`
+        : `“${reference.label}”是本机已有对象，没有记录可公开访问的来源链接。我不会重新搜索同名对象来替代它。`;
+      push({ id: `dm-${Date.now()}-${empId}-reference-link`, authorId: empId, roleId: emp.role, content: reply, mentions: [], timestamp: Date.now(), kind: 'text', references: referenceResolution.references });
+      return;
+    }
 
     if (typing) {
       const mode = loadSettings().followUpMode ?? 'steer';
@@ -270,7 +290,7 @@ export default function DmChatApp({ empId }: Props) {
         executionControl.interruptForSteering();
         setStatus(holdForFeedback ? '已挂起原任务，正在回答你的反馈…' : '正在优先处理你刚刚说的话…');
       } else {
-        queuedFollowUpsRef.current.push({ userText: content, attachments: atts, skillContext, skillRefs: refs, skillEvidence });
+        queuedFollowUpsRef.current.push({ userText: content, attachments: atts, skillContext, skillRefs: refs, skillEvidence, referenceContext: referenceResolution.context, referenceSourceUrl: referenceResolution.references[0]?.sourceUrl });
         push({
           id: `dm-${Date.now()}-${empId}-ack`, authorId: empId, roleId: emp.role,
           content: '收到。这条要求已经排到当前任务之后，不会混进正在执行的步骤。',
@@ -282,7 +302,7 @@ export default function DmChatApp({ empId }: Props) {
     }
 
     const history: ChatTurn[] = msgs.slice(-8).map((m) => ({ role: m.roleId === 'human' ? 'user' : 'assistant', content: m.content }));
-    void runDmJob({ id: `dm-retry-${Date.now()}`, workspaceId: createTaskWorkspaceId('dm', empId), userText: content, attachments: atts, skillContext, skillRefs: refs, skillEvidence, history, attempt: 0, status: 'waiting', lastError: '' });
+    void runDmJob({ id: `dm-retry-${Date.now()}`, workspaceId: createTaskWorkspaceId('dm', empId), userText: content, attachments: atts, skillContext, skillRefs: refs, skillEvidence, referenceContext: referenceResolution.context, referenceSourceUrl: referenceResolution.references[0]?.sourceUrl, history, attempt: 0, status: 'waiting', lastError: '' });
 
     // 自动提炼用户洞察（每 3 条用户消息触发一次）
     const userMsgCount = msgs.filter(m => m.roleId === 'human').length;
@@ -305,10 +325,19 @@ export default function DmChatApp({ empId }: Props) {
     dispatch({ type: 'UPDATE_EMPLOYEE', id: empId, partial: { isWorking: true } });
     activeWorkspaceIdRef.current = job.workspaceId;
     let latestControllerState = job.controllerState;
+    const taskBridge = createChatTaskBridge({
+      taskType: 'dm',
+      ownerId: empId,
+      title: `${emp.name}: ${job.userText.slice(0, 100)}`,
+      goal: job.userText,
+      workspaceId: job.workspaceId,
+      idempotencyKey: `dm-chat:${empId}:${job.id}`,
+      references: job.skillRefs.map((skill) => ({ kind: 'skill', id: skill.id, label: skill.name, state: 'local' })),
+    });
     try {
       await initializeTaskWorkspace(job.workspaceId, { kind: 'dm', label: `${emp.name} / ${job.userText.slice(0, 50) || '私聊任务'}`, taskId: job.id });
       await copyAttachmentsToWorkspace(`dm:${empId}`, job.workspaceId, job.attachments);
-      const { text: reply, usage, contextUsage, thoughtChain, skillEvidence } = await generateReply(
+      const { text: reply, usage, contextUsage, thoughtChain, skillEvidence, references } = await generateReply(
         job.userText,
         job.attachments,
         job.skillContext,
@@ -316,16 +345,20 @@ export default function DmChatApp({ empId }: Props) {
         job.history,
         job.workspaceId,
         job.controllerState,
+        job.referenceContext,
+        job.referenceSourceUrl,
         (controllerState) => {
           latestControllerState = controllerState;
           saveRetryJob(empId, { ...job, controllerState });
         },
+        taskBridge,
       );
       setStatus('正在整理清晰的结果…');
-      push({ id: `dm-${Date.now()}-${empId}`, authorId: empId, roleId: emp.role, content: reply, mentions: [], timestamp: Date.now(), kind: 'text', tokens: usage, contextUsage, thoughtChain, skillRefs: job.skillRefs.length ? job.skillRefs : undefined, skillEvidence: skillEvidence?.length ? skillEvidence : undefined });
+      push({ id: `dm-${Date.now()}-${empId}`, authorId: empId, roleId: emp.role, content: reply, mentions: [], timestamp: Date.now(), kind: 'text', tokens: usage, contextUsage, thoughtChain, skillRefs: job.skillRefs.length ? job.skillRefs : undefined, skillEvidence: skillEvidence?.length ? skillEvidence : undefined, references: references?.length ? references : undefined });
       setRetryJob(null);
       saveRetryJob(empId, null);
     } catch (error) {
+      await taskBridge.fail(error);
       const attempt = job.attempt + 1;
       const lastError = error instanceof Error ? error.message : String(error);
       const canRetry = retrySettings.autoRetry && !(error as any)?.executionRetryExhausted && attempt < retrySettings.maxAttempts;
@@ -354,6 +387,8 @@ export default function DmChatApp({ empId }: Props) {
           skillContext: queued.skillContext,
           skillRefs: queued.skillRefs,
           skillEvidence: queued.skillEvidence,
+          referenceContext: queued.referenceContext,
+          referenceSourceUrl: queued.referenceSourceUrl,
           history,
           attempt: 0,
           status: 'waiting',
@@ -379,7 +414,7 @@ export default function DmChatApp({ empId }: Props) {
   };
 
   // 优先真调 OpenAI 兼容模型（带员工提示词），失败/未配置则回落本地剧本
-  const generateReply = async (userText: string, atts: Attachment[] = [], skillContext = '', skillEvidence: SkillUsageEvidence[] = [], historyOverride?: ChatTurn[], workspaceId?: string, initialExecutionState?: ExecutionControllerSnapshot, onExecutionState?: (state: ExecutionControllerSnapshot) => void): Promise<{ text: string; usage?: number; contextUsage?: ContextUsage; thoughtChain?: ThoughtChainStep[]; skillEvidence?: SkillUsageEvidence[]; executionState?: ExecutionControllerSnapshot }> => {
+  const generateReply = async (userText: string, atts: Attachment[] = [], skillContext = '', skillEvidence: SkillUsageEvidence[] = [], historyOverride?: ChatTurn[], workspaceId?: string, initialExecutionState?: ExecutionControllerSnapshot, referenceContext = '', referenceSourceUrl = '', onExecutionState?: (state: ExecutionControllerSnapshot) => void, taskBridge?: ReturnType<typeof createChatTaskBridge>): Promise<{ text: string; usage?: number; contextUsage?: ContextUsage; thoughtChain?: ThoughtChainStep[]; skillEvidence?: SkillUsageEvidence[]; references?: ConversationReference[]; executionState?: ExecutionControllerSnapshot }> => {
     // 文本类附件：直接拼进用户文本作为上下文
     let enriched = userText;
     const textAtts = atts.filter((a) => a.kind === 'text' && a.dataUrl);
@@ -408,18 +443,24 @@ export default function DmChatApp({ empId }: Props) {
     const thoughtChain: ThoughtChainStep[] = [];
     const showThoughtChain = loadSettings().showThoughtChain !== false;
     const executionSkillEvidence = [...skillEvidence];
+    const executionReferences: ConversationReference[] = [];
     const layeredMemoryContext = await buildLayeredMemoryContext({ query: enriched, employeeId: empId, limit: 16 });
     const r = await runAgentLoop({
       turns: [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content: enriched }],
       tools: getRegisteredTools(), scene: 'dm', label: emp.name, modelConfig: getEmployeeModel(emp),
-      extraSystemContext: [emp.soul, layeredMemoryContext, skillContext].filter(Boolean).join('\n\n'), scope: `dm:${empId}`, attachments: imageAtts,
+      extraSystemContext: [emp.soul, layeredMemoryContext, skillContext, referenceContext].filter(Boolean).join('\n\n'), scope: `dm:${empId}`, attachments: imageAtts,
+      skillRefs,
+      referenceContext,
+      referenceSourceUrl,
       workspaceId,
       shouldStop: executionControl.shouldStop,
       waitIfPaused: executionControl.waitIfPaused,
       consumeSteeringMessages: () => steeringMessagesRef.current.splice(0),
       getModelRequestSignal: executionControl.getModelRequestSignal,
+      onTaskPrepared: (decision) => taskBridge?.prepare(decision),
       initialExecutionState,
       onExecutionState(state) {
+        taskBridge?.heartbeat(state);
         setStatus(executionControllerStatus(state));
         onExecutionState?.(state);
       },
@@ -432,15 +473,19 @@ export default function DmChatApp({ empId }: Props) {
         setStatus('已结合新要求重新判断…');
       },
       onToolCall(name, args) {
+        taskBridge?.toolStarted(name, args ?? '');
         setStatus(getToolActivity(name, args));
         const matchKey = `${name}:${args}`;
         const report = getToolReport(name, args);
         setLiveActivities([{ id: `${Date.now()}`, matchKey, label: report, args: args ?? '', state: 'active' }]);
         dispatch({ type: 'UPDATE_EMPLOYEE', id: empId, partial: { isWorking: true, currentTask: report } });
       },
-      onToolResult(name, args, result, success) {
+      onToolResult(name, args, result, success, _protocolEvidence, structuredEvidence) {
         const matchKey = `${name}:${args}`;
         const resultSuccess = isToolResultSuccessful(result, success);
+        taskBridge?.toolFinished(name, args ?? '', result, resultSuccess);
+        taskBridge?.artifacts(structuredEvidence);
+        executionReferences.push(...referencesFromToolResult(name, args, result, resultSuccess));
         if (/^(search_skills|read_skill|install_skill)$/u.test(name)) {
           let skillId = '';
           try {
@@ -480,7 +525,8 @@ export default function DmChatApp({ empId }: Props) {
         setLiveExecutionSteps((current) => [...current, step].slice(-50));
       },
     });
-    return { text: r.content ?? '（无回复）', usage: r.usage.totalTokens, contextUsage: r.contextUsage, thoughtChain: thoughtChain.length ? thoughtChain : undefined, skillEvidence: executionSkillEvidence, executionState: r.executionState };
+    await taskBridge?.finish({ executionState: r.executionState, usage: r.usage, model: r.model, output: r.content ?? '' });
+    return { text: r.content ?? '（无回复）', usage: r.usage.totalTokens, contextUsage: r.contextUsage, thoughtChain: thoughtChain.length ? thoughtChain : undefined, skillEvidence: executionSkillEvidence, references: executionReferences, executionState: r.executionState };
   };
 
   const openOutputFromMessage = (output: OutputRecord) => {

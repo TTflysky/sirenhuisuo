@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useStore } from '../../store';
+import { useStore } from '../../storeContext';
 import DmChatApp from './DmChatApp';
 import TeamChatApp from './TeamChatApp';
 import AssistantChat from './AssistantChat';
@@ -98,7 +98,7 @@ export default function ChatOnlyView({ hash }: Props) {
     subtitle = team ? `${team.memberIds.length} 名成员` : '团队对话';
     titleIcon = <TeamOutlined />;
   } else if (type === 'assistant-chat' || type === 'assistant') {
-    title = '驴狗蛋助手';
+    title = '章北海助理';
     subtitle = '执行、调度与交付';
     titleIcon = <RobotOutlined />;
   }

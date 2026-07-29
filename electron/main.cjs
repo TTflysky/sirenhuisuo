@@ -13,6 +13,7 @@ const { sanitizeInjectedEnv, redactInjectedValues } = require('./secretSafety.cj
 const { invokeConnectorAdapter, verifyConnectorAdapter } = require('./connectorAdapters.cjs');
 const { buildPowerShellCommand } = require('./commandShell.cjs');
 const { createTaskRuntimeStore } = require('./taskRuntimeStore.cjs');
+const { createTaskService } = require('./taskService.cjs');
 const { createTaskWorker } = require('./taskWorker.cjs');
 const { createNativeToolRuntime } = require('./nativeToolRuntime.cjs');
 const { createNativeExecutionAdapter } = require('./nativeExecutionAdapter.cjs');
@@ -40,6 +41,7 @@ const worktreeManager = createWorktreeManager({
 });
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const taskRuntimeStore = createTaskRuntimeStore(path.join(app.getPath('userData'), 'task-runtime'));
+const taskService = createTaskService(taskRuntimeStore);
 const memoryManager = createMemoryManager(path.join(app.getPath('userData'), 'taiji-memory'));
 const learningReviewQueue = createLearningReviewQueue(path.join(app.getPath('userData'), 'task-runtime'), {
   memoryManager,
@@ -88,6 +90,7 @@ const ecosystemHealth = createEcosystemHealth({
 const nativeExecutionAdapter = createNativeExecutionAdapter({
   projectRoot: PROJECT_ROOT,
   store: taskRuntimeStore,
+  taskService,
   worker: taskWorker,
   toolRuntime: nativeToolRuntime,
   worktreeManager,
@@ -520,7 +523,7 @@ function createTray() {
   tray.setToolTip('太极 AI 办公会所');
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: '打开太极', click: showMainWindow },
-    { label: '打开驴狗蛋助手', click: showAssistantCompanion },
+    { label: '打开章北海助理', click: showAssistantCompanion },
     { type: 'separator' },
     {
       label: '彻底退出',
@@ -633,7 +636,7 @@ async function createAssistantCompanion(owner = mainWindow, { focus = false } = 
     modal: false,
     minWidth: ASSISTANT_COMPANION_MIN_WIDTH,
     minHeight: CHAT_WINDOW_MIN_HEIGHT,
-    title: `${APP_TITLE} · 驴狗蛋助手`,
+    title: `${APP_TITLE} · 章北海助理`,
     skipTaskbar: false,
     frame: false,
     show: false,
@@ -892,7 +895,7 @@ function createWindow() {
       minHeight: CHAT_WINDOW_MIN_HEIGHT,
       // Keep chat windows independent. On Windows this gives a minimized chat a
       // normal taskbar entry instead of a hard-to-restore grey child-window item.
-      title: type === 'team-chat' ? `${APP_TITLE} · 团队聊天` : type === 'dm-chat' ? `${APP_TITLE} · 员工私聊` : `${APP_TITLE} · 驴狗蛋助手`,
+      title: type === 'team-chat' ? `${APP_TITLE} · 团队聊天` : type === 'dm-chat' ? `${APP_TITLE} · 员工私聊` : `${APP_TITLE} · 章北海助理`,
       skipTaskbar: false,
       frame: false,
       show: false,
@@ -1016,7 +1019,87 @@ function createWindow() {
   ipcMain.handle('task-recovery:list', async (_event, options) => taskRuntimeStore.listRecoveryPoints(options));
   ipcMain.handle('task-recovery:rebuild', async (_event, options) => taskRuntimeStore.rebuild(options));
   ipcMain.handle('task-recovery:restore', async (_event, input) => taskRuntimeStore.restoreRecoveryPoint(input?.recoveryPointId, input?.metadata));
+  ipcMain.handle('task-service:read', async (_event, options) => taskService.read(options));
+  ipcMain.handle('task-service:create', async (_event, input) => {
+    try { return await taskService.create(input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('task-service:update', async (_event, input) => {
+    try {
+      return await taskService.update(input?.taskId, (task) => Object.assign(task, input?.patch || {}), input?.detail || '统一任务服务更新任务');
+    } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('task-service:tool-attempt', async (_event, input) => {
+    try { return await taskService.recordToolAttempt(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('task-service:artifact', async (_event, input) => {
+    try { return await taskService.addArtifact(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('task-service:reference', async (_event, input) => {
+    try { return await taskService.addReference(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('task-service:create-child', async (_event, input) => {
+    try { return await taskService.createChild(input?.parentTaskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('task-service:context', async (_event, input) => {
+    try { return await taskService.context(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('task-service:ready-steps', async (_event, taskId) => {
+    try { return await taskService.readySteps(taskId); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('task-service:complete-step', async (_event, input) => {
+    try { return await taskService.completeStep(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('task-service:fail-step', async (_event, input) => {
+    try { return await taskService.failStep(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('task-service:request-approval', async (_event, input) => {
+    try { return await taskService.requestApproval(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('task-service:decide-approval', async (_event, input) => {
+    try { return await taskService.decideApproval(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('task-service:usage', async (_event, input) => {
+    try { return await taskService.recordUsage(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('task-service:metrics', async (_event, taskId) => {
+    try { return await taskService.metrics(taskId); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('task-service:tree', async (_event, taskId) => {
+    try { return await taskService.tree(taskId); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('task-service:recovery-plan', async (_event, taskId) => {
+    try { return await taskService.recoveryPlan(taskId); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('task-service:heartbeat', async (_event, input) => {
+    try { return await taskService.heartbeat(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('task-service:checkpoint', async (_event, input) => {
+    try { return await taskService.recordCheckpoint(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('task-service:verification', async (_event, input) => {
+    try { return await taskService.recordVerification(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('task-service:validate-completion', async (_event, taskId) => {
+    try { return await taskService.validateCompletion(taskId); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('task-service:status', async (_event, input) => {
+    try { return await taskService.setStatus(input?.taskId, input?.status, input?.detail); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
   ipcMain.handle('task-worker:command', async (_event, command) => {
+    if (command?.type === 'resume') {
+      try {
+        const recovery = await taskService.recoveryPlan(command?.taskId);
+        if (!recovery.plan?.ready) {
+          return {
+            ok: false,
+            error: recovery.plan?.nextAction || '任务当前不满足继续条件',
+            recoveryPlan: recovery.plan,
+          };
+        }
+      } catch (error) {
+        return { ok: false, error: error?.message ?? String(error) };
+      }
+    }
     const result = await taskWorker.dispatch(command);
     nativeExecutionAdapter.handleControl(command, result);
     return result;

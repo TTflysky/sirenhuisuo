@@ -8,12 +8,6 @@
   font-display: swap;
 }
 
-@font-face { font-family: 'Hermes Noto Sans SC'; src: url('./assets/fonts/NotoSansSC.ttf') format('truetype'); font-style: normal; font-weight: 100 900; font-display: swap; }
-@font-face { font-family: 'Hermes Noto Serif SC'; src: url('./assets/fonts/NotoSerifSC.ttf') format('truetype'); font-style: normal; font-weight: 100 900; font-display: swap; }
-@font-face { font-family: 'Hermes Source Han Sans Regular'; src: url('./assets/fonts/SourceHanSansCN-Regular.otf') format('opentype'); font-style: normal; font-weight: 400; font-display: swap; }
-@font-face { font-family: 'Hermes Source Han Sans Light'; src: url('./assets/fonts/SourceHanSansCN-Light.otf') format('opentype'); font-style: normal; font-weight: 300; font-display: swap; }
-@font-face { font-family: 'Hermes Source Han Sans Bold'; src: url('./assets/fonts/SourceHanSansCN-Bold.otf') format('opentype'); font-style: normal; font-weight: 700; font-display: swap; }
-
 :root {
   --ui-font-family: 'Hermes YouYuan', 'YouYuan', '幼圆', sans-serif;
   --ui-font-scale: 1;

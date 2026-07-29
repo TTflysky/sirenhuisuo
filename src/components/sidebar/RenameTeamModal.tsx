@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Modal, Input, Button, message } from 'antd';
-import { useStore } from '../../store';
+import { useStore } from '../../storeContext';
 
 interface Props {
   teamId: string;

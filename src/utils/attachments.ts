@@ -58,7 +58,7 @@ function workspaceScope(scope: string): string {
 }
 
 function safeFilename(name: string): string {
-  return name.replace(/[\\/<>:"|?*\u0000-\u001f]/g, '_').replace(/^\.+/, '') || 'attachment.bin';
+  return name.replace(/[\\/<>:"|?*\p{Cc}]/gu, '_').replace(/^\.+/, '') || 'attachment.bin';
 }
 
 export type WorkspaceKind = 'assistant' | 'dm' | 'team';

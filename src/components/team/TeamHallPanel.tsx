@@ -11,7 +11,7 @@ import {
 } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import type { Team } from '../../types';
-import { useStore } from '../../store';
+import { useStore } from '../../storeContext';
 import AgentAvatar from '../office/AgentAvatar';
 import RenameTeamModal from '../sidebar/RenameTeamModal';
 

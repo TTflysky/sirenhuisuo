@@ -3,7 +3,7 @@ import { UserAddOutlined } from '@ant-design/icons';
 import { Dropdown, Modal, App } from 'antd';
 import type { MenuProps } from 'antd';
 import type { Team } from '../../types';
-import { useStore } from '../../store';
+import { useStore } from '../../storeContext';
 import RenameTeamModal from './RenameTeamModal';
 import ManageTeamMembersModal from './ManageTeamMembersModal';
 

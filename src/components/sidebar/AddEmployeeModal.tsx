@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { DragOutlined, UserAddOutlined } from '@ant-design/icons';
 import type { AvatarFrameConfig, OpcRoleId } from '../../types';
-import { useStore } from '../../store';
+import { useStore } from '../../storeContext';
 import EmployeeAppearanceFields from './EmployeeAppearanceFields';
 import EmployeeAvatarPicker from './EmployeeAvatarPicker';
 import { generateDistinctEmployeeColor } from '../../data/employeeColors';

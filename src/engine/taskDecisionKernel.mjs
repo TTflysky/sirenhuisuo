@@ -10,6 +10,7 @@ import {
 } from './agentGuardrails.mjs';
 import { taskRequirementLabels } from './taskFidelity.mjs';
 import { resolveSkillInstallRequest } from './skillInstallRouting.mjs';
+import { isSkillDiscoveryRequest } from './skillHubSearch.mjs';
 
 export const TASK_DECISION_TOOL_NAME = 'compile_task_decision';
 
@@ -108,6 +109,7 @@ function defaultAcceptance(route, goal) {
 function routeForGoal(goal, availableTools) {
   const tools = new Set(availableTools ?? []);
   if (resolveSkillInstallRequest(goal)?.sourceUrl && tools.has('install_skill')) return 'install_skill';
+  if (isSkillDiscoveryRequest(goal) && tools.has('search_skills')) return 'search_skills';
   if (requiresFreshWebResearch(goal) && tools.has('web_search')) return 'web_search';
   if (/连接器|知识库|MCP|Obsidian|Vault|(?:^|[^a-z])ima(?:[^a-z]|$)/iu.test(goal)
       && /配置|安装|接入|连接|关联|验证|测试|检查|诊断/iu.test(goal)
@@ -198,6 +200,7 @@ export function normalizeTaskDecision(candidate, input = {}) {
   let primaryRoute = ROUTES.has(candidate.primaryRoute) ? candidate.primaryRoute : fallback.primaryRoute;
   if (mode !== 'execute') primaryRoute = 'direct_answer';
   if (requiresFreshWebResearch(goal)) primaryRoute = 'web_search';
+  if (isSkillDiscoveryRequest(goal) && fallback.primaryRoute === 'search_skills') primaryRoute = 'search_skills';
   if (fallback.primaryRoute === 'inspect_connectors') primaryRoute = 'inspect_connectors';
   if (fallback.primaryRoute === 'install_skill') primaryRoute = 'install_skill';
   const criteria = Array.isArray(candidate.acceptanceCriteria)

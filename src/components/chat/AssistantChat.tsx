@@ -9,7 +9,8 @@ import ChatMessageText from './ChatMessageText';
 import ThoughtChainView from './ThoughtChainView';
 import { copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
-import SkillMentionInput, { resolveSkillContextWithEvidence } from '../skills/SkillMentionInput';
+import SkillMentionInput from '../skills/SkillMentionInput';
+import { resolveSkillContextWithEvidence } from '../../engine/skillContext';
 import SkillPickerButton from '../skills/SkillPickerButton';
 import ExecutionPolicyControl from './ExecutionPolicyControl';
 import type { SkillReference } from '../../types';
@@ -21,8 +22,9 @@ import {
 } from '../../utils/attachments';
 import { useFileDrop } from '../../hooks/useFileDrop';
 import { formatExecutionDuration, useAgentExecutionControl } from '../../hooks/useAgentExecutionControl';
-import AssistantSettingsModal, { getAssistantPrompt } from '../settings/AssistantSettingsModal';
-import { useStore } from '../../store';
+import AssistantSettingsModal, { DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX } from '../settings/AssistantSettingsModal';
+import { getAssistantPrompt } from '../../data/assistantPrompt';
+import { useStore } from '../../storeContext';
 import { BUS_CHANNELS, onBus, sendBus } from '../../ipcBus';
 import { getDirectExecutionControl, isExplicitPauseSteering, isExplicitResumeSteering, shouldHoldTaskForFeedback } from '../../engine/agentGuardrails.mjs';
 import { executionControllerStatus } from '../../engine/executionController.mjs';
@@ -38,6 +40,9 @@ import {
   simplifyLegacyAssistantContent,
 } from '../../data/assistantPresentation';
 import { buildLayeredMemoryContext } from '../../data/layeredMemory';
+import { referenceClarification, referencesFromToolResult, resolveConversationReferences } from '../../engine/conversationReferences.mjs';
+import { createChatTaskBridge } from '../../engine/taskServiceBridge';
+import type { ConversationReferenceResolution } from '../../engine/conversationReferences.mjs';
 import {
   CopyOutlined,
   DeleteOutlined,
@@ -180,7 +185,16 @@ export default function AssistantChat() {
     // employee. Read the shared profile store at dispatch time, not only from
     // the last React render, before choosing project members.
     const liveEmployees = fetchInitial().employees;
-    const refs = externalRequest ? [] : skillRefs;
+    const referenceResolution: ConversationReferenceResolution = externalRequest
+      ? { status: 'none', references: [], skillRefs: [], context: '', action: 'refer' }
+      : resolveConversationReferences({ input: content, history: msgs, selectedSkillRefs: skillRefs });
+    const inheritedRefs = referenceResolution.status === 'resolved' ? referenceResolution.skillRefs : [];
+    const refs = externalRequest ? [] : (skillRefs.length ? skillRefs : inheritedRefs);
+    const usedSkillRefs = [...refs];
+    const usedReferences = [
+      ...referenceResolution.references,
+      ...refs.map((ref) => ({ kind: 'skill' as const, id: ref.id, label: ref.name, state: 'local' as const })),
+    ];
     const skillResolution = await resolveSkillContextWithEvidence(refs);
     const skillContext = skillResolution.context;
     const skillEvidence: SkillUsageEvidence[] = [...skillResolution.evidence];
@@ -209,6 +223,27 @@ export default function AssistantChat() {
         content: display, mentions: [], timestamp: Date.now(), kind: 'text', skillRefs: refs, skillEvidence,
         attachments: atts,
       });
+    }
+
+    if (referenceResolution.status === 'ambiguous') {
+      push({
+        id: `h-${Date.now()}-reference-unclear`, authorId: 'assistant', roleId: 'custom',
+        content: referenceClarification(referenceResolution), mentions: [], timestamp: Date.now(), kind: 'text',
+        references: referenceResolution.references,
+      });
+      return;
+    }
+
+    if (referenceResolution.status === 'resolved' && referenceResolution.action === 'share-link') {
+      const reference = referenceResolution.references[0];
+      const response = reference.sourceUrl
+        ? `这是“${reference.label}”的真实来源链接：\n${reference.sourceUrl}\n\n当前状态：${reference.state === 'candidate' ? '已找到候选，尚未安装。' : '该对象已在本机记录中，可继续读取或使用。'}`
+        : `“${reference.label}”是本机已有对象，没有记录可公开访问的来源链接。我不会重新搜索一个同名对象来替代它；可以继续读取、使用或根据已记录的来源重新安装。`;
+      push({
+        id: `h-${Date.now()}-reference-link`, authorId: 'assistant', roleId: 'custom',
+        content: response, mentions: [], timestamp: Date.now(), kind: 'text', references: usedReferences,
+      });
+      return;
     }
 
     if (isTeamMemberAdditionRequest(enriched)) {
@@ -344,6 +379,15 @@ export default function AssistantChat() {
 
     const workspaceId = createTaskWorkspaceId('assistant');
     activeWorkspaceIdRef.current = workspaceId;
+    const taskBridge = createChatTaskBridge({
+      taskType: 'assistant',
+      ownerId: 'assistant',
+      title: content.slice(0, 120) || 'Assistant task',
+      goal: enriched,
+      workspaceId,
+      idempotencyKey: `assistant-chat:${workspaceId}`,
+      references: usedReferences,
+    });
     try {
       await initializeTaskWorkspace(workspaceId, { kind: 'assistant', label: content.slice(0, 60) || '助理任务', taskId: workspaceId.split('/').pop() });
       await copyAttachmentsToWorkspace('assistant', workspaceId, atts);
@@ -406,22 +450,27 @@ ${employeeDirectory}
 
       const r = await runAgentLoop({
         turns: [
-          { role: 'system', content: `${getAssistantPrompt()}\n\n${selectedSkillGuide}\n\n${BEGINNER_RESPONSE_GUIDE}` },
+          { role: 'system', content: `${getAssistantPrompt(DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX)}\n\n${selectedSkillGuide}\n\n${BEGINNER_RESPONSE_GUIDE}` },
           ...history,
           { role: 'user', content: enriched },
         ],
         tools: allTools,
         scene: 'assistant',
-        label: '驴狗蛋助手',
+        label: '章北海助理',
         scope: 'assistant',
         workspaceId,
+        skillRefs: refs,
         attachments: imageAtts,
-        extraSystemContext: [organizationContext, layeredMemoryContext, selectedSkillGuide, skillContext].filter(Boolean).join('\n\n'),
+        referenceContext: referenceResolution.context,
+        referenceSourceUrl: referenceResolution.references[0]?.sourceUrl,
+        extraSystemContext: [organizationContext, layeredMemoryContext, selectedSkillGuide, skillContext, referenceResolution.context].filter(Boolean).join('\n\n'),
         shouldStop: executionControl.shouldStop,
         waitIfPaused: executionControl.waitIfPaused,
         consumeSteeringMessages: () => steeringMessagesRef.current.splice(0),
         getModelRequestSignal: executionControl.getModelRequestSignal,
+        onTaskPrepared: (decision) => taskBridge.prepare(decision),
         onExecutionState(state) {
+          taskBridge.heartbeat(state);
           setStatus(executionControllerStatus(state));
         },
         onSteeringReply(content, usage, contextUsage) {
@@ -433,14 +482,17 @@ ${employeeDirectory}
           setStatus('已结合新要求重新判断…');
         },
         onToolCall(name, args) {
+          taskBridge.toolStarted(name, args ?? '');
           lastStage = getToolStage(name);
           setStatus(getToolActivity(name, args));
           const matchKey = `${name}:${args}`;
           setLiveActivities([{ id: `${Date.now()}`, matchKey, label: getToolReport(name, args), args: args ?? '', state: 'active' }]);
         },
-        onToolResult(name, args, result, success) {
+        onToolResult(name, args, result, success, _protocolEvidence, structuredEvidence) {
           const matchKey = `${name}:${args}`;
           const resultSuccess = isToolResultSuccessful(result, success);
+          taskBridge.toolFinished(name, args ?? '', result, resultSuccess);
+          taskBridge.artifacts(structuredEvidence);
           if (/^(search_skills|read_skill|install_skill)$/u.test(name)) {
             let skillId = '';
             try {
@@ -448,13 +500,18 @@ ${employeeDirectory}
               skillId = parsed.id ?? parsed.installedSkillId ?? '';
             } catch {}
             const selected = refs.find((ref) => ref.id === skillId);
+            const readName = result.match(/(?:^|\n)#\s*([^\n]+)/u)?.[1]?.trim() || selected?.name || skillId;
+            if (resultSuccess && skillId && (name === 'read_skill' || name === 'install_skill') && !usedSkillRefs.some((ref) => ref.id === skillId)) {
+              usedSkillRefs.push({ id: skillId, name: readName });
+            }
             skillEvidence.push({
-              ts: Date.now(), skillId: skillId || selected?.id, skillName: selected?.name,
+              ts: Date.now(), skillId: skillId || selected?.id, skillName: readName || selected?.name,
               action: name === 'search_skills' ? 'searched' : name === 'read_skill' ? (resultSuccess ? 'read' : 'read-failed') : 'called',
               toolName: name, reason: resultSuccess ? '助理实际执行了技能工具' : '技能工具执行失败',
               detail: result.slice(0, 240), verified: resultSuccess, stage: 'execution', source: 'assistant',
             });
           }
+          usedReferences.push(...referencesFromToolResult(name, args, result, resultSuccess));
           if (name === 'web_search' && resultSuccess) {
             lastStage = '整理搜索结果';
             setStatus('正在阅读并整理搜索结果…');
@@ -498,11 +555,13 @@ ${employeeDirectory}
       });
 
       const ts = Date.now();
+      await taskBridge.finish({ executionState: r.executionState, usage: r.usage, model: r.model, output: r.content });
       setStatus('正在整理清楚的结果…');
       push({
         id: `h-${ts}-ai`, authorId: 'assistant', roleId: 'custom',
         content: simplifyLegacyAssistantContent(r.content), mentions: [], timestamp: ts, kind: 'text',
-        skillRefs: refs.length ? refs : undefined,
+        skillRefs: usedSkillRefs.length ? usedSkillRefs : undefined,
+        references: usedReferences.length ? usedReferences : undefined,
         skillEvidence: skillEvidence.length ? skillEvidence : undefined,
         tokens: r.usage.totalTokens,
         contextUsage: r.contextUsage,
@@ -516,9 +575,10 @@ ${employeeDirectory}
           const who = m.roleId === 'human' ? '用户' : '助手';
           return `${who}: ${m.content.slice(0, 200)}`;
         }).join('\n');
-        extractUserInsights(chatText, '驴狗蛋助手对话').catch(() => {});
+        extractUserInsights(chatText, '章北海助理对话').catch(() => {});
       }
     } catch (e: any) {
+      await taskBridge.fail(e);
       push({
         id: `h-${Date.now()}-err`, authorId: 'assistant', roleId: 'custom',
         content: `还没有处理好。卡在“${lastStage}”这一步。${humanizeExecutionError(e?.message ?? '')}`,
@@ -609,7 +669,7 @@ ${employeeDirectory}
 
   const handleCopyAll = async () => {
     const text = msgs.map((m) => {
-      const head = m.roleId === 'human' ? '你' : '驴狗蛋助手';
+      const head = m.roleId === 'human' ? '你' : '章北海助理';
       return `[${head}] ${m.content}`;
     }).join('\n\n');
     await copyToClipboard(text);
@@ -618,13 +678,13 @@ ${employeeDirectory}
   const handleExport = () => {
     const md = messagesToMarkdown(
       msgs.map((m) => ({
-        role: m.roleId === 'human' ? '你' : '驴狗蛋助手',
+        role: m.roleId === 'human' ? '你' : '章北海助理',
         content: m.content,
         time: new Date(m.timestamp).toLocaleString('zh-CN'),
       })),
-      '驴狗蛋助手对话记录'
+      '章北海助理对话记录'
     );
-    downloadTextFile(`驴狗蛋助手-对话-${new Date().toISOString().slice(0, 10)}.md`, md);
+    downloadTextFile(`章北海助理-对话-${new Date().toISOString().slice(0, 10)}.md`, md);
   };
 
   const handleClearHistory = () => {
@@ -666,7 +726,7 @@ ${employeeDirectory}
             {msgs.length === 0 && (
               <div className="assistant-welcome">
                 <div className="assistant-welcome-icon"><RobotOutlined /></div>
-                <h3>驴狗蛋助手</h3>
+                <h3>章北海助理</h3>
                 <p>全能 AI 助手，可查资料、写代码、创建文件、搜索互联网、执行命令。</p>
                 <div className="assistant-welcome-tips">
                   <span>试试：</span>
@@ -683,7 +743,7 @@ ${employeeDirectory}
                   {!isMe && (
                     <div className="msg-meta">
                       <span className="msg-author" style={{ color: '#3b82f6' }}>
-                        <RobotOutlined /> 驴狗蛋助手
+                        <RobotOutlined /> 章北海助理
                       </span>
                       <span className="msg-time">
                         {new Date(msg.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
@@ -721,7 +781,7 @@ ${employeeDirectory}
             {busy && status && (
               <div className="msg assistant-live-report">
                 <div className="msg-meta">
-                  <span className="msg-author" style={{ color: 'var(--apple-accent)' }}><RobotOutlined /> 驴狗蛋助手</span>
+                  <span className="msg-author" style={{ color: 'var(--apple-accent)' }}><RobotOutlined /> 章北海助理</span>
                 </div>
                 <div className="msg-bubble typing assistant-live-step">
                   {status === '思考中…' ? (

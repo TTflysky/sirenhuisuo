@@ -2,18 +2,19 @@ import { useState } from 'react';
 import { Modal, Switch, Input, Button, App, Tag } from 'antd';
 import { loadSettings, saveSettings, getProvider } from '../../data/hermesClient';
 import { APP_PRODUCT_NAME } from '../../brand';
+import { getAssistantPrompt, saveAssistantPrompt } from '../../data/assistantPrompt';
 
-const LS_SYSTEM_PROMPT = 'hermes_office_assistant_system_prompt';
-const LS_SYSTEM_PROMPT_VERSION = 'hermes_office_assistant_system_prompt_version';
-const DEFAULT_PROMPT_VERSION = '12';
-const PERSONA_MIGRATION_APPENDIX = `
+export const DEFAULT_PROMPT_VERSION = '13';
+export const PERSONA_MIGRATION_APPENDIX = `
 
-## 运行时协议补充（太极 v12）
-- 已选择 Skill、已读取规则、已调用工具、已完成验收是四个不同状态，不得混为一谈。
-- 工具返回后必须根据真实结果继续、换路线、暂停或验收；不得只凭模型口头声明宣布完成。
-- 任务插话、失败和重启必须沿用原任务上下文，从未完成步骤继续；成员职责和模型配置必须保持隔离。`;
+## v1 任务账本与恢复协议
+- 已选择 Skill、已读取规则、已调用工具、已完成验收是四个不同状态，不得混为一谈；所有执行结论以任务账本、工具证据、交付物和审查记录为准。
+- 需要团队时，先创建真实的成员子任务和依赖，再由成员交付；不得用助理自己的长篇答案冒充已经委派。
+- 工具返回后必须根据真实结果继续、换路线、暂停或验收；不得只凭模型口头声明宣布完成。失败时保留错误分类和原上下文，依照重试策略或替代路线继续。
+- 任务插话、失败、客户端重启和恢复必须沿用原任务合同、工作区、证据与未完成步骤；成员职责和模型配置必须保持任务级隔离。
+- 删除、发送、发布、部署、支付等补偿或外部副作用须等待真实审批；审批拒绝时保留交接和阻塞原因，不得绕过。`;
 
-export const DEFAULT_ASSISTANT_PROMPT = `你是驴狗蛋助手——一个全能 AI 助手，驻扎在“${APP_PRODUCT_NAME}”应用中。
+export const DEFAULT_ASSISTANT_PROMPT = `你是章北海助理——一个全能 AI 助手，驻扎在“${APP_PRODUCT_NAME}”应用中。
 
 你可以处理日常问答、写代码、查资料、创建文件、搜索互联网、执行命令、调用外部服务，也可以调度团队里的组员、分发任务、确认执行情况并随时向用户汇报。你的首要职责是理解用户真正想完成的目标，主动选择最合适的处理方式，并用真实、可验证的结果交付。
 
@@ -77,32 +78,6 @@ export const DEFAULT_ASSISTANT_PROMPT = `你是驴狗蛋助手——一个全能
 
 默认使用中文，回复简洁、友好、自然。先给结论，再给必要细节；不使用固定套话，不机械复述用户原话。`;
 
-export function getAssistantPrompt(): string {
-  try {
-    const version = localStorage.getItem(LS_SYSTEM_PROMPT_VERSION);
-    const raw = localStorage.getItem(LS_SYSTEM_PROMPT)?.trim();
-    if (version !== DEFAULT_PROMPT_VERSION) {
-      const next = raw
-        ? raw.includes('## 运行时执行协议') || raw.includes('## 运行时协议补充')
-          ? raw
-          : `${raw}${PERSONA_MIGRATION_APPENDIX}`
-        : DEFAULT_ASSISTANT_PROMPT;
-      localStorage.setItem(LS_SYSTEM_PROMPT, next);
-      localStorage.setItem(LS_SYSTEM_PROMPT_VERSION, DEFAULT_PROMPT_VERSION);
-      return next;
-    }
-    if (raw) return raw;
-  } catch {}
-  return DEFAULT_ASSISTANT_PROMPT;
-}
-
-export function saveAssistantPrompt(prompt: string): void {
-  try {
-    localStorage.setItem(LS_SYSTEM_PROMPT, prompt);
-    localStorage.setItem(LS_SYSTEM_PROMPT_VERSION, DEFAULT_PROMPT_VERSION);
-  } catch {}
-}
-
 interface Props {
   onClose: () => void;
   onSaved: () => void;
@@ -111,7 +86,7 @@ interface Props {
 export default function AssistantSettingsModal({ onClose, onSaved }: Props) {
   const { message } = App.useApp();
   const settings = loadSettings();
-  const curPrompt = getAssistantPrompt();
+  const curPrompt = getAssistantPrompt(DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX);
   const [prompt, setPrompt] = useState(curPrompt);
   const [showCoT, setShowCoT] = useState(settings.showThoughtChain !== false);
 
@@ -128,7 +103,7 @@ export default function AssistantSettingsModal({ onClose, onSaved }: Props) {
   const modelLibCount = settings.modelLibrary?.length ?? 0;
 
   const handleSave = () => {
-    saveAssistantPrompt(prompt);
+    saveAssistantPrompt(prompt, DEFAULT_PROMPT_VERSION);
     const s = loadSettings();
     s.showThoughtChain = showCoT;
     saveSettings(s);
@@ -143,7 +118,7 @@ export default function AssistantSettingsModal({ onClose, onSaved }: Props) {
 
   return (
     <Modal
-      title="驴狗蛋助手设置"
+      title="章北海助理设置"
       open
       onCancel={onClose}
       width={580}

@@ -38,6 +38,48 @@ function isVerifiedArtifact(artifact) {
     && Boolean(text(artifact?.diskPath, 1200))
     && Boolean(text(artifact?.path || artifact?.filename, 800));
 }
+function compensationNeedsApproval(step, job) {
+  if (step?.approvalRequired === true || job?.executionPolicy?.compensationApprovalMode === 'ask') return true;
+  return /删除|移除|发送|发布|部署|付款|支付|外部系统|delete|remove|send|publish|deploy|payment/iu.test(String(step?.assignment || ''));
+}
+
+function summarizeChildTask(child) {
+  const completedSteps = (child?.steps || []).filter((step) => step.status === 'completed').map((step) => ({
+    id: text(step.id, 160),
+    title: text(step.title, 240),
+    summary: text(step.output?.summary || step.events?.filter((event) => event.type === 'result').at(-1)?.detail, 1200),
+  }));
+  const artifacts = (child?.artifacts || []).filter((artifact) => artifact.verified === true).slice(-20).map((artifact) => ({
+    name: text(artifact.name || artifact.path, 500),
+    path: text(artifact.path || artifact.diskPath, 1600),
+    category: text(artifact.category, 80),
+    verification: text(artifact.verification, 160),
+  }));
+  const summary = completedSteps.map((step) => step.summary).filter(Boolean).join('\n')
+    || text(child?.executionMessages?.filter((message) => message.kind === 'text').at(-1)?.content, 1200)
+    || '子任务已完成，但没有可提取的文本摘要。';
+  return {
+    childTaskId: text(child?.id, 180),
+    title: text(child?.title, 240),
+    goal: text(child?.goal || child?.request, 2000),
+    status: text(child?.status, 40),
+    summary: text(summary, 1600),
+    completedSteps,
+    artifacts,
+    completedAt: Number(child?.updatedAt) || Date.now(),
+  };
+}
+
+function buildChildTaskContext(run) {
+  const results = Object.values(run?.childTaskResults || {}).filter((result) => result?.status === 'completed').slice(-12);
+  if (!results.length) return '';
+  return `\n\n## 已验收的子任务交接\n${results.map((result) => [
+    `- 子任务：${result.title || result.childTaskId}`,
+    `  目标：${result.goal || '未记录'}`,
+    `  结果：${result.summary || '未记录'}`,
+    result.artifacts?.length ? `  已验证文件：${result.artifacts.map((artifact) => artifact.path || artifact.name).join('；')}` : '',
+  ].filter(Boolean).join('\n')).join('\n')}`;
+}
 
 function resolveEndpoint(model) {
   const base = String(model?.apiHost || '').trim().replace(/\/+$/u, '');
@@ -104,6 +146,17 @@ function createNativeExecutionAdapter(options) {
     void drainQueue();
   }
 
+  function enqueueCompensation(job, reason) {
+    if (!job || job.compensationQueued === true || job.compensating === true) return;
+    job.compensationQueued = true;
+    job.compensationReason = text(reason, 1200) || '任务已停止，需要处理已声明补偿';
+    job.state = 'compensating_queue';
+    if (!queue.includes(job)) queue.push(job);
+    refreshQueuePositions();
+    emit(job, 'compensation_queued', { reason: job.compensationReason, queuePosition: job.queuePosition });
+    void drainQueue();
+  }
+
   async function drainQueue() {
     if (drainingQueue) return;
     drainingQueue = true;
@@ -111,10 +164,18 @@ function createNativeExecutionAdapter(options) {
       while (queue.length) {
         const job = queue.shift();
         refreshQueuePositions();
-        if (!job || job.state !== 'queued') continue;
+        if (!job || !['queued', 'compensating_queue'].includes(job.state)) continue;
         job.queuePosition = undefined;
         activeJob = job;
-        try { await execute(job); }
+        try {
+          if (job.state === 'compensating_queue') {
+            await runCompensations(job, job.compensationReason);
+            job.compensationQueued = false;
+            job.state = 'stopped';
+            job.finishedAt = Date.now();
+            emit(job, 'queued_task_compensation_finished', { reason: job.compensationReason });
+          } else await execute(job);
+        }
         finally { activeJob = undefined; }
         if (job.requeueAfterExecution) {
           job.requeueAfterExecution = false;
@@ -193,12 +254,12 @@ function createNativeExecutionAdapter(options) {
   }
 
   async function assertCanContinue(job) {
-    if (job.control === 'stop') throw new ExecutionControlSignal('stop', '任务已停止');
-    if (job.control === 'pause') throw new ExecutionControlSignal('pause', '任务已暂停');
+    if (!job.compensating && job.control === 'stop') throw new ExecutionControlSignal('stop', '任务已停止');
+    if (!job.compensating && job.control === 'pause') throw new ExecutionControlSignal('pause', '任务已暂停');
     const run = await readRun(job.taskId);
     if (!run) throw new ExecutionControlSignal('close', '任务已关闭');
-    if (run.status === 'stopped') throw new ExecutionControlSignal('stop', '任务已停止');
-    if (run.status === 'paused') throw new ExecutionControlSignal('pause', '任务已暂停');
+    if (!job.compensating && run.status === 'stopped') throw new ExecutionControlSignal('stop', '任务已停止');
+    if (!job.compensating && run.status === 'paused') throw new ExecutionControlSignal('pause', '任务已暂停');
     return run;
   }
 
@@ -274,6 +335,7 @@ function createNativeExecutionAdapter(options) {
       ROLE_DUTY[member.role] || ROLE_DUTY.custom,
       '你正在太极主进程原生执行 Adapter 中工作。必须自主判断、调用真实工具、读取结果、更换失败路线并核对验收条件。工具有返回值不等于目标完成。',
       '工作步骤在最终回答前必须用 write_file 产生并校验真实文件。审查步骤必须调用 submit_review。',
+      job.compensating ? '当前处于补偿阶段：只执行当前补偿责任以撤销或降低已发生副作用，留下真实工具证据；不要继续原任务或虚构补偿完成。' : '',
       `用户原始目标：\n${run.goal || run.request}`,
       `当前步骤：${step.title}\n责任：${step.assignment}`,
       dependencies && `前置步骤摘要：\n${dependencies}`,
@@ -370,6 +432,31 @@ function createNativeExecutionAdapter(options) {
     const safeResult = { ...result, output: String(options.toolRuntime.redact(result.output)) };
     const evidence = evidenceFromTool(safeResult, member, name);
     job.toolCalls += 1;
+    if (options.taskService) {
+      await options.taskService.recordToolAttempt(job.taskId, {
+        id: `attempt-${job.taskId}-${step.id}-${job.toolCalls}`,
+        stepId: step.id,
+        toolName: name,
+        status: result.success === true ? 'succeeded' : 'failed',
+        errorClass: result.success === true ? undefined : (result.errorCategory || result.error?.category || 'unknown'),
+        inputSummary: JSON.stringify(safeArgs),
+        outputSummary: safeResult.output,
+        evidenceIds: evidence.map((item) => item.artifact?.path || item.summary).slice(0, 12),
+        startedAt: result.startedAt,
+        finishedAt: result.completedAt,
+      }).catch(() => {});
+      for (const artifact of safeResult.structuredEvidence?.artifacts || []) {
+        if (!artifact.path && !artifact.diskPath) continue;
+        await options.taskService.addArtifact(job.taskId, {
+          id: `${job.taskId}:${artifact.path || artifact.diskPath}`,
+          name: artifact.filename || artifact.path || artifact.diskPath,
+          path: artifact.path || artifact.diskPath,
+          category: artifact.category,
+          verified: artifact.verified === true,
+          source: name,
+        }).catch(() => {});
+      }
+    }
     await updateRun(job.taskId, (next) => {
       const current = next.steps.find((item) => item.id === step.id);
       if (!current) return;
@@ -411,18 +498,51 @@ function createNativeExecutionAdapter(options) {
         assignment: args.assignment,
         acceptanceCriteria: args.acceptanceCriteria,
       });
+      const child = options.taskService
+        ? await options.taskService.createChild(job.taskId, {
+          employeeId: appended.delegation.employeeId,
+          title: appended.delegation.title,
+          assignment: appended.delegation.assignment,
+          goal: appended.delegation.assignment,
+          acceptanceCriteria: appended.delegation.acceptanceCriteria,
+        })
+        : undefined;
       await updateRun(job.taskId, (next) => {
         next.delegations = appended.run.delegations;
         next.steps = appended.run.steps;
+        if (child?.task?.id) {
+          const delegation = next.delegations.find((item) => item.id === appended.delegation.id);
+          if (delegation) delegation.childTaskId = child.task.id;
+          const delegatedStep = next.steps.find((item) => item.id === appended.step.id);
+          if (delegatedStep) {
+            // The parent waits on this durable child-task node; it must not execute it itself.
+            delegatedStep.childTaskId = child.task.id;
+            delegatedStep.externalChild = true;
+          }
+        }
         if (next.runner) {
           try { next.runner = runner.appendTaskRunnerSteps(next.runner, [formalStep(next.id, appended.step)], `动态委派子任务：${appended.delegation.title}`); next.plan = next.runner.plan; } catch {}
         }
       }, `原生 Adapter 动态委派 ${appended.delegation.employeeName}`);
-      emit(job, 'subtask_delegated', { parentStepId: step.id, delegation: appended.delegation });
+      const childStart = child?.task?.id
+        ? await start({
+          taskId: child.task.id,
+          members: [...job.members.values()],
+          attachments: job.attachments,
+          extraSystemContext: `Parent task ${job.taskId}; delegated by ${appended.delegation.employeeName}.`,
+          reviewModelConfig: job.reviewModelConfig,
+          memoryWriteApproval: job.memoryWriteApproval,
+          executionPolicy: job.executionPolicy,
+          connectors: job.connectors,
+          connectorTools: job.connectorTools,
+        })
+        : undefined;
+      if (child && !childStart?.ok) throw new Error(childStart?.error || 'Child task could not enter the native execution queue');
+      emit(job, 'subtask_delegated', { parentStepId: step.id, delegation: appended.delegation, childJob: childStart?.job });
       return {
         name: 'delegate_subtask', success: true,
         output: `已将“${appended.delegation.title}”委派给 ${appended.delegation.employeeName}。子任务会在当前步骤完成后进入队列，验收标准：${appended.delegation.acceptanceCriteria.join('；')}`,
-        structuredEvidence: { delegation: { id: appended.delegation.id, delegatedStepId: appended.delegation.delegatedStepId } },
+        structuredEvidence: { delegation: { id: appended.delegation.id, delegatedStepId: appended.delegation.delegatedStepId, childTaskId: child?.task?.id } },
       };
     } catch (error) {
       return { name: 'delegate_subtask', success: false, output: `无法创建子任务：${text(error?.message || error, 600)}` };
@@ -455,7 +575,7 @@ function createNativeExecutionAdapter(options) {
       structuredEvidence: { worktreeCheckpoint: checkpoint.checkpoint } };
   }
 
-  async function executeStep(job, run, step, member) {
+  async function executeStep(job, run, step, member, executionOptions = {}) {
     const { fidelity, toolRegistry, contextRouter } = await loadEngineModules();
     const layeredMemory = options.memoryManager
       ? await options.memoryManager.context({ query: run.goal || run.request, teamId: run.teamId, employeeId: member.id, limit: 16 }).catch(() => ({ context: '' }))
@@ -465,7 +585,7 @@ function createNativeExecutionAdapter(options) {
       steps: run.steps.filter((item) => item.status === 'completed' || item.id === step.id),
     });
     const messages = [
-      { role: 'system', content: `${buildSystem(run, step, member, job)}${layeredMemory.context ? `\n\n## 太极分层热记忆\n${layeredMemory.context}\n\n以上记忆只作为可复用背景；与老板当前明确要求冲突时，以当前要求为准。` : ''}\n\n${stepRecoveryPrompt}` },
+      { role: 'system', content: `${buildSystem(run, step, member, job)}${layeredMemory.context ? `\n\n## 太极分层热记忆\n${layeredMemory.context}\n\n以上记忆只作为可复用背景；与老板当前明确要求冲突时，以当前要求为准。` : ''}${buildChildTaskContext(run)}\n\n${stepRecoveryPrompt}` },
       buildUserTurn(run, step, job),
     ];
     const registry = toolRegistry.buildToolRegistry([...options.toolRuntime.definitions, ...(job.connectorTools || [])]);
@@ -580,7 +700,14 @@ function createNativeExecutionAdapter(options) {
       const latestRun = await readRun(job.taskId);
       const currentStep = latestRun.steps.find((item) => item.id === step.id);
       const hasFile = currentStep?.evidence?.some((item) => item.kind === 'file' && item.verified);
-      if (step.kind !== 'review' && !hasFile) {
+      const hasSuccessfulTool = callLog.some((call) => call.success);
+      if (executionOptions.compensation && !hasSuccessfulTool) {
+        forceActionCount += 1;
+        messages.push({ role: 'assistant', content: finalContent || '补偿步骤说明' });
+        messages.push({ role: 'system', content: '补偿步骤尚未形成真实工具执行证据。必须调用已注册工具完成声明的补偿动作，不能只用文字说明。' });
+        continue;
+      }
+      if (!executionOptions.compensation && step.kind !== 'review' && !hasFile) {
         forceActionCount += 1;
         messages.push({ role: 'assistant', content: finalContent || '当前步骤说明' });
         messages.push({ role: 'system', content: forceActionCount <= 2
@@ -595,6 +722,9 @@ function createNativeExecutionAdapter(options) {
           ? '审查步骤没有 submit_review 证据。必须先检查真实文件或运行结果，再调用 submit_review 提交 PASS 或 REJECT。'
           : '仍然没有结构化审查证据，禁止宣布完成。立即读取或运行真实产出并提交 PASS/REJECT；无法继续时只交接具体阻塞。' });
         continue;
+      }
+      if (executionOptions.compensation) {
+        return { content: finalContent || '补偿步骤已完成真实工具执行。', review, callLog, usageModel: response.model };
       }
       const acceptance = fidelity.assessTaskCompletion(run.goal || run.request, finalContent, callLog);
       if (!acceptance.passed) {
@@ -619,14 +749,21 @@ function createNativeExecutionAdapter(options) {
       stepId: step.id, type: review ? 'review' : 'tool', connector: `team-member:${step.employeeId}`,
       input: { assignment: step.assignment, employeeId: step.employeeId }, expectedOutputSchema: { type: 'object' },
       dependsOn: step.dependsOnStepIds || [], retryPolicy: { maxRetries: 3, backoffMs: 1000, maxBackoffMs: 30000 },
-      idempotencyKey: review ? '' : `run-${runId}-${step.id}`, sideEffect: !review, compensateStepId: '', approvalRequired: false,
-      metadata: { legacyStepId: step.id, employeeId: step.employeeId, kind: step.kind, revisionOfStepId: step.revisionOfStepId },
+      idempotencyKey: review ? '' : `run-${runId}-${step.id}`, sideEffect: step.sideEffect !== false && !review, compensateStepId: step.compensateStepId || '', approvalRequired: false,
+      metadata: { legacyStepId: step.id, employeeId: step.employeeId, kind: step.kind, revisionOfStepId: step.revisionOfStepId, compensationOnly: step.compensationOnly === true },
     };
   }
 
   async function beginStep(job, run, step, member) {
     const { runner, teamExecutionProtocol } = await loadEngineModules();
-    await checkpoint(job, { kind: 'step_started', stepId: step.id, summary: `${member.name}开始执行“${step.title}”` });
+    try {
+      await checkpoint(job, { kind: 'step_started', stepId: step.id, summary: `${member.name}开始执行“${step.title}”` });
+    } catch (error) {
+      if (job.control === 'stop' || job.control === 'pause' || job.control === 'close') {
+        throw new ExecutionControlSignal(job.control, `Task control arrived while beginning ${step.id}`);
+      }
+      throw error;
+    }
     await updateRun(job.taskId, (next) => {
       next.executionSessionId = options.sessionId;
       next.phase = 'executing';
@@ -644,6 +781,8 @@ function createNativeExecutionAdapter(options) {
         next.recoveryContext.interruptionReason = undefined;
       }
     }, `原生 Adapter 开始步骤 ${step.id}`);
+    const delegated = run.delegations?.find((item) => item.id === step.delegationId);
+    if (delegated?.childTaskId && options.taskService) await options.taskService.setStatus(delegated.childTaskId, 'running', `${member.name} 已领取员工子任务`).catch(() => {});
     emit(job, 'step_started', { stepId: step.id, member: publicMember(member), title: step.title });
   }
 
@@ -678,6 +817,8 @@ function createNativeExecutionAdapter(options) {
     } else {
       await checkpoint(job, { kind: 'step_completed', stepId: step.id, summary: result.content.slice(0, 700) });
       await updateRun(job.taskId, (next) => {
+        const current = next.steps.find((item) => item.id === step.id);
+        if (current) current.output = { summary: result.content.slice(0, 1200) };
         if (next.runner) {
           try { next.runner = runner.recordTaskStepResult(next.runner, { stepId: step.id, success: true, output: { summary: result.content.slice(0, 1200) } }); next.plan = next.runner.plan; } catch {}
         }
@@ -693,6 +834,11 @@ function createNativeExecutionAdapter(options) {
       await updateRun(job.taskId, (next) => {
         if (next.executionProtocol) next.executionProtocol = teamExecutionProtocol.projectTeamExecutionEvent(next.executionProtocol, { type: 'step_completed', stepId: step.id, employeeId: member.id, detail: result.content.slice(0, 700) });
       }, `团队协议完成步骤 ${step.id}`);
+    }
+    const delegated = run.delegations?.find((item) => item.id === step.delegationId);
+    if (delegated?.childTaskId && options.taskService) {
+      await options.taskService.completeStep(delegated.childTaskId, { stepId: 'step-1', summary: result.content.slice(0, 1200), output: { summary: result.content.slice(0, 1200) } }).catch(() => {});
+      await options.taskService.setStatus(delegated.childTaskId, 'completed', `${member.name} 已提交子任务结果`).catch(() => {});
     }
     await appendExecutionMessage(job, run, member, result.content, 'text');
     emit(job, 'step_completed', { stepId: step.id, member: publicMember(member), summary: result.content.slice(0, 700) });
@@ -767,12 +913,14 @@ function createNativeExecutionAdapter(options) {
         run.recoveryContext.interruptionReason = reason;
       }
     }, `原生 Adapter 步骤失败 ${step.id}`);
+    const delegated = failedRun?.delegations?.find((item) => item.id === step.delegationId);
+    if (delegated?.childTaskId && options.taskService) await options.taskService.failStep(delegated.childTaskId, { stepId: 'step-1', error: reason, retryable: false }).catch(() => {});
     emit(job, 'step_failed', { stepId: step.id, member: publicMember(member), error: reason });
   }
 
   async function finishRun(job) {
     const run = await readRun(job.taskId);
-    const unfinished = run.steps.filter((step) => step.status !== 'completed');
+    const unfinished = run.steps.filter((step) => step.status !== 'completed' && step.compensationOnly !== true);
     const needsCommand = /代码|程序|安装|部署|构建|编译|运行|测试/iu.test(run.request);
     const needsConnection = /连接器|知识库|mcp|obsidian|ima/iu.test(run.request);
     const evidence = run.evidence || [];
@@ -805,6 +953,240 @@ function createNativeExecutionAdapter(options) {
     }
   }
 
+  async function syncChildTaskTerminal(childTaskId, status, detail = '') {
+    const child = await readRun(childTaskId).catch(() => undefined);
+    if (!child?.parentTaskId) return;
+    const { runner, teamExecutionProtocol, contextRouter } = await loadEngineModules();
+    const childResult = status === 'completed' ? summarizeChildTask(child) : undefined;
+    await updateRun(child.parentTaskId, (parent) => {
+      const delegation = (parent.delegations || []).find((item) => item.childTaskId === childTaskId);
+      if (!delegation) return;
+      const parentStep = parent.steps.find((item) => item.delegationId === delegation.id);
+      delegation.status = status === 'completed' ? 'completed' : 'failed';
+      delegation.updatedAt = Date.now();
+      delegation.completedAt = Date.now();
+      delegation.output = status === 'completed' ? childResult : undefined;
+      delegation.error = status === 'completed' ? undefined : detail || child.lastError || 'Child task failed';
+      if (parentStep) {
+        parentStep.status = status === 'completed' ? 'completed' : 'failed';
+        parentStep.completedAt = Date.now();
+        parentStep.lastError = delegation.error;
+        if (childResult) {
+          parentStep.output = { childTask: childResult };
+          parentStep.evidence = [...(parentStep.evidence || []), {
+            ts: Date.now(), source: 'child_task', kind: 'child_task', verified: true,
+            summary: `子任务“${childResult.title || childTaskId}”已完成：${childResult.summary}`.slice(0, 1800),
+            childTaskId,
+            artifacts: childResult.artifacts,
+          }].slice(-30);
+          parent.childTaskResults = { ...(parent.childTaskResults || {}), [childTaskId]: childResult };
+          if (parent.recoveryContext) parent.recoveryContext.completedEvidence = [
+            ...(parent.recoveryContext.completedEvidence || []),
+            `子任务 ${childResult.title || childTaskId} 已验收：${childResult.summary}`.slice(0, 1800),
+          ].slice(-30);
+        }
+        parentStep.events = [...(parentStep.events || []), { ts: Date.now(), type: `child_${status}`, detail: detail || `Child task ${childTaskId} ${status}` }].slice(-30);
+        if (parent.runner) {
+          try {
+            parent.runner = runner.recordTaskStepResult(parent.runner, {
+              stepId: parentStep.id,
+              success: status === 'completed',
+              retryable: false,
+              detail: detail || `Child task ${childTaskId} ${status}`,
+              error: delegation.error,
+            });
+            parent.plan = parent.runner.plan;
+          } catch {}
+        }
+        if (parent.executionProtocol) parent.executionProtocol = teamExecutionProtocol.projectTeamExecutionEvent(parent.executionProtocol, {
+          type: status === 'completed' ? 'step_completed' : 'step_failed',
+          stepId: parentStep.id,
+          employeeId: parentStep.employeeId,
+          detail: detail || `Child task ${childTaskId} ${status}`,
+          error: delegation.error,
+        });
+      }
+      parent.recoveryCapsule = contextRouter.createRecoveryCapsule(parent, { reason: `子任务 ${childTaskId} 状态同步` });
+    }, `Synchronize child task ${childTaskId} terminal state`);
+  }
+
+  async function runCompensations(job, reason) {
+    const initial = await readRun(job.taskId).catch(() => undefined);
+    if (!initial) return [];
+    const targets = initial.steps.filter((step) => step.status === 'completed' && step.sideEffect !== false && step.compensateStepId)
+      .reverse();
+    if (!targets.length) return [];
+    const { runner, contextRouter } = await loadEngineModules();
+    const results = [];
+    const recordNonExecutableOutcome = async (outcome) => {
+      const detail = text(outcome.error || outcome.summary || outcome.status, 1200);
+      const needsHandoff = !['completed', 'already_completed'].includes(outcome.status);
+      await updateRun(job.taskId, (next) => {
+        next.compensation = [...(next.compensation || []), { ts: Date.now(), ...outcome, detail }].slice(-60);
+        if (needsHandoff) {
+          const targetTitle = next.steps.find((item) => item.id === outcome.targetStepId)?.title || outcome.targetStepId;
+          const nextAction = outcome.status === 'missing'
+            ? '补齐该步骤的补偿定义，或明确确认接受已发生的外部状态后再继续。'
+            : outcome.status === 'awaiting_approval'
+              ? '在审批记录中批准或拒绝该补偿；批准后点击继续即可只恢复补偿步骤。'
+            : outcome.error?.includes('Child-task')
+              ? '恢复对应子任务的补偿路线，或由负责人明确接管后再继续。'
+              : '恢复可执行负责人或补齐必要配置后，再继续处理补偿。';
+          const summary = `补偿未完成：${targetTitle}（${detail}）`;
+          if (next.recoveryContext) next.recoveryContext.unresolvedIssues = [...(next.recoveryContext.unresolvedIssues || []), summary].slice(-20);
+          next.handoff = {
+            ts: Date.now(),
+            completed: next.steps.filter((item) => item.status === 'completed' && item.compensationOnly !== true).map((item) => item.title),
+            blocked: summary,
+            nextAction,
+            compensation: { ...outcome, detail },
+          };
+          next.recoveryCapsule = contextRouter.createRecoveryCapsule(next, { reason: summary });
+        }
+      }, `Record compensation ${outcome.status} for ${outcome.targetStepId}`);
+    };
+    job.compensating = true;
+    emit(job, 'compensation_started', { reason: text(reason, 800), targetStepIds: targets.map((step) => step.id) });
+    try {
+      for (const target of targets) {
+        const run = await readRun(job.taskId);
+        const step = run?.steps.find((item) => item.id === target.compensateStepId);
+        if (!step) {
+          const outcome = { targetStepId: target.id, compensateStepId: target.compensateStepId, status: 'missing', error: 'Declared compensation step is missing' };
+          await recordNonExecutableOutcome(outcome);
+          results.push(outcome);
+          continue;
+        }
+        if (step.status === 'completed') {
+          const outcome = { targetStepId: target.id, compensateStepId: step.id, status: 'already_completed', summary: 'Compensation step was already completed' };
+          await recordNonExecutableOutcome(outcome);
+          results.push(outcome);
+          continue;
+        }
+        const member = job.members.get(step.employeeId);
+        if (!member || step.childTaskId) {
+          const outcome = { targetStepId: target.id, compensateStepId: step.id, status: 'blocked', error: member ? 'Child-task compensation requires an explicit child recovery route' : 'Compensation owner is unavailable' };
+          await recordNonExecutableOutcome(outcome);
+          results.push(outcome);
+          continue;
+        }
+        if (compensationNeedsApproval(step, job) && options.taskService) {
+          const latest = await readRun(job.taskId);
+          const approvals = latest?.approvals || [];
+          const pending = approvals.find((approval) => approval.stepId === step.id && approval.scope === 'compensation' && approval.status === 'pending');
+          const approved = approvals.some((approval) => approval.stepId === step.id && approval.scope === 'compensation' && approval.status === 'approved');
+          const rejected = approvals.find((approval) => approval.stepId === step.id && approval.scope === 'compensation' && approval.status === 'rejected');
+          if (rejected) {
+            const outcome = { targetStepId: target.id, compensateStepId: step.id, status: 'blocked', error: `Compensation was rejected: ${text(rejected.note, 800) || 'user rejected approval'}` };
+            await recordNonExecutableOutcome(outcome);
+            results.push(outcome);
+            continue;
+          }
+          if (!approved) {
+            if (!pending) await options.taskService.requestApproval(job.taskId, {
+              stepId: step.id, scope: 'compensation', requestedBy: member.name || member.id,
+              reason: `补偿“${step.title}”可能影响外部状态，需确认后执行。原步骤：${target.title}`,
+            });
+            const outcome = { targetStepId: target.id, compensateStepId: step.id, status: 'awaiting_approval', error: 'Compensation requires user approval' };
+            await recordNonExecutableOutcome(outcome);
+            results.push(outcome);
+            emit(job, 'compensation_approval_requested', { stepId: step.id, compensatesStepId: target.id });
+            continue;
+          }
+        }
+        job.currentStepId = step.id;
+        job.currentMember = member;
+        await updateRun(job.taskId, (next) => {
+          const current = next.steps.find((item) => item.id === step.id);
+          if (!current) return;
+          current.status = 'running';
+          current.attempts = (Number(current.attempts) || 0) + 1;
+          current.events = [...(current.events || []), { ts: Date.now(), type: 'compensation_started', detail: `Compensating ${target.id}: ${text(reason, 600)}` }].slice(-30);
+        }, `Start compensation ${step.id}`);
+        emit(job, 'compensation_step_started', { stepId: step.id, compensatesStepId: target.id, member: publicMember(member) });
+        try {
+          const result = await executeStep(job, await readRun(job.taskId), step, member, { compensation: true });
+          await updateRun(job.taskId, (next) => {
+            const current = next.steps.find((item) => item.id === step.id);
+            if (!current) return;
+            current.status = 'completed'; current.completedAt = Date.now(); current.lastError = undefined;
+            current.output = { summary: result.content.slice(0, 1200), compensationForStepId: target.id };
+            current.events = [...(current.events || []), { ts: Date.now(), type: 'compensation_completed', detail: result.content.slice(0, 800) }].slice(-30);
+            if (next.runner) {
+              try { next.runner = runner.recordTaskStepResult(next.runner, { stepId: step.id, success: true, output: current.output, detail: 'Compensation completed' }); next.plan = next.runner.plan; } catch {}
+            }
+            next.compensation = [...(next.compensation || []), { ts: Date.now(), targetStepId: target.id, compensateStepId: step.id, status: 'completed', summary: current.output.summary }].slice(-60);
+            if (next.recoveryContext) next.recoveryContext.completedEvidence = [...(next.recoveryContext.completedEvidence || []), `Compensation ${step.title}: ${current.output.summary}`].slice(-30);
+            next.recoveryCapsule = contextRouter.createRecoveryCapsule(next, { reason: `Compensation completed for ${target.id}` });
+          }, `Complete compensation ${step.id}`);
+          results.push({ targetStepId: target.id, compensateStepId: step.id, status: 'completed', summary: result.content.slice(0, 1200) });
+          emit(job, 'compensation_step_completed', { stepId: step.id, compensatesStepId: target.id, summary: result.content.slice(0, 700) });
+        } catch (error) {
+          const errorText = text(error?.message || error, 1200);
+          await updateRun(job.taskId, (next) => {
+            const current = next.steps.find((item) => item.id === step.id);
+            if (current) {
+              current.status = 'failed'; current.lastError = errorText;
+              current.events = [...(current.events || []), { ts: Date.now(), type: 'compensation_failed', detail: errorText }].slice(-30);
+            }
+            next.compensation = [...(next.compensation || []), { ts: Date.now(), targetStepId: target.id, compensateStepId: step.id, status: 'failed', error: errorText }].slice(-60);
+            if (next.recoveryContext) next.recoveryContext.unresolvedIssues = [...(next.recoveryContext.unresolvedIssues || []), `Compensation ${step.title} failed: ${errorText}`].slice(-20);
+            next.recoveryCapsule = contextRouter.createRecoveryCapsule(next, { reason: `Compensation failed for ${target.id}` });
+          }, `Fail compensation ${step.id}`).catch(() => {});
+          results.push({ targetStepId: target.id, compensateStepId: step.id, status: 'failed', error: errorText });
+          emit(job, 'compensation_step_failed', { stepId: step.id, compensatesStepId: target.id, error: errorText });
+        }
+      }
+    } finally {
+      job.compensating = false;
+      job.currentStepId = undefined;
+      job.currentMember = undefined;
+      emit(job, 'compensation_finished', { results });
+    }
+    return results;
+  }
+
+  async function resolveChildSteps(job, run) {
+    const childSteps = run.steps.filter((step) => step.childTaskId && !['completed', 'failed'].includes(step.status));
+    for (const step of childSteps) {
+      const child = await readRun(step.childTaskId);
+      if (!child) throw new Error(`Child task ${step.childTaskId} is missing from the durable task store`);
+      if (child?.status === 'completed') {
+        await syncChildTaskTerminal(step.childTaskId, 'completed', 'Child task reached a terminal state');
+        return { refreshed: true };
+      }
+      if (child?.status === 'failed' || child?.status === 'stopped') {
+        const reason = child.lastError || `Child task ${step.childTaskId} did not complete`;
+        await syncChildTaskTerminal(step.childTaskId, 'failed', reason);
+        throw new Error(reason);
+      }
+      if (child.status === 'awaiting_user' || child.status === 'paused') {
+        throw new ExecutionControlSignal('awaiting_user', `Child task ${step.childTaskId} is ${child.status} and requires user action before the parent can continue`);
+      }
+      const existingChildJob = jobs.get(child.id);
+      if (child.status === 'queued' && (!existingChildJob || !ACTIVE_JOB_STATES.has(existingChildJob.state))) {
+        const childMembers = child.memberSnapshot?.some((member) => member?.modelConfig?.apiHost)
+          ? child.memberSnapshot
+          : [...job.members.values()];
+        const resumed = await start({
+          taskId: child.id,
+          members: childMembers,
+          attachments: job.attachments,
+          extraSystemContext: `Parent task ${job.taskId}; resumed child task ${child.id}.`,
+          reviewModelConfig: job.reviewModelConfig,
+          memoryWriteApproval: job.memoryWriteApproval,
+          executionPolicy: job.executionPolicy,
+          connectors: job.connectors,
+          connectorTools: job.connectorTools,
+        });
+        if (!resumed.ok) throw new Error(resumed.error || `Child task ${child.id} could not resume`);
+        emit(job, 'child_task_resumed', { childTaskId: child.id, childJob: resumed.job, reason: 'durable child task was queued without an active native job' });
+      }
+      throw new ExecutionControlSignal('delegate_wait', `Waiting for child task ${step.childTaskId}`);
+    }
+    return { refreshed: false };
+  }
+
   async function execute(job) {
     job.state = 'running';
     job.startedAt = job.startedAt || Date.now();
@@ -813,7 +1195,9 @@ function createNativeExecutionAdapter(options) {
       await claim(job);
       while (true) {
         const run = await assertCanContinue(job);
-        const pending = run.steps.filter((step) => ['queued', 'paused', 'failed'].includes(step.status));
+        const childResolution = await resolveChildSteps(job, run);
+        if (childResolution.refreshed) continue;
+        const pending = run.steps.filter((step) => ['queued', 'paused', 'failed'].includes(step.status) && !step.childTaskId && step.compensationOnly !== true);
         if (!pending.length) break;
         const runnable = pending.find((step) => (step.dependsOnStepIds || []).every((dependency) => run.steps.find((item) => item.id === dependency)?.status === 'completed'));
         if (!runnable) throw new Error('任务步骤存在未完成依赖，原生 Adapter 拒绝跳步执行');
@@ -832,6 +1216,7 @@ function createNativeExecutionAdapter(options) {
         }
       }
       await finishRun(job);
+      await syncChildTaskTerminal(job.taskId, 'completed', 'Child task completed and passed its gate');
       job.state = 'completed';
       job.finishedAt = Date.now();
       emit(job, 'job_completed');
@@ -840,7 +1225,19 @@ function createNativeExecutionAdapter(options) {
         job.state = error.kind === 'stop' || error.kind === 'close' ? 'stopped' : error.kind === 'awaiting_user' ? 'awaiting_user' : 'paused';
         job.lastError = error.message;
         emit(job, 'job_controlled', { control: error.kind, error: error.message });
-        if (error.kind === 'steer') {
+        if (error.kind === 'stop' || error.kind === 'close') {
+          await runCompensations(job, `${error.kind}: ${error.message}`).catch(() => {});
+        }
+        if (error.kind === 'delegate_wait') {
+          job.state = 'queued';
+          job.requeueAfterExecution = true;
+          await updateRun(job.taskId, (run) => {
+            run.status = 'queued';
+            run.phase = 'preflight';
+            run.lastError = undefined;
+          }, 'Parent task yielded its queue slot while waiting for a child task').catch(() => {});
+          emit(job, 'child_task_waiting', { error: error.message });
+        } else if (error.kind === 'steer') {
           job.state = 'queued';
           job.requeueAfterExecution = true;
           job.interruptReason = undefined;
@@ -901,6 +1298,8 @@ function createNativeExecutionAdapter(options) {
       } else {
         job.state = 'failed';
         job.lastError = text(error?.message || error, 1200);
+        await runCompensations(job, job.lastError).catch(() => {});
+        await syncChildTaskTerminal(job.taskId, 'failed', job.lastError).catch(() => {});
         try { await checkpoint(job, { kind: 'run_failed', summary: job.lastError }); } catch {}
         emit(job, 'job_failed', { error: job.lastError });
         if (options.learningReviewQueue) {
@@ -959,11 +1358,94 @@ function createNativeExecutionAdapter(options) {
     return { ok: true, job: safeJob(job) };
   }
 
+  function removeQueuedJob(job) {
+    const index = queue.indexOf(job);
+    if (index >= 0) queue.splice(index, 1);
+    refreshQueuePositions();
+  }
+
+  function applyJobControl(job, type) {
+    if (!job) return false;
+    const wasQueued = job.state === 'queued';
+    if (type === 'resume') {
+      job.control = undefined;
+      if (!['completed', 'failed', 'stopped'].includes(job.state)) enqueueJob(job, 'resumed');
+      emit(job, 'control_received', { control: 'resume' });
+      return false;
+    }
+    const effectiveType = type === 'close' ? 'stop' : type;
+    job.control = effectiveType;
+    job.abortController?.abort();
+    if (effectiveType === 'pause') job.state = 'paused';
+    if (effectiveType === 'stop') job.state = 'stopped';
+    removeQueuedJob(job);
+    emit(job, 'control_received', { control: type });
+    return wasQueued;
+  }
+
+  async function cascadeChildControl(parentTaskId, type) {
+    if (!['pause', 'resume', 'stop', 'close'].includes(type)) return;
+    const snapshot = await options.store.read();
+    if (!snapshot.ok) return;
+    const descendants = [];
+    const pending = [String(parentTaskId)];
+    while (pending.length) {
+      const ancestorId = pending.shift();
+      for (const candidate of snapshot.runs.filter((run) => run.parentTaskId === ancestorId)) {
+        if (descendants.some((item) => item.id === candidate.id)) continue;
+        descendants.push(candidate);
+        pending.push(candidate.id);
+      }
+    }
+    const forwardedType = type === 'close' ? 'stop' : type;
+    for (const child of descendants.filter((item) => !['completed', 'failed', 'stopped'].includes(item.status))) {
+      const result = await options.worker.dispatch({
+        commandId: `native-cascade-${forwardedType}-${parentTaskId}-${child.id}-${crypto.randomUUID()}`,
+        taskId: child.id,
+        type: forwardedType,
+        requestedBy: `parent-task:${parentTaskId}`,
+        sessionId: options.sessionId,
+        payload: {},
+      });
+      if (result?.ok) {
+        const childJob = jobs.get(child.id);
+        const queuedBeforeControl = applyJobControl(childJob, forwardedType);
+        // A queued child has no active execute() catch block to initiate rollback.
+        // Complete its declared compensation before the active parent may compensate shared state.
+        if (queuedBeforeControl && forwardedType === 'stop' && childJob) {
+          await runCompensations(childJob, `Parent task ${parentTaskId} stopped before queued child ${child.id} could run`).catch(() => {});
+          emit(childJob, 'queued_child_compensation_finished', { parentTaskId });
+        }
+      }
+    }
+    const parentJob = jobs.get(String(parentTaskId));
+    if (parentJob && descendants.length) emit(parentJob, 'child_task_control_cascaded', {
+      control: type,
+      childTaskIds: descendants.map((item) => item.id),
+    });
+  }
+
   function handleControl(command, result) {
-    const job = jobs.get(String(command?.taskId || ''));
-    if (!job || !result?.ok) return;
-    if (command.type === 'pause') { job.control = 'pause'; job.abortController?.abort(); emit(job, 'control_received', { control: 'pause' }); }
-    if (command.type === 'stop' || command.type === 'close') { job.control = command.type; job.abortController?.abort(); emit(job, 'control_received', { control: command.type }); }
+    if (!result?.ok) return;
+    const taskId = String(command?.taskId || '');
+    const type = String(command?.type || '');
+    if (!['pause', 'resume', 'stop', 'close'].includes(type)) return;
+    const job = jobs.get(taskId);
+    if (type === 'resume' && job?.state === 'stopped') {
+      void readRun(taskId).then((run) => {
+        if ((run?.compensation || []).some((item) => item.status === 'awaiting_approval')) {
+          job.control = undefined;
+          enqueueCompensation(job, 'User approved a previously blocked compensation');
+        }
+      }).catch(() => {});
+    }
+    const queuedBeforeControl = applyJobControl(job, type);
+    const cascade = cascadeChildControl(taskId, type).catch(() => {});
+    if (queuedBeforeControl && (type === 'stop' || type === 'close') && job) {
+      // The parent is not inside execute(), so queue compensation after child control
+      // rather than running a second tool loop in parallel with the active descendant.
+      void cascade.then(() => enqueueCompensation(job, `Queued task ${taskId} was ${type === 'close' ? 'closed' : 'stopped'} while a descendant was active`));
+    }
   }
 
   async function steer(taskId, message) {
@@ -1010,15 +1492,49 @@ function createNativeExecutionAdapter(options) {
       if (job && !job.members.has(appended.delegation.employeeId)) {
         return { ok: false, error: `员工 ${appended.delegation.employeeName} 不在当前执行器成员列表中，请先把员工加入团队后再委派` };
       }
+      const child = options.taskService
+        ? await options.taskService.createChild(current.id, {
+          employeeId: appended.delegation.employeeId,
+          title: appended.delegation.title,
+          assignment: appended.delegation.assignment,
+          goal: appended.delegation.assignment,
+          acceptanceCriteria: appended.delegation.acceptanceCriteria,
+        })
+        : undefined;
       await updateRun(current.id, (next) => {
         next.delegations = appended.run.delegations;
         next.steps = appended.run.steps;
+        if (child?.task?.id) {
+          const delegation = next.delegations.find((item) => item.id === appended.delegation.id);
+          if (delegation) delegation.childTaskId = child.task.id;
+          const delegatedStep = next.steps.find((item) => item.id === appended.step.id);
+          if (delegatedStep) {
+            delegatedStep.childTaskId = child.task.id;
+            delegatedStep.externalChild = true;
+          }
+        }
         if (next.runner) {
           try { next.runner = runner.appendTaskRunnerSteps(next.runner, [formalStep(next.id, appended.step)], `手动添加子任务：${appended.delegation.title}`); next.plan = next.runner.plan; } catch {}
         }
       }, `手动动态委派 ${appended.delegation.employeeName}`);
-      if (job) emit(job, 'subtask_delegated', { parentStepId: input.parentStepId, delegation: appended.delegation, source: 'manual' });
-      return { ok: true, delegation: appended.delegation, step: appended.step, job: job ? safeJob(job) : undefined };
+      const childStart = child?.task?.id && job
+        ? await start({
+          taskId: child.task.id,
+          members: [...job.members.values()],
+          attachments: job.attachments,
+          extraSystemContext: `Parent task ${current.id}; manually delegated by ${appended.delegation.employeeName}.`,
+          reviewModelConfig: job.reviewModelConfig,
+          memoryWriteApproval: job.memoryWriteApproval,
+          executionPolicy: job.executionPolicy,
+          connectors: job.connectors,
+          connectorTools: job.connectorTools,
+        })
+        : undefined;
+      if (child && job && !childStart?.ok) throw new Error(childStart?.error || 'Child task could not enter the native execution queue');
+      const delegation = { ...appended.delegation, childTaskId: child?.task?.id };
+      const step = { ...appended.step, childTaskId: child?.task?.id, externalChild: Boolean(child?.task?.id) };
+      if (job) emit(job, 'subtask_delegated', { parentStepId: input.parentStepId, delegation, childJob: childStart?.job, source: 'manual' });
+      return { ok: true, delegation, step, childTask: child?.task, childJob: childStart?.job, job: job ? safeJob(job) : undefined };
     } catch (error) {
       return { ok: false, error: text(error?.message || error, 1000) };
     }

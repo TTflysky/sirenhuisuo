@@ -1,4 +1,4 @@
-export type FontKey = 'youyuan' | 'noto-sans' | 'noto-serif' | 'source-han-regular' | 'source-han-light' | 'source-han-bold';
+export type FontKey = 'youyuan';
 export type FontSizeKey = 'small' | 'standard' | 'large' | 'extra-large';
 
 export interface AppearanceSettings {
@@ -8,11 +8,6 @@ export interface AppearanceSettings {
 
 export const FONT_OPTIONS: Array<{ value: FontKey; label: string; family: string }> = [
   { value: 'youyuan', label: '幼圆', family: "'Hermes YouYuan', 'YouYuan', '幼圆', sans-serif" },
-  { value: 'noto-sans', label: '思源黑体', family: "'Hermes Noto Sans SC', sans-serif" },
-  { value: 'noto-serif', label: '思源宋体', family: "'Hermes Noto Serif SC', serif" },
-  { value: 'source-han-regular', label: '思源黑体', family: "'Hermes Source Han Sans Regular', sans-serif" },
-  { value: 'source-han-light', label: '思源黑体纤细', family: "'Hermes Source Han Sans Light', sans-serif" },
-  { value: 'source-han-bold', label: '思源黑体粗体', family: "'Hermes Source Han Sans Bold', sans-serif" },
 ];
 
 export const FONT_SIZE_OPTIONS: Array<{ value: FontSizeKey; label: string; factor: number }> = [

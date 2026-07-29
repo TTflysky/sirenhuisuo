@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { ArrowLeftOutlined, EditOutlined, HistoryOutlined, PauseCircleOutlined, PlayCircleOutlined, RobotOutlined, SearchOutlined, StopOutlined, UserAddOutlined } from '@ant-design/icons';
 import type { Team, Employee, TaskRun } from '../../types';
-import { useStore } from '../../store';
+import { useStore } from '../../storeContext';
 import { type Attachment } from '../../data/hermesClient';
 import AgentAvatar from '../office/AgentAvatar';
 import { loadOutputsByScope, type OutputRecord } from '../../data/outputs';
@@ -12,7 +12,8 @@ import RenameTeamModal from '../sidebar/RenameTeamModal';
 import ManageTeamMembersModal from '../sidebar/ManageTeamMembersModal';
 import { copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
-import SkillMentionInput, { resolveSkillContext } from '../skills/SkillMentionInput';
+import SkillMentionInput from '../skills/SkillMentionInput';
+import { resolveSkillContext } from '../../engine/skillContext';
 import SkillPickerButton from '../skills/SkillPickerButton';
 import ExecutionPolicyControl from './ExecutionPolicyControl';
 import type { SkillReference } from '../../types';
@@ -27,9 +28,12 @@ interface Props {
   teamId: string;
 }
 
+type TaskAuditNode = { id: string; depth: number; title: string; status: string; blocked?: string; steps: { completed: number; total: number }; compensation: { completed: number; blocked: number; failed: number } };
+type TaskAudit = { nodes: TaskAuditNode[]; plan?: { ready: boolean; nextAction: string; blockers: Array<{ taskId: string; title: string; reason: string }> } };
+
 const supervisorMention: Employee = {
   id: 'assistant',
-  name: '驴狗蛋助手',
+  name: '章北海助理',
   title: '监工调度',
   role: 'custom',
   avatar: 'a06',
@@ -42,7 +46,7 @@ const supervisorMention: Employee = {
 
 function SupervisorAvatar({ size = 34 }: { size?: number }) {
   return (
-    <span className="supervisor-avatar" style={{ width: size, height: size }} aria-label="驴狗蛋助手">
+    <span className="supervisor-avatar" style={{ width: size, height: size }} aria-label="章北海助理">
       <RobotOutlined style={{ fontSize: Math.round(size * 0.58) }} />
     </span>
   );
@@ -111,12 +115,23 @@ export default function TeamChatApp({ teamId }: Props) {
   const availableOutputs = loadOutputsByScope(`team:${teamId}`);
   const jumpMessages = (team?.chatMessages ?? []).filter((message) => message.kind !== 'execution').slice(-24);
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
+  const [taskAudits, setTaskAudits] = useState<Record<string, TaskAudit>>({});
   const [progressNow, setProgressNow] = useState(Date.now());
   const executionIsLive = Boolean(myProgress) || activeTaskRuns.some((run) => run.status === 'queued' || run.status === 'running');
   const historyMatches = useMemo(() => taskHistoryQuery.trim()
     ? searchTaskRunHistory(state.taskRuns, taskHistoryQuery, { teams: state.teams, limit: 12 })
     : [], [taskHistoryQuery, state.taskRuns, state.teams]);
   const replayRun = replayTaskId ? state.taskRuns.find((run) => run.id === replayTaskId) : undefined;
+  const loadTaskAudit = async (taskId: string) => {
+    const api = window.electronAPI;
+    if (!api?.taskServiceTree || !api.taskServiceRecoveryPlan) return;
+    const [treeResult, planResult] = await Promise.all([api.taskServiceTree(taskId), api.taskServiceRecoveryPlan(taskId)]);
+    if (!treeResult.ok || !treeResult.tree) return;
+    setTaskAudits((previous) => ({ ...previous, [taskId]: {
+      nodes: treeResult.tree!.nodes as TaskAuditNode[],
+      plan: planResult.ok && planResult.plan ? planResult.plan as unknown as TaskAudit['plan'] : undefined,
+    } }));
+  };
   const taskReplay = useMemo(() => buildTaskReplay(replayRun, replayLedgerEvents), [replayRun, replayLedgerEvents]);
   const replayTimeline = useMemo(() => {
     if (!taskReplay) return [];
@@ -348,9 +363,9 @@ export default function TeamChatApp({ teamId }: Props) {
     return <section key={run.id} className={`task-run-tray task-run-${run.status}`}>
       <div className="task-run-summary-row">
         <button type="button" className="task-run-summary" onClick={() => setExpandedRunIds((previous) => {
-          const next = new Set(previous); if (next.has(run.id)) next.delete(run.id); else next.add(run.id); return next;
+          const next = new Set(previous); if (next.has(run.id)) next.delete(run.id); else { next.add(run.id); void loadTaskAudit(run.id); } return next;
         })} onContextMenu={(event) => {
-          event.preventDefault(); setExpandedRunIds((previous) => { const next = new Set(previous); if (next.has(run.id)) next.delete(run.id); else next.add(run.id); return next; });
+          event.preventDefault(); setExpandedRunIds((previous) => { const next = new Set(previous); if (next.has(run.id)) next.delete(run.id); else { next.add(run.id); void loadTaskAudit(run.id); } return next; });
         }}>
           <span className="task-run-state">{run.status === 'running' ? '执行中' : run.status === 'queued' ? '排队中' : run.status === 'awaiting_user' ? '等待你处理' : run.status === 'paused' ? '已暂停' : run.status === 'stopped' ? '已停止' : run.status === 'failed' ? '待恢复' : '已完成'}</span>
           <strong>{run.title}</strong><span>{completed}/{run.steps.length}</span><span className="task-run-toggle">{expanded ? '收起' : '详情'}</span>
@@ -359,6 +374,11 @@ export default function TeamChatApp({ teamId }: Props) {
       </div>
       {run.sourceMessageId && <button type="button" className="task-run-jump" title="跳到原始需求" onClick={() => document.querySelector(`[data-message-id="${CSS.escape(run.sourceMessageId!)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>↗</button>}
       {expanded && <div className="task-run-details">
+        {taskAudits[run.id] && <div className="task-run-recovery task-run-audit">
+          <div><strong>任务树与恢复</strong><span>{taskAudits[run.id].plan?.ready ? '可以继续' : taskAudits[run.id].plan?.nextAction || '已读取账本状态'}</span></div>
+          <details><summary>任务树 {taskAudits[run.id].nodes.length}</summary>{taskAudits[run.id].nodes.map((node) => <p key={node.id} style={{ paddingLeft: `${node.depth * 12}px` }}>#{node.depth} · {node.title} · {node.status} · 步骤 {node.steps.completed}/{node.steps.total}{node.compensation.completed || node.compensation.blocked || node.compensation.failed ? ` · 补偿 ${node.compensation.completed}完成/${node.compensation.blocked}受阻/${node.compensation.failed}失败` : ''}{node.blocked ? ` · ${node.blocked}` : ''}</p>)}</details>
+          {taskAudits[run.id].plan?.blockers.length ? <details><summary>恢复阻塞 {taskAudits[run.id].plan!.blockers.length}</summary>{taskAudits[run.id].plan!.blockers.map((item) => <p key={item.taskId}>{item.title} · {item.reason}</p>)}</details> : null}
+        </div>}
         <div className="task-run-goal"><strong>目标</strong><span>{run.goal ?? run.request}</span></div>
         {!!run.preflight?.length && <div className="task-run-preflight"><strong>前置检查</strong>{run.preflight.map((item) => <span key={item.label} className={`is-${item.status}`} title={item.detail}>{item.status === 'passed' ? '✓' : item.status === 'blocked' ? '!' : '·'} {item.label}</span>)}</div>}
         {run.worker && <div className={`task-run-worker worker-${run.worker.state}`}><strong>后台 Worker</strong><span>{run.worker.state === 'running' ? '已领取执行租约' : run.worker.state === 'paused' ? '已暂停并保留租约记录' : run.worker.state === 'expired' ? '租约失效，已安全暂停' : run.worker.state === 'released' ? '执行租约已释放' : run.worker.state === 'stopped' ? '已停止' : '等待执行适配器领取'}</span><small>{run.worker.adapter ?? '未指定适配器'}{run.worker.heartbeatAt ? ` · 心跳 ${new Date(run.worker.heartbeatAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}` : ''}</small>{run.worker.lastCheckpoint && <small className="task-run-worker-checkpoint">检查点 #{run.worker.lastCheckpoint.sequence} · {run.worker.lastCheckpoint.summary || run.worker.lastCheckpoint.kind}</small>}</div>}

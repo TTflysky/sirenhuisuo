@@ -1,10 +1,9 @@
 import React, {
-  createContext,
-  useContext,
   useReducer,
   useEffect,
   type ReactNode,
 } from 'react';
+import { StoreContext } from './storeContext';
 import type {
   Employee,
   Team,
@@ -299,7 +298,7 @@ function reducer(s: AppState, a: Action): AppState {
 }
 
 // ===== Context =====
-interface StoreCtx {
+export interface StoreCtx {
   state: AppState;
   dispatch: React.Dispatch<Action>;
   // 便捷方法
@@ -326,8 +325,6 @@ interface StoreCtx {
   closeTaskRun: (runId: string) => void;
   clearTeamExecution: (teamId: string) => void;
 }
-
-const StoreContext = createContext<StoreCtx | null>(null);
 
 // INIT 是各窗口自己的初始化加载，不应跨窗口广播。
 const SKIP_BROADCAST = new Set<Action['type']>(['INIT', 'HYDRATE_TASK_RUNS']);
@@ -1490,7 +1487,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const turns: client.ChatTurn[] = [
         {
           role: 'system',
-          content: `${configuredPrompt ? `## 助理配置\n${configuredPrompt}\n\n` : ''}${userContext ? `${userContext}\n` : ''}你是${APP_PRODUCT_NAME}的驴狗蛋助手，负责监督进度、调度成员和理解老板的工作习惯。\n\n## 系统能力声明\n团队调度器、任务运行器、成员资料和 Skill 库均已连接并可用。程序会在你回复后真正创建任务并调用成员。禁止声称“没有权限”“未开放接口”“需要切换会话”或要求老板再次确认已明确提出的工作。\n\n## 当前团队（唯一可调度范围）\n团队名称：${team.name}\n${teamRoster || '暂无成员'}\n\n## 可用 Skill\n${skillRoster || '暂无可用 Skill'}\n\n监工禁止输出脚本、代码、长文正文、分镜或最终产物，绝不能替成员完成工作。${mayDelegate ? '老板的工作请求已经授权执行。简短说明你将如何分派和验收，程序会自动选择真实成员并启动任务；不要虚构成员结果。回复最多 180 个汉字。' : '当前消息不需要启动团队，只做简短直接回应。'} 你自己不是团队成员，不能@自己。`,
+          content: `${configuredPrompt ? `## 助理配置\n${configuredPrompt}\n\n` : ''}${userContext ? `${userContext}\n` : ''}你是${APP_PRODUCT_NAME}的章北海助理，负责监督进度、调度成员和理解老板的工作习惯。\n\n## 系统能力声明\n团队调度器、任务运行器、成员资料和 Skill 库均已连接并可用。程序会在你回复后真正创建任务并调用成员。禁止声称“没有权限”“未开放接口”“需要切换会话”或要求老板再次确认已明确提出的工作。\n\n## 当前团队（唯一可调度范围）\n团队名称：${team.name}\n${teamRoster || '暂无成员'}\n\n## 可用 Skill\n${skillRoster || '暂无可用 Skill'}\n\n监工禁止输出脚本、代码、长文正文、分镜或最终产物，绝不能替成员完成工作。${mayDelegate ? '老板的工作请求已经授权执行。简短说明你将如何分派和验收，程序会自动选择真实成员并启动任务；不要虚构成员结果。回复最多 180 个汉字。' : '当前消息不需要启动团队，只做简短直接回应。'} 你自己不是团队成员，不能@自己。`,
         },
         { role: 'system', content: BEGINNER_RESPONSE_GUIDE },
         ...team.chatMessages.slice(-12).map((message) => ({
@@ -1500,11 +1497,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         { role: 'user', content: `老板@你说：${content}` },
       ];
       if (!client.resolveApiBase(assistantModel)) {
-        const reply = `⚠️ 驴狗蛋助手没有可用模型配置，无法进行真实对话或调度。请在设置中激活全局模型，或为助理选择模型后重试。`;
+        const reply = `⚠️ 章北海助理没有可用模型配置，无法进行真实对话或调度。请在设置中激活全局模型，或为助理选择模型后重试。`;
         return appendSupervisorMessage(reply);
       }
       const result = await client.chatCompletion(turns, 'assistant-supervisor', `监工/${team.name}`, undefined, assistantModel);
-      const reply = result.content?.trim().replace(/@Hermes(?:\s+助理)?|@章北海(?:\s+助理)?|@驴狗蛋(?:\s+助手)?/gu, '驴狗蛋助手');
+      const reply = result.content?.trim().replace(/@Hermes(?:\s+助理)?|@章北海(?:\s+助理)?|@驴狗蛋(?:\s+助手)?/gu, '章北海助理');
       if (!reply) return undefined;
       const supervisorResult = appendSupervisorMessage(reply, result.usage.totalTokens);
       client.extractUserInsights(`老板：${content}\n监工回复：${reply}`, `团队监工-${team.name}`).catch(() => {});
@@ -1512,7 +1509,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     } catch (error) {
       console.warn('[supervisor] reply failed:', error);
       const reason = error instanceof Error ? error.message : String(error);
-      const reply = `⚠️ 驴狗蛋助手本次模型调用失败：${reason.slice(0, 180)}。任务没有被伪装为已执行；请检查模型连接后重试。`;
+      const reply = `⚠️ 章北海助理本次模型调用失败：${reason.slice(0, 180)}。任务没有被伪装为已执行；请检查模型连接后重试。`;
       return appendSupervisorMessage(reply);
     } finally {
       supervisorBusyRef.current.delete(team.id);
@@ -2100,10 +2097,4 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       {children}
     </StoreContext.Provider>
   );
-}
-
-export function useStore(): StoreCtx {
-  const ctx = useContext(StoreContext);
-  if (!ctx) throw new Error('useStore must be used within StoreProvider');
-  return ctx;
 }

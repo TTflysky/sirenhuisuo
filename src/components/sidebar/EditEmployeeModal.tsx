@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Modal, Select, Switch, Input, Button, App } from 'antd';
 import type { Employee, OpcRoleId, ModelConfig, AvatarFrameConfig } from '../../types';
-import { useStore } from '../../store';
+import { useStore } from '../../storeContext';
 import { PROVIDER_PRESETS, getProvider, loadSettings } from '../../data/hermesClient';
 import type { ModelEntry } from '../../data/hermesClient';
 import AgentAvatar from '../office/AgentAvatar';

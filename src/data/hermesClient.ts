@@ -1,4 +1,4 @@
-import type { Employee, Team, ChatMessage, AppState, AgentStatus, ModelConfig } from '../types';
+import type { Employee, Team, ChatMessage, AppState, AgentStatus, ModelConfig, SkillReference } from '../types';
 import { repairEmployeeStations } from './officeStations';
 import { seedEmployees } from './defaultEmployees';
 import { seedTeams } from './defaultTeams';
@@ -61,6 +61,7 @@ import {
 import { assessTaskCompletion, validateToolCallAgainstGoal } from '../engine/taskFidelity.mjs';
 import { buildTaskLearningContext, recordTaskLearning } from '../engine/taskLearningMemory';
 import { isSkillInstallOnlyRequest, resolveSkillInstallRequest } from '../engine/skillInstallRouting.mjs';
+import { isSkillDiscoveryRequest, isSkillLinkRequest } from '../engine/skillHubSearch.mjs';
 import {
   buildTaskSummaryMaterial,
   restoreTaskContext,
@@ -1216,6 +1217,12 @@ export interface AgentLoopOpts {
   scope?: OutputScope;        // 产出物作用域
   /** 任务专属磁盘工作区；展示仍按 scope 聚合。 */
   workspaceId?: string;
+  /** Explicitly selected skills participate in route enforcement, not only prompt injection. */
+  skillRefs?: SkillReference[];
+  /** A deterministic binding for follow-up language such as "install it". */
+  referenceContext?: string;
+  /** Real source URL carried by the bound reference, never inferred by the model. */
+  referenceSourceUrl?: string;
   attachments?: Attachment[];  // 用户上传/粘贴的图片附件（多模态视觉）
   shouldStop?: () => boolean;  // 自主执行中断信号（如用户点「停止」）
   waitIfPaused?: () => Promise<void>; // 在模型调用和工具调用之间等待用户继续
@@ -1227,6 +1234,8 @@ export interface AgentLoopOpts {
   initialExecutionState?: ExecutionControllerSnapshot;
   /** 每次观察、恢复决策或验收状态变化时通知调用方。 */
   onExecutionState?: (state: ExecutionControllerSnapshot) => void;
+  /** Called after intent compilation and before any executable route starts. */
+  onTaskPrepared?: (decision: TaskDecision) => Promise<void> | void;
   /** 团队多步骤共享控制器时用于隔离各步骤的同名工具路线。 */
   executionRouteScope?: string;
 }
@@ -1258,7 +1267,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   const {
     turns, tools, scene, label, onToolCall, onToolResult, modelConfig, extraSystemContext,
     scope, attachments, shouldStop, waitIfPaused, consumeSteeringMessages,
-    getModelRequestSignal, onSteeringReply, onModelRetry, initialExecutionState, onExecutionState,
+    getModelRequestSignal, onSteeringReply, onModelRetry, initialExecutionState, onExecutionState, onTaskPrepared, skillRefs, referenceSourceUrl,
   } = opts;
   let currentTurns = [...turns];
   let totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
@@ -1280,10 +1289,15 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     && originalUserText !== latestUserText
     && isActionableCapabilityCorrection(latestUserText);
   const isInstallationTask = /安装|装好|装上|安装包|部署/u.test(originalUserText);
-  const resolvedSkillInstall = resolveSkillInstallRequest(originalUserText);
+  const resolvedSkillInstall = resolveSkillInstallRequest(originalUserText)
+    ?? (referenceSourceUrl && isInstallationTask ? { sourceUrl: referenceSourceUrl } : undefined);
+  const skillDiscoveryTask = isSkillDiscoveryRequest(originalUserText);
+  const skillLinkTask = isSkillLinkRequest(originalUserText);
+  const skillDiscoveryRequired = skillDiscoveryTask
+    || ((skillRefs?.length ?? 0) > 0 && /(?:skill|技能)/iu.test(originalUserText));
   const connectorTask = isConnectorTask(originalUserText) || taskDecision.primaryRoute === 'inspect_connectors';
   const connectorSetupTask = isConnectorSetupRequest(originalUserText) || taskDecision.primaryRoute === 'inspect_connectors';
-  const isSkillInstallation = isInstallationTask && !connectorTask && /skill|技能|插件/iu.test(originalUserText);
+  const isSkillInstallation = isInstallationTask && !connectorTask && (/skill|技能|插件/iu.test(originalUserText) || Boolean(referenceSourceUrl));
   const conversationOnly = taskDecision.mode !== 'execute';
   const researchOnlyTask = isResearchOnlyRequest(originalUserText)
     || (taskDecision.primaryRoute === 'web_search'
@@ -1291,6 +1305,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   const requiresExecutionEvidence = !conversationOnly && taskDecision.requiresEvidence;
   const taskExperience = conversationOnly ? '' : buildTaskLearningContext(originalUserText);
   const taskContract = buildTaskContract(taskDecision, taskExperience);
+  if (!conversationOnly) await onTaskPrepared?.(taskDecision);
   currentTurns = conversationOnly
     ? [{ role: 'system', content: `${taskContract}\n\n当前消息不需要工具执行。直接结合最近上下文回应，不得自动恢复、重放或继续上一项任务。只有用户明确提出新的执行目标或明确要求继续时，才能重新开始执行。` }, ...currentTurns]
     : [{
@@ -1433,6 +1448,51 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
 
   // Connector setup and verification have client-enforced gates. The model receives
   // the evidence after the checks; it cannot replace them with a narrated checklist.
+  // Skill discovery is also a client-enforced gate. A request to find a Skill must
+  // never be rewritten as generic web research; the market result is the evidence.
+  if (!conversationOnly && skillDiscoveryRequired && tools.some((tool) => tool?.function?.name === 'search_skills')) {
+    const { executeTool } = await import('../engine/tools');
+    const skillSearchText = skillLinkTask && skillRefs?.length
+      ? skillRefs.map((ref) => `${ref.name} ${ref.id}`).join(' ')
+      : originalUserText;
+    const searchArgs = JSON.stringify({ query: skillSearchText });
+    onToolCall?.('search_skills', searchArgs);
+    const searched = await executeTool({
+      id: `required-skill-search-${Date.now()}`,
+      name: 'search_skills',
+      args: { query: skillSearchText },
+      scope,
+      workspaceId: opts.workspaceId,
+    });
+    const useful = isUsefulToolOutcome('search_skills', searched.success, searched.output, originalUserText);
+    observeToolOutcome('search_skills', searchArgs, searched.output, useful, 'skill_discovery');
+    onToolResult?.('search_skills', searchArgs, searched.output, useful, searched.protocolEvidence, searched.structuredEvidence);
+    callLog.push({ name: 'search_skills', args: searchArgs, result: searched.output.slice(0, 1200), success: useful });
+    toolResultCache.set(canonicalToolCallKey('search_skills', searchArgs), { output: searched.output.slice(0, 6000), success: useful });
+    successfulCalls.add(canonicalToolCallKey('search_skills', searchArgs));
+    primaryRoutePending = false;
+    toolCallsThisPhase += 1;
+    totalToolAttempts += 1;
+    currentTurns.push({
+      role: 'system',
+      content: useful
+        ? `## 客户端已完成 Skill 发现\n下面是 SkillHub/本机技能库的真实检索结果：\n${searched.output.slice(0, 16000)}\n\n必须区分：候选结果、已读取规则、已安装文件和实际验证。用户只要求找 Skill 时，整理候选及来源，不要改用普通网页搜索。用户要求安装时，必须使用候选提供的真实安装地址。`
+        : `## Skill 发现失败\nSkill 检索工具返回了真实失败：\n${searched.output.slice(0, 8000)}\n\n不得用普通网页搜索伪造 SkillHub 结果；应说明失败阶段和唯一缺失条件。`,
+    });
+    if (skillLinkTask && useful && /(?:安装地址|https:\/\/api\.skillhub\.cn\/api\/v1\/download)/iu.test(searched.output)) {
+      const linkResult = `已找到 SkillHub 的真实来源地址：\n\n${searched.output}\n\n当前状态：只完成了候选检索和来源交付，尚未安装或验证 Skill。`;
+      publishExecutionState(evaluateExecutionConclusion(executionState, { content: linkResult, reviewed: true }));
+      return {
+        content: linkResult,
+        usage: totalUsage,
+        contextUsage: latestContextUsage,
+        model: 'client-skill-discovery',
+        executionState,
+        taskDecision,
+      };
+    }
+  }
+
   if (!conversationOnly && connectorSetupTask && tools.some((tool) => tool?.function?.name === 'inspect_connectors')) {
     const { executeTool } = await import('../engine/tools');
     const connectorQuery = connectorQueryFromRequest(originalUserText);
@@ -1482,7 +1542,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
 
   // Requests for current facts must not depend on whether a model elects to call a tool.
   // Run one observable search first, then let the selected model analyze the real results.
-  if (!conversationOnly && (requiresFreshWebResearch(originalUserText) || taskDecision.primaryRoute === 'web_search') && tools.some((tool) => tool?.function?.name === 'web_search')) {
+  if (!conversationOnly && !skillDiscoveryRequired && (requiresFreshWebResearch(originalUserText) || taskDecision.primaryRoute === 'web_search') && tools.some((tool) => tool?.function?.name === 'web_search')) {
     const searchQuery = taskDecision.searchQuery || buildFreshWebQuery(originalUserText);
     const searchArgs = JSON.stringify({ query: searchQuery });
     onToolCall?.('web_search', searchArgs);
@@ -1831,10 +1891,14 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
           : tc.name === 'read_file' ? (connectorSetupTask ? 4 : 12) : Number.POSITIVE_INFINITY;
         const toolLimitReached = toolCallCount > getToolCallLimit(tc.name, connectorSetupTask);
         const resourceLimitReached = Boolean(resourceKey) && resourceReadCount >= resourceLimit;
+        const wrongSkillRoute = (skillDiscoveryRequired && tc.name === 'web_search')
+          || (skillLinkTask && tc.name === 'read_web_page');
         const blockedReason = !fidelityGate.allowed
           ? `${fidelityGate.reason} 当前工具调用与原始目标不一致，已在执行前拦截，必须选择能满足全部条件的路线。`
           : !routeGate.allowed
           ? routeGate.reason ?? '执行控制器已阻止重复或无效路线，必须换一种方法。'
+          : wrongSkillRoute
+          ? 'Current request is Skill discovery. web_search cannot replace SkillHub or local Skill search; call search_skills and use its verified result.'
           : misroutedConnectorSkill
           ? '请先调用 inspect_connectors 确认这个外部服务究竟使用 HTTP、MCP 还是 Skill。只有检查结果明确显示 Skill 后，才安装或读取对应 Skill。'
           : repeatedFailedSkillRead

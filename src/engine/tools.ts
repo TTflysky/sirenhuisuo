@@ -20,6 +20,7 @@ import type { ConnectorProtocolResult } from './connectorProtocol.mjs';
 import { createFileArtifactEvidence, createReviewSubmissionEvidence, createToolExecutionEvidence } from './executionEvidence.mjs';
 import type { FileArtifactEvidence, ReviewSubmissionEvidence, ToolExecutionEvidence } from './executionEvidence.mjs';
 import { buildToolRegistry, preflightToolCall } from './toolRegistry.mjs';
+import { formatSkillHubResults, isSkillDiscoveryRequest, searchSkillHub } from './skillHubSearch.mjs';
 export type { FileArtifactEvidence, ReviewSubmissionEvidence, ToolExecutionEvidence } from './executionEvidence.mjs';
 
 // ===== Tool Schema（OpenAI function-calling 格式）=====
@@ -263,7 +264,7 @@ export interface ToolResult {
 function safePath(p: string): string {
   const parts = p.replace(/\\/g, '/').split('/')
     .filter((part) => part && part !== '.' && part !== '..')
-    .map((part) => part.replace(/[<>:"|?*\u0000-\u001f]/g, '_'));
+    .map((part) => part.replace(/[<>:"|?*\p{Cc}]/gu, '_'));
   return parts.join('/') || 'untitled.txt';
 }
 
@@ -649,6 +650,27 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         if (!query) return { toolCallId: id, name, success: false, output: '技能检索关键词不能为空' };
         const { listSkills, matchSkills } = await import('../data/skills');
         const [all, matched] = await Promise.all([listSkills(), matchSkills(query, 8)]);
+        if (isSkillDiscoveryRequest(query)) {
+          const market = await searchSkillHub(query);
+          const localRows = matched.map((ref) => {
+            const skill = all.find((item) => item.id === ref.id);
+            return `- ${ref.id} | ${ref.name} | ${skill?.description || 'no description'} | source: ${skill?.source || 'unknown'}`;
+          });
+          if (!market.ok) {
+            return {
+              toolCallId: id,
+              name,
+              success: false,
+              output: `SkillHub official search failed: ${market.error}\nLocal matches are not a substitute for the requested market search.${localRows.length ? `\nLocal matches:\n${localRows.join('\n')}` : ''}`,
+            };
+          }
+          return {
+            toolCallId: id,
+            name,
+            success: Boolean(market.results?.length),
+            output: `SkillHub official market results (query: ${market.query}):\n${formatSkillHubResults(market)}\n\nThese are candidates only; they are not installed or verified until read_skill/install_skill completes.${localRows.length ? `\n\nLocal installed matches (separate source):\n${localRows.join('\n')}` : ''}`,
+          };
+        }
         const rows = matched.map((ref) => {
           const skill = all.find((item) => item.id === ref.id);
           return `- ID: ${ref.id}\n  名称: ${ref.name}\n  说明: ${skill?.description || '无说明'}\n  来源: ${skill?.source || '未知'}`;

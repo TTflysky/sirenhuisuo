@@ -1,4 +1,6 @@
-export {};
+import type { ReactNode } from 'react';
+
+type ElectronTypeModuleMarker = ReactNode | undefined;
 
 export interface ExecCommandResult {
   success: boolean;
@@ -295,6 +297,39 @@ export interface TaskStoreWriteResult {
   error?: string;
 }
 
+export interface TaskServiceTask {
+  id: string;
+  taskServiceVersion?: number;
+  taskType: 'assistant' | 'dm' | 'team' | 'child';
+  teamId: string;
+  ownerId: string;
+  parentTaskId?: string;
+  title: string;
+  request: string;
+  goal: string;
+  status: string;
+  phase?: string;
+  acceptanceCriteria: string[];
+  steps: Array<Record<string, unknown>>;
+  toolAttempts: Array<Record<string, unknown>>;
+  artifacts: Array<Record<string, unknown>>;
+  references: Array<Record<string, unknown>>;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface TaskServiceResult {
+  ok: boolean;
+  created?: boolean;
+  idempotent?: boolean;
+  task?: TaskServiceTask;
+  run?: TaskServiceTask;
+  runs?: TaskServiceTask[];
+  events?: TaskLedgerEvent[];
+  integrity?: TaskLedgerIntegrity;
+  error?: string;
+}
+
 export type ChatWindowType = 'dm-chat' | 'team-chat' | 'assistant-chat';
 export interface OpenChatOptions { type: ChatWindowType; refId: string; }
 export interface OpenChatResult { ok: boolean; reused?: boolean; error?: string; }
@@ -360,6 +395,28 @@ declare global {
     taskStoreRead: () => Promise<TaskStoreReadResult>;
     taskStoreQuery: (options?: TaskStoreQueryOptions) => Promise<TaskStoreReadResult>;
     taskStoreWrite: (runs: import('./types').TaskRun[], metadata?: { source?: string; sessionId?: string }) => Promise<TaskStoreWriteResult>;
+    taskServiceRead: (options?: TaskStoreQueryOptions) => Promise<TaskServiceResult>;
+    taskServiceCreate: (input: Record<string, unknown>) => Promise<TaskServiceResult>;
+    taskServiceUpdate: (input: { taskId: string; patch?: Record<string, unknown>; detail?: string }) => Promise<TaskServiceResult>;
+    taskServiceToolAttempt: (input: Record<string, unknown> & { taskId: string; toolName: string }) => Promise<TaskServiceResult>;
+    taskServiceArtifact: (input: Record<string, unknown> & { taskId: string; name: string; path: string }) => Promise<TaskServiceResult>;
+    taskServiceReference: (input: Record<string, unknown> & { taskId: string; label: string }) => Promise<TaskServiceResult>;
+    taskServiceCreateChild: (input: Record<string, unknown> & { parentTaskId: string }) => Promise<TaskServiceResult>;
+    taskServiceContext: (input: { taskId: string; limit?: number }) => Promise<TaskServiceResult & { goal?: string; acceptanceCriteria?: string[]; references?: Array<Record<string, unknown>>; verifiedArtifacts?: Array<Record<string, unknown>> }>;
+    taskServiceReadySteps: (taskId: string) => Promise<TaskServiceResult & { steps?: Array<Record<string, unknown>> }>;
+    taskServiceCompleteStep: (input: Record<string, unknown> & { taskId: string; stepId: string }) => Promise<TaskServiceResult>;
+    taskServiceFailStep: (input: Record<string, unknown> & { taskId: string; stepId: string }) => Promise<TaskServiceResult>;
+    taskServiceRequestApproval: (input: Record<string, unknown> & { taskId: string; reason: string }) => Promise<TaskServiceResult>;
+    taskServiceDecideApproval: (input: Record<string, unknown> & { taskId: string; approvalId: string; decision: 'approved' | 'rejected' }) => Promise<TaskServiceResult>;
+    taskServiceUsage: (input: Record<string, unknown> & { taskId: string }) => Promise<TaskServiceResult>;
+    taskServiceMetrics: (taskId: string) => Promise<TaskServiceResult & { durationMs?: number; tools?: Record<string, unknown>; usage?: Record<string, unknown> }>;
+    taskServiceTree: (taskId: string) => Promise<TaskServiceResult & { rootTaskId?: string; tree?: { nodes: Array<Record<string, unknown>>; totals: Record<string, number>; generatedAt: number } }>;
+    taskServiceRecoveryPlan: (taskId: string) => Promise<TaskServiceResult & { plan?: { rootTaskId: string; rootStatus: string; ready: boolean; resumeOrder: Array<Record<string, unknown>>; blockers: Array<Record<string, unknown>>; compensationOrder: Array<Record<string, unknown>>; nextAction: string; generatedAt: number } }>;
+    taskServiceHeartbeat: (input: { taskId: string; state?: string; detail?: string; workspaceId?: string; observedAt?: number }) => Promise<TaskServiceResult>;
+    taskServiceCheckpoint: (input: Record<string, unknown> & { taskId: string; label?: string }) => Promise<TaskServiceResult>;
+    taskServiceVerification: (input: Record<string, unknown> & { taskId: string; label: string; status: 'passed' | 'failed' | 'blocked' }) => Promise<TaskServiceResult>;
+    taskServiceValidateCompletion: (taskId: string) => Promise<TaskServiceResult & { passed?: boolean; checks?: Array<Record<string, unknown>> }>;
+    taskServiceStatus: (input: { taskId: string; status: string; detail?: string }) => Promise<TaskServiceResult>;
     taskLedgerRead: (options?: { taskId?: string; limit?: number }) => Promise<TaskStoreReadResult>;
     taskLedgerAudit: (options?: TaskStoreQueryOptions) => Promise<TaskStoreReadResult>;
     taskRecoveryCreate: (options?: { taskId?: string; label?: string }) => Promise<TaskRecoveryResult>;

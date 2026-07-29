@@ -18,9 +18,10 @@ import {
 } from '../../data/hermesClient';
 import type { ModelConfig } from '../../types';
 import type { LayeredMemoryEntry, MemoryProposal, LearningReviewItem } from '../../electron';
-import { useStore } from '../../store';
+import { useStore } from '../../storeContext';
 import { KnowledgeConnectorManager } from '../sidebar/ConnectorPanel';
-import { DEFAULT_ASSISTANT_PROMPT, getAssistantPrompt, saveAssistantPrompt } from './AssistantSettingsModal';
+import { DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX } from './AssistantSettingsModal';
+import { getAssistantPrompt, saveAssistantPrompt } from '../../data/assistantPrompt';
 import { applySyncProfile, createSyncProfile, restoreUpgradeSnapshot } from '../../utils/configSync';
 import {
   FONT_OPTIONS, FONT_SIZE_OPTIONS, loadAppearanceSettings, saveAppearanceSettings,
@@ -141,7 +142,7 @@ function AppearanceTab() {
   };
   return <div className="settings-content-page appearance-settings-page">
     <header><h2>外观</h2><span>客户端字体与界面字号</span></header>
-    <div className="settings-field"><label>字体</label><Select value={settings.font} options={FONT_OPTIONS.map(({ value, label }) => ({ value, label }))} onChange={(font) => update({ font })} /></div>
+    <div className="settings-field"><label>字体</label><Select value={settings.font} options={FONT_OPTIONS.map(({ value, label }) => ({ value, label }))} disabled /></div>
     <div className="settings-field"><label>字体大小</label><Segmented block value={settings.fontSize} options={FONT_SIZE_OPTIONS.map(({ value, label }) => ({ value, label }))} onChange={(fontSize: string | number) => update({ fontSize: fontSize as AppearanceSettings['fontSize'] })} /></div>
     <div className="appearance-font-preview" style={{ fontFamily: selectedFont.family }}>
       <strong>{APP_PRODUCT_NAME}</strong>
@@ -162,10 +163,10 @@ function WorkspaceTab() {
 }
 
 function PersonaTab() {
-  const [prompt, setPrompt] = useState(() => getAssistantPrompt());
+  const [prompt, setPrompt] = useState(() => getAssistantPrompt(DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX));
   const [saved, setSaved] = useState(false);
-  const save = () => { saveAssistantPrompt(prompt); setSaved(true); setTimeout(() => setSaved(false), 1500); };
-  return <div className="settings-content-page"><header><h2>助理人格</h2><span>与驴狗蛋助手窗口共用同一份角色、工具和调度规则</span></header><Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={16} /><div className="settings-page-actions"><Button onClick={() => setPrompt(DEFAULT_ASSISTANT_PROMPT)}>应用新版默认人格</Button><Button type="primary" onClick={save}>{saved ? '已保存' : '保存人格'}</Button></div></div>;
+  const save = () => { saveAssistantPrompt(prompt, DEFAULT_PROMPT_VERSION); setSaved(true); setTimeout(() => setSaved(false), 1500); };
+  return <div className="settings-content-page"><header><h2>助理人格</h2><span>与章北海助理窗口共用同一份角色、工具和调度规则</span></header><Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={16} /><div className="settings-page-actions"><Button onClick={() => setPrompt(DEFAULT_ASSISTANT_PROMPT)}>应用新版默认人格</Button><Button type="primary" onClick={save}>{saved ? '已保存' : '保存人格'}</Button></div></div>;
 }
 
 function AutomationTab() {

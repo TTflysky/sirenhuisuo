@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useStore } from '../../store';
+import { useStore } from '../../storeContext';
 
 interface Props {
   onClose: () => void;

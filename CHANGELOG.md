@@ -1,5 +1,160 @@
 # 更新日志
 
+## v1.0.0 (Durable execution core)
+
+- Unified assistant, employee, and team work behind the durable TaskService: task contracts, executable plans, child tasks, evidence, artifacts, review, recovery, and a ledger-derived task tree now use one source of truth.
+- Added safe cancellation and recovery semantics: bounded retries, failure classification, Worker leases and heartbeat recovery, parent-child propagation, ordered compensation, and approval gates for risky rollback actions.
+- Added the v1 fault-injection matrix and release gate coverage for timeout, credentials, approval rejection, Worker restart, child interruption, compensation, tool evidence, and Skill activation evidence.
+- Moved assistant prompt persistence and the Store hook out of React component modules. Release lint is now clean with no suppressed Fast Refresh warnings.
+- Renamed every user-facing assistant entry and the built-in persona to `章北海助理`. Existing custom personas retain their text and receive the v1 execution appendix once.
+- Standardized the built-in UI font on 幼圆. Legacy font settings fall back safely while five unused font payloads are no longer included in the renderer build.
+
+## v0.85.0 (Skill context module)
+
+- Moved Skill selection readback and evidence generation from the mention-input UI component into the shared execution module `src/engine/skillContext.ts`.
+- Assistant, employee, and team chat continue to use the same concrete Skill-read behavior while Fast Refresh warnings for the input component are removed.
+- Excluded the already-unused `_deadcode` directory from release lint and replaced the declaration file's empty module marker. Lint warnings dropped from eleven to three.
+
+## v0.84.0 (Release lint cleanup)
+
+- Replaced control-character filename sanitization ranges with Unicode `\p{Cc}` property classes across attachment, renderer tool, and native tool paths.
+- The safe-path behavior remains the same while removing three avoidable lint warnings from release verification.
+- `verify:v1-core-gate` passes again; remaining warnings are existing Fast Refresh export-layout and declaration-module hygiene items.
+
+## v0.83.0 (v1 core release gate)
+
+- Added `npm.cmd run verify:v1-core-gate`, a repeatable release-grade baseline covering lint, production build, foundation, agent kernel, execution controller, durable task service, recovery gate, plan/runner, child dispatch, native execution E2E, and ecosystem health.
+- The gate stops at the first failing command and reports the exact command, including a Windows-safe process launcher without Node shell deprecation warnings.
+- The full gate passes on the current worktree; existing lint and Vite code-splitting warnings remain non-blocking and are now visible in one place.
+
+## v0.82.0 (Task tree in team task details)
+
+- Expanding a team task now loads its durable task-tree audit and recovery plan from the Electron main process.
+- Task details show hierarchy, step progress, compensation outcomes, blockers, and whether continuation is currently allowed; the view no longer infers recovery state from chat-only data.
+- The UI uses the shared TaskService IPC projection, preserving one source of truth for execution, diagnostics, and recovery.
+
+## v0.81.0 (Approved compensation E2E)
+
+- A native end-to-end regression now proves the high-risk path: stop work, create a pending compensation approval without executing the tool, approve it, resume through TaskWorker, and execute only the compensation action.
+- Compensation approval decisions now transition to `paused`, matching the Worker resume state machine; the shared recovery gate then authorizes the dedicated compensation continuation.
+- The regression also confirms the original task work is not re-run after approval.
+
+## v0.80.0 (Compensation approval boundary)
+
+- High-risk compensation steps now request a durable human approval before tool execution. Explicit step policy, compensation policy, and dangerous side-effect verbs all enter the same approval boundary.
+- Approval is stored in the task ledger. Approval resumes only the dedicated compensation queue; rejection remains a recoverable blocked handoff and never restarts the original work.
+- Approved compensation clears its temporary handoff so the shared recovery gate can permit the dedicated continuation path.
+
+## v0.79.0 (Recovery resume gate)
+
+- Resume commands now calculate the durable recovery plan before TaskWorker state changes. A blocked task is rejected with its recovery plan instead of being incorrectly requeued.
+- The gate protects all resume entry points that use the shared worker command IPC, not only a specific chat or team screen.
+- A dedicated regression verifies the plan check occurs before Worker dispatch and returns the actionable recovery result to the caller.
+
+## v0.78.0 (Recovery plan)
+
+- TaskService now derives a recovery plan from the durable task tree: root resumability, concrete blockers, safe compensation order, and the single next action are returned together.
+- Compensation issues are ordered deepest-first so a parent cannot be resumed or rolled back ahead of an unresolved descendant.
+- The plan is exposed through Electron IPC and verified against a task tree containing a child authorization handoff and blocked compensation.
+
+## v0.77.0 (Task tree audit projection)
+
+- TaskService now exposes a durable task-tree projection for a root task, including descendants, hierarchy depth, status, blockers, next actions, step counts, verified deliverables, and compensation outcomes.
+- The task-tree projection is available through a typed Electron IPC endpoint, so recovery, diagnostics, and future UI consume one ledger-derived source of truth.
+- Regression coverage creates a parent and child task with an authorization handoff and blocked compensation, then verifies the ordered tree and aggregate status counts.
+
+## v0.76.0 (Queued parent compensation)
+
+- A stopped task that was waiting in the native queue now receives a dedicated compensation queue entry instead of losing its rollback because it has no active `execute()` loop.
+- The compensation entry waits behind an active descendant, preventing concurrent tool execution and ensuring child cancellation or compensation settles first.
+- Native queue state distinguishes ordinary work from `compensating_queue`, and regression assertions protect the dedicated queue path.
+
+## v0.75.0 (Queued child compensation ordering)
+
+- Stopping a parent task now propagates to queued descendants before the parent begins its own compensation.
+- A queued child has no active execution catch block, so the cascade explicitly runs its declared compensation and records a dedicated completion event before the parent can roll back shared state.
+- Child-task dispatch regression coverage protects this ordering rule alongside existing lifecycle and handback checks.
+
+## v0.74.0 (Compensation handoff)
+
+- Missing compensation targets, unavailable compensation owners, and child-task-only compensation routes are now persisted as explicit ledger outcomes instead of being transient executor events.
+- A blocked or missing compensation produces a recoverable handoff with the affected original step, concrete reason, and the one next action needed to resolve it.
+- Task metrics now expose compensation totals and their completed, blocked, and failed counts. Normal completion validation excludes `compensationOnly` steps until a rollback is actually required.
+
+## v0.73.0 (Executable compensation)
+
+- A completed side-effecting step can now declare a concrete compensation step. When the task is stopped, closed, or ends in an execution failure, the native executor runs those declared compensations in reverse order.
+- Compensation-only steps are excluded from normal task scheduling and completion checks. They run only during recovery, require a real successful tool call, and preserve their own completion or failure evidence in the task ledger.
+- The ledger, recovery capsule, runner history, and execution events now record compensation start, per-step result, blocked owners, missing declarations, and failed rollback evidence. A native end-to-end regression stops live work and verifies that its rollback tool action actually executes.
+
+## v0.72.0 (Unified manual delegation)
+
+- Manual delegation through the native adapter now creates and persists a real child task, not only a visual delegation record.
+- The delegated parent step is marked as child-owned and receives the child task ID through the same durable contract used by model-initiated delegation.
+- When a parent job is already active, manual child tasks enter the native queue immediately; otherwise they remain recoverable and will start when the parent resumes.
+
+## v0.71.0 (Child-task failure reconciliation)
+
+- A failed or stopped child is now reconciled into its parent delegation and parent dependency step before the parent task enters its own failure handoff.
+- The parent record retains the concrete child error, preventing a misleading "waiting" state after a child has already terminated.
+- Native regression coverage now verifies failed-child propagation alongside dispatch, recovery, handback, and lifecycle controls.
+
+## v0.70.0 (Child-task recovery resume)
+
+- When a recovered parent finds a queued child task without an active native job, it now resumes that child automatically and yields until the real result returns.
+- Restored child execution prefers persisted executable member configuration and safely falls back to the parent job's currently claimed team configuration for legacy snapshots.
+- Paused and awaiting-user child tasks remain explicit blockers; they are not silently restarted by the parent.
+
+## v0.69.0 (Child-task lifecycle control)
+
+- Child tasks now inherit the parent team member snapshot, including the employee model configuration required for native execution.
+- Pause, resume, stop, and close controls now cascade from a parent task to every non-terminal descendant; closing a parent stops descendants but preserves their audit records.
+- Queued child jobs are removed from the native queue when paused or stopped, preventing background execution after the parent has been controlled.
+
+## v0.68.0 (Verified child-task handback)
+
+- A completed child task now returns a structured handback to its parent: verified deliverables, step summaries, task goal, and completion timestamp.
+- The parent delegation step records the handback as verified evidence and the parent task preserves it for downstream model context after queue recovery or restart.
+- Parent steps can consume completed child results without treating an in-progress child step as locally runnable.
+
+## v0.67.0 (Durable child-task dispatch)
+
+- Dynamic delegation now creates a child task for the resolved employee, binds its ID to the parent delegation step, and submits it to the native execution queue.
+- A parent task yields its queue slot while a child is active; child completion or failure is synchronized back into the parent step, delegation record, runner plan, and team execution projection.
+- This removes the previous false delegation state where a child task could be recorded but never enter an execution queue.
+
+## v0.66.0 (Direct-chat worker lease)
+
+- Executable assistant and employee chat tasks now claim the existing TaskWorker lease and renew it every 10 seconds while executing.
+- On task completion, failure or a thrown client error, the lease is released; after a crash, the existing lease-recovery path can safely pause the interrupted task.
+- A regression test now proves TaskService records are compatible with TaskWorker claim, heartbeat and release commands.
+
+## v0.65.0 (Durable execution heartbeat)
+
+- Executable assistant and employee chat tasks now persist controller heartbeats with execution phase, workspace and a 90-second lease.
+- A restart can distinguish a completed task from one whose last active lease expired, instead of silently treating the last chat bubble as the truth.
+- Heartbeat writes are drained before completion is evaluated, preserving the final observed state in the audit record.
+
+## v0.64.0 (Verified chat artifact projection)
+
+- Structured file evidence from assistant and employee chat tool calls is now written into the durable task record before completion is evaluated.
+- Task artifacts retain logical path, disk path, workspace, byte size, content type, category, and read-back verification state.
+- Only the native tool runtime can provide verified-on-disk evidence; chat text still cannot create a fake deliverable record.
+
+## v0.63.0 (Direct-chat task service migration)
+
+- Assistant chat and employee direct chat now create a durable TaskService task only after the shared decision kernel classifies a request as executable.
+- Tool start/result events, bound Skill or conversation references, model token usage, controller stop/failure state, and completion-gate result are written to the same task record.
+- Employee retry attempts reuse the same idempotency key, so a transient model failure resumes one durable task instead of creating disconnected records.
+- Conversation-only messages remain lightweight and are not forced into the execution ledger.
+
+## v0.50.4 (Durable conversation references)
+
+- Chat now persists concrete references for Skill candidates, web pages, files, tasks, teams, employees, and completed answers.
+- Follow-ups such as "send its link", "install it", and "read that rule" resolve the previous real object before tool routing; they do not re-search a similarly named object.
+- Multiple matching objects require clarification rather than an arbitrary action. Assistant chat and employee direct chat share the same behavior.
+- SkillHub discovery now has a typed official-market route and post-search source identity can be carried into installation and verification.
+
 ## v0.50.3 (Runtime-aligned assistant persona)
 
 - 助理默认人格升级为 v12，与任务合同、Skill 证据、团队调度、上下文恢复和最终验收协议同步。
@@ -1256,3 +1411,50 @@
 ### 新增
 - **初始版本**：Electron + Vite + React 骨架，OPC 四角色种子员工和团队，OpenAI 兼容 API 调用。
 - 安装包 `Hermes 主动协作办公室 Setup 0.1.1.exe`（80MB）。
+## 0.51.0
+
+- 新增主进程统一 `TaskService`，为助理、员工、团队和子任务提供统一任务实体。
+- 增加任务幂等创建、工具尝试、交付物、上下文引用、子任务和状态控制接口。
+- 增加重启回放与账本完整性验收脚本 `verify:task-service`。
+- 明确本版本只建立任务底座，后续版本逐步迁移旧聊天入口，避免把未迁移能力冒充完成。
+## 0.52.0
+
+- 普通工具、Skill、连接器、文件和命令调用统一回写 TaskService 工具尝试记录。
+- 工具产出的真实文件统一登记为任务交付物，并保留是否验证落盘的状态。
+- 失败记录保存错误分类，后续 Runner 可据此决定重试、换路线或暂停。
+## 0.53.0
+
+- TaskService 创建任务时生成并校验版本化 Contract/Plan。
+- 增加步骤依赖查询，只有前置步骤真实完成后才会进入可执行列表。
+- 增加步骤成功、失败、可重试和阻塞状态的统一写回接口。
+## 0.54.0
+
+- 步骤失败增加认证、权限、限流、超时、网络、配置和校验错误分类。
+- 可重试错误使用指数退避并记录下一次重试时间；不可重试错误直接阻塞任务。
+- 重试次数、最后错误和调度事件全部持久化，恢复任务时不会丢失失败原因。
+## 0.55.0
+
+- `delegate_subtask` 的独立 child task 数据底座已准备完成，子任务会保存父任务、员工、步骤和幂等关系。
+- 后续委派执行将把领取、提交、失败状态同步回父任务。
+## 0.56.0
+
+- 子任务创建时继承父任务的目标、验收标准、已验证产物和上下文引用。
+- 新增任务上下文查询接口，按任务边界提供摘要、已完成步骤、引用和阻塞原因。
+- 不复制完整聊天记录，降低上下文串台和无效 token 消耗。
+## 0.57.0
+
+- Skill 原生读取结果增加结构化激活证据：Skill ID、名称、引用文档数量和读取验证状态。
+- 区分 Skill 检索、读取、安装和实际执行，安装成功不再等同于“已经按 Skill 规则完成任务”。
+## 0.58.0-0.60.0
+
+- 连接器和外部工具结果统一进入任务尝试账本，保留失败分类与验证状态。
+- 增加任务级人工授权请求、授权决定和审计记录。
+- 增加任务耗时、步骤、工具、错误类别、交付物、授权和模型用量指标查询。
+## 0.61.0
+
+- 代码、脚本、构建和测试任务自动标记为需要 Git Worktree 隔离。
+- 增加代码任务检查点和命令验证记录，支持后续回滚与审查。
+## 0.62.0
+
+- 增加统一交付门禁，代码任务必须通过步骤、检查点、验证和授权四类检查。
+- 提供 `validateCompletion` 接口，模型总结不能直接替代真实验收。

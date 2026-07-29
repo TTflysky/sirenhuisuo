@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AppstoreOutlined, CloseOutlined, MinusOutlined, BorderOutlined } from '@ant-design/icons';
-import { useStore } from '../../store';
+import { useStore } from '../../storeContext';
 import type { Connector } from '../../data/connectors';
 import AddEmployeeModal from '../sidebar/AddEmployeeModal';
 import CreateTeamModal from '../sidebar/CreateTeamModal';

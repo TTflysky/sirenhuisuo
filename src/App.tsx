@@ -19,7 +19,7 @@ import {
 } from '@ant-design/icons';
 import type { Employee } from './types';
 import type { UpdateStatus } from './electron.d';
-import { useStore } from './store';
+import { useStore } from './storeContext';
 import SidebarPanel from './components/sidebar/SidebarPanel';
 import OfficeView from './components/office/OfficeView';
 import SettingsModal from './components/settings/SettingsModal';
@@ -276,8 +276,8 @@ export default function App() {
           )}
           <button
             className={`titlebar-btn assistant-launch-btn ${assistantActivity.state !== 'idle' ? 'is-busy' : ''}`}
-            title="打开驴狗蛋助手"
-            aria-label="打开驴狗蛋助手"
+            title="打开章北海助理"
+            aria-label="打开章北海助理"
             onClick={openAssistantChat}
           >
             <RobotOutlined />

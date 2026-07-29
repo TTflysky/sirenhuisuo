@@ -10,7 +10,7 @@ import {
   UserOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
-import { useStore } from '../../store';
+import { useStore } from '../../storeContext';
 import type { Employee } from '../../types';
 import EmployeeCard from './EmployeeCard';
 import TeamList from './TeamList';

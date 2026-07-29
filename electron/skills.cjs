@@ -181,7 +181,14 @@ async function readSkill(projectRoot, id) {
   if (!stat.isFile() || stat.size > MAX_BODY_BYTES) throw new Error('技能正文超过大小限制');
   const content = await fs.readFile(found._path, 'utf8');
   const skillDir = path.dirname(found._path);
-  const referencedPaths = unique([...content.matchAll(/`((?:[A-Za-z0-9._-]+\/){1,4}SKILL\.md)`/g)].map((match) => match[1])).slice(0, 12);
+  const linkedPaths = [...content.matchAll(/\]\(([^)\s#]+)(?:#[^)]*)?\)/g)]
+    .map((match) => match[1])
+    .filter((item) => !/^https?:\/\//iu.test(item) && !/^#/u.test(item));
+  const inlinePaths = [...content.matchAll(/`((?:[A-Za-z0-9._-]+\/){1,4}[^`/]+\.(?:md|json|ya?ml|txt))`/giu)].map((match) => match[1]);
+  const referencedPaths = unique([...linkedPaths, ...inlinePaths])
+    .filter((item) => /^(?:\.?\/)?(?:references|scripts|assets)\//iu.test(item))
+    .map((item) => item.replace(/^\.\//u, ''))
+    .slice(0, 24);
   const documents = [];
   let totalBytes = Buffer.byteLength(content, 'utf8');
   for (const relativePath of referencedPaths) {

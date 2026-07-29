@@ -1,5 +1,6 @@
 const fs = require('fs/promises');
 const path = require('path');
+const { searchSkillHub, formatSkillHubResults } = require('./skillHubSearch.cjs');
 
 const NATIVE_TOOL_DEFINITIONS = [
   tool('write_file', '把真实文件写入当前任务工作区。category: final/工作稿 working/参考 reference。', {
@@ -12,7 +13,7 @@ const NATIVE_TOOL_DEFINITIONS = [
   tool('list_files', '列出当前任务工作区的真实文件。', { filter: stringField('可选文件名过滤词') }, []),
   tool('web_search', '搜索互联网获取最新资料。', { query: stringField('必须保留用户原始目标中的地点、时间和主题') }, ['query']),
   tool('read_web_page', '读取指定 HTTP/HTTPS 网页正文。', { url: stringField('完整网页地址') }, ['url']),
-  tool('search_skills', '搜索已安装 Skill。', { query: stringField('任务或技能关键词') }, ['query']),
+  tool('search_skills', '搜索可用 Skill；技能发现请求会同时检索 SkillHub 官方市场。', { query: stringField('任务或技能关键词') }, ['query']),
   tool('read_skill', '读取已安装 Skill 的完整说明。', { id: stringField('Skill ID') }, ['id']),
   tool('install_skill', '使用客户端原生安装器从可信 HTTPS、GitHub、SkillHub 或 ZIP 来源安装完整 Skill；禁止改用 skillhub 命令。', {
     sourceUrl: stringField('官方来源地址'), name: stringField('可选名称'),
@@ -50,7 +51,7 @@ function tool(name, description, properties, required) {
 function normalizeRelative(value, fallback = '') {
   const parts = String(value || fallback).replace(/\\/g, '/').split('/')
     .filter((part) => part && part !== '.' && part !== '..')
-    .map((part) => part.replace(/[<>:"|?*\u0000-\u001f]/g, '_'));
+    .map((part) => part.replace(/[<>:"|?*\p{Cc}]/gu, '_'));
   return parts.join('/') || fallback;
 }
 
@@ -274,12 +275,24 @@ function createNativeToolRuntime(options) {
           const text = `${skill.id} ${skill.name} ${skill.description || ''}`.toLowerCase();
           return !tokens.length || tokens.some((token) => text.includes(token));
         }).slice(0, 12);
-        return succeeded(name, matches.length ? matches.map((skill) => `- ${skill.id} | ${skill.name} | ${skill.health || 'unknown'} | ${skill.description || ''}`).join('\n') : '本机没有匹配的 Skill，请继续使用通用工具完成目标。');
+        const localOutput = matches.length
+          ? matches.map((skill) => `- ${skill.id} | ${skill.name} | ${skill.health || 'unknown'} | ${skill.description || ''}`).join('\n')
+          : '本机没有直接匹配的 Skill。';
+        if (!/(?:\bskills?\b|技能|技能源|技能库)/iu.test(query) || !/(?:找|搜索|检索|查找|发现|推荐|有没有|适合|爆款|安装|更新)/u.test(query)) {
+          return succeeded(name, `${localOutput}\n来源范围：本机已安装技能。`);
+        }
+        const market = await searchSkillHub(query, options.fetchImpl);
+        if (!market.ok) return failed(name, `SkillHub 官方检索失败：${market.error}\n本机结果不能替代市场结果。`);
+        return market.results?.length
+          ? succeeded(name, `SkillHub 官方市场结果（查询：${market.query}）：\n${formatSkillHubResults(market)}\n\n候选尚未安装或验证。\n\n本机已安装匹配：\n${localOutput}`)
+          : failed(name, `SkillHub 没有找到与“${market.query}”直接匹配的 Skill。\n${localOutput}`);
       }
       if (name === 'read_skill') {
         const skill = await options.readSkill(projectRoot, String(args.id || ''));
         const documents = (skill.documents || []).map((item) => `\n\n## ${item.path}\n${item.content}`).join('');
-        return succeeded(name, `# ${skill.name}\n${skill.content}${documents}`.slice(0, 70000));
+        return succeeded(name, `# ${skill.name}\n${skill.content}${documents}`.slice(0, 70000), {
+          skill: { action: 'read', id: String(args.id || ''), name: skill.name, documentCount: (skill.documents || []).length, verified: true },
+        });
       }
       if (name === 'install_skill') {
         if (!/^https:\/\//iu.test(String(args.sourceUrl || ''))) return failed(name, '只允许从 HTTPS 来源安装 Skill');

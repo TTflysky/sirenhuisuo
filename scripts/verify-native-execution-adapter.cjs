@@ -4,6 +4,7 @@ const os = require('os');
 const path = require('path');
 const { createTaskRuntimeStore } = require('../electron/taskRuntimeStore.cjs');
 const { createTaskWorker } = require('../electron/taskWorker.cjs');
+const { createTaskService } = require('../electron/taskService.cjs');
 const { createNativeExecutionAdapter } = require('../electron/nativeExecutionAdapter.cjs');
 const { redact, containsSensitiveLiteral } = require('../electron/nativeToolRuntime.cjs');
 
@@ -246,12 +247,276 @@ async function main() {
   assert(budgetAdapter.events(budgetRun.id).events.some((event) => event.type === 'context_compacted'), '长任务没有执行阶段压缩');
   assert.equal((await store.listRecoveryPoints({ taskId: budgetRun.id })).recoveryPoints.length > 0, true, '长任务没有创建恢复点');
 
+  const childService = createTaskService(store);
+  const childToolRuntime = {
+    ...toolRuntime,
+    definitions: [...toolRuntime.definitions, {
+      type: 'function', function: {
+        name: 'delegate_subtask', description: 'delegate a child task',
+        parameters: { type: 'object', properties: { assignment: { type: 'string' }, employeeId: { type: 'string' }, title: { type: 'string' }, acceptanceCriteria: { type: 'array', items: { type: 'string' } } }, required: ['assignment'] },
+      },
+    }],
+  };
+  const childRounds = new Map();
+  const childFetch = async (_url, options) => {
+    const system = String(JSON.parse(options.body).messages?.[0]?.content || '');
+    const isChild = system.includes('Parent task native-child-dispatch');
+    const key = isChild ? 'child' : 'parent';
+    const round = (childRounds.get(key) || 0) + 1;
+    childRounds.set(key, round);
+    if (!isChild && round === 1) {
+      return modelResponse({ role: 'assistant', content: null, tool_calls: [{ id: 'delegate-child', type: 'function', function: { name: 'delegate_subtask', arguments: JSON.stringify({ employeeId: 'writer', title: 'child report', assignment: 'write child-report.md', acceptanceCriteria: ['child file exists'] }) } }] });
+    }
+    if ((isChild && round === 1) || (!isChild && round === 2)) {
+      const filename = isChild ? 'child-report.md' : 'parent-report.md';
+      return modelResponse({ role: 'assistant', content: null, tool_calls: [{ id: `${key}-write-${round}`, type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: filename, content: `${key} verified output`, category: 'final' }) } }] });
+    }
+    return modelResponse({ role: 'assistant', content: `${key} completed verified work.` });
+  };
+  const childAdapter = createNativeExecutionAdapter({
+    projectRoot: path.resolve(__dirname, '..'), store, worker, taskService: childService, toolRuntime: childToolRuntime,
+    sessionId: 'native-test-session', fetchImpl: childFetch,
+  });
+  const childParent = singleStepRun('native-child-dispatch', 'parent task delegates and writes verified output');
+  await childAdapter.start({ taskId: childParent.id, run: childParent, members: queueMembers(childParent) });
+  let childCompleted;
+  try {
+    childCompleted = await waitFor(async () => {
+      const snapshot = await store.read();
+      const parent = snapshot.runs.find((item) => item.id === childParent.id);
+      const child = snapshot.runs.find((item) => item.parentTaskId === childParent.id);
+      return parent?.status === 'completed' && child?.status === 'completed' ? { parent, child } : null;
+    }, 15000);
+  } catch (error) {
+    const snapshot = await store.read();
+    const child = snapshot.runs.find((item) => item.parentTaskId === childParent.id);
+    console.error(JSON.stringify({ parent: snapshot.runs.find((item) => item.id === childParent.id), child, parentEvents: childAdapter.events(childParent.id).events, childEvents: child ? childAdapter.events(child.id).events : [] }, null, 2));
+    throw error;
+  }
+  const delegatedStep = childCompleted.parent.steps.find((step) => step.childTaskId === childCompleted.child.id);
+  assert(delegatedStep, 'delegated parent step must retain childTaskId');
+  assert.equal(delegatedStep.status, 'completed', 'child completion must synchronize parent step status');
+  assert.match(delegatedStep.output?.childTask?.summary || '', /child completed verified work/i, 'parent step must retain the child delivery summary');
+  assert.equal(delegatedStep.output?.childTask?.artifacts?.some((artifact) => artifact.path === 'report.md'), true, 'parent step must retain verified child artifacts');
+  assert.match(childCompleted.parent.childTaskResults?.[childCompleted.child.id]?.summary || '', /child completed verified work/i, 'parent must preserve child results for downstream steps');
+  assert.equal(childCompleted.parent.delegations.find((item) => item.childTaskId === childCompleted.child.id)?.status, 'completed');
+  assert(childAdapter.events(childParent.id).events.some((event) => event.type === 'child_task_waiting'), 'parent must yield while its child task executes');
+  assert.equal(childAdapter.events(childParent.id).events.some((event) => event.type === 'step_started' && event.stepId === delegatedStep.id), false, 'parent must never execute a delegated child step itself');
+  assert(childAdapter.events(childCompleted.child.id).events.some((event) => event.type === 'job_completed'), 'child task did not execute in the native queue');
+
+  const manualParent = singleStepRun('native-manual-child-dispatch', 'manual delegation creates a durable child');
+  await store.write([...(await store.read()).runs, manualParent], { source: 'test-manual-child-dispatch' });
+  const manualAdapter = createNativeExecutionAdapter({
+    projectRoot: path.resolve(__dirname, '..'), store, worker, taskService: childService, toolRuntime: childToolRuntime,
+    sessionId: 'native-test-session', fetchImpl: childFetch,
+  });
+  const manualDelegation = await manualAdapter.delegate(manualParent.id, {
+    parentStepId: 'work-1', employeeId: 'writer', title: 'manual child', assignment: 'write manual-child.md', acceptanceCriteria: ['manual file exists'],
+  });
+  assert.equal(manualDelegation.ok, true, manualDelegation.error);
+  assert(manualDelegation.childTask?.id, 'manual delegation must create a child task');
+  const manualSnapshot = (await store.read()).runs.find((run) => run.id === manualParent.id);
+  assert.equal(manualSnapshot.delegations[0].childTaskId, manualDelegation.childTask.id);
+  assert.equal(manualSnapshot.steps.find((step) => step.id === manualDelegation.step.id)?.externalChild, true);
+
+  const lifecycleParent = singleStepRun('native-child-lifecycle', 'parent controls its child lifecycle');
+  await store.write([...(await store.read()).runs, lifecycleParent], { source: 'test-child-lifecycle' });
+  const lifecycleChild = await childService.createChild(lifecycleParent.id, {
+    employeeId: 'writer', title: 'controlled child', assignment: 'write a controlled report', goal: 'write a controlled report',
+  });
+  const blockedFetch = async (_url, options) => new Promise((_resolve, reject) => {
+    options.signal.addEventListener('abort', () => reject(new Error('model request aborted for lifecycle control')), { once: true });
+  });
+  const lifecycleAdapter = createNativeExecutionAdapter({
+    projectRoot: path.resolve(__dirname, '..'), store, worker, taskService: childService, toolRuntime: childToolRuntime,
+    sessionId: 'native-test-session', fetchImpl: blockedFetch,
+  });
+  await lifecycleAdapter.start({ taskId: lifecycleChild.task.id, run: lifecycleChild.task, members: queueMembers(lifecycleChild.task) });
+  await waitFor(() => lifecycleAdapter.status(lifecycleChild.task.id).job?.state === 'running');
+  const pauseParent = await worker.dispatch({ commandId: 'pause-child-lifecycle-parent', taskId: lifecycleParent.id, type: 'pause' });
+  lifecycleAdapter.handleControl({ taskId: lifecycleParent.id, type: 'pause' }, pauseParent);
+  await waitFor(async () => (await store.read()).runs.find((run) => run.id === lifecycleChild.task.id)?.status === 'paused');
+  await waitFor(() => lifecycleAdapter.events(lifecycleChild.task.id).events.some((event) => event.type === 'control_received' && event.control === 'pause'));
+  assert(lifecycleAdapter.events(lifecycleChild.task.id).events.some((event) => event.type === 'control_received' && event.control === 'pause'), 'parent pause must cascade to child tasks');
+  const stopParent = await worker.dispatch({ commandId: 'stop-child-lifecycle-parent', taskId: lifecycleParent.id, type: 'stop' });
+  lifecycleAdapter.handleControl({ taskId: lifecycleParent.id, type: 'stop' }, stopParent);
+  await waitFor(async () => (await store.read()).runs.find((run) => run.id === lifecycleChild.task.id)?.status === 'stopped');
+  assert.equal(lifecycleAdapter.status(lifecycleChild.task.id).job?.state, 'stopped', 'stopping the parent must stop an active child adapter job');
+
+  const recoveryParent = singleStepRun('native-child-recovery', 'parent resumes a durable queued child');
+  recoveryParent.steps[0].status = 'completed';
+  await store.write([...(await store.read()).runs, recoveryParent], { source: 'test-child-recovery' });
+  const recoveryChild = await childService.createChild(recoveryParent.id, {
+    employeeId: 'writer', title: 'recovered child', assignment: 'write recovered-child.md', goal: 'write recovered-child.md',
+  });
+  await store.updateTask(recoveryParent.id, (run) => {
+    const delegationId = 'recovery-delegation';
+    run.delegations = [{ id: delegationId, childTaskId: recoveryChild.task.id, employeeId: 'writer', employeeName: '写作员工', title: 'recovered child', status: 'queued', acceptanceCriteria: ['recovered file exists'] }];
+    run.steps.push({ id: 'recovery-child-step', employeeId: 'writer', title: 'recovered child', assignment: 'wait for recovered child', dependsOnStepIds: [], status: 'queued', attempts: 0, evidence: [], events: [], delegationId, childTaskId: recoveryChild.task.id, externalChild: true });
+  }, { source: 'test-child-recovery' });
+  let recoveryRound = 0;
+  const recoveryFetch = async () => {
+    recoveryRound += 1;
+    if (recoveryRound === 1) return modelResponse({ role: 'assistant', content: null, tool_calls: [{ id: 'recovered-write', type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: 'recovered-child.md', content: 'recovered child output', category: 'final' }) } }] });
+    return modelResponse({ role: 'assistant', content: 'recovered child completed verified work.' });
+  };
+  const recoveryAdapter = createNativeExecutionAdapter({
+    projectRoot: path.resolve(__dirname, '..'), store, worker, taskService: childService, toolRuntime: childToolRuntime,
+    sessionId: 'native-test-session', fetchImpl: recoveryFetch,
+  });
+  await recoveryAdapter.start({ taskId: recoveryParent.id, run: recoveryParent, members: queueMembers(recoveryParent) });
+  await waitFor(async () => (await store.read()).runs.find((run) => run.id === recoveryChild.task.id)?.status === 'completed');
+  assert(recoveryAdapter.events(recoveryParent.id).events.some((event) => event.type === 'child_task_resumed' && event.childTaskId === recoveryChild.task.id), 'parent recovery must restart a queued child without an active native job');
+
+  const failedChildParent = singleStepRun('native-child-failure', 'parent records a child failure');
+  failedChildParent.steps[0].status = 'completed';
+  await store.write([...(await store.read()).runs, failedChildParent], { source: 'test-child-failure' });
+  const failedChild = await childService.createChild(failedChildParent.id, {
+    employeeId: 'writer', title: 'failed child', assignment: 'write an unavailable report', goal: 'write an unavailable report',
+  });
+  await store.updateTask(failedChild.task.id, (run) => { run.status = 'failed'; run.phase = 'blocked'; run.lastError = 'child connector authentication failed'; }, { source: 'test-child-failure' });
+  await store.updateTask(failedChildParent.id, (run) => {
+    const delegationId = 'failed-child-delegation';
+    run.delegations = [{ id: delegationId, childTaskId: failedChild.task.id, employeeId: 'writer', employeeName: '写作员工', title: 'failed child', status: 'queued', acceptanceCriteria: ['report exists'] }];
+    run.steps.push({ id: 'failed-child-step', employeeId: 'writer', title: 'failed child', assignment: 'wait for failed child', dependsOnStepIds: [], status: 'queued', attempts: 0, evidence: [], events: [], delegationId, childTaskId: failedChild.task.id, externalChild: true });
+  }, { source: 'test-child-failure' });
+  const failedChildAdapter = createNativeExecutionAdapter({
+    projectRoot: path.resolve(__dirname, '..'), store, worker, taskService: childService, toolRuntime: childToolRuntime,
+    sessionId: 'native-test-session', fetchImpl: recoveryFetch,
+  });
+  await failedChildAdapter.start({ taskId: failedChildParent.id, run: failedChildParent, members: queueMembers(failedChildParent) });
+  const failedParentSnapshot = await waitFor(async () => {
+    const parent = (await store.read()).runs.find((run) => run.id === failedChildParent.id);
+    return parent?.status === 'failed' ? parent : null;
+  });
+  assert.equal(failedParentSnapshot.delegations[0].status, 'failed', 'failed child must synchronize its delegation status before parent failure');
+  assert.equal(failedParentSnapshot.steps.find((step) => step.id === 'failed-child-step')?.status, 'failed', 'failed child must synchronize the parent child step');
+  assert.match(failedParentSnapshot.delegations[0].error, /authentication failed/i);
+
+  const compensationRun = singleStepRun('native-compensation', 'stop a task and execute its declared compensation');
+  compensationRun.steps[0].status = 'completed';
+  compensationRun.steps[0].sideEffect = true;
+  compensationRun.steps[0].compensateStepId = 'rollback-side-effect';
+  compensationRun.steps.push(
+    { id: 'await-stop', employeeId: 'writer', title: 'wait for stop', assignment: 'wait until stopped', dependsOnStepIds: [], status: 'queued', attempts: 0, evidence: [], events: [] },
+    { id: 'rollback-side-effect', employeeId: 'writer', title: 'rollback side effect', assignment: 'write rollback-evidence.md to document the executed rollback', dependsOnStepIds: [], status: 'queued', attempts: 0, evidence: [], events: [], compensationOnly: true },
+  );
+  await store.write([...(await store.read()).runs, compensationRun], { source: 'test-compensation' });
+  let compensationFirstCall = true;
+  let compensationNormalStarted = false;
+  const compensationFetch = async (_url, options) => {
+    if (compensationFirstCall) {
+      compensationFirstCall = false;
+      compensationNormalStarted = true;
+      return new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(new Error('stopped before normal work completed')), { once: true }));
+    }
+    const payload = JSON.parse(options.body);
+    const hasToolResult = payload.messages.some((message) => message.role === 'tool');
+    if (!hasToolResult) return modelResponse({ role: 'assistant', content: null, tool_calls: [{ id: 'rollback-write', type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: 'rollback-evidence.md', content: 'rollback executed', category: 'working' }) } }] });
+    return modelResponse({ role: 'assistant', content: 'Rollback completed with verified evidence.' });
+  };
+  const compensationAdapter = createNativeExecutionAdapter({
+    projectRoot: path.resolve(__dirname, '..'), store, worker, taskService: childService, toolRuntime: childToolRuntime,
+    sessionId: 'native-test-session', fetchImpl: compensationFetch,
+  });
+  await compensationAdapter.start({ taskId: compensationRun.id, run: compensationRun, members: queueMembers(compensationRun) });
+  await waitFor(() => compensationNormalStarted);
+  const stopCompensation = await worker.dispatch({ commandId: 'stop-native-compensation', taskId: compensationRun.id, type: 'stop' });
+  compensationAdapter.handleControl({ taskId: compensationRun.id, type: 'stop' }, stopCompensation);
+  const compensatedSnapshot = await waitFor(async () => {
+    const run = (await store.read()).runs.find((item) => item.id === compensationRun.id);
+    return run?.compensation?.some((item) => item.compensateStepId === 'rollback-side-effect' && item.status === 'completed') ? run : null;
+  });
+  assert.equal(compensatedSnapshot.steps.find((step) => step.id === 'rollback-side-effect')?.status, 'completed', 'declared compensation step must execute after stop');
+  assert(compensationAdapter.events(compensationRun.id).events.some((event) => event.type === 'compensation_step_completed'), 'missing compensation completion event');
+
+  const missingCompensationRun = singleStepRun('native-missing-compensation', 'stop a task with a declared but missing compensation step');
+  missingCompensationRun.steps[0].status = 'completed';
+  missingCompensationRun.steps[0].sideEffect = true;
+  missingCompensationRun.steps[0].compensateStepId = 'missing-rollback-step';
+  missingCompensationRun.steps.push({ id: 'wait-for-missing-stop', employeeId: 'writer', title: 'wait for stop', assignment: 'wait until stopped', dependsOnStepIds: [], status: 'queued', attempts: 0, evidence: [], events: [] });
+  await store.write([...(await store.read()).runs, missingCompensationRun], { source: 'test-missing-compensation' });
+  let missingCompensationStarted = false;
+  const missingCompensationAdapter = createNativeExecutionAdapter({
+    projectRoot: path.resolve(__dirname, '..'), store, worker, taskService: childService, toolRuntime: childToolRuntime,
+    sessionId: 'native-test-session', fetchImpl: async (_url, options) => {
+      missingCompensationStarted = true;
+      return new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(new Error('stopped before missing compensation')), { once: true }));
+    },
+  });
+  await missingCompensationAdapter.start({ taskId: missingCompensationRun.id, run: missingCompensationRun, members: queueMembers(missingCompensationRun) });
+  await waitFor(() => missingCompensationStarted);
+  const stopMissingCompensation = await worker.dispatch({ commandId: 'stop-native-missing-compensation', taskId: missingCompensationRun.id, type: 'stop' });
+  missingCompensationAdapter.handleControl({ taskId: missingCompensationRun.id, type: 'stop' }, stopMissingCompensation);
+  const missingCompensationSnapshot = await waitFor(async () => {
+    const run = (await store.read()).runs.find((item) => item.id === missingCompensationRun.id);
+    return run?.compensation?.some((item) => item.status === 'missing') ? run : null;
+  });
+  assert.equal(missingCompensationSnapshot.compensation.at(-1).compensateStepId, 'missing-rollback-step', 'missing compensation target must be persisted');
+  assert.match(missingCompensationSnapshot.handoff?.blocked || '', /补偿未完成/u, 'missing compensation must create a clear handoff');
+
+  const approvalCompensationRun = singleStepRun('native-approved-compensation', 'stop a task and require approval before deleting remote state');
+  approvalCompensationRun.steps[0].status = 'completed';
+  approvalCompensationRun.steps[0].sideEffect = true;
+  approvalCompensationRun.steps[0].compensateStepId = 'delete-remote-state';
+  approvalCompensationRun.steps.push(
+    { id: 'await-approval-stop', employeeId: 'writer', title: 'wait for stop', assignment: 'wait until stopped', dependsOnStepIds: [], status: 'queued', attempts: 0, evidence: [], events: [] },
+    { id: 'delete-remote-state', employeeId: 'writer', title: 'delete remote state', assignment: 'delete external system state and write approved-rollback.md as evidence', dependsOnStepIds: [], status: 'queued', attempts: 0, evidence: [], events: [], compensationOnly: true },
+  );
+  await store.write([...(await store.read()).runs, approvalCompensationRun], { source: 'test-approved-compensation' });
+  let approvalNormalStarted = false;
+  let approvalToolExecuted = false;
+  const approvalCompensationAdapter = createNativeExecutionAdapter({
+    projectRoot: path.resolve(__dirname, '..'), store, worker, taskService: childService, toolRuntime: childToolRuntime,
+    sessionId: 'native-test-session', fetchImpl: async (_url, options) => {
+      const body = JSON.parse(options.body);
+      const isCompensation = String(body.messages?.[0]?.content || '').includes('当前步骤：delete remote state');
+      if (!isCompensation) {
+        approvalNormalStarted = true;
+        return new Promise((_resolve, reject) => options.signal.addEventListener('abort', () => reject(new Error('stopped before approved compensation')), { once: true }));
+      }
+      const hasToolResult = body.messages.some((message) => message.role === 'tool');
+      if (!hasToolResult) return modelResponse({ role: 'assistant', content: null, tool_calls: [{ id: 'approved-rollback-write', type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: 'approved-rollback.md', content: 'approved rollback executed', category: 'working' }) } }] });
+      approvalToolExecuted = true;
+      return modelResponse({ role: 'assistant', content: 'Approved rollback completed.' });
+    },
+  });
+  await approvalCompensationAdapter.start({ taskId: approvalCompensationRun.id, run: approvalCompensationRun, members: queueMembers(approvalCompensationRun) });
+  await waitFor(() => approvalNormalStarted);
+  const stopApprovalCompensation = await worker.dispatch({ commandId: 'stop-native-approved-compensation', taskId: approvalCompensationRun.id, type: 'stop' });
+  approvalCompensationAdapter.handleControl({ taskId: approvalCompensationRun.id, type: 'stop' }, stopApprovalCompensation);
+  const pendingApprovalSnapshot = await waitFor(async () => {
+    const run = (await store.read()).runs.find((item) => item.id === approvalCompensationRun.id);
+    return run?.approvals?.find((approval) => approval.scope === 'compensation' && approval.status === 'pending') ? run : null;
+  });
+  assert.equal(approvalToolExecuted, false, 'high-risk compensation must not execute before approval');
+  const approvalId = pendingApprovalSnapshot.approvals.find((approval) => approval.scope === 'compensation').id;
+  await childService.decideApproval(approvalCompensationRun.id, { approvalId, decision: 'approved', decidedBy: 'test' });
+  const resumeApprovalCompensation = await worker.dispatch({ commandId: 'resume-native-approved-compensation', taskId: approvalCompensationRun.id, type: 'resume' });
+  assert.equal(resumeApprovalCompensation.ok, true, resumeApprovalCompensation.error);
+  approvalCompensationAdapter.handleControl({ taskId: approvalCompensationRun.id, type: 'resume' }, resumeApprovalCompensation);
+  await waitFor(() => approvalCompensationAdapter.events(approvalCompensationRun.id).events.some((event) => event.type === 'compensation_queued'));
+  const approvedCompensationSnapshot = await waitFor(async () => {
+    const run = (await store.read()).runs.find((item) => item.id === approvalCompensationRun.id);
+    return run?.compensation?.some((item) => item.compensateStepId === 'delete-remote-state' && item.status === 'completed') ? run : null;
+  });
+  assert.equal(approvalToolExecuted, true, 'approved compensation must execute its real tool action');
+  assert.equal(approvedCompensationSnapshot.steps.find((step) => step.id === 'delete-remote-state')?.status, 'completed');
+
   adapter.stopAll();
   pauseAdapter.stopAll();
   queueAdapter.stopAll();
   waitingAdapter.stopAll();
   steeringAdapter.stopAll();
   budgetAdapter.stopAll();
+  childAdapter.stopAll();
+  manualAdapter.stopAll();
+  lifecycleAdapter.stopAll();
+  recoveryAdapter.stopAll();
+  failedChildAdapter.stopAll();
+  compensationAdapter.stopAll();
+  missingCompensationAdapter.stopAll();
+  approvalCompensationAdapter.stopAll();
   worker.stop();
   await new Promise((resolve) => setTimeout(resolve, 100));
   await fs.rm(root, { recursive: true, force: true });

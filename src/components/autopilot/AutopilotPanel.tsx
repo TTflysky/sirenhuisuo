@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Switch, Button, Input, Space } from 'antd';
-import { useStore } from '../../store';
+import { useStore } from '../../storeContext';
 import { recommendProjects, type ProjectPlan, type AutopilotContext } from '../../engine/autopilot';
 import { loadSettings, saveSettings } from '../../data/hermesClient';
 

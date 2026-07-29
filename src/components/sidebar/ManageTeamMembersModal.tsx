@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { CheckOutlined, SearchOutlined, UserAddOutlined } from '@ant-design/icons';
 import { Button, Empty, Input, Modal, message } from 'antd';
-import { useStore } from '../../store';
+import { useStore } from '../../storeContext';
 import AgentAvatar from '../office/AgentAvatar';
 
 interface Props {

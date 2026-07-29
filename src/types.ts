@@ -99,6 +99,16 @@ export interface Skill {
   origin?: 'system' | 'manual' | 'auto';
 }
 export interface SkillReference { id: string; name: string; }
+/** A concrete object mentioned in a chat turn. It keeps follow-up requests bound to
+ * the original result instead of asking the model to guess what "it" means. */
+export interface ConversationReference {
+  kind: 'skill' | 'web' | 'file' | 'connector' | 'team' | 'employee' | 'task' | 'answer';
+  id: string;
+  label: string;
+  sourceUrl?: string;
+  state?: 'candidate' | 'installed' | 'verified' | 'local' | 'completed' | 'unknown';
+  messageId?: string;
+}
 export interface SkillUsageEvidence {
   ts: number;
   skillId?: string;
@@ -165,6 +175,8 @@ export interface ChatMessage {
   contextUsage?: import('./data/hermesClient').ContextUsage;
   attachments?: import('./data/hermesClient').Attachment[]; // 用户上传/粘贴的附件
   skillRefs?: SkillReference[];
+  /** Persisted entities available to follow-up language such as "install it". */
+  references?: ConversationReference[];
   skillEvidence?: SkillUsageEvidence[];
   thoughtChain?: ThoughtChainStep[]; // 思维链步骤（AI 推理过程记录）
   /** 主进程后台执行消息可携带快照名称，员工被删除后仍可回放。 */
