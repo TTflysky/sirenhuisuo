@@ -14,7 +14,7 @@ import {
   RobotOutlined,
   SettingOutlined,
   StopOutlined,
-  ThunderboltOutlined,
+  TeamOutlined,
   UnlockOutlined,
 } from '@ant-design/icons';
 import type { Employee } from './types';
@@ -24,7 +24,7 @@ import SidebarPanel from './components/sidebar/SidebarPanel';
 import OfficeView from './components/office/OfficeView';
 import SettingsModal from './components/settings/SettingsModal';
 import Analytics from './components/analytics/Analytics';
-import AutopilotPanel from './components/autopilot/AutopilotPanel';
+import TeamHallPanel from './components/team/TeamHallPanel';
 import ChatOnlyView from './components/chat/ChatOnlyView';
 import ToolWindowView from './components/windows/ToolWindowView';
 import SkillLibraryView from './components/skills/SkillLibraryView';
@@ -35,7 +35,7 @@ import { formatExecutionDuration } from './hooks/useAgentExecutionControl';
 import { createUpgradeSnapshot } from './utils/configSync';
 import { APP_BRAND_NAME, APP_PRODUCT_NAME } from './brand';
 
-type View = 'office' | 'analytics' | 'autopilot' | 'skill-library';
+type View = 'office' | 'analytics' | 'team-hall' | 'skill-library';
 type ThemeName = 'light' | 'dark' | 'eye-care' | 'soft-gray' | 'ocean-blue' | 'quiet-blue' | 'glass-light' | 'glass-dark' | 'spruce' | 'graphite' | 'cyberpunk';
 
 interface AssistantActivity {
@@ -214,7 +214,7 @@ export default function App() {
               options={[
                 { label: <span className="view-tab-label"><HomeOutlined /><span>办公室</span></span>, value: 'office' },
                 { label: <span className="view-tab-label"><BarChartOutlined /><span>数据分析</span></span>, value: 'analytics' },
-                { label: <span className="view-tab-label"><ThunderboltOutlined /><span>自主办公</span></span>, value: 'autopilot' },
+                { label: <span className="view-tab-label"><TeamOutlined /><span>团队大厅</span></span>, value: 'team-hall' },
                 { label: <span className="view-tab-label"><AppstoreOutlined /><span>技能库</span></span>, value: 'skill-library' },
               ]}
             />
@@ -336,8 +336,8 @@ export default function App() {
               onStationClick={handleStationClick}
             />
           </>
-        ) : view === 'autopilot' ? (
-          <AutopilotPanel />
+        ) : view === 'team-hall' ? (
+          <TeamHallPanel />
         ) : view === 'skill-library' ? (
           <SkillLibraryView />
         ) : (

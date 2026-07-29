@@ -154,7 +154,15 @@ function reducer(s: AppState, a: Action): AppState {
     case 'REMOVE_TEAM': {
       const next = s.teams.filter((t) => t.id !== a.id);
       client.saveTeams(next);
-      return { ...s, teams: next };
+      const employees = s.employees.map((employee) =>
+        employee.currentTeamId === a.id ? { ...employee, currentTeamId: undefined } : employee,
+      );
+      client.saveEmployees(employees);
+      const projects = s.projects.map((project) =>
+        project.teamId === a.id ? { ...project, teamId: undefined, updatedAt: Date.now() } : project,
+      );
+      client.saveProjects(projects);
+      return { ...s, teams: next, employees, projects };
     }
 
     case 'CREATE_PROJECT': {
@@ -299,10 +307,11 @@ interface StoreCtx {
   startTeamDemo: (teamId: string) => void;
   resetDemo: () => void;
   addEmployee: (name: string, title: string, role: OpcRoleId, avatar: string, avatarKind: 'preset' | 'custom', statusColor?: string, prompt?: string, avatarFrame?: import('./types').AvatarFrameConfig) => void;
-  createTeam: (name: string, icon: string, memberIds: string[]) => void;
+  createTeam: (name: string, icon: string, memberIds: string[], description?: string) => void;
   addTeamMembers: (teamId: string, memberIds: string[]) => Employee[];
   createProjectDraft: (input: { title: string; request: string; steps?: string[]; expectedOutputs?: string[] }) => void;
   approveProject: (projectId: string) => void;
+  rejectProject: (projectId: string, reason?: string) => void;
   archiveProject: (projectId: string) => void;
   openTeamChat: (teamId: string) => void;
   openDmChat: (empId: string) => void;
@@ -545,12 +554,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'ADD_EMPLOYEE', emp: newEmp });
   };
 
-  const createTeam = (name: string, icon: string, memberIds: string[]) => {
+  const createTeam = (name: string, icon: string, memberIds: string[], description = '') => {
+    const now = Date.now();
     const team: Team = {
-      id: `team-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      id: `team-${now}-${Math.random().toString(36).slice(2, 7)}`,
       name,
       icon,
       memberIds,
+      description: description.trim(),
+      createdAt: now,
+      updatedAt: now,
       chatMessages: [
         {
           id: `msg-welcome-${Date.now()}`,
@@ -624,6 +637,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const team: Team = {
       id: `team-project-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       name: project.title,
+      description: project.request.slice(0, 240),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
       icon: '📌', memberIds, projectId,
       chatMessages: [{ id: `msg-project-${Date.now()}`, authorId: 'assistant', roleId: 'custom',
         content: `收到项目需求：${project.request.slice(0, 240)}\n需求复述：${project.request.slice(0, 240)}\n我已拆解为既定执行顺序，后一步等待前一步真实结果后再开始：\n${project.steps.map((step, index) => `${index + 1}. ${step}`).join('\n')}\n${memberIds.map((id) => `@${stateRef.current.employees.find((employee) => employee.id === id)?.name ?? id}`).join('、')} 请按各自步骤执行，最终由审查者验收。`, mentions: memberIds, timestamp: Date.now(), kind: 'text' }],
@@ -640,6 +656,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (!project) return;
     dispatch({ type: 'UPDATE_PROJECT', id: projectId, partial: { status: 'archived' } });
     if (project.teamId) dispatch({ type: 'UPDATE_TEAM', id: project.teamId, partial: { archived: true } });
+  };
+
+  const rejectProject = (projectId: string, reason = '用户驳回团队方案') => {
+    const project = stateRef.current.projects.find((item) => item.id === projectId);
+    if (!project || project.status !== 'awaiting_approval') return;
+    dispatch({ type: 'UPDATE_PROJECT', id: projectId, partial: { status: 'archived', rejectionReason: reason } });
   };
 
   const openChatWindow = (type: 'team-chat' | 'dm-chat' | 'assistant-chat', refId = '') => {
@@ -2059,6 +2081,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         addTeamMembers,
         createProjectDraft,
         approveProject,
+        rejectProject,
         archiveProject,
         openTeamChat,
         openDmChat,

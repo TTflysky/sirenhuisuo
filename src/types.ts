@@ -47,6 +47,9 @@ export interface Team {
   memberIds: string[];
   chatMessages: ChatMessage[];
   tasks: TeamTask[];
+  description?: string;
+  createdAt?: number;
+  updatedAt?: number;
   archived?: boolean;     // 归档后不出现在活跃列表，可恢复
   projectId?: string;
 }
@@ -67,6 +70,7 @@ export interface Project {
   members: ProjectMember[];
   status: ProjectStatus;
   teamId?: string;
+  rejectionReason?: string;
   createdAt: number;
   updatedAt: number;
 }

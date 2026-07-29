@@ -3,6 +3,7 @@ import type { ChatMessage, ThoughtChainStep } from '../../types';
 import { runAgentLoop, resolveApiBase, resolveChatSettings, extractUserInsights, fetchInitial, loadSettings, type ChatTurn, type Attachment } from '../../data/hermesClient';
 import { getRegisteredTools } from '../../engine/toolCatalog';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
+import ProjectApprovalCard from './ProjectApprovalCard';
 import ChatMessageText from './ChatMessageText';
 import ThoughtChainView from './ThoughtChainView';
 import { copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../utils/clipboard';
@@ -105,7 +106,7 @@ function findSpecialistMembers(content: string, employees: Employee[]) {
 }
 
 export default function AssistantChat() {
-  const { state, createProjectDraft, addTeamMembers } = useStore();
+  const { state, createProjectDraft, approveProject, rejectProject, addTeamMembers } = useStore();
   const [msgs, setMsgs] = useState<ChatMessage[]>(() => loadHistory());
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
@@ -273,8 +274,8 @@ export default function AssistantChat() {
       push({
         id: `h-${Date.now()}-dispatch`, authorId: 'assistant', roleId: 'custom',
         content: explicitTeamDispatch
-          ? `已识别为团队调度请求，已建立项目草案，不再自行读取工作区或消耗执行预算。${memberText}请到“自主办公”确认成员和步骤后批准。`
-          : `这个任务适合由专员完成，已停止助理直接产出并建立项目草案。${memberText}请到“自主办公”确认后组建团队。`,
+          ? `已识别为团队调度请求，已建立待授权方案，不再自行读取工作区或消耗执行预算。${memberText}请直接在这条消息下方批准或驳回。`
+          : `这个任务适合由专员完成，已停止助理直接产出并建立待授权方案。${memberText}请直接在这条消息下方批准或驳回。`,
         mentions: members.map((employee) => employee.id), timestamp: Date.now(), kind: 'text',
       });
       return;
@@ -683,6 +684,17 @@ ${employeeDirectory}
                 </div>
               );
             })}
+            {state.projects
+              .filter((project) => project.status === 'awaiting_approval')
+              .map((project) => (
+                <ProjectApprovalCard
+                  key={project.id}
+                  project={project}
+                  employees={state.employees}
+                  onApprove={() => approveProject(project.id)}
+                  onReject={() => rejectProject(project.id)}
+                />
+              ))}
             {busy && status && (
               <div className="msg assistant-live-report">
                 <div className="msg-meta">
