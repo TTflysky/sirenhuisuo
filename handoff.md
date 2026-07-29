@@ -1,7 +1,7 @@
 # 太极项目当前交接
 
 > 更新时间：2026-07-29
-> 当前版本：`v0.40.0`
+> 当前版本：`v0.50.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 > Release：`v0.29.0` 为本轮分层记忆、异步复盘与学习闭环大版本
