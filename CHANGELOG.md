@@ -8,6 +8,7 @@
 - Moved assistant prompt persistence and the Store hook out of React component modules. Release lint is now clean with no suppressed Fast Refresh warnings.
 - Renamed every user-facing assistant entry and the built-in persona to `章北海助理`. Existing custom personas retain their text and receive the v1 execution appendix once.
 - Standardized the built-in UI font on 幼圆. Legacy font settings fall back safely while five unused font payloads are no longer included in the renderer build.
+- Fixed complete Skill bundle readback: nested `knowledge-base/SKILL.md` and `notes/SKILL.md` rules are now validated and injected with the root Skill, so installed Skills cannot report success while silently omitting their required sub-rules.
 
 ## v0.85.0 (Skill context module)
 

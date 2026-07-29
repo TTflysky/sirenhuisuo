@@ -82,6 +82,7 @@ async function run() {
     assert.deepEqual(read.documents.map((document) => document.path), ['knowledge-base/SKILL.md', 'notes/SKILL.md']);
     assert.ok(read.documents.some((document) => document.content.includes('search_knowledge_base')));
     assert.ok(read.documents.some((document) => document.content.includes('search_note')));
+    assert.deepEqual(bundled.requirements.referencedFiles, ['knowledge-base/SKILL.md', 'notes/SKILL.md']);
     console.log('Skill atomic replacement verification passed.');
   } finally {
     if (originalUserProfile === undefined) delete process.env.USERPROFILE;

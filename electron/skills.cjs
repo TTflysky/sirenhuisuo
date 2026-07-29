@@ -13,6 +13,7 @@ const MAX_SKILL_BUNDLE_BYTES = 8 * 1024 * 1024;
 const MAX_SKILL_ARCHIVE_BYTES = 12 * 1024 * 1024;
 const MAX_SKILL_EXPANDED_BYTES = 16 * 1024 * 1024;
 const SKILL_DRAFT_SCHEMA = 1;
+const SKILL_DOCUMENT_ROOTS = new Set(['references', 'scripts', 'assets', 'knowledge-base', 'notes']);
 
 function isSkillHubDownloadUrl(value) {
   try {
@@ -60,6 +61,12 @@ function unique(values) {
   return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
 }
 
+function isReadableSkillDocument(reference) {
+  const normalized = String(reference || '').replace(/\\/g, '/').replace(/^\.\//u, '');
+  const [root] = normalized.split('/');
+  return SKILL_DOCUMENT_ROOTS.has(String(root || '').toLocaleLowerCase());
+}
+
 async function inspectSkillRequirements(raw, skillDir) {
   const frontmatter = parseFrontmatter(raw);
   const frontmatterEnv = String(frontmatter.env_vars || frontmatter.env || '')
@@ -73,9 +80,12 @@ async function inspectSkillRequirements(raw, skillDir) {
     ...(/macOS only|requires Apple|Notes\.app|iMessage/iu.test(raw) ? ['macOS'] : []),
   ]).slice(0, 20);
   const accountRequired = /\b(?:log[ -]?in|oauth|auth configured|requires subscription|account required)\b|账号|登录|授权|订阅/u.test(raw);
-  const referencedFiles = unique([...raw.matchAll(/\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g)]
-    .map((match) => match[1].split('#')[0])
-    .filter((value) => /^(?:\.\.?\/|scripts?\/|references?\/|assets?\/)/iu.test(value))
+  const linkedReferences = [...raw.matchAll(/\]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g)]
+    .map((match) => match[1].split('#')[0]);
+  const inlineReferences = [...raw.matchAll(/`((?:[A-Za-z0-9._-]+\/){1,4}[^`/]+\.(?:md|json|ya?ml|txt))`/giu)]
+    .map((match) => match[1]);
+  const referencedFiles = unique([...linkedReferences, ...inlineReferences]
+    .filter(isReadableSkillDocument)
     .map((value) => value.replace(/^\.\//, ''))).slice(0, 80);
   const missingFiles = [];
   if (skillDir) {
@@ -186,7 +196,7 @@ async function readSkill(projectRoot, id) {
     .filter((item) => !/^https?:\/\//iu.test(item) && !/^#/u.test(item));
   const inlinePaths = [...content.matchAll(/`((?:[A-Za-z0-9._-]+\/){1,4}[^`/]+\.(?:md|json|ya?ml|txt))`/giu)].map((match) => match[1]);
   const referencedPaths = unique([...linkedPaths, ...inlinePaths])
-    .filter((item) => /^(?:\.?\/)?(?:references|scripts|assets)\//iu.test(item))
+    .filter(isReadableSkillDocument)
     .map((item) => item.replace(/^\.\//u, ''))
     .slice(0, 24);
   const documents = [];
