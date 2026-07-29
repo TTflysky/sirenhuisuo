@@ -2,6 +2,8 @@
   "name": "hermes-office-pro",
   "private": true,
   "version": "1.0.0",
+  "description": "太极 AI 办公会所 - 面向 Windows 的多模型协作与可恢复任务执行平台",
+  "author": "TTflysky",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
