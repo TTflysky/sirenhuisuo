@@ -1,6 +1,7 @@
 import type { Employee } from '../types';
 
-export const DEFAULT_OFFICE_STATIONS = 999;
+/** Keep a modest amount of empty space without rendering hundreds of fake desks. */
+export const DEFAULT_OFFICE_STATIONS = 24;
 
 type StationEmployee = Pick<Employee, 'stationIndex'>;
 

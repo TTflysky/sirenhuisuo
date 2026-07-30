@@ -1,6 +1,7 @@
 import type { Employee, ExpertCatalogEntry, OpcRoleId } from '../types';
 import { ROLE_SCARF } from '../types';
 import { AGENCY_EXPERT_CATALOG } from './generatedExpertCatalog';
+import { AVATAR_FRAME_PRESETS } from './avatarFrames';
 
 export { AGENCY_EXPERT_CATALOG } from './generatedExpertCatalog';
 
@@ -32,24 +33,57 @@ function expertCapabilities(expert: ExpertCatalogEntry): string[] {
   return rules.filter(([, pattern]) => pattern.test(source)).map(([capability]) => capability);
 }
 
-export function expertToEmployee(expert: ExpertCatalogEntry, existingCount = 0): Employee {
+function stableHash(value: string): number {
+  let hash = 2166136261;
+  for (const char of value) {
+    hash ^= char.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+const EXPERT_FRAME_IDS = AVATAR_FRAME_PRESETS
+  .filter((frame) => !['slacking', 'vacation', 'intern', 'emeritus'].includes(frame.id))
+  .map((frame) => frame.id);
+
+export function expertToEmployee(expert: ExpertCatalogEntry, visualSeed = 0, stationIndex = -1): Employee {
   const role = roleForExpert(expert);
+  const hash = stableHash(`${expert.id}:${visualSeed}`);
   return {
     id: expert.id,
     catalogId: expert.id,
     source: 'catalog',
     name: expert.name,
-    title: expert.title,
+    title: expert.domain,
     role,
-    avatar: `expert-${(existingCount % 8) + 1}`,
+    avatar: `a${String((hash % 10) + 1).padStart(2, '0')}`,
     avatarKind: 'preset',
     statusColor: ROLE_SCARF[role],
-    stationIndex: -1,
+    avatarFrame: { presetId: EXPERT_FRAME_IDS[hash % EXPERT_FRAME_IDS.length] },
+    stationIndex,
     prompt: `${expert.summary}\n\n专业工作规则：\n${expert.instructions}`,
     isOnline: true,
     isWorking: false,
     capabilities: expertCapabilities(expert),
   };
+}
+
+/** Adds every built-in expert to the real office roster without touching user-created profiles. */
+export function materializeCatalogEmployees(employees: Employee[]): { employees: Employee[]; added: Employee[] } {
+  const existingIds = new Set(employees.map((employee) => employee.id));
+  const usedStations = new Set(employees.map((employee) => employee.stationIndex).filter((index) => Number.isSafeInteger(index) && index >= 0));
+  let nextStation = 0;
+  const allocateStation = () => {
+    while (usedStations.has(nextStation)) nextStation += 1;
+    const station = nextStation;
+    usedStations.add(station);
+    nextStation += 1;
+    return station;
+  };
+  const added = AGENCY_EXPERT_CATALOG
+    .filter((expert) => !existingIds.has(expert.id))
+    .map((expert, index) => expertToEmployee(expert, employees.length + index, allocateStation()));
+  return { employees: added.length ? [...employees, ...added] : employees, added };
 }
 
 export function findExpertCatalogEntry(id: string): ExpertCatalogEntry | undefined {

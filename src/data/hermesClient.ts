@@ -8,6 +8,7 @@ import type { ToolExecutionEvidence } from '../engine/executionEvidence.mjs';
 import { loadTaskRuns } from './taskRuns';
 import { redactToolArguments } from '../engine/securityBoundary';
 import { ensureDistinctEmployeeColors } from './employeeColors';
+import { materializeCatalogEmployees } from './expertCatalog';
 import {
   canonicalToolCallKey,
   buildFreshWebQuery,
@@ -2104,11 +2105,16 @@ export function fetchInitial(): AppState {
     employees = [...seedEmployees];
     saveEmployees(employees);
   }
+  // Built-in experts are real office employees in v2.2.1. Existing user
+  // profiles, teams, chats and task data remain untouched; only missing
+  // catalog IDs are appended during this one-way migration.
+  const catalogMigration = materializeCatalogEmployees(employees);
+  employees = catalogMigration.employees;
   const distinctColors = ensureDistinctEmployeeColors(employees);
   employees = distinctColors.employees;
   const repairedStations = repairEmployeeStations(employees);
   employees = repairedStations.employees;
-  if (distinctColors.changed || repairedStations.changed) saveEmployees(employees);
+  if (catalogMigration.added.length || distinctColors.changed || repairedStations.changed) saveEmployees(employees);
 
   // Teams (不含 chatMessages)
   let teams: Team[] = [];
