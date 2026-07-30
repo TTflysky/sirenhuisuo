@@ -30,7 +30,7 @@ import { evaluateDiscussionTrigger } from './engine/discussionTrigger';
 import { findFreeStation } from './data/hermesClient';
 import { isTeamMemberAdditionRequest, resolveMentionedEmployees } from './engine/teamMembership';
 import { sendBus, onBus, BUS_CHANNELS } from './ipcBus';
-import { appendTaskRunContext, createTaskRun, formalPlanStepForRun, getExecutionSessionId, hydrateTaskRunsFromMainStore, saveTaskRuns, sendTaskWorkerCommand, taskRunContextPrompt, updateTaskRun } from './data/taskRuns';
+import { appendTaskRunContext, createTaskRun, formalPlanStepForRun, getExecutionSessionId, hydrateTaskRunFromMainStore, hydrateTaskRunsFromMainStore, saveTaskRuns, sendTaskWorkerCommand, taskRunContextPrompt, updateTaskRun } from './data/taskRuns';
 import { buildTaskPlan, matchProjectMembers, matchTeamMembers } from './engine/taskMatcher';
 import { employeePlanningPool, expertToEmployee, findExpertCatalogEntry } from './data/expertCatalog';
 import { briefExecutionContext, buildProfessionalProjectBrief } from './engine/expertOrchestration';
@@ -58,6 +58,7 @@ import { ensureActiveChatSession, legacyConversationId, messageBelongsToConversa
 type Action =
   | { type: 'INIT'; state: AppState }
   | { type: 'HYDRATE_TASK_RUNS'; runs: TaskRun[] }
+  | { type: 'PATCH_TASK_RUN'; run: TaskRun }
   | { type: 'ADD_EMPLOYEE'; emp: Employee }
   | { type: 'UPDATE_EMPLOYEE'; id: string; partial: Partial<Employee> }
   | { type: 'REMOVE_EMPLOYEE'; id: string }
@@ -116,6 +117,13 @@ function reducer(s: AppState, a: Action): AppState {
 
     case 'HYDRATE_TASK_RUNS':
       return mergeTaskExecutionMessages(s, a.runs);
+
+    case 'PATCH_TASK_RUN': {
+      const taskRuns = s.taskRuns.some((run) => run.id === a.run.id)
+        ? s.taskRuns.map((run) => run.id === a.run.id ? a.run : run)
+        : [...s.taskRuns, a.run].slice(-120);
+      return mergeTaskExecutionMessages(s, taskRuns);
+    }
 
     case 'ADD_EMPLOYEE': {
       const next = client.upsertEmployee(a.emp, s.employees);
@@ -327,10 +335,13 @@ export interface StoreCtx {
   addEmployee: (name: string, title: string, role: OpcRoleId, avatar: string, avatarKind: 'preset' | 'custom', statusColor?: string, prompt?: string, avatarFrame?: import('./types').AvatarFrameConfig) => void;
   createTeam: (name: string, icon: string, memberIds: string[], description?: string) => void;
   addTeamMembers: (teamId: string, memberIds: string[]) => Employee[];
+  setTeamMembers: (teamId: string, memberIds: string[]) => { added: Employee[]; removed: Employee[] };
+  removeTeamMembers: (teamId: string, memberIds: string[]) => Employee[];
   addCatalogExperts: (expertIds: string[]) => Employee[];
   setProjectMembers: (projectId: string, memberIds: string[]) => ProjectMember[];
-  createProjectDraft: (input: { title: string; request: string; steps?: string[]; expectedOutputs?: string[]; requiredCapabilities?: string[]; decisionReason?: string }) => void;
+  createProjectDraft: (input: { title: string; request: string; conversationId?: string; steps?: string[]; expectedOutputs?: string[]; requiredCapabilities?: string[]; decisionReason?: string }) => void;
   approveProject: (projectId: string) => void;
+  startProjectExecution: (projectId: string, clarificationResponse: string) => void;
   rejectProject: (projectId: string, reason?: string) => void;
   archiveProject: (projectId: string) => void;
   openTeamChat: (teamId: string) => void;
@@ -348,7 +359,7 @@ export interface StoreCtx {
 }
 
 // INIT 是各窗口自己的初始化加载，不应跨窗口广播。
-const SKIP_BROADCAST = new Set<Action['type']>(['INIT', 'HYDRATE_TASK_RUNS']);
+const SKIP_BROADCAST = new Set<Action['type']>(['INIT', 'HYDRATE_TASK_RUNS', 'PATCH_TASK_RUN']);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, rawDispatch] = useReducer(reducer, initialState);
@@ -387,33 +398,105 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       for (const run of runs) {
         if (!['queued', 'running'].includes(run.status)) continue;
         for (const step of run.steps) {
-          if (step.status === 'queued' || step.status === 'running') {
+          // Queued is not working. Showing every waiting employee as active
+          // made a single-file queue look like uncontrolled parallel work.
+          if (step.status === 'running') {
             active.set(step.employeeId, `执行：${step.title}`);
           }
         }
       }
       for (const [employeeId, task] of active) {
-        dispatch({ type: 'UPDATE_EMPLOYEE', id: employeeId, partial: { isWorking: true, currentTask: task } });
+        const current = stateRef.current.employees.find((employee) => employee.id === employeeId);
+        if (!current || current.isWorking !== true || current.currentTask !== task) {
+          dispatch({ type: 'UPDATE_EMPLOYEE', id: employeeId, partial: { isWorking: true, currentTask: task } });
+        }
       }
       for (const employeeId of nativeWorkingEmployeesRef.current) {
-        if (!active.has(employeeId)) dispatch({ type: 'UPDATE_EMPLOYEE', id: employeeId, partial: { isWorking: false, currentTask: undefined } });
+        if (active.has(employeeId)) continue;
+        const current = stateRef.current.employees.find((employee) => employee.id === employeeId);
+        if (current?.isWorking || current?.currentTask) {
+          dispatch({ type: 'UPDATE_EMPLOYEE', id: employeeId, partial: { isWorking: false, currentTask: undefined } });
+        }
       }
       nativeWorkingEmployeesRef.current = new Set(active.keys());
     };
-    void hydrateTaskRunsFromMainStore().then(async (runs) => {
-      if (runs) {
-        await syncNativeRunArtifacts(runs);
+
+    let disposed = false;
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    let refreshInFlight = false;
+    let refreshQueued = false;
+    const taskRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>();
+    const taskRefreshInFlight = new Set<string>();
+    const taskRefreshQueued = new Set<string>();
+    let needsArtifactReconciliation = true;
+    const refreshNativeState = async () => {
+      if (disposed) return;
+      if (refreshInFlight) {
+        refreshQueued = true;
+        return;
+      }
+      refreshInFlight = true;
+      try {
+        const runs = await hydrateTaskRunsFromMainStore();
+        if (!runs || disposed) return;
+        if (needsArtifactReconciliation) {
+          needsArtifactReconciliation = false;
+          await syncNativeRunArtifacts(runs);
+        }
+        if (disposed) return;
         dispatch({ type: 'HYDRATE_TASK_RUNS', runs });
         projectNativeEmployeeStatus(runs);
-      }
-    });
-    const unsubscribeWorker = window.electronAPI?.onTaskWorkerChanged?.(() => {
-      void hydrateTaskRunsFromMainStore().then((runs) => {
-        if (runs) {
-          dispatch({ type: 'HYDRATE_TASK_RUNS', runs });
-          projectNativeEmployeeStatus(runs);
+      } finally {
+        refreshInFlight = false;
+        if (refreshQueued && !disposed) {
+          refreshQueued = false;
+          scheduleNativeRefresh();
         }
-      });
+      }
+    };
+    const scheduleNativeRefresh = (delay = 180) => {
+      if (disposed) return;
+      if (refreshTimer) return;
+      refreshTimer = setTimeout(() => {
+        refreshTimer = undefined;
+        void refreshNativeState();
+      }, delay);
+    };
+    const refreshNativeTask = async (taskId: string) => {
+      if (disposed || !taskId) return;
+      if (taskRefreshInFlight.has(taskId)) {
+        taskRefreshQueued.add(taskId);
+        return;
+      }
+      taskRefreshInFlight.add(taskId);
+      try {
+        const run = await hydrateTaskRunFromMainStore(taskId);
+        if (!run || disposed) return;
+        const currentRuns = stateRef.current.taskRuns;
+        const nextRuns = currentRuns.some((item) => item.id === run.id)
+          ? currentRuns.map((item) => item.id === run.id ? run : item)
+          : [...currentRuns, run].slice(-120);
+        dispatch({ type: 'PATCH_TASK_RUN', run });
+        projectNativeEmployeeStatus(nextRuns);
+      } finally {
+        taskRefreshInFlight.delete(taskId);
+        if (taskRefreshQueued.delete(taskId) && !disposed) scheduleNativeTaskRefresh(taskId, 0);
+      }
+    };
+    const scheduleNativeTaskRefresh = (taskId: string, delay = 180) => {
+      if (disposed || !taskId || taskRefreshTimers.has(taskId)) return;
+      const timer = setTimeout(() => {
+        taskRefreshTimers.delete(taskId);
+        void refreshNativeTask(taskId);
+      }, delay);
+      taskRefreshTimers.set(taskId, timer);
+    };
+
+    // The first read reconciles old artifacts. Native execution then refreshes
+    // only the changed task, avoiding a full task/artifact scan per heartbeat.
+    void refreshNativeState();
+    const unsubscribeWorker = window.electronAPI?.onTaskWorkerChanged?.(() => {
+      scheduleNativeRefresh(80);
     });
     const unsubscribeExecution = window.electronAPI?.onTaskExecutionChanged?.((event) => {
       const nativeEvent = event as { type?: string; teamId?: string; taskId?: string; workspaceId?: string; artifacts?: import('./data/outputs').NativeArtifactInput[] };
@@ -424,19 +507,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           workspaceId: nativeEvent.workspaceId,
         });
       }
-      void hydrateTaskRunsFromMainStore().then(async (runs) => {
-        if (runs) {
-          await syncNativeRunArtifacts(runs);
-          dispatch({ type: 'HYDRATE_TASK_RUNS', runs });
-          projectNativeEmployeeStatus(runs);
-        }
-      });
+      if (nativeEvent.taskId) {
+        scheduleNativeTaskRefresh(nativeEvent.taskId, nativeEvent.type === 'step_completed' || nativeEvent.type === 'step_failed' ? 40 : 180);
+      } else {
+        scheduleNativeRefresh(180);
+      }
     });
     // 后端探测
     client.checkBackend().then((online) => {
       dispatch({ type: 'SET_STATUS', partial: { backendOnline: online } });
     });
-    return () => { unsubscribeWorker?.(); unsubscribeExecution?.(); };
+    return () => {
+      disposed = true;
+      if (refreshTimer) clearTimeout(refreshTimer);
+      taskRefreshTimers.forEach((timer) => clearTimeout(timer));
+      unsubscribeWorker?.();
+      unsubscribeExecution?.();
+    };
   }, [dispatch]);
 
   const sendMessage = (
@@ -463,6 +550,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
     dispatch({ type: 'APPEND_CHAT', teamId, msgs: [msg], conversationId });
     if (roleId === 'human') {
+      const project = stateRef.current.projects.find((item) => item.teamId === teamId);
+      // A newly approved team must collect the owner's direction before any
+      // executor sees a task. This message is preserved in the group chat but
+      // is not eligible for automatic discussion or native task dispatch.
+      if (project?.status === 'clarifying') return;
       const executionContent = `${content}${attachmentWorkspaceContext(attachments ?? [])}`;
       enqueueAutoDiscussion(teamId, msg.id, executionContent, mentions, attachments, skillRefs, conversationId);
     }
@@ -646,6 +738,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const nextMemberIds = [...new Set([...team.memberIds, ...added.map((employee) => employee.id)])];
     dispatch({ type: 'UPDATE_TEAM', id: teamId, partial: { memberIds: nextMemberIds } });
     added.forEach((employee) => dispatch({ type: 'UPDATE_EMPLOYEE', id: employee.id, partial: { currentTeamId: teamId } }));
+    if (team.projectId) {
+      const project = current.projects.find((item) => item.id === team.projectId);
+      if (project) {
+        const knownProjectMembers = new Set(project.members.map((member) => member.employeeId));
+        dispatch({ type: 'UPDATE_PROJECT', id: project.id, partial: {
+          members: [...project.members, ...added.filter((employee) => !knownProjectMembers.has(employee.id)).map((employee) => ({ employeeId: employee.id, reason: '按老板最新要求加入项目团队' }))],
+          rosterRevision: (project.rosterRevision ?? 1) + 1,
+        } });
+      }
+    }
     const roster = new Map([...current.employees, ...added].map((employee) => [employee.id, employee]));
     const activeRuns = current.taskRuns.filter((run) => run.teamId === teamId && ['queued', 'running', 'paused'].includes(run.status));
     for (const run of activeRuns) {
@@ -669,6 +771,87 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return added;
   };
 
+  const setTeamMembers = (teamId: string, memberIds: string[]): { added: Employee[]; removed: Employee[] } => {
+    const current = stateRef.current;
+    const team = current.teams.find((item) => item.id === teamId);
+    if (!team) return { added: [], removed: [] };
+    const directory = new Map(current.employees.map((employee) => [employee.id, employee]));
+    const added: Employee[] = [];
+    const nextMemberIds = [...new Set(memberIds)].filter((employeeId) => {
+      if (directory.has(employeeId)) return true;
+      const expert = findExpertCatalogEntry(employeeId);
+      if (!expert) return false;
+      const employee = expertToEmployee(expert, current.employees.length + added.length);
+      directory.set(employeeId, employee);
+      added.push(employee);
+      return true;
+    });
+    const previousIds = new Set(team.memberIds);
+    const nextIds = new Set(nextMemberIds);
+    const removed = team.memberIds
+      .filter((employeeId) => !nextIds.has(employeeId))
+      .map((employeeId) => directory.get(employeeId))
+      .filter((employee): employee is Employee => !!employee);
+    const newlyAssigned = nextMemberIds
+      .filter((employeeId) => !previousIds.has(employeeId))
+      .map((employeeId) => directory.get(employeeId))
+      .filter((employee): employee is Employee => !!employee);
+    if (!added.length && !removed.length && newlyAssigned.length === 0) return { added: [], removed: [] };
+    added.forEach((employee) => dispatch({ type: 'ADD_EMPLOYEE', emp: employee }));
+    dispatch({ type: 'UPDATE_TEAM', id: teamId, partial: { memberIds: nextMemberIds } });
+    newlyAssigned.forEach((employee) => dispatch({ type: 'UPDATE_EMPLOYEE', id: employee.id, partial: { currentTeamId: teamId } }));
+    removed.forEach((employee) => {
+      if (employee.currentTeamId === teamId) dispatch({ type: 'UPDATE_EMPLOYEE', id: employee.id, partial: { currentTeamId: undefined, isWorking: false, currentTask: undefined } });
+    });
+    if (team.projectId) {
+      const project = current.projects.find((item) => item.id === team.projectId);
+      if (project) {
+        const previousProjectMembers = new Map(project.members.map((member) => [member.employeeId, member]));
+        dispatch({ type: 'UPDATE_PROJECT', id: project.id, partial: {
+          members: nextMemberIds.map((employeeId) => previousProjectMembers.get(employeeId) ?? { employeeId, reason: '按老板最新要求调整项目团队' }),
+          rosterRevision: (project.rosterRevision ?? 1) + 1,
+        } });
+      }
+    }
+    const roster = nextMemberIds.map((employeeId) => directory.get(employeeId)).filter((employee): employee is Employee => !!employee)
+      .map((employee) => ({ ...employee, modelConfig: client.getEmployeeModel(employee) }));
+    for (const run of current.taskRuns.filter((run) => run.teamId === teamId && ['queued', 'running', 'paused'].includes(run.status))) {
+      void window.electronAPI?.taskExecutionSyncMembers?.({ taskId: run.id, members: roster });
+    }
+    return { added: newlyAssigned, removed };
+  };
+
+  const removeTeamMembers = (teamId: string, memberIds: string[]): Employee[] => {
+    const current = stateRef.current;
+    const team = current.teams.find((item) => item.id === teamId);
+    if (!team) return [];
+    const removedIds = new Set(memberIds.filter((id) => team.memberIds.includes(id)));
+    if (!removedIds.size) return [];
+    const removed = team.memberIds
+      .filter((id) => removedIds.has(id))
+      .map((id) => current.employees.find((employee) => employee.id === id))
+      .filter((employee): employee is Employee => !!employee);
+    const nextMemberIds = team.memberIds.filter((id) => !removedIds.has(id));
+    dispatch({ type: 'UPDATE_TEAM', id: teamId, partial: { memberIds: nextMemberIds } });
+    removed.forEach((employee) => {
+      if (employee.currentTeamId === teamId) dispatch({ type: 'UPDATE_EMPLOYEE', id: employee.id, partial: { currentTeamId: undefined, isWorking: false, currentTask: undefined } });
+    });
+    if (team.projectId) {
+      const project = current.projects.find((item) => item.id === team.projectId);
+      if (project) dispatch({ type: 'UPDATE_PROJECT', id: project.id, partial: {
+        members: project.members.filter((member) => !removedIds.has(member.employeeId)),
+        rosterRevision: (project.rosterRevision ?? 1) + 1,
+      } });
+    }
+    dispatch({ type: 'APPEND_CHAT', teamId, msgs: [{
+      id: `msg-members-removed-${Date.now()}`,
+      authorId: 'assistant', roleId: 'custom',
+      content: `已将 ${removed.map((employee) => employee.name).join('、')} 从「${team.name}」移出。未开始的任务会按最新名单重新分配；已开始的任务保留原有执行记录。`,
+      mentions: removed.map((employee) => employee.id), timestamp: Date.now(), kind: 'text',
+    }] });
+    return removed;
+  };
+
   const setProjectMembers = (projectId: string, memberIds: string[]): ProjectMember[] => {
     const current = stateRef.current;
     const project = current.projects.find((item) => item.id === projectId);
@@ -679,11 +862,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const members = [...new Set(memberIds)]
       .filter((employeeId) => employees.some((employee) => employee.id === employeeId))
       .map((employeeId) => ({ employeeId, reason: recommended.get(employeeId) ?? '按老板最新的成员调整加入' }));
-    dispatch({ type: 'UPDATE_PROJECT', id: projectId, partial: { members } });
+    dispatch({ type: 'UPDATE_PROJECT', id: projectId, partial: { members, rosterRevision: (project.rosterRevision ?? 1) + 1 } });
     return members;
   };
 
-  const createProjectDraft = (input: { title: string; request: string; steps?: string[]; expectedOutputs?: string[]; requiredCapabilities?: string[]; decisionReason?: string }) => {
+  const createProjectDraft = (input: { title: string; request: string; conversationId?: string; steps?: string[]; expectedOutputs?: string[]; requiredCapabilities?: string[]; decisionReason?: string }) => {
     const now = Date.now();
     const latestEmployees = employeePlanningPool(client.fetchInitial().employees);
     const selectionRequest = [input.request, ...(input.requiredCapabilities ?? [])].filter(Boolean).join('\n所需能力：');
@@ -692,13 +875,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       id: `project-${now}-${Math.random().toString(36).slice(2, 7)}`,
       title: input.title.trim() || '未命名项目',
       request: input.request.trim(),
+      conversationId: input.conversationId,
       steps: input.steps?.filter(Boolean) ?? [],
       expectedOutputs: input.expectedOutputs?.filter(Boolean) ?? [],
       members,
       brief: buildProfessionalProjectBrief({ request: input.request, members }),
       requiredCapabilities: input.requiredCapabilities?.filter(Boolean),
       decisionReason: input.decisionReason?.trim(),
-      status: 'awaiting_approval', createdAt: now, updatedAt: now,
+      status: 'awaiting_approval', rosterRevision: 1, createdAt: now, updatedAt: now,
     };
     dispatch({ type: 'CREATE_PROJECT', project });
   };
@@ -718,13 +902,35 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       updatedAt: Date.now(),
       icon: '📌', memberIds, projectId,
       chatMessages: [{ id: `msg-project-${Date.now()}`, authorId: 'assistant', roleId: 'custom',
-        content: `团队已建立。${memberIds.map((id) => `@${memberDirectory.get(id)?.name ?? id}`).join('、')} 将按各自责任推进；阶段进展、真实产出和验收结论会统一显示在项目面板。`, mentions: memberIds, timestamp: Date.now(), kind: 'text' }],
+        content: `团队已建立。成员名单已按批准方案固定：${memberIds.map((id) => `@${memberDirectory.get(id)?.name ?? id}`).join('、')}。\n\n现在还不会开工。请先一次性确认：\n1. 要解决的核心问题和第一版边界；\n2. 使用哪些资料或知识来源、部署到哪里；\n3. 必须具备的检索/权限/连接能力；\n4. 界面风格与最优先的使用场景。\n\n你回复后，点击“确认方向并开始执行”，团队才会生成分阶段计划。`, mentions: memberIds, timestamp: Date.now(), kind: 'text' }],
       tasks: [],
     };
     dispatch({ type: 'ADD_TEAM', team });
-    dispatch({ type: 'UPDATE_PROJECT', id: projectId, partial: { status: 'running', teamId: team.id } });
+    dispatch({ type: 'UPDATE_PROJECT', id: projectId, partial: { status: 'clarifying', teamId: team.id } });
     memberIds.forEach((id) => dispatch({ type: 'UPDATE_EMPLOYEE', id, partial: { currentTeamId: team.id } }));
-    setTimeout(() => { void startTaskRun(team.id, project.request, memberIds, undefined, undefined, [], undefined, undefined, project.brief); }, 0);
+  };
+
+  const startProjectExecution = (projectId: string, clarificationResponse: string) => {
+    const project = stateRef.current.projects.find((item) => item.id === projectId);
+    if (!project || project.status !== 'clarifying' || !project.teamId || !clarificationResponse.trim()) return;
+    const team = stateRef.current.teams.find((item) => item.id === project.teamId);
+    if (!team) return;
+    const memberIds = project.members.map((member) => member.employeeId).filter((id) => team.memberIds.includes(id));
+    if (!memberIds.length) return;
+    const effectiveRequest = `${project.request}\n\n老板确认的方向与风格：\n${clarificationResponse.trim()}`;
+    const brief = buildProfessionalProjectBrief({ request: effectiveRequest, members: project.members });
+    dispatch({ type: 'UPDATE_PROJECT', id: project.id, partial: {
+      status: 'running',
+      clarificationResponse: clarificationResponse.trim(),
+      brief,
+    } });
+    dispatch({ type: 'APPEND_CHAT', teamId: team.id, msgs: [{
+      id: `msg-project-start-${Date.now()}`,
+      authorId: 'assistant', roleId: 'custom',
+      content: '方向已确认，团队现在开始执行。会按“需求/架构 -> 设计/数据 -> 实现 -> 审查”的依赖顺序推进；没有轮到的成员会显示为等待前置步骤，不会假装同时开工。',
+      mentions: memberIds, timestamp: Date.now(), kind: 'text',
+    }] });
+    setTimeout(() => { void startTaskRun(team.id, effectiveRequest, memberIds, undefined, undefined, [], undefined, undefined, brief); }, 0);
   };
 
   const archiveProject = (projectId: string) => {
@@ -2220,10 +2426,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         addEmployee,
         createTeam,
         addTeamMembers,
+        setTeamMembers,
+        removeTeamMembers,
         addCatalogExperts,
         setProjectMembers,
         createProjectDraft,
         approveProject,
+        startProjectExecution,
         rejectProject,
         archiveProject,
         openTeamChat,

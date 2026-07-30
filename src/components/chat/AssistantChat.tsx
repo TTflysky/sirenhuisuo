@@ -7,7 +7,7 @@ import ProjectApprovalCard from './ProjectApprovalCard';
 import MessageSkillEvidence from './MessageSkillEvidence';
 import ChatMessageText from './ChatMessageText';
 import ThoughtChainView from './ThoughtChainView';
-import { copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../utils/clipboard';
+import { copyAndArchiveChatTranscript, copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
 import SkillMentionInput from '../skills/SkillMentionInput';
 import { resolveSkillContextWithEvidence } from '../../engine/skillContext';
@@ -28,7 +28,16 @@ import { useStore } from '../../storeContext';
 import { BUS_CHANNELS, onBus, sendBus } from '../../ipcBus';
 import { getDirectExecutionControl, isExplicitPauseSteering, isExplicitResumeSteering, shouldHoldTaskForFeedback } from '../../engine/agentGuardrails.mjs';
 import { executionControllerStatus } from '../../engine/executionController.mjs';
-import { isTeamMemberAdditionRequest, isTeamMemberCorrectionRequest, resolveMentionedEmployees, resolveTargetProject, resolveTargetTeam } from '../../engine/teamMembership';
+import {
+  applyProjectRosterMutation,
+  isProjectApprovalIntent,
+  isTeamMemberAdditionRequest,
+  isTeamMemberRemovalRequest,
+  isTeamMemberReplacementRequest,
+  resolveMentionedEmployees,
+  resolveTargetProject,
+  resolveTargetTeam,
+} from '../../engine/teamMembership';
 import { matchProjectMembers } from '../../engine/taskMatcher';
 import { employeePlanningPool } from '../../data/expertCatalog';
 import { classifyLocalOfficeQuery, formatLocalOfficeAnswer } from '../../engine/officeDirectory';
@@ -151,7 +160,7 @@ function resolveDispatchRequest(current: string, recentUserMessages: string[]): 
 }
 
 export default function AssistantChat() {
-  const { state, createProjectDraft, approveProject, rejectProject, addTeamMembers, setProjectMembers } = useStore();
+  const { state, createProjectDraft, approveProject, rejectProject, addTeamMembers, setTeamMembers, removeTeamMembers, setProjectMembers } = useStore();
   const sessionScope: ChatSessionScope = 'assistant';
   const [conversationId, setConversationId] = useState(() => ensureActiveChatSession(sessionScope));
   const conversationIdRef = useRef(conversationId);
@@ -316,39 +325,67 @@ export default function AssistantChat() {
       return;
     }
 
-    if (isTeamMemberAdditionRequest(enriched)) {
-      const mentionedEmployees = resolveMentionedEmployees(enriched, liveEmployees);
-      const explicitlyNamedTeam = [...state.teams].reverse().find((team) => !team.archived && enriched.replace(/\s+/g, '').includes(team.name.replace(/\s+/g, '')));
-      const contextualProject = explicitlyNamedTeam ? undefined : resolveTargetProject(enriched, state.projects);
+    const contextualProject = resolveTargetProject(enriched, state.projects, conversationIdRef.current);
+    if (isProjectApprovalIntent(enriched)) {
       if (contextualProject?.status === 'awaiting_approval') {
-        const selectionRequest = [contextualProject.request, ...(contextualProject.requiredCapabilities ?? [])].filter(Boolean).join('\n所需能力：');
-        const recommendedIds = matchProjectMembers(employeePlanningPool(liveEmployees), selectionRequest).map((member) => member.employeeId);
+        approveProject(contextualProject.id);
+        push({
+          id: `h-${Date.now()}-project-approved`, authorId: 'assistant', roleId: 'custom',
+          content: `已按刚才确认的名单建立「${contextualProject.title}」团队，成员没有重新匹配。团队会先向你确认方向和风格，确认前不会开始执行。`,
+          mentions: contextualProject.members.map((member) => member.employeeId), timestamp: Date.now(), kind: 'text',
+        });
+        return;
+      }
+      if (contextualProject?.status === 'clarifying') {
+        push({
+          id: `h-${Date.now()}-project-needs-clarification`, authorId: 'assistant', roleId: 'custom',
+          content: `「${contextualProject.title}」团队已经建立，正在等待你确认方向和风格。请在对应团队聊天里回复问题，再点“确认方向并开始执行”。`,
+          mentions: contextualProject.members.map((member) => member.employeeId), timestamp: Date.now(), kind: 'text',
+        });
+        return;
+      }
+      push({
+        id: `h-${Date.now()}-project-approval-missing`, authorId: 'assistant', roleId: 'custom',
+        content: '当前聊天没有可批准的团队草案。我不会把“拉群”当成新项目重新猜成员；请先说明要做什么，或回到包含草案的聊天继续。',
+        mentions: [], timestamp: Date.now(), kind: 'text',
+      });
+      return;
+    }
+
+    if (isTeamMemberAdditionRequest(enriched)) {
+      const planningEmployees = employeePlanningPool(liveEmployees);
+      const mentionedEmployees = resolveMentionedEmployees(enriched, planningEmployees);
+      const explicitlyNamedTeam = [...state.teams].reverse().find((team) => !team.archived && enriched.replace(/\s+/g, '').includes(team.name.replace(/\s+/g, '')));
+      const targetProject = explicitlyNamedTeam ? undefined : contextualProject;
+      if (contextualProject?.status === 'awaiting_approval') {
         const currentIds = contextualProject.members.map((member) => member.employeeId);
         const requestedIds = mentionedEmployees.map((employee) => employee.id);
-        const nextIds = [...new Set([
-          ...(isTeamMemberCorrectionRequest(enriched) ? recommendedIds : currentIds),
-          ...requestedIds,
-        ])];
-        if (!requestedIds.length && !isTeamMemberCorrectionRequest(enriched)) {
+        const intent = isTeamMemberRemovalRequest(enriched)
+          ? 'remove'
+          : isTeamMemberReplacementRequest(enriched)
+            ? 'replace'
+            : 'add';
+        if (!requestedIds.length) {
           push({
             id: `h-${Date.now()}-employee-unclear`, authorId: 'assistant', roleId: 'custom',
-            content: `我已经锁定正在等待批准的「${contextualProject.title}」，但这句话里还没有识别出具体姓名或职位。请说员工姓名或职位，我会直接更新这张团队方案。`,
+            content: `我已经锁定正在等待批准的「${contextualProject.title}」，但还没有识别出可实际修改的员工。请说姓名或完整职位；我会只修改这份已确认名单，不会重新随机选人。`,
             mentions: [], timestamp: Date.now(), kind: 'text',
           });
           return;
         }
+        const nextIds = applyProjectRosterMutation(currentIds, mentionedEmployees, planningEmployees, intent);
         setProjectMembers(contextualProject.id, nextIds);
         const selectedEmployees = nextIds
-          .map((employeeId) => liveEmployees.find((employee) => employee.id === employeeId))
+          .map((employeeId) => planningEmployees.find((employee) => employee.id === employeeId))
           .filter((employee): employee is Employee => !!employee);
         push({
           id: `h-${Date.now()}-project-members-updated`, authorId: 'assistant', roleId: 'custom',
-          content: `已直接修正正在等待批准的「${contextualProject.title}」，不需要你再说团队名。现在的候选成员是：${selectedEmployees.map((employee) => `${employee.name}（${employee.title}）`).join('、')}。${isTeamMemberCorrectionRequest(enriched) ? '原先与任务能力不匹配的候选已从方案中移除。' : ''}`,
+          content: `已直接更新「${contextualProject.title}」的真实成员名单。${intent === 'replace' ? '同类职责的原成员已替换。' : intent === 'remove' ? '指定成员已移出。' : '新成员已加入，原名单保持不变。'}现在是：${selectedEmployees.map((employee) => `${employee.name}（${employee.title}）`).join('、')}。`,
           mentions: nextIds, timestamp: Date.now(), kind: 'text',
         });
         return;
       }
-      const preferredTeamIds = [contextualProject?.teamId].filter((teamId): teamId is string => !!teamId);
+      const preferredTeamIds = [targetProject?.teamId].filter((teamId): teamId is string => !!teamId);
       const targetTeam = explicitlyNamedTeam ?? resolveTargetTeam(enriched, state.teams, msgs.slice(-12).map((message) => message.content), preferredTeamIds);
       if (!targetTeam) {
         push({
@@ -366,18 +403,34 @@ export default function AssistantChat() {
         });
         return;
       }
-      const additions = mentionedEmployees.filter((employee) => !targetTeam.memberIds.includes(employee.id));
-      const added = addTeamMembers(targetTeam.id, additions.map((employee) => employee.id));
+      const removing = isTeamMemberRemovalRequest(enriched);
+      const replacing = isTeamMemberReplacementRequest(enriched);
+      const desiredMemberIds = replacing
+        ? applyProjectRosterMutation(targetTeam.memberIds, mentionedEmployees, planningEmployees, 'replace')
+        : targetTeam.memberIds;
+      const rosterChange = replacing ? setTeamMembers(targetTeam.id, desiredMemberIds) : undefined;
+      const removed = removing
+        ? removeTeamMembers(targetTeam.id, mentionedEmployees.map((employee) => employee.id))
+        : rosterChange?.removed ?? [];
+      const added = removing
+        ? []
+        : rosterChange?.added ?? addTeamMembers(targetTeam.id, mentionedEmployees.map((employee) => employee.id)
+          .filter((employeeId) => !targetTeam.memberIds.includes(employeeId)));
+      const updated = [...removed, ...added];
       const alreadyPresent = mentionedEmployees.filter((employee) => targetTeam.memberIds.includes(employee.id));
       push({
         id: `h-${Date.now()}-members-updated`, authorId: 'assistant', roleId: 'custom',
-        content: added.length
-          ? `已处理好：${added.map((employee) => employee.name).join('、')} 已加入「${targetTeam.name}」，团队窗口和成员名单会立即同步。${alreadyPresent.length ? `${alreadyPresent.map((employee) => employee.name).join('、')} 原本就在团队中。` : ''}`
-          : `${alreadyPresent.map((employee) => employee.name).join('、')} 已经在「${targetTeam.name}」中，名单没有重复添加。`,
+        content: removing
+          ? (updated.length ? `已将 ${updated.map((employee) => employee.name).join('、')} 从「${targetTeam.name}」移出，成员列表已同步。` : '没有找到可移出的对应成员，名单没有变化。')
+          : replacing
+            ? `已更新「${targetTeam.name}」的职责名单：${removed.length ? `移出 ${removed.map((employee) => employee.name).join('、')}；` : ''}${added.length ? `加入 ${added.map((employee) => employee.name).join('、')}。` : '指定成员已经在对应职责位置。'}`
+          : (updated.length
+            ? `已处理好：${updated.map((employee) => employee.name).join('、')} 已加入「${targetTeam.name}」，团队窗口和成员名单会立即同步。${alreadyPresent.length ? `${alreadyPresent.map((employee) => employee.name).join('、')} 原本就在团队中。` : ''}`
+            : `${alreadyPresent.map((employee) => employee.name).join('、')} 已经在「${targetTeam.name}」中，名单没有重复添加。`),
         mentions: mentionedEmployees.map((employee) => employee.id), timestamp: Date.now(), kind: 'text',
       });
-      if (busy && added.length) {
-        steeringMessagesRef.current.push(`团队名单已真实更新：${added.map((employee) => `${employee.name}（${employee.title}）`).join('、')} 已加入「${targetTeam.name}」。后续判断和分工必须使用更新后的名单。`);
+      if (busy && updated.length) {
+        steeringMessagesRef.current.push(`团队名单已真实更新：${updated.map((employee) => `${employee.name}（${employee.title}）`).join('、')} 已${removing ? '移出' : '加入'}「${targetTeam.name}」。后续判断和分工必须使用更新后的名单。`);
         executionControl.interruptForSteering();
         setStatus('团队名单已更新，正在让当前任务采用新成员信息…');
       }
@@ -419,10 +472,11 @@ export default function AssistantChat() {
       const decision = taskDecisionCompilation!.decision;
       const requiredCapabilities = decision.requiredCapabilities ?? [];
       const selectionRequest = [dispatchRequest, ...requiredCapabilities].filter(Boolean).join('\n所需能力：');
-      const existing = state.projects.find((project) => project.status === 'awaiting_approval' && project.request === dispatchRequest);
+      const existing = state.projects.find((project) => project.status === 'awaiting_approval' && project.conversationId === conversationIdRef.current && project.request === dispatchRequest);
       if (!existing) createProjectDraft({
         title: content.slice(0, 40),
         request: dispatchRequest,
+        conversationId: conversationIdRef.current,
         requiredCapabilities,
         decisionReason: decision.decisionReason,
       });
@@ -806,6 +860,15 @@ ${employeeDirectory}
       return `[${head}] ${m.content}`;
     }).join('\n\n');
     await copyToClipboard(text);
+    await copyAndArchiveChatTranscript({
+      scope: 'assistant',
+      title: 'Taiji Assistant Transcript',
+      messages: msgs.map((message) => ({
+        role: message.roleId === 'human' ? 'User' : 'Assistant',
+        content: message.content,
+        time: new Date(message.timestamp).toLocaleString('zh-CN'),
+      })),
+    });
   };
 
   const handleExport = () => {

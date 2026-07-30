@@ -28,7 +28,12 @@ assert.deepEqual(membership.resolveMentionedEmployees('把小王和@小李加进
 assert.deepEqual(membership.resolveMentionedEmployees('把小张加进团队', employees), []);
 assert.equal(membership.isTeamMemberAdditionRequest('不是有UI UX前端设计师吗，为什么不叫上'), true);
 assert.equal(membership.isTeamMemberCorrectionRequest('成员拉得不对'), true);
+assert.equal(membership.isTeamMemberReplacementRequest('换一个UI设计师，在员工里面再找一找'), true);
+assert.equal(membership.isTeamMemberRemovalRequest('把小王从团队移除'), true);
+assert.equal(membership.isProjectApprovalIntent('就这个团队，你拉群吧'), true);
+assert.equal(membership.isProjectApprovalIntent('可以'), true);
 assert.deepEqual(membership.resolveMentionedEmployees('不是有UI UX前端设计师吗，为什么不叫上', employees).map((item) => item.id), ['ux']);
+assert.deepEqual(membership.resolveMentionedEmployees('换一个UI设计师', employees).map((item) => item.id), ['ux']);
 assert.equal(membership.resolveTargetTeam('把小王加入水果饮料网站demo', teams)?.id, 'fruit-demo');
 assert.equal(membership.resolveTargetTeam('你刚拉的队员不对', teams)?.id, 'fruit-demo');
 assert.equal(membership.resolveTargetTeam('把小王加进去', teams, ['刚创建了水果饮料网站demo'])?.id, 'fruit-demo');
@@ -38,4 +43,26 @@ const projects = [
 ];
 assert.equal(membership.resolveTargetProject('为什么不叫UI设计师', projects)?.id, 'pending');
 
-console.log(JSON.stringify({ passed: true, recognizedEmployees: employees.length }, null, 2));
+const scopedProjects = [
+  { id: 'other-chat', title: '另一个项目', status: 'awaiting_approval', conversationId: 'chat-other', updatedAt: 9 },
+  { id: 'knowledge-base', title: '太极知识库存储软件', status: 'awaiting_approval', conversationId: 'chat-knowledge', updatedAt: 8 },
+];
+assert.equal(membership.resolveTargetProject('就这个团队', scopedProjects, 'chat-knowledge')?.id, 'knowledge-base');
+
+const rosterEmployees = [
+  { id: 'planner', name: '规划者', title: '软件架构师', role: 'planner' },
+  { id: 'old-ui', name: '旧设计师', title: 'UI 设计师', role: 'planner' },
+  { id: 'new-ui', name: '新设计师', title: 'UI UX前端设计师', role: 'planner' },
+  { id: 'frontend', name: '前端工程师', title: '网页开发工程师', role: 'coder' },
+  { id: 'database', name: '数据库优化师', title: '数据库工程师', role: 'coder' },
+];
+const replacedRoster = membership.applyProjectRosterMutation(
+  ['planner', 'old-ui', 'frontend', 'database'],
+  [rosterEmployees.find((employee) => employee.id === 'new-ui')],
+  rosterEmployees,
+  'replace',
+);
+assert.deepEqual(replacedRoster, ['planner', 'frontend', 'database', 'new-ui'], 'replacement must preserve the agreed non-UI roster');
+assert.equal(replacedRoster.includes('old-ui'), false, 'the old UI member must be removed structurally');
+
+console.log(JSON.stringify({ passed: true, recognizedEmployees: employees.length, continuity: 'scoped-project-roster-replacement' }, null, 2));

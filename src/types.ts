@@ -74,7 +74,7 @@ export interface Team {
   projectId?: string;
 }
 
-export type ProjectStatus = 'awaiting_approval' | 'running' | 'completed' | 'failed' | 'archived';
+export type ProjectStatus = 'awaiting_approval' | 'clarifying' | 'running' | 'completed' | 'failed' | 'archived';
 
 export interface ProjectMember {
   employeeId: string;
@@ -105,6 +105,8 @@ export interface Project {
   id: string;
   title: string;
   request: string;
+  /** The chat session that owns this proposal. Never use another chat's draft as context. */
+  conversationId?: string;
   steps: string[];
   expectedOutputs: string[];
   members: ProjectMember[];
@@ -114,6 +116,10 @@ export interface Project {
   status: ProjectStatus;
   teamId?: string;
   rejectionReason?: string;
+  /** The user answers collected by the newly formed team before execution starts. */
+  clarificationResponse?: string;
+  /** Increments whenever the confirmed roster is structurally changed. */
+  rosterRevision?: number;
   /** Versioned source of truth for professional planning and approval. */
   brief?: ProjectBrief;
   createdAt: number;

@@ -54,7 +54,7 @@ export default function ProjectApprovalCard({ project, employees, onApprove, onR
       )}
       {project.expectedOutputs.length > 0 && <div className="project-approval-output">预期产出：{project.expectedOutputs.join('、')}</div>}
       <div className="project-approval-actions">
-        <Button type="primary" icon={<CheckOutlined />} disabled={members.length === 0} onClick={onApprove}>批准并组建团队</Button>
+        <Button type="primary" icon={<CheckOutlined />} disabled={members.length === 0} onClick={onApprove}>批准并建立团队</Button>
         <Button danger icon={<CloseOutlined />} onClick={onReject}>驳回</Button>
       </div>
     </section>

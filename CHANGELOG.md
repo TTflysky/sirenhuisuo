@@ -1,5 +1,15 @@
 # 更新日志
 
+## v2.2.2 (Durable team formation and staged execution)
+
+- Made the project proposal the durable source of truth for team formation. Each draft now records its owning chat session, original goal, structured roster revision, and clarification state; a correction updates that same record instead of asking the dispatcher to infer a new project from recent wording.
+- Added structural add, replace, and remove roster mutations. “换一个 UI 设计师” now replaces the corresponding responsibility only after a real employee is resolved; generic UI/UX wording never falls back to an unrelated general designer, and ambiguous specialty choices request a concrete employee instead of guessing.
+- Routed “可以”“就这个团队，拉群吧” to approval of the pending project in the current chat session. It can no longer create a new proposal or re-run capability matching, preventing the previously observed irrelevant Drupal candidate regression.
+- Separated team establishment from execution. Approval creates the group with the approved roster, asks for product boundary, sources, deployment, required capabilities and UI style, then waits for the owner to confirm direction before creating the staged task plan.
+- Strengthened staged delivery visibility: work and review remain interleaved gates, queued members show “等待前置步骤” or “等待执行”, and only a truly running step marks an employee as working.
+- Replaced high-frequency full task hydration with per-task incremental projections after native execution events. IPC wake-up events are compact, artifacts sync only on actual artifact events, and startup/recovery remains the only full reconciliation path.
+- Added continuity and control-plane regressions covering scoped proposal approval, structured UI-role replacement, queued stage projection, clarification-before-execution, and incremental task refresh.
+
 ## v2.2.1 (Expert roster materialization)
 
 - Materialized all 268 bundled MIT-licensed Agency specialists as real office employees on first launch while preserving existing employees, teams, chats, tasks, and local configuration.

@@ -29,7 +29,8 @@ assert.equal(requiresFreshWebResearch('你不知道自己办公室多少人吗�
 
 const assistantSource = await fs.readFile('src/components/chat/AssistantChat.tsx', 'utf8');
 assert.match(assistantSource, /compileTaskDecision\(decisionTurns/);
-assert.match(assistantSource, /resolveTargetProject\(enriched, state\.projects\)/);
+assert.match(assistantSource, /resolveTargetProject\(enriched, state\.projects, conversationIdRef\.current\)/);
+assert.match(assistantSource, /isProjectApprovalIntent\(enriched\)/);
 assert.ok(assistantSource.indexOf('classifyLocalOfficeQuery(content)') < assistantSource.indexOf('resolveSkillContextWithEvidence(refs)'), 'local office facts must bypass skill resolution');
 assert.doesNotMatch(assistantSource, /recentUserContext[\s\S]{0,240}老板最新调度要求/);
 

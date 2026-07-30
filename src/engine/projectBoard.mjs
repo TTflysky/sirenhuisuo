@@ -6,7 +6,8 @@ const STAGE_ORDER = [
   { id: 'review', label: '验收' },
 ];
 
-const ACTIVE = new Set(['queued', 'running']);
+const ACTIVE_RUNS = new Set(['queued', 'running']);
+const RUNNING_STEPS = new Set(['running']);
 const NEEDS_ACTION = new Set(['awaiting_user', 'paused', 'failed']);
 
 function text(value, limit = 360) {
@@ -15,10 +16,11 @@ function text(value, limit = 360) {
 
 function stageFor(step = {}) {
   const source = `${text(step.title, 500)} ${text(step.assignment, 2000)}`;
-  if (step.kind === 'review' || /验收|审查|复审|review|检查/u.test(source)) return 'review';
+  if (step.kind === 'review') return 'review';
   if (/数据|数据库|接口|api|连接器|知识库|mcp|ima|接入|联调|连通/u.test(source)) return 'integration';
-  if (/ui\/?ux|交互|视觉|原型|界面设计|用户体验/u.test(source)) return 'design';
+  if (/ui\/?ux|交互|视觉|原型|界面设计|用户体验/iu.test(source)) return 'design';
   if (/html|css|react|前端|后端|代码|开发|实现|构建|编程/u.test(source)) return 'build';
+  if (/验收|审查|复审|review|检查/iu.test(source)) return 'review';
   return 'discovery';
 }
 
@@ -90,9 +92,10 @@ export function buildProjectBoard(runs = [], projectRecords = []) {
       const stageEntries = entries.filter((entry) => entry.stageId === stage.id);
       const total = stageEntries.length;
       const completed = stageEntries.filter((entry) => entry.step.status === 'completed').length;
-      const activeEntry = stageEntries.find((entry) => ACTIVE.has(entry.step.status));
+      const activeEntry = stageEntries.find((entry) => RUNNING_STEPS.has(entry.step.status));
       const actionEntry = stageEntries.find((entry) => NEEDS_ACTION.has(entry.step.status));
-      const owner = activeEntry?.step?.employeeId ?? actionEntry?.step?.employeeId ?? stageEntries.at(-1)?.step?.employeeId;
+      const queuedEntry = stageEntries.find((entry) => entry.step.status === 'queued');
+      const owner = activeEntry?.step?.employeeId ?? actionEntry?.step?.employeeId ?? queuedEntry?.step?.employeeId ?? stageEntries.at(-1)?.step?.employeeId;
       const status = activeEntry ? 'running'
         : actionEntry ? actionEntry.step.status
           : total > 0 && completed === total ? 'completed'
@@ -109,10 +112,10 @@ export function buildProjectBoard(runs = [], projectRecords = []) {
     const sortedRuns = [...projectRuns].sort(sortByTime);
     const latestRun = sortedRuns.at(-1) ?? root;
     const actionRun = [...sortedRuns].reverse().find((run) => NEEDS_ACTION.has(run.status));
-    const runningRun = [...sortedRuns].reverse().find((run) => ACTIVE.has(run.status));
-    const currentStage = stages.find((stage) => ACTIVE.has(stage.status))
+    const runningRun = [...sortedRuns].reverse().find((run) => ACTIVE_RUNS.has(run.status));
+    const currentStage = stages.find((stage) => stage.status === 'running')
       ?? stages.find((stage) => NEEDS_ACTION.has(stage.status))
-      ?? [...stages].reverse().find((stage) => stage.status !== 'completed')
+      ?? stages.find((stage) => stage.status === 'queued')
       ?? stages.at(-1);
     const total = entries.length;
     const completed = entries.filter((entry) => entry.step.status === 'completed').length;
@@ -136,7 +139,7 @@ export function buildProjectBoard(runs = [], projectRecords = []) {
       actionRun,
       latestResult: resultForRun(actionRun ?? latestRun),
       updatedAt: Math.max(...sortedRuns.map((run) => Number(run.updatedAt || run.createdAt || 0))),
-      section: ACTIVE.has(status) || NEEDS_ACTION.has(status) ? 'current' : status === 'completed' ? 'completed' : 'stopped',
+      section: ACTIVE_RUNS.has(status) || NEEDS_ACTION.has(status) ? 'current' : status === 'completed' ? 'completed' : 'stopped',
     };
   }).sort((a, b) => b.updatedAt - a.updatedAt);
 }

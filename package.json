@@ -1,7 +1,7 @@
 {
   "name": "hermes-office-pro",
   "private": true,
-  "version": "2.2.1",
+  "version": "2.2.2",
   "description": "太极 AI 办公会所 - 面向 Windows 的多模型协作与可恢复任务执行平台",
   "author": "TTflysky",
   "type": "module",
@@ -83,6 +83,7 @@
     "verify:execution-detail-contract": "node scripts/verify-execution-detail-contract.mjs",
     "verify:execution-detail-ui": "node scripts/verify-execution-detail-ui.mjs",
     "verify:team-execution-protocol": "node scripts/verify-team-execution-protocol.mjs",
+    "verify:orchestration-control": "node scripts/verify-orchestration-control-plane.mjs",
     "verify:expert-orchestration": "node scripts/verify-expert-orchestration.cjs",
     "verify:project-board": "node scripts/verify-project-board.mjs",
     "verify:connector-tool-availability": "node scripts/verify-connector-tool-availability.mjs",

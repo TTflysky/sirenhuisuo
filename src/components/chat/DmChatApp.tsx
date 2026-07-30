@@ -8,7 +8,7 @@ import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
 import ChatMessageText from './ChatMessageText';
 import MessageSkillEvidence from './MessageSkillEvidence';
 import ThoughtChainView from './ThoughtChainView';
-import { copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../utils/clipboard';
+import { copyAndArchiveChatTranscript, copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
 import SkillMentionInput from '../skills/SkillMentionInput';
 import { resolveSkillContextWithEvidence } from '../../engine/skillContext';
@@ -611,6 +611,16 @@ export default function DmChatApp({ empId }: Props) {
   const handleCopyMsg = async (content: string) => { await copyToClipboard(content); };
   const handleCopyAll = async () => {
     await copyToClipboard(msgs.map((m) => `[${m.roleId === 'human' ? '你' : emp.name}] ${m.content}`).join('\n\n'));
+    await copyAndArchiveChatTranscript({
+      scope: `dm-${emp.id}`,
+      title: `${emp.name} Direct Message Transcript`,
+      messages: msgs.map((message) => ({
+        role: message.roleId === 'human' ? 'User' : emp.title,
+        author: message.roleId === 'human' ? 'User' : emp.name,
+        content: message.content,
+        time: new Date(message.timestamp).toLocaleString('zh-CN'),
+      })),
+    });
   };
   const handleExport = () => {
     const md = messagesToMarkdown(msgs.map((m) => ({

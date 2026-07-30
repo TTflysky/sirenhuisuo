@@ -1218,7 +1218,12 @@ function createNativeExecutionAdapter(options) {
       await updateRun(job.taskId, (next) => {
         if (next.executionProtocol) next.executionProtocol = teamExecutionProtocol.projectTeamExecutionEvent(next.executionProtocol, { type: review.decision === 'pass' ? 'review_passed' : 'review_rejected', stepId: step.id, employeeId: member.id, reason: review.reason, responsibleStepId: review.responsibleStepId, detail: review.reason });
       }, `团队协议记录审查 ${step.id}`);
-      if (review.decision === 'reject') await appendRevisionSteps(job, step, review);
+      if (review.decision === 'reject') {
+        const revisionOutcome = await appendRevisionSteps(job, step, review);
+        if (revisionOutcome?.waitingForUser) {
+          throw new ExecutionControlSignal('awaiting_user', revisionOutcome.waitingForUser);
+        }
+      }
     } else {
       await checkpoint(job, { kind: 'step_completed', stepId: step.id, summary: result.content.slice(0, 700) });
       await updateRun(job.taskId, (next) => {
@@ -1251,10 +1256,34 @@ function createNativeExecutionAdapter(options) {
 
   async function appendRevisionSteps(job, reviewStep, review) {
     const { runner, taskDelegation, teamExecutionProtocol } = await loadEngineModules();
+    let waitingForUser = '';
     await updateRun(job.taskId, (run) => {
       const revisionCount = Number(run.revisionCount) || 0;
       const maxRevisions = Number(run.maxRevisions) || 2;
-      if (revisionCount >= maxRevisions) throw new Error(`审查已连续退回 ${maxRevisions} 次，需要人工确认`);
+      if (revisionCount >= maxRevisions) {
+        waitingForUser = `“${reviewStep.title}”已连续退回 ${maxRevisions} 次。请你决定：允许按当前结果通过、要求从本阶段重新做，或停止该项目。`;
+        run.status = 'awaiting_user';
+        run.phase = 'blocked';
+        run.handoff = {
+          ts: Date.now(),
+          completed: run.steps.filter((step) => step.status === 'completed').map((step) => step.title),
+          blocked: waitingForUser,
+          nextAction: '请在聊天中选择“允许通过”“本阶段重做”或“停止项目”；系统会保留已完成证据，不会自行越过审查。',
+        };
+        if (run.recoveryContext) {
+          run.recoveryContext.summary = '审查多次未通过，正在等待老板决定是否通过、重做或停止。';
+          run.recoveryContext.waitingFor = waitingForUser;
+          run.recoveryContext.autoResume = false;
+        }
+        run.steps.forEach((step) => {
+          if (step.status === 'queued') {
+            step.status = 'paused';
+            step.events ||= [];
+            step.events.push({ ts: Date.now(), type: 'status', detail: '审查未通过，等待老板决定后再继续。' });
+          }
+        });
+        return;
+      }
       const target = (review.responsibleStepId ? run.steps.find((item) => item.id === review.responsibleStepId) : undefined)
         || [...run.steps].reverse().find((item) => item.status === 'completed' && item.kind !== 'review');
       const employeeId = review.responsibleEmployeeId || target?.employeeId;
@@ -1284,13 +1313,31 @@ function createNativeExecutionAdapter(options) {
         dependsOnStepIds: [revision.id], status: 'queued', attempts: 0, evidence: [], events: [{ ts: now, type: 'status', detail: '等待修订后复审' }],
       };
       run.steps.push(revision, recheck);
+      // A rejection is a gate, not a note. The next original stage must wait
+      // for the correction and its recheck instead of racing ahead.
+      for (const pending of run.steps) {
+        if (pending.id === revision.id || pending.id === recheck.id || !['queued', 'paused'].includes(pending.status)) continue;
+        if (!(pending.dependsOnStepIds || []).includes(reviewStep.id)) continue;
+        pending.dependsOnStepIds = [...new Set((pending.dependsOnStepIds || []).filter((id) => id !== reviewStep.id).concat(recheck.id))];
+        pending.events ||= [];
+        pending.events.push({ ts: now, type: 'status', detail: '前置审查退回，等待修订和复审通过。' });
+        const runnerStep = run.runner?.plan?.steps?.find((item) => item.stepId === pending.id);
+        if (runnerStep) runnerStep.dependsOn = [...pending.dependsOnStepIds];
+        const formalStep = run.plan?.steps?.find((item) => item.stepId === pending.id);
+        if (formalStep) formalStep.dependsOn = [...pending.dependsOnStepIds];
+      }
       if (run.executionProtocol) run.executionProtocol = teamExecutionProtocol.reconcileTeamExecutionProtocol(run.executionProtocol, { members: run.memberSnapshot, steps: run.steps });
       run.revisionCount = count;
       if (run.runner) {
         try { run.runner = runner.appendTaskRunnerSteps(run.runner, [formalStep(run.id, revision), formalStep(run.id, recheck)], '原生 Adapter 审查退回'); run.plan = run.runner.plan; } catch {}
       }
     }, '原生 Adapter 根据审查退回追加修订与复审');
+    if (waitingForUser) {
+      emit(job, 'review_waiting_user', { stepId: reviewStep.id, reason: waitingForUser });
+      return { waitingForUser };
+    }
     emit(job, 'plan_extended', { stepId: reviewStep.id, reason: review.reason });
+    return { waitingForUser: '' };
   }
 
   async function failStep(job, step, member, error) {

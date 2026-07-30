@@ -171,12 +171,12 @@ export default function AutopilotPanel() {
               return `${employee?.name ?? '已删除成员'}：${member.reason}`;
             });
             return <div className="autopilot-card" key={project.id}>
-              <div className="autopilot-card-title">{project.title} <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{project.status === 'awaiting_approval' ? '待批准' : project.status === 'running' ? '执行中' : project.status === 'archived' ? '已归档' : project.status}</span></div>
+              <div className="autopilot-card-title">{project.title} <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{project.status === 'awaiting_approval' ? '待批准' : project.status === 'clarifying' ? '等待确认方向' : project.status === 'running' ? '执行中' : project.status === 'archived' ? '已归档' : project.status}</span></div>
               <div className="autopilot-card-rationale">{project.request}</div>
               <div className="autopilot-card-out">成员选择：{members.join('；') || '未找到在线成员'}</div>
               {project.steps.length > 0 && <ol className="autopilot-card-steps">{project.steps.map((step, index) => <li key={index}>{step}</li>)}</ol>}
               <div className="autopilot-card-actions">
-                {project.status === 'awaiting_approval' && <Button size="small" type="primary" disabled={!project.members.length} onClick={() => approveProject(project.id)}>批准并组建团队</Button>}
+                {project.status === 'awaiting_approval' && <Button size="small" type="primary" disabled={!project.members.length} onClick={() => approveProject(project.id)}>批准并建立团队</Button>}
                 {project.teamId && <Button size="small" onClick={() => openTeamChat(project.teamId!)}>打开项目团队</Button>}
                 {project.status !== 'archived' && <Button size="small" onClick={() => archiveProject(project.id)}>归档</Button>}
               </div>

@@ -14,6 +14,9 @@ const TEAM_ADDITION_PATTERNS = [
 ];
 
 const TEAM_MEMBER_CORRECTION_RE = /(?:拉|加|选|成员|队员).{0,12}(?:不对|错了|不合理|不匹配|漏了|少了)|(?:为什么|怎么).{0,16}(?:不叫|不拉|不加|不用|不选|没叫|没拉|没加|没选)|不是有|明明有/u;
+const TEAM_MEMBER_REPLACEMENT_RE = /(?:换|替换|改用|改成|不要(?:再)?用).{0,20}(?:成员|队员|员工|设计师|开发|工程师|UI|UX|前端|后端)|(?:成员|队员|员工).{0,12}(?:换成|替换成|改用)/iu;
+const TEAM_MEMBER_REMOVAL_RE = /(?:移除|删除|删掉|去掉|不(?:要|用)).{0,20}(?:成员|队员|员工|设计师|开发|工程师|UI|UX|前端|后端)|(?:团队|小组|群).{0,24}(?:移除|删除|删掉|去掉)/iu;
+const PROJECT_APPROVAL_RE = /^(?:(?:可以|好(?:的)?|同意|批准|确认|按(?:这个|刚才|上面|之前)(?:的)?(?:团队|方案)?)(?:[，。！!\s]*)|(?:(?:就|按)(?:这个|刚才|上面|之前)(?:的)?(?:团队|方案)?[，,，\s]*(?:你)?(?:拉群|组队|组建团队|建群)(?:吧)?[。！!\s]*)|(?:(?:拉群|组队|组建团队|建群)(?:吧)?[。！!\s]*))$/u;
 
 function compact(value: string): string {
   return value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
@@ -21,11 +24,60 @@ function compact(value: string): string {
 
 export function isTeamMemberAdditionRequest(text: string): boolean {
   const normalized = text.trim();
-  return TEAM_ADDITION_PATTERNS.some((pattern) => pattern.test(normalized));
+  return TEAM_ADDITION_PATTERNS.some((pattern) => pattern.test(normalized))
+    || isTeamMemberReplacementRequest(normalized)
+    || isTeamMemberRemovalRequest(normalized);
 }
 
 export function isTeamMemberCorrectionRequest(text: string): boolean {
   return TEAM_MEMBER_CORRECTION_RE.test(text.trim());
+}
+
+export function isTeamMemberReplacementRequest(text: string): boolean {
+  return TEAM_MEMBER_REPLACEMENT_RE.test(text.trim());
+}
+
+export function isTeamMemberRemovalRequest(text: string): boolean {
+  return TEAM_MEMBER_REMOVAL_RE.test(text.trim());
+}
+
+export function isProjectApprovalIntent(text: string): boolean {
+  return PROJECT_APPROVAL_RE.test(text.trim());
+}
+
+function specialistDomains(employee: Employee): string[] {
+  const source = `${employee.name} ${employee.title} ${employee.role} ${(employee.capabilities ?? []).join(' ')}`.toLowerCase();
+  if (/ui|ux|界面|交互|视觉|设计/u.test(source)) return ['design'];
+  if (/前端|react|vue|网页|网站|客户端/u.test(source)) return ['frontend'];
+  if (/后端|数据库|服务端|api|安全|ai|知识库|连接器/u.test(source)) return ['architecture'];
+  if (/测试|审查|审核|验收|质量/u.test(source)) return ['review'];
+  if (/项目|策划|产品|协调|规划/u.test(source)) return ['scope'];
+  return [`role:${employee.role}`];
+}
+
+/**
+ * Applies a roster mutation without re-running project matching. The confirmed
+ * list remains the source of truth; a replacement only swaps the same specialty.
+ */
+export function applyProjectRosterMutation(
+  currentMemberIds: string[],
+  mentionedEmployees: Employee[],
+  employees: Employee[],
+  intent: 'add' | 'replace' | 'remove',
+): string[] {
+  const requestedIds = [...new Set(mentionedEmployees.map((employee) => employee.id))];
+  if (!requestedIds.length) return [...new Set(currentMemberIds)];
+  if (intent === 'remove') return currentMemberIds.filter((id) => !requestedIds.includes(id));
+  if (intent === 'add') return [...new Set([...currentMemberIds, ...requestedIds])];
+
+  const directory = new Map(employees.map((employee) => [employee.id, employee]));
+  const replacementDomains = new Set(mentionedEmployees.flatMap(specialistDomains));
+  const retained = currentMemberIds.filter((employeeId) => {
+    if (requestedIds.includes(employeeId)) return true;
+    const existing = directory.get(employeeId);
+    return !existing || !specialistDomains(existing).some((domain) => replacementDomains.has(domain));
+  });
+  return [...new Set([...retained, ...requestedIds])];
 }
 
 export function resolveMentionedEmployees(text: string, employees: Employee[]): Employee[] {
@@ -35,6 +87,16 @@ export function resolveMentionedEmployees(text: string, employees: Employee[]): 
     return name.length > 0 && normalized.includes(name);
   });
   if (named.length) return named;
+
+  // A title such as "UI 设计师" is a specialty request, not a request for the
+  // first generic "设计师" in the office. When there are several specialists,
+  // leave the choice explicit instead of silently selecting one.
+  const wantsDesignSpecialist = /ui|ux|界面|交互|视觉/iu.test(text);
+  if (wantsDesignSpecialist) {
+    const specialists = employees.filter((employee) => /ui|ux|界面|交互|视觉/iu.test(`${employee.title} ${(employee.capabilities ?? []).join(' ')}`));
+    if (specialists.length === 1) return specialists;
+    if (specialists.length > 1) return [];
+  }
 
   // The boss often refers to a specialist by title instead of remembering the
   // employee name. Prefer the most specific matching title, not every generic
@@ -58,14 +120,17 @@ export function resolveMentionedEmployees(text: string, employees: Employee[]): 
   return ranked.filter((item) => item.score === topScore).map((item) => item.employee);
 }
 
-export function resolveTargetProject(text: string, projects: Project[]): Project | undefined {
+export function resolveTargetProject(text: string, projects: Project[], conversationId?: string): Project | undefined {
   const candidates = projects
-    .filter((project) => project.status === 'awaiting_approval' || project.status === 'running')
+    .filter((project) => project.status === 'awaiting_approval' || project.status === 'clarifying' || project.status === 'running')
+    .filter((project) => !conversationId || !project.conversationId || project.conversationId === conversationId)
     .sort((a, b) => b.updatedAt - a.updatedAt);
   const normalized = compact(text);
   const explicit = candidates.find((project) => normalized.includes(compact(project.title)));
   if (explicit) return explicit;
-  return candidates.find((project) => project.status === 'awaiting_approval') ?? candidates[0];
+  return candidates.find((project) => project.status === 'awaiting_approval')
+    ?? candidates.find((project) => project.status === 'clarifying')
+    ?? candidates[0];
 }
 
 export function resolveTargetTeam(text: string, teams: Team[], recentMessages: string[] = [], preferredTeamIds: string[] = []): Team | undefined {

@@ -19,6 +19,7 @@ const checks = [
   'verify:execution-evidence',
   'verify:tool-registry',
   'verify:project-board',
+  'verify:orchestration-control',
   'verify:skill-directory-contract',
   'verify:skill-install-e2e',
 ];

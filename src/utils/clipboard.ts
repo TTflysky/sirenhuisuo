@@ -42,6 +42,42 @@ export function messagesToMarkdown(msgs: { role: string; author?: string; conten
 }
 
 /** 直接下载文本，不把聊天导出混入产出物列表。 */
+export interface ChatTranscriptInput {
+  scope: string;
+  title: string;
+  messages: { role: string; author?: string; content: string; time?: string }[];
+}
+
+function transcriptScope(value: string): string {
+  return String(value || 'chat').replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'chat';
+}
+
+/**
+ * A copied conversation is also persisted as Markdown. This keeps a readable
+ * handoff in the workspace instead of making the clipboard the only record.
+ */
+export async function copyAndArchiveChatTranscript(input: ChatTranscriptInput): Promise<{ copied: boolean; path?: string; error?: string }> {
+  const markdown = messagesToMarkdown(input.messages, input.title);
+  const copied = await copyToClipboard(markdown);
+  const filename = `${transcriptScope(input.scope)}-${new Date().toISOString().replace(/[:.]/g, '-')}.md`;
+  const relativePath = `transcripts/${transcriptScope(input.scope)}/${filename}`;
+  const writer = typeof window !== 'undefined' ? window.electronAPI?.fsWrite : undefined;
+  if (!writer) {
+    downloadTextFile(filename, markdown);
+    return { copied };
+  }
+  try {
+    const result = await writer(relativePath, markdown);
+    if (result.ok) return { copied, path: result.path };
+    // Preserve the user's handoff even when the workspace cannot be written.
+    downloadTextFile(filename, markdown);
+    return { copied, error: result.error || '聊天记录写入工作区失败，已下载 Markdown 文件。' };
+  } catch (error) {
+    downloadTextFile(filename, markdown);
+    return { copied, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export function downloadTextFile(filename: string, content: string, mime = 'text/markdown;charset=utf-8'): void {
   const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);

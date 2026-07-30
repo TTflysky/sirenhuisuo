@@ -301,6 +301,22 @@ export async function hydrateTaskRunsFromMainStore(): Promise<TaskRun[] | null> 
   }
 }
 
+/** Reads only one changed task projection for high-frequency native events. */
+export async function hydrateTaskRunFromMainStore(taskId: string): Promise<TaskRun | null> {
+  try {
+    const reader = typeof window !== 'undefined' ? window.electronAPI?.taskStoreQuery : undefined;
+    if (!reader || !taskId) return null;
+    const result = await reader({ taskId, limit: 1 });
+    if (!result.ok) return null;
+    mergeTaskLedgerState(result.events, result.integrity);
+    const run = result.runs?.find((item) => item.id === taskId);
+    if (!run) return null;
+    return normalizeTaskRuns([run])[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function saveTaskRuns(runs: TaskRun[]): void {
   const limited = saveLocalTaskRuns(runs);
   writeMainTaskRuns(limited);

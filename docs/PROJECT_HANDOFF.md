@@ -1,9 +1,19 @@
 # 项目交接手册
 
 > 最后整理：2026-07-30
-> 当前源码版本：`v2.2.1`
+> 当前源码版本：`v2.2.2`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+
+## v2.2.2 组队连续性与依赖执行
+
+本版解决两个 P0 根因，不能用提示词替代。第一，项目草案是结构化状态而不是最近几条聊天的推断：草案绑定创建它的聊天会话，保存原始目标、确认成员、名单修订和方向确认状态。换人、加人和删人都必须改同一份名单；“可以”“就这个团队，拉群吧”只能批准当前会话的待批方案，不能重新匹配专家。UI/UX 泛称若无法唯一定位员工，必须追问，绝不能回退到普通设计师或无关专家。
+
+第二，建立团队与开工分开。批准后只创建团队并在群内确认第一版边界、知识来源/部署、必需能力和界面风格；用户确认后才生成依赖计划。执行计划将工作和审查交错，审查未通过阻塞下游；界面只把真实 `running` 标为工作中，`queued` 明确显示为“等待前置步骤/等待执行”。
+
+性能规则：启动和故障恢复可全量读取任务账本；原生执行的高频通知必须按 `taskId` 读取并补丁合并单条任务。工具产出只在真实 `tool_result` 带有 artifact 时同步；IPC 通知只传简短预览，完整证据仍从主进程账本读取。
+
+必跑命令：`npm.cmd run verify:team-membership`、`verify:dispatch-intelligence`、`verify:orchestration-control`、`verify:project-board`、`verify:team-execution-protocol`、`verify:native-execution`、`verify:v2-core-gate`、`npm.cmd run dist:win`、`npm.cmd run verify:package`。
 
 ## v2.2.1 专家员工化与交接
 

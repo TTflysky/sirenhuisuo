@@ -32,6 +32,21 @@ const APP_SESSION_ID = `session-${Date.now()}-${Math.random().toString(36).slice
 const WINDOW_PREFERENCES_PATH = path.join(app.getPath('userData'), 'window-preferences.json');
 const DEV_SERVER_URL = process.env.TAIJI_DEV_SERVER_URL || 'http://localhost:5173';
 
+// The durable task store remains the source of full execution details. IPC
+// notifications only wake renderers, so keep high-frequency tool events small.
+function compactExecutionEventForRenderer(event) {
+  if (!event || typeof event !== 'object') return event;
+  const next = { ...event };
+  if (typeof next.output === 'string' && next.output.length > 320) next.output = `${next.output.slice(0, 320)}...`;
+  if (typeof next.summary === 'string' && next.summary.length > 320) next.summary = `${next.summary.slice(0, 320)}...`;
+  if (typeof next.error === 'string' && next.error.length > 320) next.error = `${next.error.slice(0, 320)}...`;
+  if (next.arguments && typeof next.arguments === 'object') {
+    const preview = JSON.stringify(next.arguments);
+    if (preview.length > 480) next.arguments = { preview: `${preview.slice(0, 480)}...`, truncated: true };
+  }
+  return next;
+}
+
 ipcMain.on('app:getSessionId', (event) => { event.returnValue = APP_SESSION_ID; });
 
 // ===== 自主代理工作区（沙箱目录，所有文件读写/命令执行都限制在此）=====
@@ -101,7 +116,7 @@ const nativeExecutionAdapter = createNativeExecutionAdapter({
   fetchImpl: (url, options) => net.fetch(url, options),
   onChanged(event) {
     for (const win of BrowserWindow.getAllWindows()) {
-      if (!win.isDestroyed()) win.webContents.send('task-execution:changed', event);
+      if (!win.isDestroyed()) win.webContents.send('task-execution:changed', compactExecutionEventForRenderer(event));
     }
   },
 });
