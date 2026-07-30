@@ -32,6 +32,8 @@ import { isTeamMemberAdditionRequest, resolveMentionedEmployees } from './engine
 import { sendBus, onBus, BUS_CHANNELS } from './ipcBus';
 import { appendTaskRunContext, createTaskRun, formalPlanStepForRun, getExecutionSessionId, hydrateTaskRunsFromMainStore, saveTaskRuns, sendTaskWorkerCommand, taskRunContextPrompt, updateTaskRun } from './data/taskRuns';
 import { buildTaskPlan, matchProjectMembers, matchTeamMembers } from './engine/taskMatcher';
+import { employeePlanningPool, expertToEmployee, findExpertCatalogEntry } from './data/expertCatalog';
+import { briefExecutionContext, buildProfessionalProjectBrief } from './engine/expertOrchestration';
 import { buildSkillContextWithEvidence, listSkills, matchSkills } from './data/skills';
 import { attachmentWorkspaceContext, copyAttachmentsToWorkspace, initializeTaskWorkspace } from './utils/attachments';
 import { syncNativeArtifacts, syncNativeRunArtifacts } from './data/outputs';
@@ -325,6 +327,7 @@ export interface StoreCtx {
   addEmployee: (name: string, title: string, role: OpcRoleId, avatar: string, avatarKind: 'preset' | 'custom', statusColor?: string, prompt?: string, avatarFrame?: import('./types').AvatarFrameConfig) => void;
   createTeam: (name: string, icon: string, memberIds: string[], description?: string) => void;
   addTeamMembers: (teamId: string, memberIds: string[]) => Employee[];
+  addCatalogExperts: (expertIds: string[]) => Employee[];
   setProjectMembers: (projectId: string, memberIds: string[]) => ProjectMember[];
   createProjectDraft: (input: { title: string; request: string; steps?: string[]; expectedOutputs?: string[]; requiredCapabilities?: string[]; decisionReason?: string }) => void;
   approveProject: (projectId: string) => void;
@@ -571,6 +574,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'ADD_EMPLOYEE', emp: newEmp });
   };
 
+  const addCatalogExperts = (expertIds: string[]): Employee[] => {
+    const current = stateRef.current;
+    const existing = new Map(current.employees.map((employee) => [employee.id, employee]));
+    const added: Employee[] = [];
+    for (const expertId of [...new Set(expertIds)]) {
+      const present = existing.get(expertId);
+      if (present) {
+        added.push(present);
+        continue;
+      }
+      const expert = findExpertCatalogEntry(expertId);
+      if (!expert) continue;
+      const employee = expertToEmployee(expert, current.employees.length + added.length);
+      existing.set(employee.id, employee);
+      added.push(employee);
+      dispatch({ type: 'ADD_EMPLOYEE', emp: employee });
+    }
+    return added;
+  };
+
   const createTeam = (name: string, icon: string, memberIds: string[], description = '') => {
     const now = Date.now();
     const team: Team = {
@@ -607,14 +630,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const team = current.teams.find((item) => item.id === teamId);
     if (!team) return [];
     const existingIds = new Set(team.memberIds);
-    const added = [...new Set(memberIds)]
-      .map((id) => current.employees.find((employee) => employee.id === id))
-      .filter((employee): employee is Employee => !!employee && !existingIds.has(employee.id));
+    const knownEmployees = new Map(current.employees.map((employee) => [employee.id, employee]));
+    const added = [...new Set(memberIds)].map((id, index) => {
+      const present = knownEmployees.get(id);
+      if (present) return present;
+      const expert = findExpertCatalogEntry(id);
+      return expert ? expertToEmployee(expert, current.employees.length + index) : undefined;
+    }).filter((employee): employee is Employee => !!employee && !existingIds.has(employee.id));
     if (!added.length) return [];
+
+    for (const employee of added) {
+      if (!knownEmployees.has(employee.id)) dispatch({ type: 'ADD_EMPLOYEE', emp: employee });
+    }
 
     const nextMemberIds = [...new Set([...team.memberIds, ...added.map((employee) => employee.id)])];
     dispatch({ type: 'UPDATE_TEAM', id: teamId, partial: { memberIds: nextMemberIds } });
     added.forEach((employee) => dispatch({ type: 'UPDATE_EMPLOYEE', id: employee.id, partial: { currentTeamId: teamId } }));
+    const roster = new Map([...current.employees, ...added].map((employee) => [employee.id, employee]));
+    const activeRuns = current.taskRuns.filter((run) => run.teamId === teamId && ['queued', 'running', 'paused'].includes(run.status));
+    for (const run of activeRuns) {
+      const members = nextMemberIds.map((id) => roster.get(id)).filter((employee): employee is Employee => !!employee)
+        .map((employee) => ({ ...employee, modelConfig: client.getEmployeeModel(employee) }));
+      void window.electronAPI?.taskExecutionSyncMembers?.({ taskId: run.id, members });
+    }
     dispatch({
       type: 'APPEND_CHAT',
       teamId,
@@ -635,7 +673,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const current = stateRef.current;
     const project = current.projects.find((item) => item.id === projectId);
     if (!project || project.status !== 'awaiting_approval') return [];
-    const employees = client.fetchInitial().employees;
+    const employees = employeePlanningPool(client.fetchInitial().employees);
     const selectionRequest = [project.request, ...(project.requiredCapabilities ?? [])].filter(Boolean).join('\n所需能力：');
     const recommended = new Map(matchProjectMembers(employees, selectionRequest).map((member) => [member.employeeId, member.reason]));
     const members = [...new Set(memberIds)]
@@ -647,14 +685,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const createProjectDraft = (input: { title: string; request: string; steps?: string[]; expectedOutputs?: string[]; requiredCapabilities?: string[]; decisionReason?: string }) => {
     const now = Date.now();
-    const latestEmployees = client.fetchInitial().employees;
+    const latestEmployees = employeePlanningPool(client.fetchInitial().employees);
+    const selectionRequest = [input.request, ...(input.requiredCapabilities ?? [])].filter(Boolean).join('\n所需能力：');
+    const members = matchProjectMembers(latestEmployees, selectionRequest);
     const project: Project = {
       id: `project-${now}-${Math.random().toString(36).slice(2, 7)}`,
       title: input.title.trim() || '未命名项目',
       request: input.request.trim(),
       steps: input.steps?.filter(Boolean) ?? [],
       expectedOutputs: input.expectedOutputs?.filter(Boolean) ?? [],
-      members: matchProjectMembers(latestEmployees, [input.request, ...(input.requiredCapabilities ?? [])].filter(Boolean).join('\n所需能力：')),
+      members,
+      brief: buildProfessionalProjectBrief({ request: input.request, members }),
       requiredCapabilities: input.requiredCapabilities?.filter(Boolean),
       decisionReason: input.decisionReason?.trim(),
       status: 'awaiting_approval', createdAt: now, updatedAt: now,
@@ -667,6 +708,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (!project || project.status !== 'awaiting_approval') return;
     const memberIds = project.members.map((member) => member.employeeId);
     if (!memberIds.length) return;
+    const memberDirectory = new Map(stateRef.current.employees.map((employee) => [employee.id, employee]));
+    for (const employee of addCatalogExperts(memberIds)) memberDirectory.set(employee.id, employee);
     const team: Team = {
       id: `team-project-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       name: project.title,
@@ -675,13 +718,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       updatedAt: Date.now(),
       icon: '📌', memberIds, projectId,
       chatMessages: [{ id: `msg-project-${Date.now()}`, authorId: 'assistant', roleId: 'custom',
-        content: `团队已建立。${memberIds.map((id) => `@${stateRef.current.employees.find((employee) => employee.id === id)?.name ?? id}`).join('、')} 将按各自责任推进；阶段进展、真实产出和验收结论会统一显示在项目面板。`, mentions: memberIds, timestamp: Date.now(), kind: 'text' }],
+        content: `团队已建立。${memberIds.map((id) => `@${memberDirectory.get(id)?.name ?? id}`).join('、')} 将按各自责任推进；阶段进展、真实产出和验收结论会统一显示在项目面板。`, mentions: memberIds, timestamp: Date.now(), kind: 'text' }],
       tasks: [],
     };
     dispatch({ type: 'ADD_TEAM', team });
     dispatch({ type: 'UPDATE_PROJECT', id: projectId, partial: { status: 'running', teamId: team.id } });
     memberIds.forEach((id) => dispatch({ type: 'UPDATE_EMPLOYEE', id, partial: { currentTeamId: team.id } }));
-    setTimeout(() => { void startTaskRun(team.id, project.request, memberIds); }, 0);
+    setTimeout(() => { void startTaskRun(team.id, project.request, memberIds, undefined, undefined, [], undefined, undefined, project.brief); }, 0);
   };
 
   const archiveProject = (projectId: string) => {
@@ -1643,7 +1686,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [state.taskRuns, state.employees, dispatch]);
 
-  const startTaskRun = async (teamId: string, request: string, employeeIds: string[], sourceMessageId?: string, attachments?: import('./data/hermesClient').Attachment[], explicitSkillRefs: import('./types').SkillReference[] = [], taskDecision?: import('./engine/taskDecisionKernel.mjs').TaskDecision, requestedConversationId?: string) => {
+  const startTaskRun = async (teamId: string, request: string, employeeIds: string[], sourceMessageId?: string, attachments?: import('./data/hermesClient').Attachment[], explicitSkillRefs: import('./types').SkillReference[] = [], taskDecision?: import('./engine/taskDecisionKernel.mjs').TaskDecision, requestedConversationId?: string, projectBrief?: Project['brief']) => {
     const current = stateRef.current;
     const team = current.teams.find((item) => item.id === teamId);
     if (!team) return;
@@ -1673,6 +1716,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
     }
     run.projectId = team.projectId;
+    if (projectBrief) {
+      appendTaskRunContext(run, {
+        type: 'decision', source: 'system', verified: true,
+        summary: `本任务遵循已批准的项目策划 v${projectBrief.version}，共 ${projectBrief.stages.length} 个阶段。`,
+        data: { projectBriefVersion: projectBrief.version, stages: projectBrief.stages.map((stage) => stage.id) },
+      });
+    }
     run.memberSnapshot.forEach((snapshot) => {
       const employee = current.employees.find((item) => item.id === snapshot.id);
       if (employee) snapshot.model = client.getEmployeeModel(employee).model;
@@ -1719,7 +1769,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return;
     }
     dispatch({ type: 'CREATE_TASK_RUN', run });
-    const extraSystemContext = [layeredMemoryContext, skillContext, historyContext, taskRunContextPrompt(run)].filter(Boolean).join('\n\n');
+    const extraSystemContext = [briefExecutionContext(projectBrief), layeredMemoryContext, skillContext, historyContext, taskRunContextPrompt(run)].filter(Boolean).join('\n\n');
     const nativeResult = await startNativeTaskExecution(run, extraSystemContext, attachments);
     if (nativeResult) {
       if (!nativeResult.ok) {
@@ -2170,6 +2220,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         addEmployee,
         createTeam,
         addTeamMembers,
+        addCatalogExperts,
         setProjectMembers,
         createProjectDraft,
         approveProject,

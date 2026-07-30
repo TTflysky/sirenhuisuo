@@ -2099,6 +2099,45 @@ function createNativeExecutionAdapter(options) {
     }
   }
 
+  // Team membership is allowed to grow while a project is running. Keep the
+  // durable member snapshot and in-memory execution roster in lockstep before
+  // a new expert can receive delegated work.
+  async function syncMembers(taskId, input = {}) {
+    const current = await readRun(String(taskId || '')).catch(() => undefined);
+    if (!current) return { ok: false, error: '找不到需要同步成员的任务' };
+    const incoming = Array.isArray(input.members) ? input.members
+      .filter((member) => member && text(member.id, 180))
+      .map((member) => ({ ...member, id: text(member.id, 180) })) : [];
+    if (!incoming.length) return { ok: false, error: '没有提供有效的团队成员名单' };
+    const job = jobs.get(current.id);
+    const known = new Map((current.memberSnapshot || []).map((member) => [String(member.id), member]));
+    const additions = incoming.filter((member) => !known.has(member.id));
+    if (!additions.length) return { ok: true, changed: false, job: job ? safeJob(job) : undefined };
+    if (job) {
+      for (const member of additions) job.members.set(member.id, { ...member });
+    }
+    const { teamExecutionProtocol } = await loadEngineModules();
+    await updateRun(current.id, (next) => {
+      const snapshots = incoming.map((member) => {
+        const snapshot = { ...member };
+        delete snapshot.modelConfig;
+        return snapshot;
+      });
+      const snapshotById = new Map((next.memberSnapshot || []).map((member) => [String(member.id), member]));
+      for (const member of snapshots) snapshotById.set(String(member.id), { ...snapshotById.get(String(member.id)), ...member });
+      next.memberSnapshot = [...snapshotById.values()];
+      next.memberRosterVersion = Number(next.memberRosterVersion || 0) + 1;
+      if (next.executionProtocol) {
+        next.executionProtocol = teamExecutionProtocol.reconcileTeamExecutionProtocol(next.executionProtocol, {
+          members: next.memberSnapshot,
+          steps: next.steps,
+        });
+      }
+    }, `团队执行名单已扩充：${additions.map((member) => text(member.name || member.id, 120)).join('、')}`);
+    if (job) emit(job, 'member_roster_updated', { additions: additions.map((member) => ({ id: member.id, name: text(member.name, 120) })), rosterSize: job.members.size });
+    return { ok: true, changed: true, additions: additions.map((member) => ({ id: member.id, name: text(member.name, 120) })), job: job ? safeJob(job) : undefined };
+  }
+
   async function delegationStatus(taskId) {
     const run = await readRun(String(taskId || '')).catch(() => undefined);
     if (!run) return { ok: false, error: '找不到任务' };
@@ -2128,7 +2167,7 @@ function createNativeExecutionAdapter(options) {
     }
   }
 
-  return { start, steer, delegate, delegationStatus, status, events, handleControl, stopAll };
+  return { start, steer, delegate, syncMembers, delegationStatus, status, events, handleControl, stopAll };
 }
 
 module.exports = {

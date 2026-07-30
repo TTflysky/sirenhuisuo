@@ -1125,6 +1125,7 @@ function createWindow() {
   ipcMain.handle('task-execution:status', async (_event, taskId) => nativeExecutionAdapter.status(taskId));
   ipcMain.handle('task-execution:events', async (_event, input) => nativeExecutionAdapter.events(input?.taskId, input?.afterSequence));
   ipcMain.handle('task-execution:steer', async (_event, input) => nativeExecutionAdapter.steer(input?.taskId, input?.message));
+  ipcMain.handle('task-execution:sync-members', async (_event, input) => nativeExecutionAdapter.syncMembers(input?.taskId, input));
   ipcMain.handle('memory:list', async (_event, input) => memoryManager.list(input));
   ipcMain.handle('memory:context', async (_event, input) => memoryManager.context(input));
   ipcMain.handle('memory:upsert', async (_event, input) => {

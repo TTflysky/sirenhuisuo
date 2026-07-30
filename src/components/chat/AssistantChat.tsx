@@ -30,6 +30,7 @@ import { getDirectExecutionControl, isExplicitPauseSteering, isExplicitResumeSte
 import { executionControllerStatus } from '../../engine/executionController.mjs';
 import { isTeamMemberAdditionRequest, isTeamMemberCorrectionRequest, resolveMentionedEmployees, resolveTargetProject, resolveTargetTeam } from '../../engine/teamMembership';
 import { matchProjectMembers } from '../../engine/taskMatcher';
+import { employeePlanningPool } from '../../data/expertCatalog';
 import { classifyLocalOfficeQuery, formatLocalOfficeAnswer } from '../../engine/officeDirectory';
 import {
   BEGINNER_RESPONSE_GUIDE,
@@ -321,7 +322,7 @@ export default function AssistantChat() {
       const contextualProject = explicitlyNamedTeam ? undefined : resolveTargetProject(enriched, state.projects);
       if (contextualProject?.status === 'awaiting_approval') {
         const selectionRequest = [contextualProject.request, ...(contextualProject.requiredCapabilities ?? [])].filter(Boolean).join('\n所需能力：');
-        const recommendedIds = matchProjectMembers(liveEmployees, selectionRequest).map((member) => member.employeeId);
+        const recommendedIds = matchProjectMembers(employeePlanningPool(liveEmployees), selectionRequest).map((member) => member.employeeId);
         const currentIds = contextualProject.members.map((member) => member.employeeId);
         const requestedIds = mentionedEmployees.map((employee) => employee.id);
         const nextIds = [...new Set([
@@ -425,8 +426,8 @@ export default function AssistantChat() {
         requiredCapabilities,
         decisionReason: decision.decisionReason,
       });
-      const members = matchProjectMembers(liveEmployees, selectionRequest)
-        .map((member) => liveEmployees.find((employee) => employee.id === member.employeeId))
+      const members = matchProjectMembers(employeePlanningPool(liveEmployees), selectionRequest)
+        .map((member) => employeePlanningPool(liveEmployees).find((employee) => employee.id === member.employeeId))
         .filter((employee): employee is Employee => !!employee);
       const memberText = members.length
         ? `已识别候选成员：${members.map((employee) => `${employee.name}（${employee.title}）`).join('、')}。`

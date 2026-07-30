@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   taskExecutionStatus: (taskId) => ipcRenderer.invoke('task-execution:status', taskId),
   taskExecutionEvents: (input) => ipcRenderer.invoke('task-execution:events', input),
   taskExecutionSteer: (input) => ipcRenderer.invoke('task-execution:steer', input),
+  taskExecutionSyncMembers: (input) => ipcRenderer.invoke('task-execution:sync-members', input),
   taskDelegationCreate: (input) => ipcRenderer.invoke('task-delegation:create', input),
   taskDelegationStatus: (taskId) => ipcRenderer.invoke('task-delegation:status', taskId),
   worktreeInspect: (sourceRepo) => ipcRenderer.invoke('worktree:inspect', sourceRepo),

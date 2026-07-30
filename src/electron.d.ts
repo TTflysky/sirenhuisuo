@@ -449,6 +449,7 @@ declare global {
     taskExecutionStatus: (taskId?: string) => Promise<NativeExecutionResult>;
     taskExecutionEvents: (input: { taskId: string; afterSequence?: number }) => Promise<{ ok: boolean; events: NativeExecutionEvent[] }>;
     taskExecutionSteer: (input: { taskId: string; message: string }) => Promise<NativeExecutionResult>;
+    taskExecutionSyncMembers: (input: { taskId: string; members: Array<import('./types').TaskRunMemberSnapshot & { modelConfig: import('./types').ModelConfig }> }) => Promise<NativeExecutionResult>;
     taskDelegationCreate: (input: TaskDelegationCreateInput) => Promise<TaskDelegationResult>;
     taskDelegationStatus: (taskId: string) => Promise<TaskDelegationResult>;
     worktreeInspect: (sourceRepo: string) => Promise<WorktreeResult>;

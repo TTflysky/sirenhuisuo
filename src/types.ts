@@ -39,6 +39,24 @@ export interface Employee {
   showThoughtChain?: boolean; // 是否显示思维链（可视化推理过程）
   /** 稳定能力 ID；旧数据缺省时从职位和提示词推导。 */
   capabilities?: string[];
+  /** Built-in catalog experts are promoted to an office employee only when selected. */
+  source?: 'user' | 'catalog' | 'seed';
+  catalogId?: string;
+}
+
+export interface ExpertCatalogEntry {
+  id: string;
+  agentId: string;
+  name: string;
+  title: string;
+  domain: string;
+  summary: string;
+  sourceType: string;
+  instructions: string;
+  sourcePath: string;
+  sourceUrl: string;
+  license: 'MIT';
+  sourceVersion: string;
 }
 
 // ===== 团队 =====
@@ -63,6 +81,26 @@ export interface ProjectMember {
   reason: string;
 }
 
+export interface ProjectBriefStage {
+  id: string;
+  title: string;
+  objective: string;
+  deliverables: string[];
+  acceptance: string;
+  memberIds: string[];
+}
+
+export interface ProjectBrief {
+  version: number;
+  createdAt: number;
+  goal: string;
+  deliverableType: string;
+  summary: string;
+  assumptions: string[];
+  openQuestions: string[];
+  stages: ProjectBriefStage[];
+}
+
 export interface Project {
   id: string;
   title: string;
@@ -76,6 +114,8 @@ export interface Project {
   status: ProjectStatus;
   teamId?: string;
   rejectionReason?: string;
+  /** Versioned source of truth for professional planning and approval. */
+  brief?: ProjectBrief;
   createdAt: number;
   updatedAt: number;
 }
@@ -381,6 +421,8 @@ export interface TaskRun {
   createdAt: number;
   updatedAt: number;
   memberSnapshot: TaskRunMemberSnapshot[];
+  /** Monotonic roster version; increments whenever a running project admits a new expert. */
+  memberRosterVersion?: number;
   steps: TaskRunStep[];
   skillRefs?: SkillReference[];
   skillEvidence?: SkillUsageEvidence[];
