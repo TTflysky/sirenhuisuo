@@ -5,9 +5,11 @@ import {
   LoadingOutlined,
   PictureOutlined,
   ReloadOutlined,
+  RobotOutlined,
+  ThunderboltOutlined,
   UploadOutlined,
 } from '@ant-design/icons';
-import { Modal } from 'antd';
+import { Button, Input, Modal, Select } from 'antd';
 import {
   AVATAR_PRESET_GROUPS,
   AVATAR_PRESETS,
@@ -15,12 +17,22 @@ import {
   renderPresetAvatar,
   type AvatarPresetGroupId,
 } from '../../data/avatarPresets';
+import { generateEmployeeAvatarImage, loadSettings, saveSettings, type AppSettings } from '../../data/hermesClient';
 
 interface Props {
   avatar: string;
   avatarKind: 'preset' | 'custom';
   onChange: (avatar: string, avatarKind: 'preset' | 'custom') => void;
+  employeeName?: string;
+  employeeTitle?: string;
 }
+
+type PickerGroupId = AvatarPresetGroupId | 'ai';
+
+const AVATAR_LIBRARY_GROUPS: Array<{ id: PickerGroupId; label: string; description: string }> = [
+  ...AVATAR_PRESET_GROUPS,
+  { id: 'ai', label: 'AI 生成', description: '调用模型库中指定的生图模型，生成并保存为本地员工头像' },
+];
 
 interface OnlinePixelAvatar {
   id: string;
@@ -54,30 +66,81 @@ function readBlobAsDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-export default function EmployeeAvatarPicker({ avatar, avatarKind, onChange }: Props) {
+const AVATAR_STYLES = [
+  '现代 3D 黏土风格，柔和棚拍光，干净纯色背景，专业且亲切',
+  '精致像素艺术风格，清晰轮廓，有限色板，适合作为办公软件头像',
+  '扁平矢量插画风格，几何造型，清晰面部特征，专业团队形象',
+  '日系动画头像风格，克制配色，清晰五官，办公室职业形象',
+  '未来科技员工肖像，材质细腻，明亮背景，可信赖的专业气质',
+];
+
+function randomAvatarPrompt(name = '', title = ''): string {
+  const style = AVATAR_STYLES[Math.floor(Math.random() * AVATAR_STYLES.length)];
+  const identity = [name.trim(), title.trim()].filter(Boolean).join('，');
+  return `正方形单人头像，${identity || 'AI 办公室员工'}，${style}。主体居中，头肩构图，背景简洁，无文字，无水印，无徽标。`;
+}
+
+export default function EmployeeAvatarPicker({ avatar, avatarKind, onChange, employeeName = '', employeeTitle = '' }: Props) {
   const currentPreset = avatarKind === 'preset' ? getPreset(avatar) : undefined;
   const isOnlinePixelAvatar = avatarKind === 'custom' && avatar.startsWith('data:image/svg+xml');
   const [open, setOpen] = useState(false);
-  const [groupId, setGroupId] = useState<AvatarPresetGroupId>(isOnlinePixelAvatar ? 'pixel' : currentPreset?.group === 'pixel' ? 'pixel' : currentPreset?.group ?? 'office');
+  const [groupId, setGroupId] = useState<PickerGroupId>(isOnlinePixelAvatar ? 'pixel' : currentPreset?.group === 'pixel' ? 'pixel' : currentPreset?.group ?? 'office');
   const [onlineBatch, setOnlineBatch] = useState(1);
   const [savingOnlineId, setSavingOnlineId] = useState('');
   const [onlineError, setOnlineError] = useState('');
+  const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
+  const [aiPrompt, setAiPrompt] = useState(() => randomAvatarPrompt(employeeName, employeeTitle));
+  const [generating, setGenerating] = useState(false);
+  const [generatedAvatar, setGeneratedAvatar] = useState('');
+  const [generatedModel, setGeneratedModel] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
   const visiblePresets = useMemo(
-    () => groupId === 'pixel' ? [] : AVATAR_PRESETS.filter((preset) => preset.group === groupId),
+    () => groupId === 'pixel' || groupId === 'ai' ? [] : AVATAR_PRESETS.filter((preset) => preset.group === groupId),
     [groupId],
   );
   const onlinePixelAvatars = useMemo(() => createOnlinePixelAvatars(onlineBatch), [onlineBatch]);
 
-  const groupCount = (id: AvatarPresetGroupId) => (
-    id === 'pixel' ? ONLINE_PIXEL_COUNT : AVATAR_PRESETS.filter((preset) => preset.group === id).length
-  );
+  const groupCount = (id: PickerGroupId) => id === 'pixel'
+    ? ONLINE_PIXEL_COUNT
+    : id === 'ai'
+      ? (settings.imageModelId ? 1 : 0)
+      : AVATAR_PRESETS.filter((preset) => preset.group === id).length;
 
   const openLibrary = () => {
     setGroupId(isOnlinePixelAvatar ? 'pixel' : currentPreset?.group === 'pixel' ? 'pixel' : currentPreset?.group ?? 'office');
     setOnlineError('');
+    setSettings(loadSettings());
     setOpen(true);
+  };
+
+  const selectImageModel = (id: string) => {
+    const next = loadSettings();
+    next.imageModelId = id || undefined;
+    saveSettings(next);
+    setSettings(next);
+  };
+
+  const generateAvatar = async () => {
+    const model = (settings.modelLibrary ?? []).find((entry) => entry.id === settings.imageModelId);
+    if (!model) {
+      setOnlineError('请先在模型库添加生图模型，并在这里选择它');
+      return;
+    }
+    setGenerating(true);
+    setGeneratedAvatar('');
+    setGeneratedModel('');
+    setOnlineError('');
+    try {
+      const result = await generateEmployeeAvatarImage(aiPrompt, model);
+      if (result.dataUrl.length > MAX_CUSTOM_AVATAR_BYTES * 1.4) throw new Error('生成头像超过 10MB，请降低生图尺寸');
+      setGeneratedAvatar(result.dataUrl);
+      setGeneratedModel(result.model);
+    } catch (error) {
+      setOnlineError(error instanceof Error ? error.message : '头像生成失败');
+    } finally {
+      setGenerating(false);
+    }
   };
 
   const selectPreset = (key: string) => {
@@ -162,7 +225,7 @@ export default function EmployeeAvatarPicker({ avatar, avatarKind, onChange }: P
       >
         <div className="avatar-library-toolbar">
           <div className="avatar-library-tabs" role="tablist" aria-label="头像分类">
-            {AVATAR_PRESET_GROUPS.map((group) => (
+            {AVATAR_LIBRARY_GROUPS.map((group) => (
               <button
                 key={group.id}
                 type="button"
@@ -197,13 +260,28 @@ export default function EmployeeAvatarPicker({ avatar, avatarKind, onChange }: P
         </div>
 
         <div className="avatar-library-group-note">
-          <span>{AVATAR_PRESET_GROUPS.find((group) => group.id === groupId)?.description}</span>
+          <span>{AVATAR_LIBRARY_GROUPS.find((group) => group.id === groupId)?.description}</span>
           {groupId === 'pixel' && <span>CC0 1.0</span>}
         </div>
 
         {onlineError && <div className="avatar-library-error" role="alert">{onlineError}</div>}
 
-        <div className={`avatar-library-grid${groupId === 'pixel' ? ' online' : ''}`}>
+        {groupId === 'ai' ? (
+          <section className="avatar-ai-generator">
+            <div className="avatar-ai-fields">
+              <label><span>生图模型</span><Select value={settings.imageModelId} placeholder="选择模型库中的生图模型" onChange={selectImageModel} options={(settings.modelLibrary ?? []).map((model) => ({ value: model.id, label: `${model.label} · ${model.model ?? '未填写模型名'}` }))} /></label>
+              <label><span>头像描述</span><Input.TextArea value={aiPrompt} rows={4} onChange={(event) => setAiPrompt(event.target.value)} maxLength={1200} showCount /></label>
+              <div className="avatar-ai-actions">
+                <Button icon={<ReloadOutlined />} onClick={() => { setAiPrompt(randomAvatarPrompt(employeeName, employeeTitle)); setGeneratedAvatar(''); }}>换个创意</Button>
+                <Button type="primary" icon={<ThunderboltOutlined />} loading={generating} disabled={!settings.imageModelId || !aiPrompt.trim()} onClick={() => void generateAvatar()}>随机生成头像</Button>
+              </div>
+            </div>
+            <div className={`avatar-ai-preview${generatedAvatar ? ' has-image' : ''}`}>
+              {generatedAvatar ? <img src={generatedAvatar} alt="AI 生成员工头像预览" /> : <div><RobotOutlined /><strong>{generating ? '正在生成头像' : '生成结果会显示在这里'}</strong><span>{generating ? '生图通常需要几十秒，请保持窗口开启' : '不会自动覆盖当前头像'}</span></div>}
+              {generatedAvatar && <><small>{generatedModel}</small><Button type="primary" icon={<CheckOutlined />} onClick={() => { onChange(generatedAvatar, 'custom'); setOpen(false); }}>使用这个头像</Button></>}
+            </div>
+          </section>
+        ) : <div className={`avatar-library-grid${groupId === 'pixel' ? ' online' : ''}`}>
           {groupId === 'pixel' ? onlinePixelAvatars.map((item) => {
             const saving = savingOnlineId === item.id;
             return (
@@ -236,7 +314,7 @@ export default function EmployeeAvatarPicker({ avatar, avatarKind, onChange }: P
               </button>
             );
           })}
-        </div>
+        </div>}
       </Modal>
     </>
   );

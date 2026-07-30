@@ -9,6 +9,7 @@ import { loadTaskRuns } from './taskRuns';
 import { redactToolArguments } from '../engine/securityBoundary';
 import { ensureDistinctEmployeeColors } from './employeeColors';
 import { materializeCatalogEmployees } from './expertCatalog';
+import { parseGeneratedAvatarPayload } from './generatedAvatar';
 import {
   canonicalToolCallKey,
   buildFreshWebQuery,
@@ -146,6 +147,8 @@ export interface AppSettings {
   activeModelId?: string;       // 当前全局使用的模型 ID（对应 modelLibrary 中的 entry.id）
   assistantModelId?: string;    // 助理机器人使用的模型 ID
   reviewModelId?: string;       // 独立任务复盘/责任审查模型，不设置时不自动调用复盘模型
+  diagnosticModelId?: string;   // 诊断中心的一键优化模型
+  imageModelId?: string;        // 员工头像生图模型（OpenAI 兼容 images/generations）
   memoryWriteApproval?: boolean; // 独立审查模型提出的记忆更新是否需要人工审核（默认 true）
   skillsWriteApproval?: boolean; // 自动 Skill 草案是否需要审核（固定默认 true）
   showThoughtChain?: boolean;   // 助理是否显示思维链（默认 true）
@@ -270,6 +273,31 @@ export function getReviewModel(): ModelConfig | undefined {
   const model = settings.modelLibrary.find((item) => item.id === settings.reviewModelId);
   if (!model) return undefined;
   return { provider: model.provider, apiHost: model.apiHost, apiKey: model.apiKey, model: model.model, contextWindowTokens: model.contextWindowTokens };
+}
+
+function configuredModelById(id?: string): ModelConfig | undefined {
+  const settings = loadSettings();
+  if (!id || !settings.modelLibrary?.length) return undefined;
+  const model = settings.modelLibrary.find((item) => item.id === id);
+  if (!model) return undefined;
+  return {
+    provider: model.provider,
+    apiHost: model.apiHost,
+    apiKey: model.apiKey,
+    model: model.model,
+    contextWindowTokens: model.contextWindowTokens,
+    refModelId: model.id,
+  };
+}
+
+/** The diagnostic center requires an explicit model assignment. */
+export function getDiagnosticModel(): ModelConfig | undefined {
+  return configuredModelById(loadSettings().diagnosticModelId);
+}
+
+/** Image generation never silently falls back to a chat model. */
+export function getImageGenerationModel(): ModelConfig | undefined {
+  return configuredModelById(loadSettings().imageModelId);
 }
 
 /** 员工是否启用了独立模型。旧版数据没有开关字段时兼容已有 modelConfig。 */
@@ -827,6 +855,56 @@ async function apiFetch(path: string, init: RequestInit = {}, timeoutMs = 4000, 
   } finally {
     clearTimeout(timer);
     externalSignal?.removeEventListener('abort', abortFromExternal);
+  }
+}
+
+export interface GeneratedAvatarImage {
+  dataUrl: string;
+  model: string;
+  revisedPrompt?: string;
+}
+
+function blobAsDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('生成图片读取失败'));
+    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/** Generate one square employee portrait through an explicitly assigned image model. */
+export async function generateEmployeeAvatarImage(prompt: string, modelConfig = getImageGenerationModel()): Promise<GeneratedAvatarImage> {
+  const cleanPrompt = prompt.trim();
+  if (!cleanPrompt) throw new Error('请先填写头像描述');
+  if (!modelConfig?.apiHost?.trim() || !modelConfig.model?.trim()) throw new Error('还没有配置头像生图模型，请先在模型库中指定一个生图模型');
+  const base = resolveApiBase(modelConfig as AppSettings);
+  const model = modelConfig.model.trim();
+  const response = await apiFetch('/images/generations', {
+    method: 'POST',
+    body: JSON.stringify({ model, prompt: cleanPrompt, n: 1, size: '1024x1024', response_format: 'b64_json' }),
+  }, 180000, modelConfig.apiKey, base);
+  const raw = await response.text().catch(() => '');
+  if (!response.ok) throw new Error(`生图接口返回 ${response.status}：${apiErrorMessage(raw)}`);
+  let payload: any;
+  try { payload = JSON.parse(raw); }
+  catch { throw new Error('生图接口返回的不是有效 JSON'); }
+  const result = parseGeneratedAvatarPayload(payload);
+  if (result.kind === 'data') return { dataUrl: result.dataUrl, model, revisedPrompt: result.revisedPrompt };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 60000);
+  try {
+    const downloaded = await fetch(result.url, { signal: controller.signal });
+    if (!downloaded.ok) throw new Error(`生成图片下载失败（HTTP ${downloaded.status}）`);
+    const blob = await downloaded.blob();
+    if (!blob.type.startsWith('image/')) throw new Error('生图地址返回的不是图片');
+    if (blob.size > 10 * 1024 * 1024) throw new Error('生成图片超过 10MB，请在生图服务中降低图片尺寸');
+    return { dataUrl: await blobAsDataUrl(blob), model, revisedPrompt: result.revisedPrompt };
+  } catch (error: any) {
+    if (error?.name === 'AbortError') throw new Error('生成图片下载超过 60 秒，请稍后重试');
+    throw error;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

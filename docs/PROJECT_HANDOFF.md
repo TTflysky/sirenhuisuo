@@ -1,9 +1,19 @@
 # 项目交接手册
 
 > 最后整理：2026-07-30
-> 当前源码版本：`v2.2.2`
+> 当前源码版本：`v2.3.0`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+
+## v2.3.0 员工导航、主题工牌与专用模型
+
+办公室分类由 `src/data/employeeProfiles.ts` 统一推导，`OfficeView` 只过滤当前真实员工并显示实时计数。不要为分类另建持久化员工名单，否则新建、导入或目录补齐员工后会再次不同步。工牌正反面共用现有主题变量；正面是可键盘操作的私聊入口，翻面和背面私聊按钮保持独立。大量员工依靠办公室自身滚动与 `content-visibility`，不能退回一次只显示 12 人的固定布局。
+
+头像生图复用现有模型库的地址和凭据，但必须显式设置 `imageModelId`，不允许静默使用聊天主模型。接口契约位于 `generateEmployeeAvatarImage()` 与 `parseGeneratedAvatarPayload()`，支持 Base64 和 HTTPS URL；图片类型、下载超时和 10MB 上限必须保留。生成结果只有在用户点击“使用这个头像”后才进入员工数据。
+
+诊断优化模型通过 `diagnosticModelId` 单独指定。`diagnosticOptimizer.ts` 的自动动作白名单只能包含 `skill` 与 `permission`：前者只修复来源明确的用户安装 Skill，后者只恢复沙盒和两类低风险委托审核。模型、连接器、密钥、外部软件、路径、代码、系统运行时均不可由模型猜测修改；每次动作后必须重新执行确定性诊断并展示仍需用户处理的项目。
+
+专项门禁：`npm.cmd run verify:v230-experience`。该检查已进入 `verify:v2-core-gate` 与正式 GitHub 发布脚本。Vite 实测覆盖 `1440×960` 和 `1024×720`；Electron 原生 UI 仍需结合下文图形进程故障继续验证。发布候选 `taiji-office-setup-2.3.0.exe` 为 `175403350` 字节，`.blockmap` 为 `181355` 字节，`latest.yml` 为 `353` 字节，安装包 SHA-256 为 `F929BA87A3B7A64D0CC8CE78376D93EFAD6539B5BA0804C00AF1F83B39CDFD31`；提交、标签和 GitHub Release 仍需发布脚本最终核验。
 
 ## v2.2.2 组队连续性与依赖执行
 

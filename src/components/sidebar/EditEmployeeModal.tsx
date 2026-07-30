@@ -183,6 +183,8 @@ export default function EditEmployeeModal({ employee, onClose }: Props) {
         <EmployeeAvatarPicker
           avatar={avatar}
           avatarKind={avatarKind}
+          employeeName={name}
+          employeeTitle={title}
           onChange={(nextAvatar, nextKind) => {
             setAvatar(nextAvatar);
             setAvatarKind(nextKind);

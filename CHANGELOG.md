@@ -1,5 +1,14 @@
 # 更新日志
 
+## v2.3.0 (Employee navigation, staff badges, and dedicated utility models)
+
+- Added a horizontally scrollable office category navigator backed by live employee profiles. Product, design, engineering, data/AI, content, growth, business, finance/legal, people/education, GIS, and support counts update without maintaining a second employee list.
+- Replaced office workstation tiles with theme-aware, reversible staff ID badges. The front shows the avatar frame, identity, concise capabilities and status; the back exposes the full ability summary and a dedicated direct-message action.
+- Preserved large-office responsiveness with stable card dimensions, an independently scrolling office surface, offscreen `content-visibility`, reduced-motion support, and employee-keyed flip state across category changes.
+- Added an AI generation tab to the employee avatar library. A dedicated OpenAI-compatible image model can return Base64 or a downloadable image URL; the result is validated and previewed, and never replaces the current avatar without explicit confirmation.
+- Added a dedicated diagnostics model and one-click optimization flow. Model judgment is constrained by a deterministic whitelist: only user-installed unhealthy Skills and the reversible recommended sandbox/approval policy can be changed automatically; credentials, connectors, external software, paths, code, and runtime faults remain explicit user actions.
+- Added `verify:v230-experience` for employee categories, badge interaction/accessibility, dedicated model persistence, image-response parsing, the diagnostics whitelist, and post-fix reinspection. The check is included in the v2 core and GitHub release gates.
+
 ## v2.2.2 (Durable team formation and staged execution)
 
 - Made the project proposal the durable source of truth for team formation. Each draft now records its owning chat session, original goal, structured roster revision, and clarification state; a correction updates that same record instead of asking the dispatcher to infer a new project from recent wording.

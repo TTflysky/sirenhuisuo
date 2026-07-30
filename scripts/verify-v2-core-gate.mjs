@@ -22,6 +22,7 @@ const checks = [
   'verify:orchestration-control',
   'verify:skill-directory-contract',
   'verify:skill-install-e2e',
+  'verify:v230-experience',
 ];
 
 for (const script of checks) {

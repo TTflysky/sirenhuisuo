@@ -1,6 +1,9 @@
+import { useState } from 'react';
+import { MessageOutlined, SwapOutlined } from '@ant-design/icons';
 import type { Employee } from '../../types';
 import AgentAvatar from './AgentAvatar';
 import { resolveAvatarFrame } from '../../data/avatarFrames';
+import { employeeBadgeProfile } from '../../data/employeeProfiles';
 
 interface Props {
   stationIndex: number;
@@ -14,26 +17,59 @@ interface Props {
  * 无桌椅显示器，干净网格。点击员工弹私聊。
  */
 export default function Workstation({ stationIndex, employee, isWorking, onClick }: Props) {
+  const [flipped, setFlipped] = useState(false);
   const hasEmp = employee !== null;
   const frame = employee ? resolveAvatarFrame(employee.avatarFrame) : null;
+  const profile = employee ? employeeBadgeProfile(employee) : null;
+  const openChat = () => onClick?.();
+  const flip = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    setFlipped((value) => !value);
+  };
 
   return (
     <div
-      className={`station-card ${hasEmp ? 'occupied' : 'empty'}`}
+      className={`station-card ${hasEmp ? 'occupied employee-id-card' : 'empty'}${flipped ? ' is-flipped' : ''}`}
       data-role={employee?.role}
-      onClick={onClick}
       title={hasEmp ? `${employee.name} - ${employee.title}` : `空位 #${stationIndex + 1}`}
     >
       {hasEmp ? (
         <>
-          {/* 头像 + 角色色环 + 状态点 */}
-          <div className="station-avatar-ring">
-            <AgentAvatar employee={employee} size={72} />
-            <span className={`station-status ${!employee.isOnline ? 'offline' : isWorking || employee.isWorking ? 'busy' : 'idle'}`} />
+          <div className="employee-id-strap" aria-hidden><i /></div>
+          <button type="button" className="employee-id-flip" onClick={flip} title={flipped ? '查看工牌正面' : '查看详细能力'} aria-label={flipped ? '查看工牌正面' : '查看详细能力'}><SwapOutlined /></button>
+          <div className="employee-id-inner">
+            <section
+              className="employee-id-face employee-id-front"
+              aria-hidden={flipped}
+              aria-label={`打开与${employee.name}的私聊`}
+              onClick={!flipped ? openChat : undefined}
+              onKeyDown={(event) => {
+                if (!flipped && (event.key === 'Enter' || event.key === ' ')) {
+                  event.preventDefault();
+                  openChat();
+                }
+              }}
+              role="button"
+              tabIndex={flipped ? -1 : 0}
+            >
+              <div className="employee-id-meta"><span>TAIJI STAFF</span><i className={!employee.isOnline ? 'offline' : isWorking || employee.isWorking ? 'busy' : 'idle'} /></div>
+              <div className="employee-id-identity">
+                <div className="station-avatar-ring">
+                  <AgentAvatar employee={employee} size={58} />
+                  <span className={`station-status ${!employee.isOnline ? 'offline' : isWorking || employee.isWorking ? 'busy' : 'idle'}`} />
+                </div>
+                <div><div className="station-name">{employee.name}</div><div className="station-title">{employee.title}</div><div className="station-frame-title" style={{ color: frame?.primary }}>{frame?.name}</div></div>
+              </div>
+              <p className="employee-id-summary">{profile?.summary}</p>
+              <div className="employee-id-abilities">{profile?.abilities.slice(0, 3).map((ability) => <span key={ability}>{ability}</span>)}</div>
+            </section>
+            <section className="employee-id-face employee-id-back" aria-hidden={!flipped}>
+              <div className="employee-id-back-heading"><div><strong>{employee.name}</strong><span>{employee.title}</span></div><small>能力档案</small></div>
+              <p>{profile?.detail}</p>
+              <div className="employee-id-abilities is-detail">{profile?.abilities.map((ability) => <span key={ability}>{ability}</span>)}</div>
+              <button type="button" className="employee-id-chat" tabIndex={flipped ? 0 : -1} onClick={(event) => { event.stopPropagation(); openChat(); }}><MessageOutlined /> 打开私聊</button>
+            </section>
           </div>
-          <div className="station-name">{employee.name}</div>
-          <div className="station-title" style={{ color: employee.statusColor }}>{employee.title}</div>
-          <div className="station-frame-title" style={{ color: frame?.primary, borderColor: frame?.primary }}>{frame?.name}</div>
         </>
       ) : (
         <div className="station-empty-slot">

@@ -112,6 +112,7 @@ if (-not $SkipTests) {
     'verify:tool-registry',
     'verify:native-execution',
     'verify:office-layout',
+    'verify:v230-experience',
     'verify:team-membership',
     'verify:execution-detail-contract',
     'verify:skill-atomic',

@@ -245,6 +245,8 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
   const activeId = settings.activeModelId;
   const assistantId = settings.assistantModelId;
   const reviewId = settings.reviewModelId;
+  const diagnosticId = settings.diagnosticModelId;
+  const imageId = settings.imageModelId;
 
   const startAdd = () => {
     setEditingId('__new__');
@@ -347,6 +349,8 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
       s.assistantModelId = undefined;
     }
     if (s.reviewModelId === id) s.reviewModelId = undefined;
+    if (s.diagnosticModelId === id) s.diagnosticModelId = undefined;
+    if (s.imageModelId === id) s.imageModelId = undefined;
     saveSettings(s);
     setSettings({ ...s });
     message.success('已删除');
@@ -389,6 +393,14 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
     saveSettings(s);
     setSettings({ ...s });
     message.success(id ? '已设为独立审查模型' : '已关闭模型复盘；确定性任务经验仍会保留');
+  };
+
+  const handleSetSpecialModel = (key: 'diagnosticModelId' | 'imageModelId', id?: string) => {
+    const s = loadSettings();
+    s[key] = id;
+    saveSettings(s);
+    setSettings({ ...s });
+    message.success(id ? (key === 'diagnosticModelId' ? '已设为诊断优化模型' : '已设为员工头像生图模型') : '已取消专用模型指派');
   };
 
   const handleTest = async (entry: ModelEntry) => {
@@ -458,6 +470,8 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
                 {entry.id === activeId && <Tag color="blue" style={{ fontSize: 10, margin: 0, lineHeight: '18px' }}>全局</Tag>}
                 {entry.id === assistantId && <Tag color="purple" style={{ fontSize: 10, margin: 0, lineHeight: '18px' }}>助理</Tag>}
                 {entry.id === reviewId && <Tag color="cyan" style={{ fontSize: 10, margin: 0, lineHeight: '18px' }}>审查</Tag>}
+                {entry.id === diagnosticId && <Tag color="gold" style={{ fontSize: 10, margin: 0, lineHeight: '18px' }}>诊断</Tag>}
+                {entry.id === imageId && <Tag color="magenta" style={{ fontSize: 10, margin: 0, lineHeight: '18px' }}>生图</Tag>}
               </div>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {entry.model ?? '未设置模型名'} · {getProvider(entry.provider).label}
@@ -516,6 +530,22 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
             onChange={(value) => handleSetReview(value === '__none__' ? undefined : value)}
             style={{ width: 180 }}
             options={[{ value: '__none__', label: '不调用模型复盘' }, ...library.map((model) => ({ value: model.id, label: model.label }))]}
+          />
+          <span style={{ fontSize: 12, fontWeight: 500, marginLeft: 8 }}>诊断优化：</span>
+          <Select
+            size="small"
+            value={diagnosticId ?? '__none__'}
+            onChange={(value) => handleSetSpecialModel('diagnosticModelId', value === '__none__' ? undefined : value)}
+            style={{ width: 180 }}
+            options={[{ value: '__none__', label: '未指定' }, ...library.map((model) => ({ value: model.id, label: model.label }))]}
+          />
+          <span style={{ fontSize: 12, fontWeight: 500, marginLeft: 8 }}>头像生图：</span>
+          <Select
+            size="small"
+            value={imageId ?? '__none__'}
+            onChange={(value) => handleSetSpecialModel('imageModelId', value === '__none__' ? undefined : value)}
+            style={{ width: 180 }}
+            options={[{ value: '__none__', label: '未指定' }, ...library.map((model) => ({ value: model.id, label: model.label }))]}
           />
         </Space>
       )}
