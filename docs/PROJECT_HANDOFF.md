@@ -1,9 +1,17 @@
 # 项目交接手册
 
-> 最后整理：2026-07-29
-> 当前源码版本：`v2.1.0`
+> 最后整理：2026-07-30
+> 当前源码版本：`v2.2.1`
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+
+## v2.2.1 专家员工化与交接
+
+`v2.2.1` 已将 `jnMetaCode/agency-agents-zh` 的 268 位 MIT 许可中文专家内置到客户端，并在首次启动时补齐为真实办公室员工。迁移只追加缺失专家，保留用户既有员工、团队、聊天、任务、模型配置和工作区；专家拥有稳定的职责名称、部门、头像框和工位。办公室由最少 24 个工位按实际人员增长，避免旧版固定 999 空工位。
+
+本版同时保留 `ProjectBrief`、项目审批上下文和执行中动态增员的主进程同步。当前已完成的是专家目录、员工物化和名单同步；尚未完成的专业专家分别产出方案、由项目简报编译完整执行 DAG、专家目录独立管理页和中途增员审计 UI，详见 [`V2.2.0_AGENCY_EXPERT_ORCHESTRATION.md`](./V2.2.0_AGENCY_EXPERT_ORCHESTRATION.md)。下一位开发者应先读该文档及根目录 `handoff.md`，再从 `SpecialistOutput` 数据模型和 ProjectBrief 到 TaskPlan DAG 的编译开始，不能将当前规则驱动项目简报误报为完整多专家协作。
+
+发布资产为 `release/taiji-office-setup-2.2.1.exe`、同名 `.blockmap` 与 `release/latest.yml`。只有 GitHub Release `v2.2.1` 的标签、三个资产大小与 SHA-256 均由发布脚本核验一致后，才可声明客户端已同步。
 
 ## v2.1 Hermes 真实运行链路
 

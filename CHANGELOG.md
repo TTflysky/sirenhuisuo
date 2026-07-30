@@ -1,5 +1,12 @@
 # 更新日志
 
+## v2.2.1 (Expert roster materialization)
+
+- Materialized all 268 bundled MIT-licensed Agency specialists as real office employees on first launch while preserving existing employees, teams, chats, tasks, and local configuration.
+- Assigned every specialist a stable specialty name, department, avatar frame, and office station. Office capacity now grows from a small baseline instead of rendering 999 empty stations.
+- Kept the professional expert catalog, project brief, approval context, and live team-roster synchronization introduced in v2.2.0. Running teams receive a roster version update when experts are added during execution.
+- Packaged the Windows installer `taiji-office-setup-2.2.1.exe` with its update metadata for GitHub Release distribution.
+
 ## v2.1.0 (Durable turn lifecycle)
 
 - Aligned assistant chat, employee direct messages, and native team execution on one durable Turn Lifecycle without storing hidden chain-of-thought. The public trajectory records the goal, model decisions, paired tool calls and results, verified evidence, context compaction, user steering, budget, exit reason, and recovery conditions.
