@@ -16,8 +16,19 @@ function toolName(conn: Connector, action: ConnectorAction): string {
   return `connector_${conn.id}_${action.mcpToolName ?? action.name}`;
 }
 
+function isUsableConfiguredConnector(connector: Connector): boolean {
+  if (!connector.enabled) return false;
+  // A local Obsidian Vault is executable as soon as its directory is known.
+  // Its status may still be stale in another renderer window; hiding the
+  // tool in that state made the model fall back to the unrelated task workspace.
+  return connector.status === 'connected'
+    || Boolean(connector.localPath)
+    || Boolean(connector.baseUrl)
+    || Boolean(connector.installedSkillId);
+}
+
 export function getConnectorTools(): ToolDef[] {
-  const connectors = loadConnectors().filter(c => c.enabled && c.status === 'connected');
+  const connectors = loadConnectors().filter(isUsableConfiguredConnector);
   return connectors.flatMap(conn => actionsFor(conn).map(action => ({
     type: 'function' as const,
     function: { name: toolName(conn, action), description: `[${conn.label}] ${action.description}`, parameters: { ...action.parameters, required: action.parameters.required ?? [] } },
@@ -25,7 +36,7 @@ export function getConnectorTools(): ToolDef[] {
 }
 
 function dryRunConnector(connector: Connector, action: ConnectorAction): Record<string, unknown> {
-  if (!connector.enabled || connector.status !== 'connected') throw new Error('连接器未启用或未通过连接验证');
+  if (!connector.enabled) throw new Error('连接器已禁用');
   if (action.local === 'knowledge-fetch-url') {
     if (!connector.baseUrl) throw new Error('知识库链接未配置');
     if (!window.electronAPI?.knowledgeFetchUrl) throw new Error('知识库读取运行时不可用');
@@ -70,7 +81,7 @@ export async function executeConnectorTool(
   const prefix = 'connector_';
   if (!toolNameInput.startsWith(prefix)) return { success: false, output: `未找到匹配的连接器操作: ${toolNameInput}` };
   const raw = toolNameInput.slice(prefix.length);
-  const connectors = loadConnectors().filter(c => c.enabled && c.status === 'connected');
+  const connectors = loadConnectors().filter(isUsableConfiguredConnector);
   const conn = connectors
     .filter(c => raw.startsWith(`${c.id}_`))
     .sort((a, b) => b.id.length - a.id.length)[0];

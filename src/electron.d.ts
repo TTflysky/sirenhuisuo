@@ -351,7 +351,7 @@ export interface SkillInstallResult {
   resolvedUrl?: string;
   requestedSourceUrl?: string;
   slug?: string;
-  verification?: { verified: boolean; manifestReadable: boolean; skillId: string; health?: string; documentCount: number; checkedAt: string };
+  verification?: { verified: boolean; manifestReadable: boolean; skillId: string; health?: string; documentCount: number; sourceFileCount?: number; bundleHash?: string; checkedAt: string };
   error?: string;
 }
 export interface SkillMarketSearchResult {

@@ -1096,6 +1096,7 @@ function createWindow() {
   ipcMain.handle('task-worker:command', async (_event, command) => {
     if (command?.type === 'resume') {
       try {
+        await taskService.repairDelegationCollisions(command?.taskId);
         const recovery = await taskService.recoveryPlan(command?.taskId);
         if (!recovery.plan?.ready) {
           return {
@@ -1109,7 +1110,7 @@ function createWindow() {
       }
     }
     const result = await taskWorker.dispatch(command);
-    nativeExecutionAdapter.handleControl(command, result);
+    await nativeExecutionAdapter.handleControl(command, result);
     return result;
   });
   ipcMain.handle('skills:drafts', async () => {

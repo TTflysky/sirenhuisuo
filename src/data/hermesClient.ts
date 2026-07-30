@@ -57,7 +57,7 @@ import {
   type TaskDecision,
 } from '../engine/taskDecisionKernel.mjs';
 import { assessTaskCompletion } from '../engine/taskFidelity.mjs';
-import { resolveSkillInstallInput } from '../engine/skillInstallRouting.mjs';
+import { isSkillInstallOnlyRequest, resolveSkillInstallInput, resolveSkillInstallRequest } from '../engine/skillInstallRouting.mjs';
 import { buildTaskLearningContext, recordTaskLearning } from '../engine/taskLearningMemory';
 import {
   buildTaskSummaryMaterial,
@@ -1267,6 +1267,40 @@ function getUserActionForFailure(raw: string): string {
   return '请展开最后一条“执行过程”查看通俗原因；如果需要你提供账号、授权、文件或选择，助手会明确说明具体缺少哪一项。';
 }
 
+function sourceUrlParts(value: string): { host: string; pathname: string } | undefined {
+  try {
+    const parsed = new URL(value);
+    return { host: parsed.hostname.toLocaleLowerCase(), pathname: parsed.pathname.replace(/\/+$/u, '') };
+  } catch {
+    return undefined;
+  }
+}
+
+function githubRepository(value: ReturnType<typeof sourceUrlParts>): string {
+  if (!value) return '';
+  const parts = value.pathname.split('/').filter(Boolean);
+  if (value.host === 'api.github.com' && parts[0] === 'repos') return parts.slice(1, 3).join('/');
+  if (value.host === 'github.com' || value.host === 'raw.githubusercontent.com') return parts.slice(0, 2).join('/');
+  return '';
+}
+
+function isAllowedPinnedSkillSource(value: unknown, pinnedSource: string): boolean {
+  const candidate = sourceUrlParts(String(value || ''));
+  const pinned = sourceUrlParts(pinnedSource);
+  if (!candidate || !pinned) return false;
+  if (candidate.host === pinned.host && candidate.pathname === pinned.pathname) return true;
+  const pinnedRepository = githubRepository(pinned);
+  const candidateRepository = githubRepository(candidate);
+  return Boolean(pinnedRepository && candidateRepository && pinnedRepository === candidateRepository);
+}
+
+function isPinnedSkillRuleDocument(value: unknown, pinnedSource: string): boolean {
+  const candidate = sourceUrlParts(String(value || ''));
+  const pinned = sourceUrlParts(pinnedSource);
+  if (!candidate || !pinned || !isAllowedPinnedSkillSource(value, pinnedSource)) return false;
+  return /(?:^|\/)SKILL\.md$/iu.test(candidate.pathname);
+}
+
 export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: string; usage: TokenUsage; contextUsage?: ContextUsage; model: string; executionState: ExecutionControllerSnapshot; taskDecision: TaskDecision; turnRuntime: TurnRuntimeState; turnFinalization: Record<string, unknown>; turnLifecycle: TurnLifecycleState }> {
   const {
     turns, tools, scene, label, onToolCall, onToolResult, modelConfig, extraSystemContext,
@@ -1289,6 +1323,8 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   latestContextUsage = compiled.contextUsage;
   finalModel = compiled.model ?? '';
   const originalUserText = taskDecision.goal;
+  const installOnlyTask = isSkillInstallOnlyRequest(originalUserText);
+  const explicitSkillInstallRequest = resolveSkillInstallRequest(originalUserText);
   const resumedFromCapabilityCorrection = taskDecision.mode === 'execute'
     && originalUserText !== latestUserText
     && isActionableCapabilityCorrection(latestUserText);
@@ -1298,12 +1334,22 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   const isSkillInstallation = isInstallationTask && !connectorTask
     && (/skill|技能|插件/iu.test(originalUserText) || Boolean(opts.referenceSourceUrl));
   const conversationOnly = taskDecision.mode !== 'execute';
+  const pinnedSkillInstall = !conversationOnly && installOnlyTask && isSkillInstallation
+    ? resolveSkillInstallInput({ sourceUrl: explicitSkillInstallRequest?.sourceUrl || opts.referenceSourceUrl }, originalUserText)
+    : undefined;
+  const pinnedSkillSource = !pinnedSkillInstall?.error ? pinnedSkillInstall?.sourceUrl || '' : '';
+  const skillDiscoveryNeedsSelection = !explicitSkillInstallRequest?.sourceUrl
+    && /(?:找|搜索|搜寻|检索|推荐|find|search)/iu.test(originalUserText)
+    && /(?:skill|技能|插件)/iu.test(originalUserText);
   const researchOnlyTask = isResearchOnlyRequest(originalUserText)
     || (taskDecision.primaryRoute === 'web_search'
       && !/(?:安装|部署|开发|修改|修复|创建|生成|保存|下载|上传|提交|打包|配置|接入|连接)/u.test(originalUserText));
   const requiresExecutionEvidence = !conversationOnly && taskDecision.requiresEvidence;
   const taskExperience = conversationOnly ? '' : buildTaskLearningContext(originalUserText);
   const taskContract = buildTaskContract(taskDecision, taskExperience);
+  const pinnedSkillInstruction = pinnedSkillSource
+    ? `\n\n## 指定 Skill 来源合同\n用户已指定唯一来源：${pinnedSkillSource}\n先读取该来源的 SKILL.md，并按其中的引用关系读取必要配套文件，自己完成用途、规则和风险判断；禁止搜索 SkillsMP、SkillHub 或其他替代来源，禁止使用 npx/skills CLI。完成阅读与风险判断后，调用 install_skill，且 sourceUrl 必须保持为上述来源。客户端原生安装器会复制并校验完整目录。`
+    : '';
   let turnRuntime = createTurnRuntime({
     scope: scope ?? scene,
     goal: originalUserText,
@@ -1324,7 +1370,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     ? [{ role: 'system', content: `${taskContract}\n\n当前消息不需要工具执行。直接结合最近上下文回应，不得自动恢复、重放或继续上一项任务。只有用户明确提出新的执行目标或明确要求继续时，才能重新开始执行。` }, ...currentTurns]
     : [{
       role: 'system',
-      content: `${taskContract}\n\n${buildTurnGuidance(turnRuntime)}\n\n${AUTONOMOUS_EXECUTION_GUIDE}\n\n${CAPABILITY_ROUTING_GUIDE}\n\n${SKILL_RECOVERY_GUIDE}${resumedFromCapabilityCorrection
+      content: `${taskContract}\n\n${buildTurnGuidance(turnRuntime)}\n\n${AUTONOMOUS_EXECUTION_GUIDE}\n\n${CAPABILITY_ROUTING_GUIDE}\n\n${SKILL_RECOVERY_GUIDE}${pinnedSkillInstruction}${resumedFromCapabilityCorrection
         ? `\n\n用户最新消息是在纠正上一轮没有行动的问题。当前仍未完成的目标是：\n${originalUserText.slice(0, 2000)}\n必须立即按纠正后的能力路线执行，不要再次道歉、解释能力或要求用户重复目标。`
         : ''}`,
     }, ...currentTurns];
@@ -1360,6 +1406,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   const toolCallCounts = new Map<string, number>();
   const resourceReadCounts = new Map<string, number>();
   const failedSkillReads = new Set<string>();
+  let pinnedSkillRuleRead = false;
   const successfulCalls = new Set<string>();
   let stopped = false;
   let finalReviewRequested = false;
@@ -1376,6 +1423,8 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   let requiredResearchSucceeded = false;
   let requiredResearchOutput = '';
   let researchSummaryFailures = 0;
+  let completedInstallOnlyTask = false;
+  let completedSkillDiscovery = false;
   const maxResearchSummaryAttempts = 2;
   let executionState = initialExecutionState
     ? restoreExecutionController(initialExecutionState, { goal: originalUserText, acceptanceCriteria: taskDecision.acceptanceCriteria, requiresEvidence: requiresExecutionEvidence, maxAttempts: maxTotalToolAttempts })
@@ -1674,9 +1723,14 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         let effectiveCallOk = normalizedCall.ok;
         let effectiveCallError = normalizedCall.error;
         if (tc.name === 'install_skill') {
-          const modelArgs = normalizedCall.ok && normalizedCall.args && typeof normalizedCall.args === 'object'
+          const suppliedArgs = normalizedCall.ok && normalizedCall.args && typeof normalizedCall.args === 'object'
             ? normalizedCall.args
             : {};
+          // The model can audit the requested package, but it cannot substitute
+          // a different package at the final write step.
+          const modelArgs = pinnedSkillSource
+            ? { ...suppliedArgs, sourceUrl: pinnedSkillSource }
+            : suppliedArgs;
           const resolvedInstall = resolveSkillInstallInput(modelArgs, originalUserText);
           if (!resolvedInstall.error) {
             effectiveArguments = JSON.stringify({ ...modelArgs, ...resolvedInstall });
@@ -1710,6 +1764,16 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         const resourceLimitReached = Boolean(resourceKey) && resourceReadCount >= resourceLimit;
         const blockedReason = !effectiveCallOk
           ? effectiveCallError ?? '工具参数无效，模型需要修正后再调用。'
+          : pinnedSkillSource && (tc.name === 'search_skills' || tc.name === 'web_search')
+          ? '用户已给出明确的 Skill 来源。本次只允许阅读该来源及同仓库配套文件、完成风险判断并安装；禁止搜索候选或替代来源。'
+          : pinnedSkillSource && tc.name === 'read_web_page' && !isAllowedPinnedSkillSource(lifecycleArgs.url, pinnedSkillSource)
+          ? '当前网页不属于用户指定的 Skill 来源或其同一 GitHub 仓库。不得改读市场页、聚合页或替代来源。'
+          : pinnedSkillSource && tc.name === 'run_command' && /(?:npx\s+skills|skills\s+add)/iu.test(String(lifecycleArgs.command ?? lifecycleArgs.cmd ?? ''))
+          ? '指定来源安装必须使用原生 install_skill，以便保存完整目录并做原子校验；禁止改走 npx/skills CLI。'
+          : pinnedSkillSource && tc.name === 'install_skill' && !/\.zip$/iu.test(sourceUrlParts(pinnedSkillSource)?.pathname ?? '') && !pinnedSkillRuleRead
+          ? '安装前必须先读取用户指定来源中的 SKILL.md，并按其规则判断必要配套文件和风险；不要把市场介绍页或安装说明当成 Skill 正文。'
+          : tc.name === 'install_skill' && skillDiscoveryNeedsSelection
+          ? '当前任务只要求检索 Skill 候选，用户尚未选择要安装的技能。请展示已找到的候选及来源，等待用户明确选择后再安装；禁止擅自安装或改用其他来源。'
           : !routeGate.allowed
           ? routeGate.reason ?? '执行控制器已阻止重复或无效路线，必须换一种方法。'
           : repeatedFailedSkillRead
@@ -1738,6 +1802,9 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         }
         observeToolOutcome(tc.name, effectiveArguments, result.output, resultSuccess, tc.name === 'write_file' ? 'file' : tc.name === 'test_connector' ? 'connection' : 'progress');
         if (resourceKey && executed) resourceReadCounts.set(resourceKey, resourceReadCount + 1);
+        if (resultSuccess && tc.name === 'read_web_page' && isPinnedSkillRuleDocument(lifecycleArgs.url, pinnedSkillSource)) {
+          pinnedSkillRuleRead = true;
+        }
         if (tc.name === 'read_skill' && !resultSuccess) failedSkillReads.add(cacheKey);
         if (newEvidence && !isPreparationOnlyTool(tc.name)) successfulCalls.add(cacheKey);
         if (!newEvidence) iterationHadFailure = true;
@@ -1764,6 +1831,32 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
           evidenceIds: [observedResult.evidence.evidenceId],
         });
         publishTurnLifecycle();
+        if (resultSuccess && tc.name === 'search_skills' && skillDiscoveryNeedsSelection) {
+          const acceptance = assessTaskCompletion(originalUserText, result.output, callLog);
+          publishExecutionState(evaluateExecutionConclusion(executionState, {
+            content: result.output,
+            reviewed: true,
+            acceptancePassed: acceptance.passed,
+            acceptanceIssues: acceptance.issues,
+          }));
+          finalContent = `已找到以下 Skill 候选，尚未安装。\n\n${result.output}\n\n请直接回复候选名称或发送该技能的详情链接；确认后我只会安装你选中的那一个。`;
+          completedSkillDiscovery = true;
+          break;
+        }
+        if (resultSuccess && tc.name === 'install_skill' && installOnlyTask) {
+          const acceptance = assessTaskCompletion(originalUserText, result.output, callLog);
+          publishExecutionState(evaluateExecutionConclusion(executionState, {
+            content: result.output,
+            reviewed: true,
+            acceptancePassed: acceptance.passed,
+            acceptanceIssues: acceptance.issues,
+          }));
+          if (executionState.status === 'completed') {
+            finalContent = `已经安装好了。\n\n${result.output}`;
+            completedInstallOnlyTask = true;
+            break;
+          }
+        }
         if (!resultSuccess && observedResult.error) {
           const recovery = decideTurnRecovery(turnRuntime, observedResult.error);
           turnRuntime = recovery.runtime;
@@ -1819,6 +1912,8 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         }
       }
       if (stopped) break;
+      if (completedInstallOnlyTask) break;
+      if (completedSkillDiscovery) break;
       if (steeringHandled) continue;
       if (phaseToolBudgetReached) continue;
       if (iterationHadFailure) {

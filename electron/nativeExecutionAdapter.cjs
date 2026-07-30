@@ -11,7 +11,7 @@ const MAX_PREPARATION_STREAK = 4;
 const DEFAULT_MODEL_REQUEST_TIMEOUT_MS = 120_000;
 const DEFAULT_TOOL_CALL_TIMEOUT_MS = 120_000;
 const DEFAULT_PROGRESS_STALL_MS = 150_000;
-const ACTIVE_JOB_STATES = new Set(['queued', 'running']);
+const ACTIVE_JOB_STATES = new Set(['queued', 'running', 'waiting_children']);
 
 const ROLE_DUTY = {
   pm: '你是团队协调者。把目标拆解成可执行、可验收的结果，并按任务合同选择回答、文件、连接、操作或决策证据。',
@@ -41,6 +41,18 @@ function isVerifiedArtifact(artifact) {
     && Boolean(text(artifact?.diskPath, 1200))
     && Boolean(text(artifact?.path || artifact?.filename, 800));
 }
+const DELIVERABLE_TYPES = new Set(['answer', 'file', 'connection', 'operation', 'decision', 'mixed']);
+function inferStepDeliverableType(step, run) {
+  const declared = text(step?.deliverableType || step?.metadata?.deliverableType, 40).toLowerCase();
+  if (DELIVERABLE_TYPES.has(declared)) return declared;
+  const source = `${text(step?.title, 400)} ${text(step?.assignment, 3000)}`;
+  if (/(?:文件|文档|代码|网页|页面|html|excel|word|ppt|pdf|脚本|安装包)/iu.test(source)) return 'file';
+  if (/(?:连接|接入|连通|知识库|mcp|ima|connector)/iu.test(source)) return 'connection';
+  if (/(?:安装|部署|发布|发送|上传|下载|执行|运行)/iu.test(source)) return 'operation';
+  if (/(?:方案|设计|分析|建议|判断|评审|审查|调研|规划)/iu.test(source)) return 'decision';
+  const contractType = text(run?.contract?.deliverableType || run?.taskDecision?.deliverableType, 40).toLowerCase();
+  return DELIVERABLE_TYPES.has(contractType) ? contractType : 'answer';
+}
 function compensationNeedsApproval(step, job) {
   if (step?.approvalRequired === true || job?.executionPolicy?.compensationApprovalMode === 'ask') return true;
   return /删除|移除|发送|发布|部署|付款|支付|外部系统|delete|remove|send|publish|deploy|payment/iu.test(String(step?.assignment || ''));
@@ -66,6 +78,7 @@ function summarizeChildTask(child) {
     title: text(child?.title, 240),
     goal: text(child?.goal || child?.request, 2000),
     status: text(child?.status, 40),
+    deliverableType: text(child?.contract?.deliverableType || child?.taskDecision?.deliverableType, 40) || undefined,
     summary: text(summary, 1600),
     completedSteps,
     artifacts,
@@ -553,6 +566,7 @@ function createNativeExecutionAdapter(options) {
     if (result.structuredEvidence?.connection) evidence.push({ ts: now, source: 'connector', kind: 'connection', summary: `${result.structuredEvidence.connection.connectorLabel}：${result.output.slice(0, 240)}`, verified: result.structuredEvidence.connection.verified === true });
     if (result.structuredEvidence?.review) evidence.push({ ts: now, source: 'review', kind: 'review', summary: `${result.structuredEvidence.review.decision === 'pass' ? '审查通过' : '审查退回'}：${result.structuredEvidence.review.reason}`, verified: result.structuredEvidence.review.decision === 'pass', review: result.structuredEvidence.review });
     if (!evidence.length) evidence.push({ ts: now, source: 'tool', kind: 'progress', summary: `${member.name} 调用 ${name}：${result.output.slice(0, 240)}`, verified: result.success === true });
+    if (result.structuredEvidence?.skill) evidence.push({ ts: now, source: 'tool', kind: 'operation', summary: `${name}: ${result.structuredEvidence.skill.name || result.structuredEvidence.skill.id || 'skill'}`, verified: result.structuredEvidence.skill.verified === true });
     return evidence;
   }
 
@@ -713,6 +727,7 @@ function createNativeExecutionAdapter(options) {
         title: args.title,
         assignment: args.assignment,
         acceptanceCriteria: args.acceptanceCriteria,
+        deliverableType: args.deliverableType,
       });
       const child = options.taskService
         ? await options.taskService.createChild(job.taskId, {
@@ -721,6 +736,7 @@ function createNativeExecutionAdapter(options) {
           assignment: appended.delegation.assignment,
           goal: appended.delegation.assignment,
           acceptanceCriteria: appended.delegation.acceptanceCriteria,
+          deliverableType: appended.delegation.deliverableType,
         })
         : undefined;
       if (child?.task?.id && current.conversationId) {
@@ -799,11 +815,14 @@ function createNativeExecutionAdapter(options) {
 
   async function executeStep(job, run, step, member, executionOptions = {}) {
     const { fidelity, toolRegistry, contextRouter, turnRuntime, turnLifecycle, moaRuntime } = await loadEngineModules();
+    const stepDeliverableType = inferStepDeliverableType(step, run);
     let runtime = turnRuntime.createTurnRuntime({
       taskId: job.taskId,
       scope: `team:${run.teamId}`,
-      goal: run.goal || run.request,
-      contract: run.contract || { goal: run.goal || run.request, deliverableType: step.deliverableType },
+      // Each team member is verified against its own contractual stage. The
+      // full project goal remains in the system prompt and final run checks.
+      goal: step.assignment || run.goal || run.request,
+      contract: { ...(run.contract || {}), goal: step.assignment || run.goal || run.request, deliverableType: stepDeliverableType },
     });
     const layeredMemory = options.memoryManager
       ? await options.memoryManager.context({ query: run.goal || run.request, teamId: run.teamId, employeeId: member.id, limit: 16 }).catch(() => ({ context: '' }))
@@ -1106,7 +1125,7 @@ function createNativeExecutionAdapter(options) {
         await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 完成补偿步骤');
         return { content: finalContent || '补偿步骤已完成真实工具执行。', review, callLog, usageModel: response.model, turnRuntime: runtime, turnFinalization: finalized.finalization };
       }
-      const acceptance = fidelity.assessTaskCompletion(run.goal || run.request, finalContent, callLog);
+      const acceptance = fidelity.assessTaskCompletion(runtime.goal, finalContent, callLog);
       if (!acceptance.passed) {
         forceActionCount += 1;
         messages.push({ role: 'assistant', content: finalContent });
@@ -1316,6 +1335,30 @@ function createNativeExecutionAdapter(options) {
       ...(needsConnection ? [{ kind: 'connection', label: '连接验证', passed: evidence.some((item) => item.kind === 'connection' && item.verified), detail: '任务涉及外部连接，必须有最小真实调用证据' }] : []),
       ...(run.steps.some((step) => step.kind === 'review') ? [{ kind: 'review', label: '责任审查', passed: evidence.some((item) => item.kind === 'review' && item.verified), detail: '审查步骤必须明确通过' }] : []),
     ];
+    const completedWork = run.steps.filter((step) => step.status === 'completed' && step.compensationOnly !== true && step.kind !== 'review');
+    const typedChecks = new Map();
+    for (const step of completedWork) {
+      const type = inferStepDeliverableType(step, run);
+      const stepEvidence = step.evidence || [];
+      const childArtifacts = step.output?.childTask?.artifacts || [];
+      const hasFile = stepEvidence.some((item) => item.kind === 'file' && item.verified && isVerifiedArtifact(item.artifact))
+        || evidence.some((item) => item.kind === 'file' && item.verified && isVerifiedArtifact(item.artifact))
+        || childArtifacts.length > 0;
+      const hasConnection = stepEvidence.some((item) => item.kind === 'connection' && item.verified)
+        || evidence.some((item) => item.kind === 'connection' && item.verified);
+      const hasOperation = stepEvidence.some((item) => ['run', 'connection', 'operation'].includes(item.kind) && item.verified)
+        || evidence.some((item) => ['run', 'connection', 'operation'].includes(item.kind) && item.verified);
+      const hasResult = Boolean(text(step.output?.summary || step.output?.childTask?.summary, 1600))
+        || stepEvidence.some((item) => item.verified && ['child_task', 'progress', 'review'].includes(item.kind));
+      if (type === 'file') typedChecks.set('file', { kind: 'file', label: 'file deliverable', passed: hasFile, detail: 'A file deliverable needs a verified disk artifact.' });
+      else if (type === 'connection') typedChecks.set('connection', { kind: 'connection', label: 'connection deliverable', passed: hasConnection, detail: 'A connection deliverable needs a verified live call.' });
+      else if (type === 'operation') typedChecks.set('operation', { kind: 'operation', label: 'operation deliverable', passed: hasOperation, detail: 'An operation deliverable needs a verified runtime result.' });
+      else if (type === 'mixed') typedChecks.set('mixed', { kind: 'mixed', label: 'mixed deliverable', passed: hasResult || hasFile || hasConnection || hasOperation, detail: 'A mixed deliverable needs at least one verified result.' });
+      else typedChecks.set(type, { kind: type, label: `${type} deliverable`, passed: hasResult, detail: 'An answer or decision deliverable needs a persisted real result.' });
+    }
+    if (typedChecks.size) checks.splice(0, checks.length, ...typedChecks.values(), ...(run.steps.some((step) => step.kind === 'review')
+      ? [{ kind: 'review', label: 'review decision', passed: evidence.some((item) => item.kind === 'review' && item.verified), detail: 'A review step needs an explicit PASS result.' }]
+      : []));
     const blocked = checks.filter((item) => !item.passed);
     if (unfinished.length || blocked.length) throw new Error(unfinished.length ? `仍有 ${unfinished.length} 个步骤未完成` : `验收未通过：${blocked.map((item) => item.detail).join('；')}`);
     const beforeFinish = await readRun(job.taskId);
@@ -1366,6 +1409,12 @@ function createNativeExecutionAdapter(options) {
             artifacts: childResult.artifacts,
           }].slice(-30);
           parent.childTaskResults = { ...(parent.childTaskResults || {}), [childTaskId]: childResult };
+          const inheritedChildEvidence = (childResult.artifacts || []).map((artifact) => ({
+            ts: Date.now(), source: 'child_task', kind: 'file', verified: true,
+            summary: `Child task artifact: ${artifact.path || artifact.name || childTaskId}`,
+            artifact: { path: artifact.path || artifact.name, filename: artifact.name || artifact.path, diskPath: artifact.path || '', persistence: 'disk', verified: true },
+          }));
+          parent.evidence = [...(parent.evidence || []), ...inheritedChildEvidence].slice(-120);
           if (parent.recoveryContext) parent.recoveryContext.completedEvidence = [
             ...(parent.recoveryContext.completedEvidence || []),
             `子任务 ${childResult.title || childTaskId} 已验收：${childResult.summary}`.slice(0, 1800),
@@ -1394,6 +1443,13 @@ function createNativeExecutionAdapter(options) {
       }
       parent.recoveryCapsule = contextRouter.createRecoveryCapsule(parent, { reason: `子任务 ${childTaskId} 状态同步` });
     }, `Synchronize child task ${childTaskId} terminal state`);
+    const parentJob = jobs.get(child.parentTaskId);
+    if (parentJob?.state === 'waiting_children') {
+      parentJob.waitingFor = undefined;
+      parentJob.requeueAfterExecution = false;
+      enqueueJob(parentJob, 'child-task-terminal');
+      emit(parentJob, 'parent_resumed_after_child_terminal', { childTaskId, status });
+    }
   }
 
   async function runCompensations(job, reason) {
@@ -1661,12 +1717,20 @@ function createNativeExecutionAdapter(options) {
             payload: { reason: error.message },
           }).catch(() => undefined);
         } else if (controlKind === 'delegate_wait') {
-          job.state = 'queued';
-          job.requeueAfterExecution = true;
+          // A parent must yield while its child runs, but it must not spin in
+          // the queue. The child terminal event is the sole wake-up source.
+          job.state = 'waiting_children';
+          job.waitingFor = error.message;
+          job.requeueAfterExecution = false;
           await updateRun(job.taskId, (run) => {
             run.status = 'queued';
-            run.phase = 'preflight';
+            run.phase = 'awaiting_child';
             run.lastError = undefined;
+            if (run.recoveryContext) {
+              run.recoveryContext.summary = '父任务正在等待子任务完成；不会重复排队或重复调用模型。';
+              run.recoveryContext.waitingFor = error.message;
+              run.recoveryContext.autoResume = true;
+            }
           }, 'Parent task yielded its queue slot while waiting for a child task').catch(() => {});
           emit(job, 'child_task_waiting', { error: error.message });
         } else if (controlKind === 'steer') {
@@ -1819,7 +1883,16 @@ function createNativeExecutionAdapter(options) {
     const wasQueued = job.state === 'queued';
     if (type === 'resume') {
       job.control = undefined;
-      if (!['completed', 'failed', 'stopped'].includes(job.state)) enqueueJob(job, 'resumed');
+      // The durable worker has already moved a failed/paused run back to
+      // queued before this control reaches the in-memory adapter. A failed
+      // job is therefore resumable; keeping it terminal here made the UI's
+      // "continue" button appear to work while no job was ever re-enqueued.
+      if (!['completed', 'stopped'].includes(job.state)) {
+        job.state = 'queued';
+        job.finishedAt = undefined;
+        job.lastError = undefined;
+        enqueueJob(job, 'resumed');
+      }
       emit(job, 'control_received', { control: 'resume' });
       return false;
     }
@@ -1848,7 +1921,10 @@ function createNativeExecutionAdapter(options) {
       }
     }
     const forwardedType = type === 'close' ? 'stop' : type;
-    for (const child of descendants.filter((item) => !['completed', 'failed', 'stopped'].includes(item.status))) {
+    const controllableDescendants = type === 'resume'
+      ? descendants.filter((item) => ['paused', 'failed', 'awaiting_user'].includes(item.status))
+      : descendants.filter((item) => !['completed', 'failed', 'stopped'].includes(item.status));
+    for (const child of controllableDescendants) {
       const childJob = jobs.get(child.id);
       const queuedBeforeControl = applyJobControl(childJob, forwardedType);
       const result = await options.worker.dispatch({
@@ -1875,7 +1951,7 @@ function createNativeExecutionAdapter(options) {
     });
   }
 
-  function handleControl(command, result) {
+  async function handleControl(command, result) {
     if (!result?.ok) return;
     const taskId = String(command?.taskId || '');
     const type = String(command?.type || '');
@@ -1892,14 +1968,17 @@ function createNativeExecutionAdapter(options) {
     if (type === 'resume') {
       // Resume descendants first. Otherwise the parent can re-enter execute(),
       // observe a still-paused child and immediately fall back to awaiting_user.
-      if (job && !['completed', 'failed', 'stopped'].includes(job.state)) {
+      if (job && !['completed', 'stopped'].includes(job.state)) {
         job.control = undefined;
         job.state = 'queued';
         emit(job, 'resume_waiting_for_children');
       }
-      void cascadeChildControl(taskId, type)
-        .then(() => applyJobControl(job, type))
-        .catch((error) => emit(job, 'child_task_control_failed', { control: type, error: text(error?.message || error, 600) }));
+      try {
+        await cascadeChildControl(taskId, type);
+        applyJobControl(job, type);
+      } catch (error) {
+        emit(job, 'child_task_control_failed', { control: type, error: text(error?.message || error, 600) });
+      }
       return;
     }
     const queuedBeforeControl = applyJobControl(job, type);

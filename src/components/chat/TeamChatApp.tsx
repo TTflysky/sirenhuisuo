@@ -23,6 +23,8 @@ import { buildTaskReplay, searchTaskRunHistory } from '../../engine/taskHistory.
 import { getTaskLedgerEvents, getTaskLedgerIntegrity, readTaskLedger } from '../../data/taskRuns';
 import type { TaskLedgerEvent, TaskLedgerIntegrity, TaskWorkerCommandRecord } from '../../electron';
 import { cleanExecutionDisplay } from '../../engine/executionDisplay.mjs';
+import { buildProjectBoard, projectBoardSections } from '../../engine/projectBoard.mjs';
+import type { ProjectBoardProject } from '../../engine/projectBoard.mjs';
 import ThoughtChainView from './ThoughtChainView';
 import {
   activateChatSession,
@@ -42,11 +44,10 @@ interface Props {
 
 type TaskAuditNode = { id: string; depth: number; title: string; status: string; blocked?: string; steps: { completed: number; total: number }; compensation: { completed: number; blocked: number; failed: number } };
 type TaskAudit = { nodes: TaskAuditNode[]; plan?: { ready: boolean; nextAction: string; blockers: Array<{ taskId: string; title: string; reason: string }> } };
-
 const supervisorMention: Employee = {
   id: 'assistant',
   name: '章北海助理',
-  title: '监工调度',
+  title: '常驻主助理',
   role: 'custom',
   avatar: 'a06',
   avatarKind: 'preset',
@@ -67,7 +68,7 @@ function SupervisorAvatar({ size = 34 }: { size?: number }) {
 export default function TeamChatApp({ teamId }: Props) {
   const {
     state, sendMessage,
-    publishTask, claimTask, advanceTask, triggerDiscussion, pauseTaskRun, resumeTaskRun, stopTaskRun, closeTaskRun, clearTeamExecution,
+    publishTask, claimTask, advanceTask, triggerDiscussion, pauseTaskRun, resumeTaskRun, stopTaskRun, closeTaskRun, clearTeamExecution, archiveProject,
   } = useStore();
   const team = state.teams.find((t: Team) => t.id === teamId);
   const sessionScope: ChatSessionScope = `team:${teamId}`;
@@ -128,22 +129,23 @@ export default function TeamChatApp({ teamId }: Props) {
   const taskRuns = state.taskRuns.filter((run) => run.teamId === teamId && (
     run.conversationId === conversationId || (!run.conversationId && conversationId === legacyConversationId(sessionScope))
   )).reverse();
-  const activeTaskRuns = taskRuns.filter((run) => run.status !== 'completed' && run.status !== 'stopped');
-  const completedTaskRuns = taskRuns.filter((run) => run.status === 'completed' || run.status === 'stopped');
+  const projectBoard = useMemo(() => buildProjectBoard(taskRuns, state.projects), [taskRuns, state.projects]);
+  const projectSections = useMemo(() => projectBoardSections(projectBoard), [projectBoard]);
   const availableOutputs = loadOutputsByScope(`team:${teamId}`);
   const jumpMessages = visibleMessages.filter((message) => message.kind !== 'execution').slice(-24);
   const chatSessions = listChatSessions(sessionScope).filter((session) => session.id !== conversationId);
   const [expandedRunIds, setExpandedRunIds] = useState<Set<string>>(() => new Set());
+  const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(() => new Set());
   const [resumingRunIds, setResumingRunIds] = useState<Set<string>>(() => new Set());
   const [taskAudits, setTaskAudits] = useState<Record<string, TaskAudit>>({});
   const [progressNow, setProgressNow] = useState(Date.now());
-  const currentLiveRun = activeTaskRuns.find((run) => run.status === 'running' || run.status === 'queued');
+  const currentLiveRun = taskRuns.find((run) => run.status === 'running' || run.status === 'queued');
   const currentLiveStep = currentLiveRun?.steps.find((step) => step.status === 'running')
     ?? currentLiveRun?.steps.find((step) => step.status === 'queued');
   const currentLiveEmployee = currentLiveStep ? state.employees.find((employee) => employee.id === currentLiveStep.employeeId) : undefined;
   const currentLiveEvents = currentLiveStep?.events.slice(-4) ?? [];
   const executionIsLive = Boolean(myProgress) || Boolean(currentLiveRun);
-  const waitingRun = !currentLiveRun ? activeTaskRuns.find((run) => run.status === 'awaiting_user' || run.status === 'paused' || run.status === 'failed') : undefined;
+  const waitingRun = !currentLiveRun ? taskRuns.find((run) => run.status === 'awaiting_user' || run.status === 'paused' || run.status === 'failed') : undefined;
   const historyMatches = useMemo(() => taskHistoryQuery.trim()
     ? searchTaskRunHistory(state.taskRuns, taskHistoryQuery, { teams: state.teams, limit: 12 })
     : [], [taskHistoryQuery, state.taskRuns, state.teams]);
@@ -284,7 +286,7 @@ export default function TeamChatApp({ teamId }: Props) {
   };
 
   const handleStartNewChat = () => {
-    const running = activeTaskRuns.filter((run) => run.status === 'queued' || run.status === 'running');
+    const running = taskRuns.filter((run) => run.status === 'queued' || run.status === 'running');
     if (running.length && !confirm(`当前有 ${running.length} 个任务正在执行。新建聊天会安全停止这些任务并保留已完成内容，是否继续？`)) return;
     running.forEach((run) => stopTaskRun(run.id));
     if (visibleMessages.length) touchChatSession(sessionScope, conversationIdRef.current, titleFromMessages(visibleMessages, team.name));
@@ -430,14 +432,17 @@ export default function TeamChatApp({ teamId }: Props) {
     return result;
   };
 
-  const handleResumeTaskRun = (runId: string) => {
+  const handleResumeTaskRun = async (runId: string) => {
     setResumingRunIds((previous) => new Set(previous).add(runId));
-    resumeTaskRun(runId);
-    window.setTimeout(() => setResumingRunIds((previous) => {
+    try {
+      await resumeTaskRun(runId);
+    } finally {
+      setResumingRunIds((previous) => {
       const next = new Set(previous);
       next.delete(runId);
       return next;
-    }), 8_000);
+      });
+    }
   };
 
   const renderTaskRunCard = (run: TaskRun) => {
@@ -518,6 +523,56 @@ export default function TeamChatApp({ teamId }: Props) {
     </section>;
   };
 
+  const renderProjectCard = (project: ProjectBoardProject) => {
+    const expanded = expandedProjectIds.has(project.id);
+    const controlRun = project.actionRun ?? project.root;
+    const active = controlRun.status === 'running' || controlRun.status === 'queued';
+    const owner = project.currentStage?.ownerId ? state.employees.find((employee) => employee.id === project.currentStage?.ownerId) : undefined;
+    return <section key={project.id} className={`project-board-card status-${project.status}`}>
+      <button type="button" className="project-board-summary" onClick={() => setExpandedProjectIds((previous) => {
+        const next = new Set(previous); if (next.has(project.id)) next.delete(project.id); else next.add(project.id); return next;
+      })}>
+        <span className={`project-board-state state-${project.status}`}>{project.statusLabel}</span>
+        <strong>{project.title}</strong>
+        <span className="project-board-progress">{project.completed}/{project.total || 1}</span>
+        <span className="project-board-toggle">{expanded ? '收起' : '详情'}</span>
+      </button>
+      <div className="project-board-current">
+        <span>{project.currentStage ? `当前：${project.currentStage.label}` : '等待制定阶段'}</span>
+        {owner && <span>{owner.name}</span>}
+      </div>
+      <p className="project-board-result" title={project.latestResult}>{project.latestResult}</p>
+      {expanded && <div className="project-board-details">
+        <div className="project-board-goal"><strong>项目目标</strong><span>{project.goal}</span></div>
+        <div className="project-board-stages">
+          {project.stages.map((stage) => {
+            const stageOwner = stage.ownerId ? state.employees.find((employee) => employee.id === stage.ownerId) : undefined;
+            return <details key={stage.id} className={`project-board-stage stage-${stage.status}`} open={stage.status === 'running' || stage.status === 'awaiting_user' || stage.status === 'failed'}>
+              <summary><span>{stage.label}</span><small>{stageOwner?.name ?? '待分配'} · {stage.completed}/{stage.total}</small><b>{stage.status === 'running' ? '执行中' : stage.status === 'awaiting_user' ? '等待你处理' : stage.status === 'failed' ? '需要恢复' : stage.status === 'completed' ? '已完成' : '等待'}</b></summary>
+              {stage.entries.map(({ run, step }) => {
+                const employee = state.employees.find((item) => item.id === step.employeeId);
+                const detail = step.lastError || step.reviewReason || step.events.at(-1)?.detail || '尚未产生阶段结果。';
+                return <div key={`${run.id}-${step.id}`} className="project-board-stage-entry">
+                  <strong>{employee?.name ?? step.title}</strong><span>{step.title}</span><small>{detail}</small>
+                  <button type="button" onClick={() => setReplayTaskId(run.id)} title="查看该任务的可审计回放"><HistoryOutlined /></button>
+                </div>;
+              })}
+            </details>;
+          })}
+        </div>
+        <div className="project-board-actions">
+          {project.root.sourceMessageId && <button className="btn btn-sm" onClick={() => document.querySelector(`[data-message-id="${CSS.escape(project.root.sourceMessageId!)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>原始需求</button>}
+          {active && <button className="btn btn-sm" onClick={() => pauseTaskRun(controlRun.id)}><PauseCircleOutlined />暂停</button>}
+          {(controlRun.status === 'paused' || controlRun.status === 'failed' || controlRun.status === 'awaiting_user') && <button className="btn btn-sm btn-primary" disabled={resumingRunIds.has(controlRun.id)} onClick={() => handleResumeTaskRun(controlRun.id)}><PlayCircleOutlined />{resumingRunIds.has(controlRun.id) ? '正在继续…' : '继续执行'}</button>}
+          {(active || controlRun.status === 'paused' || controlRun.status === 'failed' || controlRun.status === 'awaiting_user') && <button className="btn btn-sm btn-danger" onClick={() => stopTaskRun(controlRun.id)}><StopOutlined />停止</button>}
+          {project.projectId && !project.archived && <button className="btn btn-sm" onClick={() => archiveProject(project.projectId!)} title="归档项目并保留任务记录">归档</button>}
+          <button className="btn btn-sm" onClick={() => closeTaskRun(project.root.id)} title="关闭项目及其任务记录">关闭</button>
+        </div>
+        <details className="project-board-audit"><summary>完整执行证据与回放</summary>{project.runs.map(renderTaskRunCard)}</details>
+      </div>}
+    </section>;
+  };
+
   const startPanelResize = (event: React.PointerEvent<HTMLDivElement>) => {
     event.preventDefault();
     resizingPanelRef.current = true;
@@ -591,6 +646,10 @@ export default function TeamChatApp({ teamId }: Props) {
                     : ((currentLiveRun?.steps.filter((step) => step.status === 'completed').length ?? 0) / Math.max(1, currentLiveRun?.steps.length ?? 1)) * 100}%` }} />
                 </div>
               </div>
+              {!myProgress && currentLiveRun && <div className="team-live-actions" aria-label="当前任务控制">
+                <button type="button" className="btn btn-sm" onClick={() => pauseTaskRun(currentLiveRun.id)}><PauseCircleOutlined />暂停</button>
+                <button type="button" className="btn btn-sm btn-danger" onClick={() => stopTaskRun(currentLiveRun.id)}><StopOutlined />停止</button>
+              </div>}
               {!myProgress && currentLiveRun && <div className="team-live-event-stream">
                 {(currentLiveEvents.length ? currentLiveEvents : [{ ts: currentLiveRun.updatedAt, type: 'status' as const, detail: currentLiveRun.status === 'queued' ? '任务已排队，等待后台执行器领取' : '后台执行器正在处理当前步骤' }]).map((event, index, events) => <div key={`${event.ts}-${index}`} className={index === events.length - 1 ? 'is-current' : ''}><i /> <span>{cleanExecutionDisplay(event.detail, 180)}</span><time>{new Date(event.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time></div>)}
               </div>}
@@ -879,8 +938,8 @@ export default function TeamChatApp({ teamId }: Props) {
               </div>
               <button type="button" className="chat-jump-bottom" title="跳到最新消息" onClick={() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })}>↓</button>
             </nav>
-            {showTaskList && <><div className="workspace-resize-handle" onPointerDown={startPanelResize} title="拖动调整任务面板宽度" /><aside className="team-task-sidebar" style={{ width: workspacePanelWidth, minWidth: workspacePanelWidth }} aria-label="任务列表">
-              <div className="team-task-sidebar-head"><strong>{taskReplay ? '任务回放' : '快速导航'}</strong><span>{taskReplay ? '只读' : `${taskRuns.length} 个任务`}</span>{!taskReplay && <button type="button" className="team-task-clear" title="清理聊天中的旧执行过程" onClick={() => clearTeamExecution(teamId)}>清理过程</button>}<button type="button" className="task-run-close" title="收起任务列表" onClick={() => setShowTaskList(false)}>×</button></div>
+            {showTaskList && <><div className="workspace-resize-handle" onPointerDown={startPanelResize} title="拖动调整任务面板宽度" /><aside className="team-task-sidebar" style={{ width: workspacePanelWidth, minWidth: workspacePanelWidth }} aria-label="项目面板">
+              <div className="team-task-sidebar-head"><strong>{taskReplay ? '任务回放' : '项目面板'}</strong><span>{taskReplay ? '只读' : `${projectBoard.length} 个项目`}</span>{!taskReplay && <button type="button" className="team-task-clear" title="清理聊天中的旧执行过程" onClick={() => clearTeamExecution(teamId)}>清理过程</button>}<button type="button" className="task-run-close" title="收起项目面板" onClick={() => setShowTaskList(false)}>×</button></div>
               {!taskReplay && <label className="task-history-search"><SearchOutlined /><input value={taskHistoryQuery} onChange={(event) => setTaskHistoryQuery(event.target.value)} placeholder="历史任务检索" aria-label="历史任务检索" />{taskHistoryQuery && <button type="button" onClick={() => setTaskHistoryQuery('')} title="清空搜索">×</button>}</label>}
               <div className="team-task-sidebar-body">
                 {taskReplay ? <div className="task-replay">
@@ -898,9 +957,10 @@ export default function TeamChatApp({ teamId }: Props) {
                   {historyMatches.map((match) => <button type="button" key={match.taskId} className="task-history-result" onClick={() => setReplayTaskId(match.taskId)}><span>{match.teamName} · {match.status}</span><strong>{match.title}</strong><p>{match.summary || match.goal}</p><small>已验证 {match.verifiedFacts.length} · 文件 {match.artifactPaths.length} · {new Date(match.updatedAt).toLocaleDateString('zh-CN')}</small></button>)}
                   {historyMatches.length === 0 && <div className="team-task-empty">没有匹配的历史任务</div>}
                 </div> : <>
-                  {activeTaskRuns.length > 0 && <div className="team-task-section"><div className="team-task-section-title">进行中与待处理</div>{activeTaskRuns.map(renderTaskRunCard)}</div>}
-                  {completedTaskRuns.length > 0 && <div className="team-task-section completed"><div className="team-task-section-title">已完成</div>{completedTaskRuns.map(renderTaskRunCard)}</div>}
-                  {taskRuns.length === 0 && <div className="team-task-empty">暂无任务</div>}
+                  {projectSections.current.length > 0 && <div className="team-task-section"><div className="team-task-section-title">当前与待处理</div>{projectSections.current.map((project) => renderProjectCard(project as ProjectBoardProject))}</div>}
+                  {projectSections.completed.length > 0 && <div className="team-task-section completed"><div className="team-task-section-title">已完成</div>{projectSections.completed.map((project) => renderProjectCard(project as ProjectBoardProject))}</div>}
+                  {projectSections.stopped.length > 0 && <div className="team-task-section completed"><div className="team-task-section-title">已停止与归档</div>{projectSections.stopped.map((project) => renderProjectCard(project as ProjectBoardProject))}</div>}
+                  {projectBoard.length === 0 && <div className="team-task-empty">暂无项目</div>}
                 </>}
               </div>
             </aside></>}

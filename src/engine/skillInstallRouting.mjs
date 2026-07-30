@@ -134,11 +134,8 @@ export function resolveSkillInstallRequest(text) {
       return false;
     }
   });
-  if (instructionUrl) {
-    const slug = skillHubSlugFromRequest(source);
-    if (!slug) return { instructionUrl, error: '已识别 SkillHub 安装说明，但没有识别出要安装的技能名。' };
-    return { instructionUrl, ...resolveSkillInstallInput({ sourceUrl: instructionUrl, slug, name: slug }) };
-  }
+  // A concrete package location is stronger evidence than a generic install
+  // manual pasted alongside it. Preserve the user's explicitly chosen source.
   const directUrl = urls.find((value) => {
     try {
       const parsed = new URL(value);
@@ -153,6 +150,17 @@ export function resolveSkillInstallRequest(text) {
       return false;
     }
   });
+  if (directUrl) {
+    // A slug mentioned in prose must not reclassify a GitHub/ZIP package as a
+    // SkillHub download. Only a SkillHub URL may supply a SkillHub slug here.
+    const slug = skillHubSlugFromUrl(directUrl);
+    return { ...(instructionUrl ? { instructionUrl } : {}), ...resolveSkillInstallInput({ sourceUrl: directUrl, slug, name: slug || undefined }) };
+  }
+  if (instructionUrl) {
+    const slug = skillHubSlugFromRequest(source);
+    if (!slug) return { instructionUrl, error: '已识别 SkillHub 安装说明，但没有识别出要安装的技能名。' };
+    return { instructionUrl, ...resolveSkillInstallInput({ sourceUrl: instructionUrl, slug, name: slug }) };
+  }
   const slug = skillHubSlugFromRequest(source) || skillHubSlugFromUrl(directUrl);
   if (!directUrl && !slug) return undefined;
   return resolveSkillInstallInput({ sourceUrl: directUrl, slug, name: slug || undefined });

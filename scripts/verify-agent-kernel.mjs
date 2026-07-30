@@ -19,6 +19,7 @@ import {
 } from '../src/engine/agentGuardrails.mjs';
 import {
   buildTaskContract,
+  classifyTaskTurnIntent,
   createFallbackTaskDecision,
   normalizeTaskDecision,
 } from '../src/engine/taskDecisionKernel.mjs';
@@ -37,6 +38,12 @@ import {
 } from '../src/engine/taskFidelity.mjs';
 
 const allToolNames = ['web_search', 'inspect_connectors', 'read_file', 'list_files', 'search_skills', 'install_skill', 'write_file', 'run_command'];
+
+assert.equal(
+  resolveActionableUserGoal('\u91cd\u65b0\u67e5\u4e00\u4e0b\u672c\u5730\u5df2\u5b89\u88c5\u6280\u80fd\u6570\u91cf', '\u5b89\u88c5\u4e0a\u4e00\u4e2a\u7f51\u4e0a\u627e\u5230\u7684 Skill'),
+  '\u91cd\u65b0\u67e5\u4e00\u4e0b\u672c\u5730\u5df2\u5b89\u88c5\u6280\u80fd\u6570\u91cf',
+  'a self-contained new request must not inherit the previous failed task',
+);
 
 const webDecision = createFallbackTaskDecision({
   latestMessage: '查一下今天的抖音热度榜，然后给我',
@@ -78,6 +85,16 @@ assert.deepEqual(skillInstall, {
 assert.equal(skillHubDownloadUrl('grill-me'), skillInstall.sourceUrl);
 assert.equal(isSkillHubDownloadUrl(skillInstall.sourceUrl), true);
 assert.equal(isSkillInstallOnlyRequest(skillHubPrompt), true);
+const explicitGitHubSkillPrompt = 'Install this Skill exactly from https://skillsmp.com/zh/creators/anthropics/skills/skills-skill-creator and https://github.com/anthropics/skills/tree/main/skills/skill-creator. Read the complete package before installing.';
+const explicitGitHubSkill = resolveSkillInstallRequest(explicitGitHubSkillPrompt);
+assert.equal(explicitGitHubSkill.sourceUrl, 'https://github.com/anthropics/skills/tree/main/skills/skill-creator', 'A concrete GitHub package must outrank a marketplace reference or generic instructions');
+assert.equal(explicitGitHubSkill.provider, 'direct');
+assert.equal(isSkillInstallOnlyRequest(explicitGitHubSkillPrompt), true);
+const githubContentsSkill = resolveSkillInstallRequest('Install https://api.github.com/repos/anthropics/skills/contents/skills/skill-creator/SKILL.md?ref=main as a Skill.');
+assert.equal(githubContentsSkill.sourceUrl, 'https://api.github.com/repos/anthropics/skills/contents/skills/skill-creator/SKILL.md?ref=main');
+assert.equal(githubContentsSkill.provider, 'direct');
+assert.equal(resolveSkillInstallRequest('Find a Skill for viral video analysis'), undefined, 'Discovery must not fabricate an install source');
+assert.equal(isSkillInstallOnlyRequest('Find a Skill for viral video analysis'), false, 'Discovery must wait for user selection before installation');
 const skillInstallDecision = createFallbackTaskDecision({ latestMessage: skillHubPrompt, availableTools: allToolNames });
 assert.equal(skillInstallDecision.mode, 'execute');
 assert.equal(skillInstallDecision.primaryRoute, 'install_skill');
@@ -92,6 +109,22 @@ const chatDecision = createFallbackTaskDecision({
   availableTools: allToolNames,
 });
 assert.equal(chatDecision.mode, 'conversation');
+
+const contextualFollowUp = '你自己判断我这句话到底是叫你重新查找，还是基于之前的回答问你？';
+assert.equal(classifyTaskTurnIntent(contextualFollowUp), 'follow_up_question');
+const contextualFollowUpDecision = createFallbackTaskDecision({
+  latestMessage: contextualFollowUp,
+  previousUserMessage: '重新查一下本地已安装技能数量',
+  availableTools: allToolNames,
+});
+assert.notEqual(contextualFollowUpDecision.mode, 'execute', 'A question about the previous exchange must not inherit the old tool route');
+assert.equal(contextualFollowUpDecision.primaryRoute, 'direct_answer');
+const modelMisclassifiedFollowUp = normalizeTaskDecision({
+  mode: 'execute', goal: '重新查找技能', primaryRoute: 'search_skills', acceptanceCriteria: ['重新检索'],
+  requiresEvidence: true, needsUser: false, missingUserCondition: '', searchQuery: '技能', decisionReason: '误把追问当命令', confidence: 0.9,
+}, { latestMessage: contextualFollowUp, previousUserMessage: '重新查一下本地已安装技能数量', availableTools: allToolNames });
+assert.equal(modelMisclassifiedFollowUp.mode, 'conversation', 'The kernel must deny tools even when the model misclassifies a discourse follow-up');
+assert.equal(modelMisclassifiedFollowUp.primaryRoute, 'direct_answer');
 
 const pausedButNewWorkDecision = createFallbackTaskDecision({
   latestMessage: '我已经暂停了之前的任务，现在把这个内核问题修复并验证',
@@ -280,6 +313,11 @@ assert.match(clientSource, /buildTaskContract\(taskDecision/u);
 assert.match(clientSource, /recordTaskLearning/u);
 assert.match(clientSource, /resumedFromCapabilityCorrection/u);
 assert.match(clientSource, /cognitiveOnlyCompletion/u);
+assert.match(clientSource, /指定 Skill 来源合同/u);
+assert.match(clientSource, /不得改读市场页、聚合页或替代来源/u);
+assert.match(clientSource, /const modelArgs = pinnedSkillSource/u);
+assert.match(clientSource, /安装前必须先读取用户指定来源中的 SKILL\.md/u);
+assert.doesNotMatch(clientSource, /pinnedSkillInstallAttempted/u);
 assert.doesNotMatch(clientSource, /buildRecoveryGuide\(/u);
 assert.match(assistantChatSource, /onExecutionState\(state\)/u);
 assert.match(dmChatSource, /controllerState\?: ExecutionControllerSnapshot/u);

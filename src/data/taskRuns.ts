@@ -338,7 +338,7 @@ export function createTaskRun(team: Team, employees: Employee[], request: string
     ...item,
     deliverableType: item.kind === 'review'
       ? 'decision'
-      : taskDecision?.deliverableType ?? item.deliverableType,
+      : item.deliverableType ?? taskDecision?.deliverableType,
     status: 'queued',
     attempts: 0,
     events: [{ ts: now, type: 'status', detail: '等待执行' }],

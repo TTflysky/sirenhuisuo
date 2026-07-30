@@ -175,7 +175,7 @@ export function assessTaskCompletion(goal, finalContent, callLog = []) {
     if (!installed) {
       issues.push(`没有真实安装目标 Skill${target ? `“${target}”` : ''}`);
     } else {
-      const readBackVerified = /自动回读验证|manifestReadable|回读文档|verified.{0,8}true/iu.test(installed.result)
+      const readBackVerified = /自动回读验证|完整包回读验证|manifestReadable|回读(?:规则)?文档|已核验源文件|verified.{0,8}true/iu.test(installed.result)
         || callLog.some((call) => call.name === 'read_skill' && call.success
           && (!target || `${call.args}\n${call.result}`.toLocaleLowerCase().includes(target)));
       if (!readBackVerified) issues.push('Skill 写入后没有完成 SKILL.md 回读与完整性验证');

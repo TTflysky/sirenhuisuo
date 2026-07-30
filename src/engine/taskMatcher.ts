@@ -93,6 +93,16 @@ function outputInstruction(deliverableType: TurnDeliverableType): string {
   return '直接形成清楚、可核对的回答或决策；本步骤不强制生成文件。';
 }
 
+function stepDeliverableType(employee: Employee, review: boolean, taskType: TurnDeliverableType, selected: Employee[]): TurnDeliverableType {
+  if (review) return 'decision';
+  // A project may need both a design decision and implementation files. Do
+  // not force the UX/planning member to manufacture a file when a real
+  // implementation owner is already responsible for that final artifact.
+  const hasImplementationOwner = selected.some((member) => member.role === 'coder' || /前端|后端|开发|工程|代码/u.test(`${member.title} ${member.prompt ?? ''}`));
+  if (hasImplementationOwner && employee.role === 'planner' && ['file', 'mixed'].includes(taskType)) return 'decision';
+  return taskType;
+}
+
 export function buildTaskPlan(team: Team, employees: Employee[], request: string, explicitIds: string[] = []): TaskPlanStep[] {
   const selectedIds = matchTeamMembers(team, employees, request, explicitIds);
   const selected = selectedIds.map((id) => employees.find((item) => item.id === id)).filter((item): item is Employee => !!item);
@@ -102,11 +112,12 @@ export function buildTaskPlan(team: Team, employees: Employee[], request: string
   const steps: TaskPlanStep[] = [];
   for (const employee of ordered) {
     const review = isReviewer(employee) && requiresValidation(request);
+    const currentDeliverableType = stepDeliverableType(employee, review, deliverableType, selected);
     const previous = steps.at(-1);
     const covered = capabilityCoverage(employee, inferTaskCapabilities(request)).covered.map(capabilityLabel);
     const assignment = review
       ? '审查本任务已有真实产出和执行证据。逐项核对老板原始要求，最后使用 submit_review 提交 PASS 或 REJECT；退回时必须标明责任步骤和具体问题。'
-      : `${previous ? `继承步骤“${previous.title}”已经验证的结果，在此基础上继续。` : '理解老板的完整要求并选择最直接的可用能力。'} 不得只回复收到或复述计划。${outputInstruction(deliverableType)} 你的责任能力：${covered.join('、') || employee.title}。`;
+      : `${previous ? `继承步骤“${previous.title}”已经验证的结果，在此基础上继续。` : '理解老板的完整要求并选择最直接的可用能力。'} 不得只回复收到或复述计划。${outputInstruction(currentDeliverableType)} 你的责任能力：${covered.join('、') || employee.title}。`;
     steps.push({
       id: `step-${stamp}-${steps.length + 1}-${employee.id}`,
       employeeId: employee.id,
@@ -114,7 +125,7 @@ export function buildTaskPlan(team: Team, employees: Employee[], request: string
       kind: review ? 'review' : 'work',
       title: review ? `${employee.name} · 最终审查` : `${employee.name} · ${employee.title}`,
       assignment,
-      deliverableType: review ? 'decision' : deliverableType,
+      deliverableType: currentDeliverableType,
       dependsOnStepIds: previous ? [previous.id] : [],
     });
   }

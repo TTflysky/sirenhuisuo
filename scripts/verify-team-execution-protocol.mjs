@@ -27,8 +27,9 @@ const protocol = createTeamExecutionProtocol({
 });
 assert.equal(TEAM_EXECUTION_PROTOCOL_VERSION, 1);
 assert.equal(validateTeamExecutionProtocol(protocol).valid, true);
-assert.match(protocol.kickoff.content, /需求复述/u);
+assert.match(protocol.kickoff.content, /任务简报/u);
 assert.match(protocol.kickoff.content, /@编剧/u);
+assert.doesNotMatch(protocol.kickoff.content, /需求复述/u);
 assert.deepEqual(protocol.members.map((member) => member.model), ['model-writer', 'model-checker']);
 
 const started = projectTeamExecutionEvent(protocol, { type: 'step_started', stepId: 'draft', employeeId: 'writer', tool: 'write_file' });

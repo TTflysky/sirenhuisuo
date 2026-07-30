@@ -14,7 +14,7 @@ const MAX_SKILL_BUNDLE_BYTES = 8 * 1024 * 1024;
 const MAX_SKILL_ARCHIVE_BYTES = 12 * 1024 * 1024;
 const MAX_SKILL_EXPANDED_BYTES = 16 * 1024 * 1024;
 const SKILL_DRAFT_SCHEMA = 1;
-const SKILL_DOCUMENT_ROOTS = new Set(['references', 'scripts', 'assets', 'knowledge-base', 'notes']);
+const SKILL_DOCUMENT_ROOTS = new Set(['references', 'scripts', 'assets', 'agents', 'eval-viewer', 'knowledge-base', 'notes']);
 let skillInstallRoutingPromise;
 
 function loadSkillInstallRouting() {
@@ -69,6 +69,99 @@ function parseFrontmatter(raw) {
 
 function unique(values) {
   return [...new Set(values.filter(Boolean))].sort((a, b) => a.localeCompare(b));
+}
+
+function sha256(value) {
+  return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function safeBundlePath(root, relativePath) {
+  const normalized = String(relativePath || '').replace(/\\/g, '/').replace(/^\.\//u, '');
+  if (!normalized || normalized.startsWith('/') || /^[a-z]:\//iu.test(normalized) || /(^|\/)\.\.(\/|$)/u.test(normalized)) {
+    throw new Error('技能包包含不安全路径');
+  }
+  const target = path.resolve(root, normalized);
+  if (target !== root && !target.startsWith(`${root}${path.sep}`)) throw new Error('技能包路径越界');
+  return { normalized, target };
+}
+
+async function collectPackageFiles(root) {
+  const resolvedRoot = path.resolve(root);
+  const files = [];
+  const walk = async (directory) => {
+    const entries = await fs.readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.name === '.taiji-skill.json') continue;
+      const fullPath = path.join(directory, entry.name);
+      const relative = path.relative(resolvedRoot, fullPath).replace(/\\/g, '/');
+      const { normalized } = safeBundlePath(resolvedRoot, relative);
+      if (entry.isSymbolicLink()) throw new Error('技能包不允许包含符号链接');
+      if (entry.isDirectory()) { await walk(fullPath); continue; }
+      if (!entry.isFile()) throw new Error('技能包包含不支持的文件类型');
+      const content = await fs.readFile(fullPath);
+      files.push({ path: normalized, bytes: content.length, sha256: sha256(content) });
+    }
+  };
+  await walk(resolvedRoot);
+  return files.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+async function createPackageManifest(root, source) {
+  const expectedFiles = await collectPackageFiles(root);
+  if (!expectedFiles.some((file) => file.path === 'SKILL.md')) throw new Error('技能包中没有 SKILL.md');
+  return {
+    schema: 1,
+    source,
+    expectedFiles,
+    expectedFileCount: expectedFiles.length,
+    expectedBundleHash: sha256(JSON.stringify(expectedFiles)),
+  };
+}
+
+async function validatePackageManifest(root, packageManifest) {
+  if (!packageManifest || packageManifest.schema !== 1 || !Array.isArray(packageManifest.expectedFiles)) {
+    throw new Error('技能安装记录缺少完整包清单');
+  }
+  const expected = packageManifest.expectedFiles
+    .filter((file) => file && typeof file.path === 'string' && typeof file.sha256 === 'string')
+    .map((file) => ({ path: file.path.replace(/\\/g, '/'), bytes: Number(file.bytes), sha256: file.sha256 }))
+    .sort((a, b) => a.path.localeCompare(b.path));
+  if (!expected.length || !expected.some((file) => file.path === 'SKILL.md')) throw new Error('技能完整包清单无效');
+  if (Number(packageManifest.expectedFileCount) !== expected.length || packageManifest.expectedBundleHash !== sha256(JSON.stringify(expected))) {
+    throw new Error('技能完整包清单校验失败');
+  }
+  const actual = await collectPackageFiles(root);
+  const expectedByPath = new Map(expected.map((file) => [file.path, file]));
+  const actualByPath = new Map(actual.map((file) => [file.path, file]));
+  const missing = expected.filter((file) => !actualByPath.has(file.path)).map((file) => file.path);
+  const unexpected = actual.filter((file) => !expectedByPath.has(file.path)).map((file) => file.path);
+  const altered = expected.filter((file) => {
+    const actualFile = actualByPath.get(file.path);
+    return actualFile && (actualFile.bytes !== file.bytes || actualFile.sha256 !== file.sha256);
+  }).map((file) => file.path);
+  if (missing.length || unexpected.length || altered.length) {
+    const details = [
+      missing.length ? `缺少：${missing.slice(0, 8).join('、')}` : '',
+      altered.length ? `内容不一致：${altered.slice(0, 8).join('、')}` : '',
+      unexpected.length ? `意外文件：${unexpected.slice(0, 8).join('、')}` : '',
+    ].filter(Boolean).join('；');
+    throw new Error(`技能完整包校验未通过（${details}）`);
+  }
+  return { fileCount: actual.length, bundleHash: sha256(JSON.stringify(actual)) };
+}
+
+async function writeInstallMetadata(stageDir, metadata) {
+  const content = await fs.readFile(path.join(stageDir, 'SKILL.md'), 'utf8');
+  const packageManifest = await createPackageManifest(stageDir, metadata.source);
+  await fs.writeFile(path.join(stageDir, '.taiji-skill.json'), JSON.stringify({
+    schema: 2,
+    ...metadata,
+    contentHash: sha256(content),
+    files: packageManifest.expectedFileCount,
+    packageManifest,
+    installedAt: new Date().toISOString(),
+  }, null, 2), 'utf8');
+  return packageManifest;
 }
 
 function isReadableSkillDocument(reference) {
@@ -146,6 +239,10 @@ async function scanSkills(projectRoot) {
               health = 'limited';
               healthMessage = '此技能仅安装了 SKILL.md；如原作者依赖脚本或参考资料，请从完整目录重新安装。';
             }
+            if (metadata.installMode && !metadata.packageManifest) {
+              health = 'limited';
+              healthMessage = '此技能来自旧版安装记录，缺少可核验的完整包清单；请重新安装后再用于自动任务。';
+            }
           } catch {}
           if (requirements.missingFiles.length > 0) {
             health = 'broken';
@@ -190,7 +287,20 @@ async function listSkills(projectRoot) {
 
 async function readSkill(projectRoot, id) {
   if (typeof id !== 'string' || id.length > 200) throw new Error('无效技能 ID');
-  const found = (await scanSkills(projectRoot)).find((item) => item.id === id);
+  const requested = id.trim();
+  const scanned = await scanSkills(projectRoot);
+  let found = scanned.find((item) => item.id === requested);
+  // Tool calls can preserve the stable path hash while dropping the display
+  // suffix from a long ID. Resolve that alias only when it is unambiguous.
+  if (!found) {
+    const normalized = requested.toLocaleLowerCase();
+    const aliases = scanned.filter((item) => item.pathHash === normalized
+      || item.name.toLocaleLowerCase() === normalized
+      || item.id.toLocaleLowerCase() === normalized
+      || (normalized.length >= 6 && (item.pathHash.startsWith(normalized) || item.id.toLocaleLowerCase().startsWith(normalized))));
+    if (aliases.length === 1) found = aliases[0];
+    else if (aliases.length > 1) throw new Error('Skill identifier is ambiguous; use the complete LOCAL ID returned by search_skills.');
+  }
   if (!found) throw new Error('技能不存在或已移除');
   let allowed = false;
   for (const root of uniqueRoots(projectRoot)) {
@@ -292,18 +402,49 @@ function githubCandidates(inputUrl) {
   return [inputUrl];
 }
 
-function githubDirectoryCandidate(inputUrl) {
+function githubDirectoryDescriptor(inputUrl) {
   const parsed = new URL(inputUrl);
-  if (parsed.hostname !== 'github.com') return null;
-  const parts = parsed.pathname.split('/').filter(Boolean);
-  if (parts[2] !== 'tree' || parts.length < 5) return null;
-  const [owner, repo, , branch, ...skillPath] = parts;
-  return `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo.replace(/\.git$/i, ''))}/contents/${skillPath.map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(branch)}`;
+  const host = parsed.hostname.toLocaleLowerCase();
+  let owner = '';
+  let repo = '';
+  let ref = '';
+  let skillPath = [];
+  if (host === 'github.com') {
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    if (parts[2] !== 'tree' || parts.length < 5) return null;
+    [owner, repo, , ref, ...skillPath] = parts;
+  } else if (host === 'api.github.com') {
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    if (parts[0] !== 'repos' || parts[3] !== 'contents' || parts.length < 6) return null;
+    [, owner, repo, , ...skillPath] = parts;
+    ref = parsed.searchParams.get('ref') || 'main';
+    // A contents API URL ending in SKILL.md is normally produced by the old
+    // resolver from a GitHub directory. Restore the directory contract here.
+    if (skillPath.at(-1)?.toLocaleLowerCase() === 'skill.md') skillPath.pop();
+  } else {
+    return null;
+  }
+  if (!owner || !repo || !ref || !skillPath.length) return null;
+  const encodedPath = skillPath.map(encodeURIComponent).join('/');
+  const cleanRepo = repo.replace(/\.git$/i, '');
+  return {
+    type: 'github-directory',
+    owner,
+    repo: cleanRepo,
+    ref,
+    subdirectory: skillPath.join('/'),
+    canonicalUrl: `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(cleanRepo)}/tree/${encodeURIComponent(ref)}/${encodedPath}`,
+    rootUrl: `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(cleanRepo)}/contents/${encodedPath}?ref=${encodeURIComponent(ref)}`,
+  };
+}
+
+function githubDirectoryCandidate(inputUrl) {
+  return githubDirectoryDescriptor(inputUrl)?.rootUrl || null;
 }
 
 async function downloadSkillDirectory(sourceUrl, targetDir, fetchImpl = globalThis.fetch) {
-  const rootUrl = githubDirectoryCandidate(sourceUrl);
-  if (!rootUrl) return { installMode: 'single-file', files: 1 };
+  const source = githubDirectoryDescriptor(sourceUrl);
+  if (!source) return { installMode: 'single-file', files: 1, source: { type: 'single-file', requestedUrl: sourceUrl } };
   let totalBytes = 0;
   let fileCount = 0;
   const download = async (directoryUrl, relativeDir = '') => {
@@ -316,10 +457,13 @@ async function downloadSkillDirectory(sourceUrl, targetDir, fetchImpl = globalTh
     if (!Array.isArray(entries)) throw new Error('技能目录格式不正确');
     for (const entry of entries) {
       if (fileCount >= MAX_SKILL_BUNDLE_FILES) throw new Error('技能目录文件过多，无法安全安装');
-      if (entry.name.startsWith('.')) continue;
+      const unsafeEntryName = !entry?.name
+        || entry.name.includes('/')
+        || entry.name.includes('\\')
+        || entry.name.includes(String.fromCharCode(0));
+      if (unsafeEntryName) throw new Error('技能目录包含不安全文件名');
       const relative = path.posix.join(relativeDir, entry.name);
-      const target = path.resolve(targetDir, relative);
-      if (!target.startsWith(`${targetDir}${path.sep}`)) throw new Error('技能目录包含不安全路径');
+      const { target } = safeBundlePath(path.resolve(targetDir), relative);
       if (entry.type === 'dir') { await download(entry.url, relative); continue; }
       if (entry.type !== 'file' || !entry.download_url) continue;
       const fileResponse = await fetchImpl(entry.download_url, { signal: AbortSignal.timeout(SKILL_DOWNLOAD_TIMEOUT_MS) });
@@ -332,9 +476,9 @@ async function downloadSkillDirectory(sourceUrl, targetDir, fetchImpl = globalTh
       fileCount += 1;
     }
   };
-  await download(rootUrl);
+  await download(source.rootUrl);
   if (!(await fs.stat(path.join(targetDir, 'SKILL.md'))).isFile()) throw new Error('技能目录中没有 SKILL.md');
-  return { installMode: 'directory', files: fileCount };
+  return { installMode: 'directory', files: fileCount, source };
 }
 
 async function downloadSkillMarkdown(sourceUrl, fetchImpl = globalThis.fetch) {
@@ -463,6 +607,7 @@ async function validateStagedSkill(stageDir) {
   if (!metadata.requestedSourceUrl || !metadata.contentHash) throw new Error('技能安装记录不完整');
   const actualHash = crypto.createHash('sha256').update(content).digest('hex');
   if (metadata.contentHash !== actualHash) throw new Error('SKILL.md 完整性校验失败');
+  if (metadata.packageManifest) await validatePackageManifest(root, metadata.packageManifest);
   const requirements = await inspectSkillRequirements(content, root);
   if (metadata.installMode !== 'single-file' && requirements.missingFiles.length > 0) {
     throw new Error(`技能包缺少引用文件：${requirements.missingFiles.slice(0, 5).join('、')}`);
@@ -553,15 +698,13 @@ async function installZipSkill(projectRoot, sourceUrl, requestedName, fetchImpl 
     const stageDir = await createSkillStage(skillsRoot, slug);
     try {
       await fs.cp(skillRoot, stageDir, { recursive: true, errorOnExist: false, force: false });
-      await fs.writeFile(path.join(stageDir, '.taiji-skill.json'), JSON.stringify({
-        schema: 1,
+      await writeInstallMetadata(stageDir, {
         installMode: 'zip',
         sourceUrl: response.url || sourceUrl,
         requestedSourceUrl: sourceUrl,
-        contentHash: crypto.createHash('sha256').update(content).digest('hex'),
-        files: archiveInfo.files,
-        installedAt: new Date().toISOString(),
-      }, null, 2), 'utf8');
+        archiveFiles: archiveInfo.files,
+        source: { type: 'zip', requestedUrl: sourceUrl, resolvedUrl: response.url || sourceUrl },
+      });
       await replaceSkillDirectoryAtomically(targetDir, stageDir);
     } catch (error) {
       try { await fs.rm(stageDir, { recursive: true, force: true }); } catch {}
@@ -607,15 +750,12 @@ async function installSkill(projectRoot, input, options = {}) {
   try {
     const bundle = await downloadSkillDirectory(sourceUrl, stageDir, fetchImpl);
     if (bundle.installMode === 'single-file') await fs.writeFile(path.join(stageDir, 'SKILL.md'), content, 'utf8');
-    await fs.writeFile(path.join(stageDir, '.taiji-skill.json'), JSON.stringify({
-      schema: 1,
+    await writeInstallMetadata(stageDir, {
       installMode: bundle.installMode,
       sourceUrl: resolvedUrl,
       requestedSourceUrl: sourceUrl,
-      contentHash: crypto.createHash('sha256').update(content).digest('hex'),
-      files: bundle.files,
-      installedAt: new Date().toISOString(),
-    }, null, 2), 'utf8');
+      source: bundle.source || { type: 'single-file', requestedUrl: sourceUrl, resolvedUrl },
+    });
     await replaceSkillDirectoryAtomically(targetDir, stageDir);
   } catch (error) {
     try { await fs.rm(stageDir, { recursive: true, force: true }); } catch {}
@@ -641,6 +781,13 @@ async function verifyInstalledSkill(projectRoot, result, request) {
   }
   const readBack = await readSkill(projectRoot, found.id);
   if (!readBack.content?.trim()) throw new Error('技能已经写入，但安装后无法回读 SKILL.md');
+  const skillDir = path.dirname(found._path);
+  let metadata;
+  try { metadata = JSON.parse(await fs.readFile(path.join(skillDir, '.taiji-skill.json'), 'utf8')); } catch {
+    throw new Error('技能已经写入，但没有可验证的安装记录');
+  }
+  if (!metadata.packageManifest) throw new Error('技能已经写入，但缺少完整包清单，不能报告安装成功');
+  const packageVerification = await validatePackageManifest(skillDir, metadata.packageManifest);
   const { _path, ...skill } = found;
   return {
     ...result,
@@ -653,6 +800,8 @@ async function verifyInstalledSkill(projectRoot, result, request) {
       skillId: found.id,
       health: found.health,
       documentCount: readBack.documents?.length || 0,
+      sourceFileCount: packageVerification.fileCount,
+      bundleHash: packageVerification.bundleHash,
       checkedAt: new Date().toISOString(),
     },
   };
@@ -824,4 +973,4 @@ async function reviewSkillDraft(projectRoot, draftId, decision, note = '') {
   return { ok: true, action: proposal.action === 'create' ? 'created' : 'patched', draft: proposal };
 }
 
-module.exports = { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill, inspectSkillSource, repairSkill, createSkillDraft, listSkillDrafts, reviewSkillDraft, validateZipArchive, validateStagedSkill, replaceSkillDirectoryAtomically, isSkillHubDownloadUrl, MAX_BODY_BYTES };
+module.exports = { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill, inspectSkillSource, repairSkill, createSkillDraft, listSkillDrafts, reviewSkillDraft, validateZipArchive, validateStagedSkill, validatePackageManifest, replaceSkillDirectoryAtomically, isSkillHubDownloadUrl, MAX_BODY_BYTES };

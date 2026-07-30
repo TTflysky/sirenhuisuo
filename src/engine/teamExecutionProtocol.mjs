@@ -48,14 +48,16 @@ function normalizeStep(step = {}) {
 
 function buildKickoff(input, members, steps, createdAt) {
   const lines = [
-    `需求复述：${text(input.goal, 1000)}`,
-    '执行顺序：',
+    '任务简报',
+    `目标：${text(input.goal, 500) || '按当前任务合同执行'}`,
+    '分工：',
     ...steps.map((step, index) => {
       const member = members.find((item) => item.id === step.employeeId);
       const dependencies = step.dependsOnStepIds.length ? `（等待：${step.dependsOnStepIds.join('、')}）` : '';
       return `${index + 1}. @${member?.name ?? step.employeeId} 负责「${step.title || step.id}」${dependencies}`;
     }),
-    '规则：每一步必须返回可验证结果，前一步未完成时不跳过；最后由审查步骤验收。',
+    '交付：以每一步任务合同中的交付类型和验收条件为准。',
+    '当前缺口：暂无；只有账号、授权、批准或业务选择等外部条件缺失时才会提出。',
   ];
   return {
     id: id('kickoff'),

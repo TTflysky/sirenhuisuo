@@ -58,6 +58,8 @@ async function main() {
     const readBack = await readSkill(projectRoot, direct.skill.id);
     assert.match(readBack.content, /Diagram Builder/u);
     assert.equal(readBack.documents[0].path, 'references/guide.md');
+    const readByUniquePrefix = await readSkill(projectRoot, direct.skill.id.slice(0, 8));
+    assert.equal(readByUniquePrefix.id, direct.skill.id, 'a unique Skill ID prefix must resolve to the complete installed Skill');
 
     const runtime = createNativeToolRuntime({
       projectRoot,
@@ -71,13 +73,18 @@ async function main() {
     assert.equal(market.success, true);
     assert.match(market.output, /diagram-builder/u);
     assert.match(market.output, /api\.skillhub\.cn\/api\/v1\/download/u);
+    const inventory = await runtime.execute('search_skills', { query: 'all', scope: 'local' }, { executionPolicy: { approvalMode: 'full' } });
+    assert.equal(inventory.success, true, inventory.output);
+    assert.match(inventory.output, /Local skill inventory:/u);
+    assert.match(inventory.output, /built-in/u);
 
     const installed = await runtime.execute('install_skill', { name: 'diagram-builder' }, {
       goal: prompt,
       executionPolicy: { approvalMode: 'full' },
     });
     assert.equal(installed.success, true, installed.output);
-    assert.match(installed.output, /自动回读验证/u);
+    assert.match(installed.output, /完整包回读验证/u);
+    assert.match(installed.output, /已核验源文件/u);
     assert.match(installed.output, /健康状态/u);
 
     const acceptance = fidelity.assessTaskCompletion(prompt, 'diagram-builder 已安装并验证。', [{

@@ -1,6 +1,7 @@
 import { capabilityCoverage, capabilityLabel, inferCapabilityIds, selectCapabilityTeam } from './capabilityGraph.mjs';
 
-const DELEGATION_VERSION = 1;
+const DELEGATION_VERSION = 2;
+const DELIVERABLE_TYPES = new Set(['answer', 'file', 'connection', 'operation', 'decision', 'mixed']);
 const TERMINAL = new Set(['completed', 'failed', 'cancelled']);
 const DELEGATION_TRANSITIONS = {
   queued: new Set(['queued', 'running', 'cancelled']),
@@ -14,6 +15,23 @@ function text(value, max = 1600) { return String(value ?? '').trim().slice(0, ma
 function clone(value) { return value === undefined ? undefined : JSON.parse(JSON.stringify(value)); }
 function list(value, max = 12) { return Array.isArray(value) ? value.map((item) => text(item, 500)).filter(Boolean).slice(0, max) : []; }
 function id(prefix) { return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`; }
+function normalizeDeliverableType(value) {
+  const normalized = text(value, 40).toLowerCase();
+  return DELIVERABLE_TYPES.has(normalized) ? normalized : '';
+}
+function inferDeliverableType(input, parent, run) {
+  const declared = normalizeDeliverableType(input.deliverableType);
+  if (declared) return declared;
+  const assignment = `${text(input.title, 400)} ${text(input.assignment, 3000)} ${list(input.acceptanceCriteria, 8).join(' ')}`;
+  if (/(?:文件|文档|代码|网页|页面|html|excel|word|ppt|pdf|脚本|安装包)/iu.test(assignment)) return 'file';
+  if (/(?:连接|接入|连通|知识库|mcp|ima|connector)/iu.test(assignment)) return 'connection';
+  if (/(?:安装|部署|发布|发送|上传|下载|执行|运行)/iu.test(assignment)) return 'operation';
+  if (/(?:方案|设计|分析|建议|判断|评审|审查|调研|规划)/iu.test(assignment)) return 'decision';
+  return normalizeDeliverableType(parent?.deliverableType)
+    || normalizeDeliverableType(run?.contract?.deliverableType)
+    || normalizeDeliverableType(run?.taskDecision?.deliverableType)
+    || 'answer';
+}
 function selectionReason(member, assignment) {
   const required = inferCapabilityIds(assignment);
   const covered = capabilityCoverage(member, required).covered;
@@ -58,6 +76,7 @@ export function createDelegation(run, input = {}) {
   const delegatedStepId = `subtask-${delegationId}`;
   const title = text(input.title, 240) || `${employee.name} · 子任务`;
   const acceptanceCriteria = list(input.acceptanceCriteria, 8);
+  const expectedDeliverableType = inferDeliverableType(input, parent, run);
   const dependsOn = parent ? [parent.id] : list(input.dependsOnStepIds, 20);
   const knownStepIds = new Set((run.steps || []).map((step) => step.id));
   const unknownDependencies = dependsOn.filter((dependency) => !knownStepIds.has(dependency));
@@ -72,6 +91,7 @@ export function createDelegation(run, input = {}) {
     employeeName: employee.name,
     title,
     assignment,
+    deliverableType: expectedDeliverableType,
     acceptanceCriteria: acceptanceCriteria.length ? acceptanceCriteria : ['完成委派说明', '留下可验证的结果'],
     dependsOnStepIds: dependsOn,
     status: 'queued',
@@ -85,6 +105,7 @@ export function createDelegation(run, input = {}) {
     employeeId: employee.id,
     order: (run.steps?.length || 0) + 1,
     kind: 'work',
+    deliverableType: expectedDeliverableType,
     title,
     assignment: `${assignment}\n\n本任务由动态委派创建。验收标准：${delegation.acceptanceCriteria.join('；')}`,
     dependsOnStepIds: dependsOn,

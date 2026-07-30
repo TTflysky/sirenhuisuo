@@ -25,7 +25,7 @@ function fixture() {
   };
 }
 
-assert.equal(TASK_DELEGATION_VERSION, 1);
+assert.equal(TASK_DELEGATION_VERSION, 2);
 assert.equal(selectDelegate(fixture().memberSnapshot, '实现代码并运行构建').id, 'coder');
 assert.equal(selectDelegate(fixture().memberSnapshot, '检查测试结果').id, 'checker');
 
@@ -36,6 +36,12 @@ assert.equal(appended.delegation.employeeId, 'coder');
 assert.equal(appended.step.delegationId, appended.delegation.id);
 assert.deepEqual(appended.step.dependsOnStepIds, ['plan']);
 assert.equal(appended.run.steps.length, 3);
+
+const decision = appendDelegation(fixture(), {
+  parentStepId: 'plan', employeeId: 'checker', title: '审查方案', assignment: '审查方案并给出是否可执行的结论', deliverableType: 'decision',
+});
+assert.equal(decision.delegation.deliverableType, 'decision');
+assert.equal(decision.step.deliverableType, 'decision');
 
 const running = transitionDelegation(appended.run, appended.delegation.id, 'running');
 assert.equal(running.run.steps.at(-1).status, 'running');

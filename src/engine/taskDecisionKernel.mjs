@@ -3,6 +3,8 @@ import {
   getDirectExecutionControl,
   isActionableCapabilityCorrection,
   isConversationOnlyMessage,
+  isExplicitPauseSteering,
+  isExplicitStopSteering,
   requiresFreshWebResearch,
   requiresObservableExecutionEvidence,
   resolveActionableUserGoal,
@@ -95,6 +97,31 @@ function clean(value, maxLength = 2000) {
   return String(value ?? '').trim().replace(/\s+/g, ' ').slice(0, maxLength);
 }
 
+/**
+ * This is a turn-level gate, not a capability router.  Its sole job is to
+ * distinguish a request to act from a question about the conversation that
+ * has already happened.  The latter must never inherit tool authority from
+ * the previous task.
+ */
+export function classifyTaskTurnIntent(message) {
+  const text = clean(message, 4000);
+  if (!text) return 'conversation';
+  const control = getDirectExecutionControl(text);
+  if (control) return 'resume_control';
+
+  const asksQuestion = /[？?]|(?:为什么|为何|怎么|怎样|是不是|对不对|能不能|可以吗|什么意思|理解了吗|看懂了吗|判断一下)/u.test(text);
+  const refersToConversation = /(?:这句话|这次的话|我的意思|刚才(?:那)?句|上一句|上面(?:的)?(?:回答|回复|结果)|之前(?:的)?(?:回答|回复|结果)|基于(?:上面|之前|刚才)|针对(?:上面|之前|刚才)|你(?:到底)?理解|你自己判断|你说的|你的(?:回答|回复|判断))/u.test(text);
+  // A question about the meaning, scope, or correctness of the current
+  // exchange is an answer turn even when it repeats verbs from the old task.
+  if (asksQuestion && refersToConversation) return 'follow_up_question';
+
+  if (isActionableCapabilityCorrection(text)) return 'execute_request';
+  if (requiresFreshWebResearch(text) || requiresObservableExecutionEvidence(text) || !isConversationOnlyMessage(text)) return 'execute_request';
+  if (shouldHoldTaskForFeedback(text) || isExplicitPauseSteering([text]) || isExplicitStopSteering([text])) return 'feedback_or_correction';
+  if (asksQuestion) return 'answer';
+  return 'conversation';
+}
+
 function defaultAcceptance(route, goal) {
   if (route === 'web_search') return [`查询结果必须直接对应“${clean(goal, 160)}”中的对象、地点、时间和主题`, '取得当前可核验的外部资料，偏题结果不得交付', '直接回答用户问题并保留来源链接'];
   if (route === 'inspect_connectors') return ['识别真实接入方式和缺失条件', '完成保存并通过真实连接测试后才宣布可用'];
@@ -126,6 +153,8 @@ function routeForGoal(goal, availableTools) {
 }
 
 function deliverableTypeForGoal(goal, route, provided) {
+  if (/(?:连接|接入|连通|知识库|mcp|ima|connector)/iu.test(goal)
+    && /(?:能否|能不能|可不可以|是否可以|能不能够|评估|可行性|方案|判断)/u.test(goal)) return 'decision';
   if (route === 'write_file') return 'file';
   if (route === 'inspect_connectors' || route === 'connector') return 'connection';
   if (['install_skill', 'run_command'].includes(route)) return 'operation';
@@ -156,23 +185,24 @@ export function createFallbackTaskDecision(input = {}) {
   const latestMessage = clean(input.latestMessage);
   const previousUserMessage = clean(input.previousUserMessage);
   const control = getDirectExecutionControl(latestMessage);
+  const turnIntent = classifyTaskTurnIntent(latestMessage);
   const capabilityCorrection = isActionableCapabilityCorrection(latestMessage);
   const goal = clean(resolveActionableUserGoal(latestMessage, previousUserMessage)) || latestMessage;
   const feedbackOnly = shouldHoldTaskForFeedback(latestMessage) && isConversationOnlyMessage(latestMessage);
   const requiredConstraints = taskRequirementLabels(goal);
-  const mustExecute = capabilityCorrection
+  const mustExecute = turnIntent === 'execute_request' && (capabilityCorrection
     || requiresFreshWebResearch(goal)
     || requiresObservableExecutionEvidence(goal)
-    || !isConversationOnlyMessage(latestMessage);
+    || !isConversationOnlyMessage(latestMessage));
 
-  if (control === 'stop' || control === 'pause' || feedbackOnly) {
+  if (control === 'stop' || control === 'pause' || feedbackOnly || turnIntent === 'follow_up_question' || turnIntent === 'feedback_or_correction') {
     return {
       mode: 'conversation', goal: latestMessage, primaryRoute: 'direct_answer',
       deliverableType: 'answer',
-      acceptanceCriteria: ['回应用户当前控制指令或反馈，不偷跑旧任务'],
+      acceptanceCriteria: ['回应用户当前控制指令、追问或反馈，不偷跑旧任务'],
       requiredConstraints,
       requiresEvidence: false, needsUser: false, missingUserCondition: '', searchQuery: '',
-      decisionReason: '这是对当前执行的控制或反馈，应先回应用户。', confidence: 1, source: 'rules',
+      decisionReason: '这是对当前对话的控制、追问或反馈，应先回应用户。', confidence: 1, source: 'rules',
     };
   }
 
@@ -219,9 +249,11 @@ export function normalizeTaskDecision(candidate, input = {}) {
   if (!candidate || typeof candidate !== 'object') return fallback;
   const latestMessage = clean(input.latestMessage);
   const control = getDirectExecutionControl(latestMessage);
+  const turnIntent = classifyTaskTurnIntent(latestMessage);
   const capabilityCorrection = isActionableCapabilityCorrection(latestMessage);
   const hardExecute = capabilityCorrection || requiresFreshWebResearch(fallback.goal) || requiresObservableExecutionEvidence(fallback.goal);
-  const hardHold = control === 'stop' || control === 'pause'
+  const hardHold = turnIntent === 'follow_up_question' || turnIntent === 'feedback_or_correction'
+    || control === 'stop' || control === 'pause'
     || (shouldHoldTaskForFeedback(latestMessage) && isConversationOnlyMessage(latestMessage));
   const proposedMode = ['conversation', 'answer', 'execute'].includes(candidate.mode) ? candidate.mode : fallback.mode;
   const mode = hardHold ? 'conversation' : hardExecute ? 'execute' : proposedMode;
@@ -286,6 +318,7 @@ export function buildTaskDecisionMessages(input = {}) {
 判断原则：
 - 先理解完整语义、最近上下文和用户真正想达到的结果，不靠单个关键词分类。
 - conversation 用于闲聊、情绪、状态询问、暂停/停止和单纯反馈；answer 用于不需要外部行动即可可靠回答的问题；execute 用于查询外部或本地事实、配置、安装、创建、修改、运行、验证、调度等任务。
+- 先判断本轮说话意图，再决定是否允许工具：用户问“我这句话是什么意思”“你理解的是不是对的”“基于刚才回答……”是在追问现有对话，即使复用了“查找、技能、安装”等词，也必须选 conversation 或 answer，禁止调用工具、重放旧任务或继承旧任务的工具权限。
 - 用户纠正“为什么不调用工具/不会搜索”时，要恢复最近尚未完成的真实目标，而不是把纠正句当作新目标。
 - 不得因为尚未检查就假定缺少 API、账号或文件。只有明确缺少且客户端无法自行取得的凭据、授权、批准或业务选择，needsUser 才能为 true。
 - acceptanceCriteria 描述最终可验收结果，不能把“调用了工具”“尝试了”当作完成。

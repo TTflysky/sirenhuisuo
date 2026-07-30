@@ -347,6 +347,7 @@ export interface TaskWorkerLease {
 
 export interface TaskRun {
   id: string;
+  parentTaskId?: string;
   teamId: string;
   /** Chat session that created this task. Old runs without it belong to the legacy session. */
   conversationId?: string;

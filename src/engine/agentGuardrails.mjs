@@ -133,7 +133,17 @@ export function isActionableCapabilityCorrection(message) {
 export function resolveActionableUserGoal(message, previousUserMessage) {
   const current = String(message ?? '').trim();
   const previous = String(previousUserMessage ?? '').trim();
-  if (!isActionableCapabilityCorrection(current) || !previous || isConversationOnlyMessage(previous)) return current;
+  // A correction only inherits a previous goal when it actually refers back to
+  // that goal. A complete new request must start from fresh observations.
+  const refersToPreviousWork = /(?:\u4e0a\u6b21|\u4e0a\u9762|\u4e4b\u524d|\u521a\u624d|\u7ee7\u7eed|\u539f\u4efb\u52a1|\u8fd9\u4e2a\u4efb\u52a1|\u6309\u521a\u624d|\u5b83|\u8be5\u4efb\u52a1)|\b(?:continue|resume|previous|above|prior|same task)\b/iu.test(current);
+  const introducesNewTarget = /(?:\u672c\u5730|\u5f53\u524d|\u6570\u91cf|\u591a\u5c11|\u6e05\u5355|\u76ee\u5f55|\u6587\u4ef6|\u8fde\u63a5\u5668|\u6a21\u578b|\u5458\u5de5|\u56e2\u961f|\u5de5\u4f5c\u533a|\u6280\u80fd\u5e93|\u4ea7\u51fa\u7269|\u72b6\u6001)/u.test(current);
+  const capabilityCorrection = isActionableCapabilityCorrection(current);
+  const correctiveFraming = /(?:不对|不要|别(?:只|再|用)|应该|应当|而不是|难道|为什么|怎么(?:不|还)|没有|没(?:有|做|查|用)|只读)/u.test(current);
+  // A route correction often names the failed route (for example "本地" or
+  // "连接器").  That is not a new task target, so decide correction status
+  // before applying the self-contained-request isolation rule.
+  if (!refersToPreviousWork && introducesNewTarget && (!capabilityCorrection || !correctiveFraming)) return current;
+  if (!capabilityCorrection || !previous || isConversationOnlyMessage(previous)) return current;
   const addsHardConstraint = /(?:我)?(?:需要|要求|必须|只能|务必|改用|换成|不能|不要).{0,48}(?:工具|方式|格式|文件|模型|路线)|而不是/u.test(current);
   return addsHardConstraint ? `${previous}\n新增约束：${current}` : previous;
 }

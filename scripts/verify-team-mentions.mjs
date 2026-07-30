@@ -16,8 +16,10 @@ const store = await fs.readFile(new URL('../src/store.tsx', import.meta.url), 'u
 const discussion = await fs.readFile(new URL('../src/engine/teamDiscussion.ts', import.meta.url), 'utf8');
 assert.match(store, /runTeamMentionReply/);
 assert.match(store, /runDirectEmployeeReply/);
-assert.match(store, /relayAssistantMentions/);
+assert.match(store, /enqueueTeamAssistantReply/);
+assert.match(store, /directMentions\.length > 0 && !supervisorMentioned/);
+assert.doesNotMatch(store, /relayAssistantMentions/);
 assert.match(discussion, /export async function runTeamMentionReply/);
 assert.match(discussion, /不要擅自创建任务、安排其他成员或生成文件/);
 
-console.log(JSON.stringify({ passed: true, cases: 9, contract: 'direct-mention-routing-v1' }, null, 2));
+console.log(JSON.stringify({ passed: true, cases: 9, contract: 'direct-mention-routing-v2' }, null, 2));

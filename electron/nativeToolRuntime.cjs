@@ -14,7 +14,9 @@ const NATIVE_TOOL_DEFINITIONS = [
   tool('list_files', '列出当前任务工作区的真实文件。', { filter: stringField('可选文件名过滤词') }, []),
   tool('web_search', '搜索互联网获取最新资料。', { query: stringField('必须保留用户原始目标中的地点、时间和主题') }, ['query']),
   tool('read_web_page', '读取指定 HTTP/HTTPS 网页正文。', { url: stringField('完整网页地址') }, ['url']),
-  tool('search_skills', '搜索可用 Skill；技能发现请求会同时检索 SkillHub 官方市场。', { query: stringField('任务或技能关键词') }, ['query']),
+  tool('search_skills', '搜索可用 Skill。scope=local 用于盘点已安装技能；scope=market 用于只查 SkillHub；auto 会同时参考本地与官方市场。', {
+    query: stringField('任务或技能关键词'), scope: { type: 'string', enum: ['auto', 'local', 'market'], description: '由任务合同决定检索范围' },
+  }, ['query']),
   tool('read_skill', '读取已安装 Skill 的完整说明。', { id: stringField('Skill ID') }, ['id']),
   tool('install_skill', '使用客户端原生安装器安装完整 Skill。可直接传 SkillHub slug、技能名、商城详情页、安装说明页、GitHub、SKILL.md 或 ZIP；禁止改用 skillhub 命令。', {
     sourceUrl: stringField('可选：官方来源、SkillHub 详情页或下载地址'),
@@ -45,6 +47,15 @@ const NATIVE_TOOL_DEFINITIONS = [
     cmd: stringField('完整 PowerShell 命令'), verification: { type: 'boolean' }, connector: stringField('可选连接器 ID'),
   }, ['cmd']),
 ];
+
+const delegateSubtaskDefinition = NATIVE_TOOL_DEFINITIONS.find((item) => item.function?.name === 'delegate_subtask');
+if (delegateSubtaskDefinition) {
+  delegateSubtaskDefinition.function.parameters.properties.deliverableType = {
+    type: 'string',
+    enum: ['answer', 'file', 'connection', 'operation', 'decision', 'mixed'],
+    description: 'Final deliverable type for this subtask.',
+  };
+}
 
 function stringField(description) { return { type: 'string', description }; }
 function tool(name, description, properties, required) {
@@ -273,15 +284,29 @@ function createNativeToolRuntime(options) {
       if (name === 'search_skills') {
         const skills = await options.listSkills(projectRoot);
         const query = String(args.query || '').trim().toLowerCase();
+        const requestedScope = ['local', 'market'].includes(String(args.scope || '').toLocaleLowerCase())
+          ? String(args.scope).toLocaleLowerCase()
+          : 'auto';
+        const inventoryRequested = requestedScope === 'local';
         const tokens = query.split(/[\s，。；、]+/u).filter((item) => item.length > 1);
         const matches = skills.filter((skill) => {
           const text = `${skill.id} ${skill.name} ${skill.description || ''}`.toLowerCase();
-          return !tokens.length || tokens.some((token) => text.includes(token));
-        }).slice(0, 12);
-        const localOutput = matches.length
+          return inventoryRequested || !tokens.length || tokens.some((token) => text.includes(token));
+        }).slice(0, inventoryRequested ? 80 : 12);
+        const localInventorySummary = `Local skill inventory: ${skills.length} total; built-in ${skills.filter((skill) => skill.scope !== 'mine').length}; user ${skills.filter((skill) => skill.scope === 'mine').length}; matched ${matches.length}.`;
+        let localOutput = matches.length
           ? matches.map((skill) => `- ${skill.id} | ${skill.name} | ${skill.health || 'unknown'} | ${skill.description || ''}`).join('\n')
           : '本机没有直接匹配的 Skill。';
-        const market = await searchSkillHub(query, options.fetchImpl);
+        localOutput = `${localInventorySummary}\n${localOutput}`;
+        if (inventoryRequested) {
+          const health = Object.entries(skills.reduce((summary, skill) => {
+            const key = skill.health || 'unknown'; summary[key] = (summary[key] || 0) + 1; return summary;
+          }, {})).map(([key, count]) => `${key} ${count}`).join('，');
+          return succeeded(name, `本地技能库真实扫描：共 ${skills.length} 个${health ? `（${health}）` : ''}。\n本次列出 ${matches.length} 个：\n${localOutput}\n\n这是本次请求的系统扫描结果，不需要逐个调用 read_skill，也不能用之前失败的读取结果推断本地数量。`, {
+            skillSearch: { scope: 'local', total: skills.length, builtIn: skills.filter((skill) => skill.scope !== 'mine').length, user: skills.filter((skill) => skill.scope === 'mine').length, listed: matches.length },
+          });
+        }
+        const market = requestedScope === 'local' ? { ok: true, results: [] } : await searchSkillHub(query, options.fetchImpl);
         const explicitlyRequestedMarket = /skillhub|技能商城|第三方技能|外部技能/iu.test(query);
         if (!market.ok) {
           const output = `SkillHub 官方检索失败：${market.error}\n\n本机已安装匹配：\n${localOutput}`;
@@ -309,7 +334,7 @@ function createNativeToolRuntime(options) {
         }
         const result = await options.installSkill(projectRoot, resolved);
         return result.ok
-          ? succeeded(name, `Skill 已安装并完成自动回读验证。\nID: ${result.skill?.id || ''}\n名称: ${result.skill?.name || resolved.name || resolved.slug}\n来源: ${result.resolvedUrl || resolved.sourceUrl}\n健康状态: ${result.verification?.health || result.skill?.health || 'ready'}\n已回读文档: ${result.verification?.documentCount ?? 0}`, {
+          ? succeeded(name, `Skill 已安装并完成完整包回读验证。\nID: ${result.skill?.id || ''}\n名称: ${result.skill?.name || resolved.name || resolved.slug}\n来源: ${result.resolvedUrl || resolved.sourceUrl}\n健康状态: ${result.verification?.health || result.skill?.health || 'ready'}\n已核验源文件: ${result.verification?.sourceFileCount ?? 0}\n已回读规则文档: ${result.verification?.documentCount ?? 0}\n包校验哈希: ${result.verification?.bundleHash || ''}`, {
             skill: { id: result.skill?.id, name: result.skill?.name || resolved.name, slug: result.slug || resolved.slug, sourceUrl: result.resolvedUrl || resolved.sourceUrl, verified: result.verification?.verified === true },
           })
           : failed(name, result.error || 'Skill 安装失败');

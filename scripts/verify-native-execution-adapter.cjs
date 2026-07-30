@@ -128,6 +128,27 @@ async function main() {
   assert(!JSON.stringify(await store.read()).includes('NATIVE_TEST_SECRET'), '模型凭据泄漏到任务持久化');
   const completedEvent = await waitFor(() => adapter.events(run.id).events.find((event) => event.type === 'job_completed'));
   assert.equal(completedEvent.type, 'job_completed', '没有完成事件');
+  const decisionRun = singleStepRun('native-decision-deliverable', 'Provide a UX design decision with clear rationale.');
+  decisionRun.steps[0] = {
+    ...decisionRun.steps[0], title: 'Provide UX design decision', assignment: 'Provide a UX design decision with clear rationale.', deliverableType: 'decision',
+  };
+  const decisionAdapter = createNativeExecutionAdapter({
+    projectRoot: path.resolve(__dirname, '..'), store, worker, toolRuntime, sessionId: 'native-test-session',
+    fetchImpl: async () => modelResponse({ role: 'assistant', content: 'Use a focused workspace layout, preserve direct navigation, and validate the visual hierarchy with the team.' }),
+  });
+  const decisionStarted = await decisionAdapter.start({
+    taskId: decisionRun.id,
+    run: decisionRun,
+    members: decisionRun.memberSnapshot.map((member) => ({ ...member, modelConfig: { apiHost: 'https://mock.invalid/v1', model: 'mock-model' } })),
+  });
+  assert.equal(decisionStarted.ok, true, decisionStarted.error);
+  const completedDecision = await waitFor(async () => {
+    const snapshot = await store.read();
+    const current = snapshot.runs.find((item) => item.id === decisionRun.id);
+    return current?.status === 'completed' ? current : null;
+  });
+  assert.equal(completedDecision.verification.some((item) => item.kind === 'decision' && item.status === 'passed'), true, 'decision deliverable must not require a file artifact');
+
   const staleRendererRun = { ...completed, status: 'running', evidence: [], executionMessages: [] };
   const staleWrite = await store.write([staleRendererRun], { source: 'renderer', sessionId: 'stale-window' });
   assert.equal(staleWrite.ok, true);
@@ -211,6 +232,14 @@ async function main() {
     return current?.status === 'failed' ? current : null;
   });
   assert.match(boundedModelRun.lastError, /没有返回|超时/u, '不响应的模型必须在边界内返回明确错误');
+  const resumeFailedJob = await worker.dispatch({ commandId: 'resume-failed-native-job', taskId: uncooperativeRun.id, type: 'resume' });
+  assert.equal(resumeFailedJob.ok, true, resumeFailedJob.error);
+  await uncooperativeAdapter.handleControl({ taskId: uncooperativeRun.id, type: 'resume' }, resumeFailedJob);
+  await waitFor(() => {
+    const state = uncooperativeAdapter.status(uncooperativeRun.id).job?.state;
+    return state === 'queued' || state === 'running';
+  });
+  assert(uncooperativeAdapter.events(uncooperativeRun.id).events.some((event) => event.type === 'control_received' && event.control === 'resume'), 'a failed native job must accept and requeue a resume control');
 
   const stalledBodyAdapter = createNativeExecutionAdapter({
     projectRoot: path.resolve(__dirname, '..'), store, worker, toolRuntime,
@@ -406,6 +435,54 @@ async function main() {
   await waitFor(async () => (await store.read()).runs.find((run) => run.id === lifecycleChild.task.id)?.status === 'paused');
   await waitFor(() => lifecycleAdapter.events(lifecycleChild.task.id).events.some((event) => event.type === 'control_received' && event.control === 'pause'));
   assert(lifecycleAdapter.events(lifecycleChild.task.id).events.some((event) => event.type === 'control_received' && event.control === 'pause'), 'parent pause must cascade to child tasks');
+
+  const resumeCascadeParent = singleStepRun('native-child-resume-cascade', 'parent resumes a paused child before continuing');
+  resumeCascadeParent.steps[0].status = 'completed';
+  await store.write([...(await store.read()).runs, resumeCascadeParent], { source: 'test-child-resume-cascade' });
+  const resumeCascadeChild = await childService.createChild(resumeCascadeParent.id, {
+    employeeId: 'writer', title: 'resume cascade child', assignment: 'resume child work', goal: 'resume child work',
+  });
+  await store.updateTask(resumeCascadeParent.id, (run) => {
+    run.status = 'awaiting_user';
+    run.phase = 'awaiting_user';
+    run.steps.push({ id: 'resume-cascade-child-step', employeeId: 'writer', title: 'resume cascade child', assignment: 'wait for child resume', dependsOnStepIds: [], status: 'paused', attempts: 0, evidence: [], events: [], childTaskId: resumeCascadeChild.task.id, externalChild: true });
+  }, { source: 'test-child-resume-cascade' });
+  await store.updateTask(resumeCascadeChild.task.id, (run) => {
+    run.status = 'failed';
+    run.phase = 'blocked';
+  }, { source: 'test-child-resume-cascade' });
+  const resumeCascade = await worker.dispatch({ commandId: 'resume-child-lifecycle-parent', taskId: resumeCascadeParent.id, type: 'resume' });
+  assert.equal(resumeCascade.ok, true, resumeCascade.error);
+  await lifecycleAdapter.handleControl({ taskId: resumeCascadeParent.id, type: 'resume' }, resumeCascade);
+  await waitFor(async () => {
+    const snapshot = await store.read();
+    const parent = snapshot.runs.find((run) => run.id === resumeCascadeParent.id);
+    const child = snapshot.runs.find((run) => run.id === resumeCascadeChild.task.id);
+    return parent?.status === 'queued' && child?.status === 'queued' ? { parent, child } : null;
+  });
+
+  const waitingParent = singleStepRun('native-child-wait-without-spin', 'parent waits without repeatedly reclaiming the queue');
+  waitingParent.steps[0].status = 'completed';
+  await store.write([...(await store.read()).runs, waitingParent], { source: 'test-child-wait-without-spin' });
+  const waitingChild = await childService.createChild(waitingParent.id, {
+    employeeId: 'writer', title: 'slow child', assignment: 'wait for a model response', goal: 'wait for a model response',
+  });
+  await store.updateTask(waitingParent.id, (run) => {
+    run.steps.push({ id: 'waiting-child-step', employeeId: 'writer', title: 'slow child', assignment: 'wait for child', dependsOnStepIds: [], status: 'queued', attempts: 0, evidence: [], events: [], childTaskId: waitingChild.task.id, externalChild: true });
+  }, { source: 'test-child-wait-without-spin' });
+  const childWaitAdapter = createNativeExecutionAdapter({
+    projectRoot: path.resolve(__dirname, '..'), store, worker, taskService: childService, toolRuntime: childToolRuntime,
+    sessionId: 'native-test-session', fetchImpl: blockedFetch,
+  });
+  await childWaitAdapter.start({ taskId: waitingParent.id, run: waitingParent, members: queueMembers(waitingParent) });
+  await waitFor(() => childWaitAdapter.status(waitingParent.id).job?.state === 'waiting_children');
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  assert.equal(childWaitAdapter.events(waitingParent.id).events.filter((event) => event.type === 'child_task_waiting').length, 1, 'a parent waiting on a child must not spin in the queue');
+  const stopWaitingParent = await worker.dispatch({ commandId: 'stop-waiting-parent', taskId: waitingParent.id, type: 'stop' });
+  assert.equal(stopWaitingParent.ok, true, stopWaitingParent.error);
+  await childWaitAdapter.handleControl({ taskId: waitingParent.id, type: 'stop' }, stopWaitingParent);
+  await waitFor(async () => (await store.read()).runs.find((run) => run.id === waitingChild.task.id)?.status === 'stopped');
+
   const stopParent = await worker.dispatch({ commandId: 'stop-child-lifecycle-parent', taskId: lifecycleParent.id, type: 'stop' });
   lifecycleAdapter.handleControl({ taskId: lifecycleParent.id, type: 'stop' }, stopParent);
   await waitFor(async () => (await store.read()).runs.find((run) => run.id === lifecycleChild.task.id)?.status === 'stopped');
@@ -572,6 +649,7 @@ async function main() {
   assert.equal(approvedCompensationSnapshot.steps.find((step) => step.id === 'delete-remote-state')?.status, 'completed');
 
   adapter.stopAll();
+  decisionAdapter.stopAll();
   pauseAdapter.stopAll();
   stalledAdapter.stopAll();
   uncooperativeAdapter.stopAll();
@@ -584,6 +662,7 @@ async function main() {
   manualAdapter.stopAll();
   lifecycleAdapter.stopAll();
   recoveryAdapter.stopAll();
+  childWaitAdapter.stopAll();
   failedChildAdapter.stopAll();
   compensationAdapter.stopAll();
   missingCompensationAdapter.stopAll();

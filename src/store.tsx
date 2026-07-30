@@ -153,7 +153,15 @@ function reducer(s: AppState, a: Action): AppState {
         t.id === a.id ? { ...t, ...a.partial } : t
       );
       client.saveTeams(next);
-      return { ...s, teams: next };
+      const renamed = a.partial.name?.trim();
+      const target = s.teams.find((team) => team.id === a.id);
+      const projects = renamed && target?.projectId
+        ? s.projects.map((project) => project.id === target.projectId
+          ? { ...project, title: renamed, updatedAt: Date.now() }
+          : project)
+        : s.projects;
+      if (projects !== s.projects) client.saveProjects(projects);
+      return { ...s, teams: next, projects };
     }
 
     case 'REMOVE_TEAM': {
@@ -330,7 +338,7 @@ export interface StoreCtx {
   publishTask: (teamId: string, title: string, description?: string, acceptance?: string) => void;
   triggerDiscussion: (teamId: string, opts?: { task?: TeamTask; userText?: string; extraSystemContext?: string; attachments?: import('./data/hermesClient').Attachment[]; participantPlan?: import('./types').DiscussionParticipantPlan[]; triggerMessageId?: string; discussionId?: string; conversationId?: string; forcedMemberIds?: string[]; maxRounds?: number }) => void;
   pauseTaskRun: (runId: string) => void;
-  resumeTaskRun: (runId: string) => void;
+  resumeTaskRun: (runId: string) => Promise<void>;
   stopTaskRun: (runId: string) => void;
   closeTaskRun: (runId: string) => void;
   clearTeamExecution: (teamId: string) => void;
@@ -667,7 +675,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       updatedAt: Date.now(),
       icon: '📌', memberIds, projectId,
       chatMessages: [{ id: `msg-project-${Date.now()}`, authorId: 'assistant', roleId: 'custom',
-        content: `收到项目需求：${project.request.slice(0, 240)}\n需求复述：${project.request.slice(0, 240)}\n我已拆解为既定执行顺序，后一步等待前一步真实结果后再开始：\n${project.steps.map((step, index) => `${index + 1}. ${step}`).join('\n')}\n${memberIds.map((id) => `@${stateRef.current.employees.find((employee) => employee.id === id)?.name ?? id}`).join('、')} 请按各自步骤执行，最终由审查者验收。`, mentions: memberIds, timestamp: Date.now(), kind: 'text' }],
+        content: `团队已建立。${memberIds.map((id) => `@${stateRef.current.employees.find((employee) => employee.id === id)?.name ?? id}`).join('、')} 将按各自责任推进；阶段进展、真实产出和验收结论会统一显示在项目面板。`, mentions: memberIds, timestamp: Date.now(), kind: 'text' }],
       tasks: [],
     };
     dispatch({ type: 'ADD_TEAM', team });
@@ -1298,18 +1306,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             const hasFailed = run.steps.some((step) => step.status === 'failed') || !!run.lastError;
             const hasUnfinished = run.steps.some((step) => step.status !== 'completed' && step.status !== 'failed' && step.status !== 'stopped');
             const evidence = run.evidence ?? [];
-            const needsRunEvidence = /代码|程序|安装|部署|构建|编译|运行|测试/iu.test(run.request);
-            const needsConnectionEvidence = /连接器|知识库|(?:^|[^a-z])mcp(?:[^a-z]|$)|obsidian|(?:^|[^a-z])ima(?:[^a-z]|$)|(?:GitHub|邮箱|企业微信|腾讯文档).{0,20}(?:连接|配置|关联|接入)/iu.test(run.request);
+            const deliverableType = run.contract?.deliverableType
+              ?? run.steps.find((step) => step.kind !== 'review')?.deliverableType
+              ?? 'mixed';
             const hasFileEvidence = evidence.some((item) => item.kind === 'file' && item.verified);
             const hasRunEvidence = evidence.some((item) => item.kind === 'run' && item.verified);
             const hasConnectionEvidence = evidence.some((item) => item.kind === 'connection' && item.verified);
+            const hasOperationEvidence = hasRunEvidence || hasConnectionEvidence;
+            const hasMixedEvidence = hasFileEvidence || hasOperationEvidence;
             const reviewSteps = run.steps.filter((step) => step.kind === 'review');
             const hasReviewEvidence = reviewSteps.length === 0 || evidence.some((item) => item.kind === 'review' && item.verified);
+            const deliveryVerification = deliverableType === 'file'
+              ? [{ kind: 'file' as const, label: '文件交付', status: hasFileEvidence ? 'passed' as const : 'blocked' as const, detail: hasFileEvidence ? '要求的文件已写入并通过磁盘验证' : '该任务要求文件交付，但没有可交接的真实文件' }]
+              : deliverableType === 'connection'
+                ? [{ kind: 'connection' as const, label: '连接验证', status: hasConnectionEvidence ? 'passed' as const : 'blocked' as const, detail: hasConnectionEvidence ? '已完成最小真实连接调用' : '该任务要求连接可用性，但尚未取得真实连接证据' }]
+                : deliverableType === 'operation'
+                  ? [{ kind: 'run' as const, label: '操作结果', status: hasOperationEvidence ? 'passed' as const : 'blocked' as const, detail: hasOperationEvidence ? '已保留真实操作或连接结果' : '该任务要求实际操作，但尚未取得运行或连接证据' }]
+                  : deliverableType === 'mixed'
+                    ? [{ kind: 'file' as const, label: '交付证据', status: hasMixedEvidence ? 'passed' as const : 'blocked' as const, detail: hasMixedEvidence ? '已保留与任务匹配的文件、运行或连接证据' : '混合交付尚未保留任何真实文件、运行或连接证据' }]
+                    : [];
             run.verification = [
-              { kind: 'file', label: '真实产出', status: hasFileEvidence ? 'passed' : 'blocked', detail: hasFileEvidence ? '至少一个文件已成功写入任务工作区' : '没有成功写入可交接文件' },
-              ...(needsRunEvidence ? [{ kind: 'run' as const, label: '运行结果', status: hasRunEvidence ? 'passed' as const : 'blocked' as const, detail: hasRunEvidence ? '命令或测试已成功运行' : '任务涉及运行或安装，但没有成功运行证据' }] : []),
-              ...(needsConnectionEvidence ? [{ kind: 'connection' as const, label: '连接测试', status: hasConnectionEvidence ? 'passed' as const : 'blocked' as const, detail: hasConnectionEvidence ? '连接器完成最小真实调用' : '任务涉及外部连接，但没有成功连接证据' }] : []),
-              ...(reviewSteps.length ? [{ kind: 'review' as const, label: '责任审查', status: hasReviewEvidence ? 'passed' as const : 'blocked' as const, detail: hasReviewEvidence ? '审查步骤明确通过' : '审查步骤没有给出通过证据' }] : []),
+              ...deliveryVerification,
+              ...(reviewSteps.length ? [{ kind: 'review' as const, label: '责任审查', status: hasReviewEvidence ? 'passed' as const : 'blocked' as const, detail: hasReviewEvidence ? '审查步骤已给出明确结论' : '审查步骤没有提交具体的通过或退回依据' }] : []),
             ];
             const verificationBlocked = run.verification.some((item) => item.status === 'blocked');
             run.status = stopped ? 'stopped' : paused ? 'paused' : hasFailed || hasUnfinished || verificationBlocked ? 'failed' : 'completed';
@@ -1478,18 +1496,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }, delay);
   };
 
-  const enqueueAssistantSupervisor = async (team: Team, content: string, mayDelegate: boolean, conversationId: string): Promise<{ reply: string; messageId: string } | undefined> => {
+  const enqueueTeamAssistantReply = async (team: Team, content: string, conversationId: string): Promise<{ reply: string; messageId: string } | undefined> => {
     const busyKey = `${team.id}:${conversationId}`;
     if (supervisorBusyRef.current.has(busyKey)) return undefined;
     supervisorBusyRef.current.add(busyKey);
-    const sanitizeSupervisorReply = (reply: string) => {
-      if (mayDelegate && /没有权限|未开放.*(?:接口|调度)|无法.*(?:分派|调用|调度)|切换到.*会话|开启.*调度/u.test(reply)) {
-        return '我会按团队成员的职责分派执行，并在任务面板持续跟踪；产出完成后安排审查验收。';
-      }
+    const sanitizeAssistantReply = (reply: string) => {
       return reply.replace(/^(?:收到|好的|明白)[，,。！!：:\s]*/u, '').trim() || reply.trim();
     };
-    const appendSupervisorMessage = (reply: string, tokens?: number): { reply: string; messageId: string } => {
-      const visibleReply = sanitizeSupervisorReply(reply);
+    const appendAssistantMessage = (reply: string, tokens?: number): { reply: string; messageId: string } => {
+      const visibleReply = sanitizeAssistantReply(reply);
       const messageId = `msg-supervisor-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
       const mentions = resolveMentionedEmployees(visibleReply, stateRef.current.employees)
         .filter((employee) => team.memberIds.includes(employee.id))
@@ -1528,7 +1543,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const turns: client.ChatTurn[] = [
         {
           role: 'system',
-          content: `${configuredPrompt ? `## 助理配置\n${configuredPrompt}\n\n` : ''}${userContext ? `${userContext}\n` : ''}你是${APP_PRODUCT_NAME}的章北海助理，负责监督进度、调度成员和理解老板的工作习惯。\n\n## 系统能力声明\n团队调度器、任务运行器、成员资料和 Skill 库均已连接并可用。程序会在你回复后真正创建任务并调用成员。禁止声称“没有权限”“未开放接口”“需要切换会话”或要求老板再次确认已明确提出的工作。\n\n## 当前团队（唯一可调度范围）\n团队名称：${team.name}\n${teamRoster || '暂无成员'}\n\n## 可用 Skill\n${skillRoster || '暂无可用 Skill'}\n\n监工禁止输出脚本、代码、长文正文、分镜或最终产物，绝不能替成员完成工作。${mayDelegate ? '老板的工作请求已经授权执行。简短说明你将如何分派和验收，程序会自动选择真实成员并启动任务；不要虚构成员结果。回复最多 180 个汉字。' : '当前消息不需要启动团队，只做简短直接回应。'} 你自己不是团队成员，不能@自己。`,
+          content: `${configuredPrompt ? `## 助理配置\n${configuredPrompt}\n\n` : ''}${userContext ? `${userContext}\n` : ''}你是${APP_PRODUCT_NAME}的章北海助理，也是这个团队里的常驻主助理。\n\n## 对话职责\n- 老板没有明确 @ 某位员工时，你直接理解、回答、追问必要条件或调整执行方案；不要复述老板原话，不要自称监工或临时调度员。\n- 老板明确 @ 某位员工时，该员工拥有回复权；不要抢答或代替其工作。\n- 多人任务的分工、依赖、交付和验收由任务系统处理。你只在真实状态基础上汇报，不编造成员回复、文件、连接或后台进度。\n- 普通沟通直接回答。不要为了展示流程重复输出“收到需求”“需求复述”“已完成分工”等模板化文案。\n\n## 当前团队（唯一可调度范围）\n团队名称：${team.name}\n${teamRoster || '暂无成员'}\n\n## 可用 Skill\n${skillRoster || '暂无可用 Skill'}\n\n你可以解释、分析、协调和汇报，但不能伪造成员已完成的成果。你自己不是团队成员，不能@自己。`,
         },
         { role: 'system', content: BEGINNER_RESPONSE_GUIDE },
         ...team.chatMessages.filter((message) => messageBelongsToConversation(message, conversationId, `team:${team.id}`)).slice(-12).map((message) => ({
@@ -1539,19 +1554,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       ];
       if (!client.resolveApiBase(assistantModel)) {
         const reply = `⚠️ 章北海助理没有可用模型配置，无法进行真实对话或调度。请在设置中激活全局模型，或为助理选择模型后重试。`;
-        return appendSupervisorMessage(reply);
+        return appendAssistantMessage(reply);
       }
-      const result = await client.chatCompletion(turns, 'assistant-supervisor', `监工/${team.name}`, undefined, assistantModel);
+      const result = await client.chatCompletion(turns, 'assistant-team', `章北海/${team.name}`, undefined, assistantModel);
       const reply = result.content?.trim().replace(/@Hermes(?:\s+助理)?|@章北海(?:\s+助理)?|@驴狗蛋(?:\s+助手)?/gu, '章北海助理');
       if (!reply) return undefined;
-      const supervisorResult = appendSupervisorMessage(reply, result.usage.totalTokens);
-      client.extractUserInsights(`老板：${content}\n监工回复：${reply}`, `团队监工-${team.name}`).catch(() => {});
-      return supervisorResult;
+      const assistantResult = appendAssistantMessage(reply, result.usage.totalTokens);
+      client.extractUserInsights(`老板：${content}\n章北海回复：${reply}`, `团队主助理-${team.name}`).catch(() => {});
+      return assistantResult;
     } catch (error) {
       console.warn('[supervisor] reply failed:', error);
       const reason = error instanceof Error ? error.message : String(error);
       const reply = `⚠️ 章北海助理本次模型调用失败：${reason.slice(0, 180)}。任务没有被伪装为已执行；请检查模型连接后重试。`;
-      return appendSupervisorMessage(reply);
+      return appendAssistantMessage(reply);
     } finally {
       supervisorBusyRef.current.delete(busyKey);
     }
@@ -1740,9 +1755,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  const resumeTaskRun = (runId: string) => {
-    pausedRunIdsRef.current.delete(runId);
-    stoppedRunIdsRef.current.delete(runId);
+  const resumeTaskRun = async (runId: string): Promise<void> => {
     const run = stateRef.current.taskRuns.find((item) => item.id === runId);
     if (!run) return;
     const pendingSteps = run.status === 'awaiting_user'
@@ -1751,9 +1764,40 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const pending = pendingSteps.map((step) => step.employeeId);
     const pendingStepIds = new Set(pendingSteps.map((step) => step.id));
     if (!pendingSteps.length) return;
-    void (async () => {
+    const reportResumeFailure = (message: string) => {
+      const latest = stateRef.current.taskRuns.find((item) => item.id === runId) ?? run;
+      dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(latest, (next) => {
+        const reason = message.slice(0, 900);
+        next.status = ['paused', 'failed', 'awaiting_user'].includes(next.status) ? next.status : 'failed';
+        next.phase = next.status === 'awaiting_user' ? 'awaiting_user' : 'blocked';
+        next.lastError = reason;
+        next.handoff = {
+          ts: Date.now(),
+          completed: next.steps.filter((step) => step.status === 'completed').map((step) => step.title),
+          blocked: reason,
+          nextAction: '恢复命令没有生效。请查看本条真实错误；修复后可再次点击“继续执行”，已完成步骤不会重做。',
+        };
+        if (next.recoveryContext) {
+          next.recoveryContext.summary = `恢复未启动：${reason}`;
+          next.recoveryContext.unresolvedIssues = [...next.recoveryContext.unresolvedIssues, reason].slice(-12);
+          next.recoveryContext.waitingFor = reason;
+        }
+      }) });
+    };
+    try {
+      const preparing = updateTaskRun(run, (next) => {
+        if (!next.recoveryContext) return;
+        next.recoveryContext.summary = '正在校验恢复条件，并按子任务到父任务的顺序重新入队。';
+        next.recoveryContext.waitingFor = undefined;
+      });
+      dispatch({ type: 'UPDATE_TASK_RUN', run: preparing });
       const resumedByWorker = await sendTaskWorkerCommand({ taskId: runId, type: 'resume', requestedBy: 'task-control' });
-      if (resumedByWorker && !resumedByWorker.ok) return;
+      if (resumedByWorker && !resumedByWorker.ok) {
+        reportResumeFailure(resumedByWorker.error || '后台 Worker 拒绝了恢复命令。');
+        return;
+      }
+      pausedRunIdsRef.current.delete(runId);
+      stoppedRunIdsRef.current.delete(runId);
       const workerRun = resumedByWorker?.run ?? updateTaskRun(run, (next) => {
         next.status = 'queued'; next.phase = 'preflight'; next.lastError = undefined; next.handoff = undefined;
         next.steps.forEach((step) => { if (pendingStepIds.has(step.id)) step.status = 'queued'; });
@@ -1793,11 +1837,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (!nativeResult) {
         enqueueDiscussion(workerRun.teamId, { userText: workerRun.request, triggerMessageId: workerRun.sourceMessageId, discussionId: workerRun.id, conversationId: workerRun.conversationId, forcedMemberIds: pending, runSteps: workerPendingSteps, maxRounds: workerPendingSteps.length, runId, workspaceId: workerRun.workspaceId, extraSystemContext }, 50);
       } else if (!nativeResult.ok) {
-        dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(resumedWithSkills, (next) => {
-          next.status = 'failed'; next.phase = 'blocked'; next.lastError = nativeResult.error || '主进程执行器恢复失败';
-        }) });
+        reportResumeFailure(nativeResult.error || '主进程执行器恢复失败。');
       }
-    })();
+    } catch (error) {
+      reportResumeFailure(error instanceof Error ? error.message : String(error));
+    }
   };
 
   const stopTaskRun = (runId: string) => {
@@ -1922,16 +1966,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const relayAssistantMentions = async (team: Team, supervisorResult: { reply: string; messageId: string } | undefined, conversationId: string) => {
-    if (!supervisorResult?.reply) return;
-    const mentionedEmployees = resolveMentionedEmployees(supervisorResult.reply, stateRef.current.employees)
-      .filter((employee) => team.memberIds.includes(employee.id) && supervisorResult.reply.includes(`@${employee.name}`));
-    if (!mentionedEmployees.length || classifyTeamMention(supervisorResult.reply, { assistantRelay: true }) !== 'reply') return;
-    for (const employee of mentionedEmployees) {
-      await runDirectEmployeeReply(team, employee.id, `助理在团队消息中@你：${supervisorResult.reply}`, supervisorResult.messageId, conversationId, undefined, supervisorResult.messageId);
-    }
-  };
-
   const enqueueAutoDiscussion = (teamId: string, messageId: string, content: string, mentions: string[], attachments?: import('./data/hermesClient').Attachment[], skillRefs: import('./types').SkillReference[] = [], conversationId = ensureActiveChatSession(`team:${teamId}`)) => {
     const current = stateRef.current;
     const team = current.teams.find((item) => item.id === teamId);
@@ -2049,20 +2083,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         current.taskRuns
           .filter((run) => run.teamId === teamId && runBelongsToConversation(run) && (run.status === 'queued' || run.status === 'running'))
           .forEach((run) => pauseTaskRun(run.id));
-        const supervisorResult = await enqueueAssistantSupervisor(team, content, false, conversationId);
-        await relayAssistantMentions(team, supervisorResult, conversationId);
+        await enqueueTeamAssistantReply(team, content, conversationId);
         return;
       }
       if (isConversationOnlyMessage(content)) {
-        const supervisorResult = await enqueueAssistantSupervisor(team, content, false, conversationId);
-        await relayAssistantMentions(team, supervisorResult, conversationId);
+        await enqueueTeamAssistantReply(team, content, conversationId);
         return;
       }
       const activeRun = [...current.taskRuns].reverse().find((run) => run.teamId === teamId && runBelongsToConversation(run) && (run.status === 'queued' || run.status === 'running'));
       if (activeRun && (client.loadSettings().followUpMode ?? 'steer') === 'steer' && window.electronAPI?.taskExecutionSteer) {
         const steered = await window.electronAPI.taskExecutionSteer({ taskId: activeRun.id, message: content });
         if (steered.ok) {
-          await enqueueAssistantSupervisor(team, content, false, conversationId);
+          await enqueueTeamAssistantReply(team, content, conversationId);
           return;
         }
       }
@@ -2081,36 +2113,30 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (planned.length > 0) {
         const planText = planned.map((step) => {
           const employee = current.employees.find((item) => item.id === step.employeeId);
-          return `${step.order}. @${employee?.name ?? step.employeeId}：${step.assignment}`;
+          const dependencies = step.dependsOnStepIds.length ? `（等待第 ${step.dependsOnStepIds.map((id) => planned.find((item) => item.id === id)?.order ?? '?').join('、')} 步）` : '';
+          return `${step.order}. @${employee?.name ?? step.employeeId}：${step.title}${dependencies}`;
         }).join('\n');
+        const deliverables = taskDecision.decision.deliverables?.map((item) => item.label).filter(Boolean).join('、')
+          || taskDecision.decision.acceptanceCriteria?.[0]
+          || '按任务合同交付可验证结果';
         dispatch({
           type: 'APPEND_CHAT', teamId, conversationId,
           msgs: [{
             id: `msg-dispatch-plan-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
             authorId: 'assistant', roleId: 'custom',
-            content: `收到需求：${content.slice(0, 240)}\n需求复述：${taskRequest.slice(0, 240)}\n我已拆解为以下顺序，后一步等待前一步真实结果后再开始：\n${planText}`,
+            content: `任务简报\n目标：${taskDecision.decision.goal}\n分工：\n${planText}\n交付：${deliverables}\n当前缺口：暂无，执行中如需账号、授权或业务选择会明确提出。`,
             mentions: requestedMemberIds, timestamp: Date.now(), kind: 'text',
           }],
         });
       }
-      const supervisorResult = await enqueueAssistantSupervisor(team, content, mayDelegate, conversationId);
-      await relayAssistantMentions(team, supervisorResult, conversationId);
-      if (!mayDelegate) return;
-      if (requestedMemberIds.length > 0) {
-        const sequence = planned.map((step) => `${step.order}. ${step.title}`).join(' → ');
-        dispatch({
-          type: 'APPEND_CHAT',
-          teamId,
-          conversationId,
-          msgs: [{
-            id: `msg-dispatch-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-            authorId: 'assistant', roleId: 'custom',
-            content: `执行计划已启动：${sequence}。每一步完成后自动交接；审查不通过时只退回责任步骤修改。`,
-            mentions: requestedMemberIds, timestamp: Date.now(), kind: 'text',
-          }],
-        });
+      if (!mayDelegate) {
+        await enqueueTeamAssistantReply(team, content, conversationId);
+        return;
       }
-      if (!requestedMemberIds.length) return;
+      if (!requestedMemberIds.length) {
+        await enqueueTeamAssistantReply(team, '当前目标需要执行，但团队内没有匹配的在线成员。请说明缺少的角色或补充成员后，我会重新编排。', conversationId);
+        return;
+      }
       void startTaskRun(teamId, taskRequest, requestedMemberIds, messageId, attachments, skillRefs, taskDecision.decision, conversationId);
     })();
   };

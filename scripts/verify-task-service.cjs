@@ -84,7 +84,53 @@ async function main() {
     assert.equal(recoveryPlan.plan.ready, false);
     assert.equal(recoveryPlan.plan.blockers[0].taskId, child.task.id);
     assert.equal(recoveryPlan.plan.compensationOrder[0].taskId, child.task.id);
+    const resumableParent = await service.create({
+      taskType: 'team',
+      title: 'Parent resume cascade',
+      goal: 'Verify a paused child resumes before its parent',
+      idempotencyKey: 'parent-resume-cascade',
+      memberSnapshot: [{ id: 'researcher', name: 'Researcher', role: 'researcher', modelConfig: { model: 'mock-model' } }],
+      steps: [{ id: 'parent-step', title: 'Wait for child', employeeId: 'researcher' }],
+    });
+    const resumableChild = await service.createChild(resumableParent.task.id, {
+      employeeId: 'researcher', title: 'Paused child', goal: 'Resume before the parent task',
+    });
+    await service.setStatus(resumableParent.task.id, 'awaiting_user', 'Parent is waiting for a child task');
+    await service.setStatus(resumableChild.task.id, 'paused', 'Child task is paused');
+    const cascadePlan = await service.recoveryPlan(resumableParent.task.id);
+    assert.equal(cascadePlan.plan.ready, true, 'A paused child must be resumable through the parent control');
+    assert.deepEqual(cascadePlan.plan.resumeOrder.map((item) => item.taskId), [resumableChild.task.id, resumableParent.task.id]);
     await service.setStatus(taskId, 'running', 'Worker 已领取任务');
+
+    const decisionChild = await service.createChild(taskId, {
+      employeeId: 'researcher', title: 'UX decision', goal: 'Provide a UX design decision', deliverableType: 'decision',
+    });
+    assert.equal(decisionChild.task.contract.deliverableType, 'decision');
+    assert.equal(decisionChild.task.steps[0].deliverableType, 'decision');
+
+    const collisionParent = await service.create({
+      taskType: 'team', title: 'Legacy delegation collision', goal: 'Repair two distinct delegated outcomes',
+      idempotencyKey: 'legacy-delegation-collision',
+      memberSnapshot: created.task.memberSnapshot,
+      steps: [{ id: 'parent-work', title: 'Delegate work', employeeId: 'researcher' }],
+    });
+    const collisionChild = await service.createChild(collisionParent.task.id, {
+      employeeId: 'researcher', title: 'UX plan', goal: 'Produce a UX design plan', deliverableType: 'decision',
+    });
+    await service.update(collisionParent.task.id, (task) => {
+      task.steps.push(
+        { id: 'legacy-ux', employeeId: 'researcher', title: 'UX plan', assignment: 'Produce a UX design plan', childTaskId: collisionChild.task.id, externalChild: true, status: 'failed', attempts: 0, events: [] },
+        { id: 'legacy-html', employeeId: 'researcher', title: 'HTML demo', assignment: 'Produce a single-file HTML demo and read it back', childTaskId: collisionChild.task.id, externalChild: true, status: 'queued', attempts: 0, events: [] },
+      );
+    }, 'seed legacy duplicate child reference');
+    const repairedCollision = await service.repairDelegationCollisions(collisionParent.task.id);
+    assert.equal(repairedCollision.repaired.length, 1, 'exactly one duplicated child reference should be repaired');
+    const collisionSnapshot = await service.read({ taskId: collisionParent.task.id });
+    const repairedHtml = collisionSnapshot.runs[0].steps.find((step) => step.id === 'legacy-html');
+    assert.notEqual(repairedHtml.childTaskId, collisionChild.task.id, 'distinct legacy assignments must not share a child task');
+    assert.equal(repairedHtml.deliverableType, 'file', 'legacy file assignment should receive a file delivery contract');
+    const replacementSnapshot = await service.read({ taskId: repairedHtml.childTaskId });
+    assert.equal(replacementSnapshot.runs[0].contract.deliverableType, 'file');
 
     worker = createTaskWorker({ rootDir: root, store, sessionId: 'task-service-test' });
     const claim = await worker.dispatch({ taskId, type: 'claim', requestedBy: 'test', payload: { adapter: 'renderer-chat-task-service', jobId: 'test-job' } });
@@ -138,7 +184,7 @@ async function main() {
     assert.equal(restoredContext.turnLifecycle.sequence, 5);
     assert.equal(restoredContext.lifecycleRecovery.goal, created.task.goal);
     const all = await createTaskService(restartedStore).read({});
-    assert.equal(all.runs.length, 3);
+    assert.equal(all.runs.length, 9);
     assert.equal(all.integrity.ok, true);
     console.log('verify-task-service: PASS');
   } finally {

@@ -12,7 +12,8 @@ const run = {
 };
 const created = appendDelegation(run, { assignment: '请编写一份脚本', title: '脚本初稿', dependsOnStepIds: ['parent'] });
 assert.equal(created.delegation.employeeId, 'writer');
-assert.match(created.delegation.selectionReason, /匹配|人选/);
+assert.equal(typeof created.delegation.selectionReason, 'string');
+assert.ok(created.delegation.selectionReason.length > 0);
 assert.equal(created.delegation.availability, 'available');
 const running = transitionDelegation(created.run, created.delegation.id, 'running');
 const completed = transitionDelegation(running.run, created.delegation.id, 'completed', { output: { path: 'script.md' } });

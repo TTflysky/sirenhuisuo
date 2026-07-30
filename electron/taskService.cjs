@@ -4,6 +4,7 @@ const { pathToFileURL } = require('url');
 
 const TASK_SERVICE_VERSION = 2;
 const TASK_TYPES = new Set(['assistant', 'dm', 'team', 'child']);
+const DELIVERABLE_TYPES = new Set(['answer', 'file', 'connection', 'operation', 'decision', 'mixed']);
 const ACTIVE_STATUSES = new Set(['queued', 'running', 'awaiting_user', 'paused']);
 const TERMINAL_STATUSES = new Set(['failed', 'completed', 'stopped']);
 
@@ -23,6 +24,22 @@ function list(value, fallback = []) {
   return Array.isArray(value) ? value.map((item) => text(item, 500)).filter(Boolean) : fallback;
 }
 
+function normalizeDeliverableType(value) {
+  const normalized = text(value, 40).toLowerCase();
+  return DELIVERABLE_TYPES.has(normalized) ? normalized : undefined;
+}
+
+function inferLegacyDeliverableType(input = {}, parent = {}) {
+  const declared = normalizeDeliverableType(input.deliverableType);
+  if (declared) return declared;
+  const source = `${text(input.title, 400)} ${text(input.assignment || input.goal, 3000)}`;
+  if (/(?:\bhtml\b|\bpdf\b|\bexcel\b|\bword\b|\bppt\b|\bfile\b|\bcode\b|\bscript\b|\bpage\b|文件|文档|代码|网页|页面|脚本|安装包)/iu.test(source)) return 'file';
+  if (/(?:\bconnect(?:ion|or)?\b|\bmcp\b|\bima\b|连接|接入|知识库)/iu.test(source)) return 'connection';
+  if (/(?:\binstall\b|\bdeploy\b|\bpublish\b|\bexecute\b|\brun\b|安装|部署|发布|执行|运行|上传|下载)/iu.test(source)) return 'operation';
+  if (/(?:\bdesign\b|\bplan\b|\banaly[sz]e\b|\breview\b|\bdecision\b|\bux\b|方案|设计|分析|审查|评估|调研|规划)/iu.test(source)) return 'decision';
+  return normalizeDeliverableType(parent.deliverableType || parent.contract?.deliverableType || parent.taskDecision?.deliverableType) || 'answer';
+}
+
 function normalizeStep(input, index) {
   const stepId = text(input?.stepId || input?.id, 160) || `step-${index + 1}`;
   return {
@@ -36,7 +53,7 @@ function normalizeStep(input, index) {
     compensationOnly: input?.compensationOnly === true,
     approvalRequired: input?.approvalRequired === true,
     kind: text(input?.kind, 40) || undefined,
-    deliverableType: ['answer', 'file', 'connection', 'operation', 'decision', 'mixed'].includes(input?.deliverableType) ? input.deliverableType : undefined,
+    deliverableType: normalizeDeliverableType(input?.deliverableType),
     status: 'queued',
     attempts: 0,
     events: [{ ts: Date.now(), type: 'status', detail: '任务步骤已创建，等待执行' }],
@@ -51,9 +68,17 @@ function normalizeTaskInput(input = {}) {
     ? input.steps.map(normalizeStep)
     : [normalizeStep({ title: '完成用户目标', assignment: goal }, 0)];
   const requiresWorktree = input.requiresWorktree === true || /代码|编程|开发|脚本|构建|编译|测试|修复|bug|coding|software|repository/iu.test(goal);
-  const taskDecision = input.taskDecision && typeof input.taskDecision === 'object' && !Array.isArray(input.taskDecision)
+  const rawTaskDecision = input.taskDecision && typeof input.taskDecision === 'object' && !Array.isArray(input.taskDecision)
     ? clone(input.taskDecision)
     : undefined;
+  const taskDeliverableType = normalizeDeliverableType(input.deliverableType || rawTaskDecision?.deliverableType);
+  const taskDecision = rawTaskDecision || taskDeliverableType ? {
+    ...(rawTaskDecision || {}),
+    ...(taskDeliverableType ? { deliverableType: taskDeliverableType } : {}),
+  } : undefined;
+  if (taskDeliverableType) {
+    for (const step of steps) if (!step.deliverableType) step.deliverableType = taskDeliverableType;
+  }
   return {
     id: text(input.id, 180) || id('task'),
     taskType,
@@ -70,6 +95,7 @@ function normalizeTaskInput(input = {}) {
     acceptanceCriteria: list(input.acceptanceCriteria, ['完成用户目标', '留下真实可观察结果', '完成必要验收']),
     constraints: list(input.constraints),
     taskDecision,
+    deliverableType: taskDeliverableType,
     memberSnapshot: Array.isArray(input.memberSnapshot) ? clone(input.memberSnapshot) : undefined,
     steps,
     artifacts: [],
@@ -192,6 +218,7 @@ async function attachFormalPlan(task) {
     scope: `task:${task.id}`,
     decision: {
       ...incomingDecision,
+      deliverableType: task.deliverableType || incomingDecision.deliverableType,
       mode: 'execute',
       goal: task.goal,
       primaryRoute,
@@ -341,18 +368,26 @@ function createTaskService(store) {
 
   async function createChild(parentTaskId, input = {}) {
     const assignment = text(input.assignment || input.goal || input.title, 3000);
+    const childIdempotencyKey = input.idempotencyKey || `child:${parentTaskId}:${input.employeeId || 'assistant'}:${crypto.createHash('sha256').update(`${input.title || ''}\n${assignment}\n${input.deliverableType || ''}`).digest('hex').slice(0, 16)}`;
     const parentSnapshot = await store.read({ taskId: parentTaskId });
     const parent = parentSnapshot.ok ? parentSnapshot.runs?.[0] : undefined;
     const result = await create({
       ...input,
       taskType: 'child',
       parentTaskId,
+      deliverableType: normalizeDeliverableType(input.deliverableType || input.taskDecision?.deliverableType),
       teamId: input.teamId || parent?.teamId,
       conversationId: input.conversationId || parent?.conversationId,
       memberSnapshot: input.memberSnapshot || parent?.memberSnapshot,
       steps: input.steps || [{ id: 'step-1', title: input.title || '员工子任务', assignment, employeeId: input.employeeId }],
-      idempotencyKey: input.idempotencyKey || `child:${parentTaskId}:${input.employeeId || input.title || input.goal}`,
+      idempotencyKey: childIdempotencyKey,
     });
+    if (result.task && !input.steps && normalizeDeliverableType(input.deliverableType || input.taskDecision?.deliverableType)) {
+      await update(result.task.id, (child) => {
+        for (const step of child.steps || []) step.deliverableType = normalizeDeliverableType(input.deliverableType || input.taskDecision?.deliverableType);
+      }, '同步子任务交付类型');
+      result.task = (await store.read({ taskId: result.task.id })).runs?.[0] || result.task;
+    }
     if (result.task && parent) {
       const inheritedReferences = Array.isArray(parent.references) ? parent.references.slice(-30) : [];
       const inheritedArtifacts = Array.isArray(parent.artifacts) ? parent.artifacts.filter((item) => item.verified).slice(-20) : [];
@@ -373,6 +408,60 @@ function createTaskService(store) {
       result.task = (await store.read({ taskId: result.task.id })).runs?.[0] || result.task;
     }
     return result;
+  }
+
+  async function repairDelegationCollisions(parentTaskId) {
+    const snapshot = await store.read({ taskId: parentTaskId });
+    const parent = snapshot.ok ? snapshot.runs?.[0] : undefined;
+    if (!parent) throw new Error(snapshot.error || `找不到任务：${parentTaskId}`);
+    const seen = new Set();
+    const collisions = (parent.steps || []).filter((step) => {
+      const childTaskId = text(step.childTaskId, 180);
+      if (!childTaskId) return false;
+      if (seen.has(childTaskId)) return true;
+      seen.add(childTaskId);
+      return false;
+    });
+    const repaired = [];
+    for (const step of collisions) {
+      const deliverableType = inferLegacyDeliverableType(step, parent);
+      const created = await createChild(parent.id, {
+        employeeId: step.employeeId,
+        title: step.title,
+        assignment: step.assignment,
+        goal: step.assignment || step.title,
+        deliverableType,
+        teamId: parent.teamId,
+        conversationId: parent.conversationId,
+        memberSnapshot: parent.memberSnapshot,
+      });
+      if (!created.task?.id) throw new Error('修复重复子任务引用时未能创建新任务');
+      const replacementId = created.task.id;
+      const previousId = step.childTaskId;
+      await update(parent.id, (current) => {
+        const currentStep = (current.steps || []).find((item) => item.id === step.id && item.childTaskId === previousId);
+        if (!currentStep) return;
+        currentStep.childTaskId = replacementId;
+        currentStep.deliverableType = deliverableType;
+        currentStep.status = 'queued';
+        currentStep.lastError = undefined;
+        currentStep.events = [...(currentStep.events || []), {
+          ts: Date.now(), type: 'migration', detail: '已修复旧版本重复复用的子任务引用，改为独立执行。',
+        }].slice(-100);
+        const delegation = (current.delegations || []).find((item) => item.delegationId === currentStep.delegationId || item.id === currentStep.delegationId);
+        if (delegation && delegation.childTaskId === previousId) {
+          delegation.childTaskId = replacementId;
+          delegation.deliverableType = deliverableType;
+          delegation.status = 'queued';
+          delegation.error = undefined;
+        }
+        appendServiceEvent(current, 'delegation_collision_repaired', '已为旧版重复委派创建独立子任务。', {
+          stepId: currentStep.id, previousChildTaskId: previousId, replacementChildTaskId: replacementId, deliverableType,
+        });
+      }, '修复旧版本动态委派重复子任务引用');
+      repaired.push({ stepId: step.id, previousChildTaskId: previousId, replacementChildTaskId: replacementId, deliverableType });
+    }
+    return { ok: true, parentTaskId: parent.id, repaired };
   }
 
   async function context(taskId, options = {}) {
@@ -617,7 +706,23 @@ function createTaskService(store) {
     const compensationOrder = nodes.filter((node) => node.compensation.blocked || node.compensation.failed)
       .sort((left, right) => right.depth - left.depth || String(left.id).localeCompare(String(right.id)))
       .map((node) => ({ taskId: node.id, title: node.title, depth: node.depth, action: 'resolve_compensation', reason: node.compensation.failed ? '存在失败的补偿步骤' : '存在受阻的补偿步骤' }));
-    const resumable = ['queued', 'paused'].includes(root.status) && blockers.length === 0;
+    // Clicking "resume" is an explicit acknowledgement that the user has
+    // handled the previously requested input. Paused/awaiting descendants are
+    // therefore work to resume, not a reason to reject the parent's control
+    // command before the native adapter can cascade it to those descendants.
+    // Compensation failures remain a hard safety gate.
+    const resumable = ['queued', 'paused', 'failed', 'awaiting_user'].includes(root.status)
+      && compensationOrder.length === 0;
+    const resumeOrder = resumable
+      ? nodes
+        .filter((node) => node.id === root.id || ['queued', 'paused', 'failed', 'awaiting_user'].includes(node.status))
+        .sort((left, right) => right.depth - left.depth || String(left.id).localeCompare(String(right.id)))
+        .map((node) => ({
+          taskId: node.id,
+          action: node.id === root.id ? 'resume_root' : 'resume_descendant',
+          reason: node.id === root.id ? '所有可恢复子任务已先入队，恢复根任务' : '先恢复被父任务依赖的子任务',
+        }))
+      : [];
     return {
       ok: true,
       taskId: root.id,
@@ -625,11 +730,11 @@ function createTaskService(store) {
         rootTaskId: root.id,
         rootStatus: root.status,
         ready: resumable,
-        resumeOrder: resumable ? [{ taskId: root.id, action: 'resume_root', reason: '从根任务恢复，执行器会按已持久化的父子依赖重新领取未完成步骤' }] : [],
+        resumeOrder,
         blockers,
         compensationOrder,
         nextAction: resumable
-          ? '可以继续根任务，系统会从已持久化的未完成步骤和子任务依赖恢复。'
+          ? '可以继续。系统会先恢复可恢复的子任务，再恢复根任务，并从已持久化的未完成步骤继续。'
           : compensationOrder.length
             ? '先按补偿顺序解决最深层的受阻或失败补偿，再重新计算恢复计划。'
             : blockers.length
@@ -724,7 +829,7 @@ function createTaskService(store) {
     }, '更新任务状态');
   }
 
-  return { version: TASK_SERVICE_VERSION, read, create, update, recordToolAttempt, addArtifact, addReference, createChild, context, recordLifecycle, readySteps, completeStep, failStep, requestApproval, decideApproval, recordUsage, metrics, tree, recoveryPlan, heartbeat, recordCheckpoint, recordVerification, validateCompletion, setStatus };
+  return { version: TASK_SERVICE_VERSION, read, create, update, recordToolAttempt, addArtifact, addReference, createChild, repairDelegationCollisions, context, recordLifecycle, readySteps, completeStep, failStep, requestApproval, decideApproval, recordUsage, metrics, tree, recoveryPlan, heartbeat, recordCheckpoint, recordVerification, validateCompletion, setStatus };
 }
 
 module.exports = { TASK_SERVICE_VERSION, createTaskService };

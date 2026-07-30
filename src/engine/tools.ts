@@ -715,10 +715,12 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         if (!query) return { toolCallId: id, name, success: false, output: '技能检索关键词不能为空' };
         const { listSkills, matchSkills } = await import('../data/skills');
         const [all, matched] = await Promise.all([listSkills(), matchSkills(query, 8)]);
+        const inventorySummary = `本地技能库存：共 ${all.length} 个（内置 ${all.filter((skill) => skill.scope !== 'mine').length}，用户 ${all.filter((skill) => skill.scope === 'mine').length}）；本次匹配 ${matched.length} 个。`;
         const localRows = matched.map((ref) => {
           const skill = all.find((item) => item.id === ref.id);
           return `- ${ref.id} | ${ref.name} | ${skill?.description || '无说明'} | 来源: ${skill?.source || '未知'}`;
         });
+        localRows.unshift(inventorySummary);
         const api = getFsApi();
         const market = api?.skillsSearchMarket
           ? await api.skillsSearchMarket(query)
@@ -778,7 +780,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
             sendBus(BUS_CHANNELS.CONNECTORS_CHANGED, { connectorId: connector.id, reason: 'skill-installed' });
           }
         }
-        return { toolCallId: id, name, success: true, output: `Skill 已安装并完成自动回读验证。\nID: ${result.skill.id}\n名称: ${result.skill.name}\nSlug: ${result.slug ?? resolved.slug ?? ''}\n来源: ${result.resolvedUrl ?? resolved.sourceUrl}\n健康状态: ${result.verification?.health ?? result.skill.health ?? 'ready'}\n已回读文档: ${result.verification?.documentCount ?? 0}\n\n如果该 Skill 还依赖账号、外部软件或连接器，再按说明配置并做实际调用验证；纯安装任务到这里已经完成。` };
+        return { toolCallId: id, name, success: true, output: `Skill 已安装并完成完整包回读验证。\nID: ${result.skill.id}\n名称: ${result.skill.name}\nSlug: ${result.slug ?? resolved.slug ?? ''}\n来源: ${result.resolvedUrl ?? resolved.sourceUrl}\n健康状态: ${result.verification?.health ?? result.skill.health ?? 'ready'}\n已核验源文件: ${result.verification?.sourceFileCount ?? 0}\n已回读规则文档: ${result.verification?.documentCount ?? 0}\n包校验哈希: ${result.verification?.bundleHash ?? ''}\n\n如果该 Skill 还依赖账号、外部软件或连接器，再按说明配置并做实际调用验证；纯安装任务到这里已经完成。` };
       }
 
       case 'inspect_connectors': {
