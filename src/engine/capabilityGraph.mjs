@@ -1,9 +1,10 @@
-const CAPABILITY_GRAPH_VERSION = 2;
+const CAPABILITY_GRAPH_VERSION = 3;
 
 const CAPABILITIES = Object.freeze({
   ui_ux: { label: 'UI/UX 与交互设计', patterns: [/(?:^|[^a-z])ui\s*[/+·-]?\s*ux(?:[^a-z]|$)|(?:^|[^a-z])(?:ui|ux)(?:[^a-z]|$)|交互|界面|视觉设计|用户体验|产品设计|原型设计/iu] },
   frontend: { label: '前端实现', patterns: [/前端|网页开发|网站开发|web\s*(?:developer|frontend)|react|vue|svelte|html|css|桌面端开发/iu] },
   backend: { label: '后端与服务', patterns: [/后端|服务端|接口开发|数据库|api\s*(?:developer|engineer)|node\.js|java|python|golang|全栈/iu] },
+  architecture: { label: '软件与系统架构', patterns: [/软件架构|系统架构|技术架构|架构设计|系统设计|solution\s*architect|software\s*architect|system\s*architect/iu] },
   content: { label: '内容创作', patterns: [/文案|编剧|脚本|策划|写作|内容创作|故事|分镜/iu] },
   research: { label: '调研分析', patterns: [/调研|研究|数据分析|行业分析|资料分析|检索|信息搜集/iu] },
   office_document: { label: '办公文档交付', patterns: [/word|excel|powerpoint|ppt|pdf|办公文档|表格|报告排版/iu] },
@@ -18,6 +19,7 @@ const ALIASES = Object.freeze({
   ui: 'ui_ux', ux: 'ui_ux', ui_ux_design: 'ui_ux', design: 'ui_ux',
   web_frontend: 'frontend', frontend_implementation: 'frontend',
   server: 'backend', backend_development: 'backend',
+  architect: 'architecture', software_architecture: 'architecture', system_architecture: 'architecture',
   web_research: 'research', data_analysis: 'research',
   file_output: 'office_document', document: 'office_document',
   connector_access: 'connector', knowledge_base: 'connector',
@@ -30,6 +32,43 @@ const ALIASES = Object.freeze({
 function text(value, max = 4000) { return String(value ?? '').trim().slice(0, max); }
 function unique(values) { return [...new Set(values.filter(Boolean))]; }
 function profile(member) { return `${member?.name ?? ''} ${member?.title ?? ''} ${member?.role ?? ''} ${member?.prompt ?? ''} ${member?.soul ?? ''}`.toLowerCase(); }
+
+const CAPABILITY_ORDER = Object.freeze([
+  'coordination', 'architecture', 'ui_ux', 'frontend', 'backend', 'coding', 'review',
+  'research', 'content', 'office_document', 'connector', 'skill',
+]);
+const NEW_SOFTWARE_PRODUCT_RE = /(?:做|开发|创建|制作|搭建|构建|研发|实现).{0,24}(?:一个|一款|一套|个|款|套)?\s*(?:软件|应用程序|应用|app|客户端|桌面端|平台|系统|网站|网页|小程序|管理后台|控制台)|(?:软件|应用程序|应用|app|客户端|桌面端|平台|系统|网站|网页|小程序|管理后台|控制台).{0,24}(?:开发|创建|制作|搭建|构建|研发)/iu;
+const USER_FACING_PRODUCT_RE = /客户端|桌面端|应用程序|应用|(?:^|[^a-z])app(?:[^a-z]|$)|网站|网页|小程序|管理后台|控制台|前端/iu;
+const SERVICE_PRODUCT_RE = /平台|发布|账号|用户|登录|权限|存储|同步|内容管理|支付|数据|知识库|云端|协作|服务|接口|api/iu;
+const SPECIALTY_PATTERNS = Object.freeze({
+  coordination: /产品经理|项目经理|项目管理|交付经理|协调者/iu,
+  architecture: /软件架构师|系统架构师|技术架构师|解决方案架构师|架构设计/iu,
+  ui_ux: /ui\s*[/+·-]?\s*ux|ui\s*设计|ux\s*设计|交互设计|视觉设计|用户体验|产品设计|原型设计/iu,
+  frontend: /前端开发|前端工程|客户端开发|桌面端开发|网页开发|网站开发|web\s*(?:developer|frontend)/iu,
+  backend: /后端架构|后端开发|后端工程|服务端|api\s*(?:developer|engineer)|数据库架构/iu,
+  coding: /软件工程师|开发工程师|实现工程师|程序员|编码者/iu,
+  review: /qa|测试工程|质量工程|质量保证|审查者|验收/iu,
+});
+
+function orderedCapabilities(values) {
+  const ids = unique(values);
+  return ids.sort((left, right) => {
+    const leftIndex = CAPABILITY_ORDER.indexOf(left);
+    const rightIndex = CAPABILITY_ORDER.indexOf(right);
+    return (leftIndex < 0 ? CAPABILITY_ORDER.length : leftIndex) - (rightIndex < 0 ? CAPABILITY_ORDER.length : rightIndex);
+  });
+}
+
+function specializationScore(member, capabilityId) {
+  const identity = `${member?.name ?? ''} ${member?.title ?? ''}`;
+  if (SPECIALTY_PATTERNS[capabilityId]?.test(identity)) return 120;
+  if (Array.isArray(member?.capabilities) && member.capabilities.map(normalizeCapabilityId).includes(capabilityId)) return 55;
+  if (capabilityId === 'coordination' && member?.role === 'pm') return 50;
+  if (capabilityId === 'architecture' && member?.role === 'planner') return 35;
+  if (capabilityId === 'coding' && member?.role === 'coder') return 35;
+  if (capabilityId === 'review' && member?.role === 'checker') return 50;
+  return 0;
+}
 
 export function normalizeCapabilityId(value) {
   const raw = text(value, 120).toLowerCase().replace(/[\s/+.·-]+/gu, '_');
@@ -49,16 +88,29 @@ export function inferCapabilityIds(input, provided = []) {
   }
   const uiTask = ids.includes('ui_ux');
   if (uiTask && /改造|开发|实现|制作|重构|修改|优化|搭建|编写|落地|升级/u.test(source)) ids.push('frontend');
-  return unique(ids);
+  if (NEW_SOFTWARE_PRODUCT_RE.test(source)) {
+    ids.push('coordination', 'architecture', 'coding', 'review');
+    if (USER_FACING_PRODUCT_RE.test(source)) ids.push('ui_ux', 'frontend');
+    if (SERVICE_PRODUCT_RE.test(source)) ids.push('backend');
+  }
+  return orderedCapabilities(ids);
 }
 
 export function employeeCapabilityProfile(member) {
   const source = profile(member);
+  const identity = `${member?.name ?? ''} ${member?.title ?? ''} ${member?.role ?? ''}`.toLowerCase();
   const explicit = Array.isArray(member?.capabilities) ? member.capabilities.map(normalizeCapabilityId) : [];
   const inferred = [];
   for (const [id, capability] of Object.entries(CAPABILITIES)) {
-    if (!capability.patterns.some((pattern) => pattern.test(source))) continue;
-    if (id === 'frontend' && !/前端开发|网页开发|网站开发|客户端开发|桌面端开发|工程师|react|vue|svelte|html|css|javascript|typescript|代码|编程|实现/iu.test(source)) continue;
+    // Long role prompts often mention adjacent disciplines as dependencies.
+    // Team composition therefore infers core delivery specialties from stable
+    // identity fields; prompts remain useful only for broad supporting skills.
+    const specialtySource = ['ui_ux', 'frontend', 'backend', 'architecture', 'review'].includes(id) ? identity : source;
+    if (!capability.patterns.some((pattern) => pattern.test(specialtySource))) continue;
+    if (id === 'ui_ux' && !/(?:^|[^a-z])ui\s*[/+·-]?\s*ux(?:[^a-z]|$)|(?:^|[^a-z])(?:ui|ux)(?:[^a-z]|$)|交互设计|视觉设计|用户体验|产品设计|原型设计|界面设计/iu.test(identity)) continue;
+    if (id === 'frontend' && !/前端开发|网页开发|网站开发|客户端开发|桌面端开发|react|vue|svelte|web\s*(?:developer|frontend)/iu.test(identity)) continue;
+    if (id === 'architecture' && !/软件架构|系统架构|技术架构|解决方案架构|架构设计|系统设计|software\s*architect|system\s*architect/iu.test(identity)) continue;
+    if (id === 'review' && !/qa|测试工程|测试员|质量工程|质量保证|审查者|代码审查|验收/iu.test(identity)) continue;
     inferred.push(id);
   }
   if (member?.role === 'checker') inferred.push('review');
@@ -90,9 +142,15 @@ export function selectCapabilityTeam(members, input = {}) {
     const availability = member.isWorking ? -5 : 5;
     return { member, coverage, score: exactName + coverage.covered.length * 30 + coverage.ratio * 20 + availability };
   }).sort((left, right) => right.score - left.score || left.member.stationIndex - right.member.stationIndex || left.member.name.localeCompare(right.member.name, 'zh-CN'));
-  while (uncovered.size) {
-    const next = ranked.find((item) => !selectedIds.has(item.member.id) && item.coverage.covered.some((id) => uncovered.has(id)));
-    if (!next) break;
+  for (const capabilityId of required) {
+    if (!uncovered.has(capabilityId)) continue;
+    const next = ranked
+      .filter((item) => !selectedIds.has(item.member.id) && item.coverage.covered.includes(capabilityId))
+      .sort((left, right) => specializationScore(right.member, capabilityId) - specializationScore(left.member, capabilityId)
+        || right.score - left.score
+        || left.member.stationIndex - right.member.stationIndex
+        || left.member.name.localeCompare(right.member.name, 'zh-CN'))[0];
+    if (!next) continue;
     selected.push(next.member);
     selectedIds.add(next.member.id);
     next.coverage.covered.forEach((id) => uncovered.delete(id));

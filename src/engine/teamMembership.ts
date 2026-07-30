@@ -1,5 +1,5 @@
-import type { Employee, Project, Team } from '../types';
-import { scoreEmployeeForTask } from './taskMatcher';
+import type { Employee, Project, ProjectMember, Team } from '../types';
+import { matchProjectMembers, scoreEmployeeForTask } from './taskMatcher';
 
 const TEAM_ADDITION_PATTERNS = [
   /(?:加入|添加|加进|拉进|调进|并入).{0,18}(?:团队|小组|群|进来)/u,
@@ -16,6 +16,7 @@ const TEAM_ADDITION_PATTERNS = [
 const TEAM_MEMBER_CORRECTION_RE = /(?:拉|加|选|成员|队员).{0,12}(?:不对|错了|不合理|不匹配|漏了|少了)|(?:为什么|怎么).{0,16}(?:不叫|不拉|不加|不用|不选|没叫|没拉|没加|没选)|不是有|明明有/u;
 const TEAM_MEMBER_REPLACEMENT_RE = /(?:换|替换|改用|改成|不要(?:再)?用).{0,20}(?:成员|队员|员工|设计师|开发|工程师|UI|UX|前端|后端)|(?:成员|队员|员工).{0,12}(?:换成|替换成|改用)/iu;
 const TEAM_MEMBER_REMOVAL_RE = /(?:移除|删除|删掉|去掉|不(?:要|用)).{0,20}(?:成员|队员|员工|设计师|开发|工程师|UI|UX|前端|后端)|(?:团队|小组|群).{0,24}(?:移除|删除|删掉|去掉)/iu;
+const PROJECT_ROSTER_REMATCH_RE = /(?:人员|成员|队员|团队|人选).{0,14}(?:不对|错了|不合理|不匹配)|重新.{0,12}(?:看|分析|理解).{0,12}(?:需求|目标)|重新(?:选人|挑人|挑选|匹配|安排)|(?:框架|架构|代码|UI|UX|前端|后端|审核|测试).{0,40}(?:全没有|都没有|没拉|没选|缺少|漏了)/iu;
 const PROJECT_APPROVAL_RE = /^(?:(?:可以|好(?:的)?|同意|批准|确认|按(?:这个|刚才|上面|之前)(?:的)?(?:团队|方案)?)(?:[，。！!\s]*)|(?:(?:就|按)(?:这个|刚才|上面|之前)(?:的)?(?:团队|方案)?[，,，\s]*(?:你)?(?:拉群|组队|组建团队|建群)(?:吧)?[。！!\s]*)|(?:(?:拉群|组队|组建团队|建群)(?:吧)?[。！!\s]*))$/u;
 
 function compact(value: string): string {
@@ -31,6 +32,25 @@ export function isTeamMemberAdditionRequest(text: string): boolean {
 
 export function isTeamMemberCorrectionRequest(text: string): boolean {
   return TEAM_MEMBER_CORRECTION_RE.test(text.trim());
+}
+
+export function isProjectRosterRematchRequest(text: string): boolean {
+  return PROJECT_ROSTER_REMATCH_RE.test(text.trim())
+    && !isTeamMemberReplacementRequest(text)
+    && !isTeamMemberRemovalRequest(text);
+}
+
+export function rematchProjectRoster(
+  project: Pick<Project, 'request' | 'requiredCapabilities'>,
+  correction: string,
+  employees: Employee[],
+): ProjectMember[] {
+  const selectionRequest = [
+    project.request,
+    ...(project.requiredCapabilities ?? []),
+    `老板对同一项目的最新纠正：${correction}`,
+  ].filter(Boolean).join('\n所需能力：');
+  return matchProjectMembers(employees, selectionRequest);
 }
 
 export function isTeamMemberReplacementRequest(text: string): boolean {

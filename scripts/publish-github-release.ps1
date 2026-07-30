@@ -113,6 +113,7 @@ if (-not $SkipTests) {
     'verify:native-execution',
     'verify:office-layout',
     'verify:v230-experience',
+    'verify:v231-dispatch-and-brand',
     'verify:team-membership',
     'verify:execution-detail-contract',
     'verify:skill-atomic',

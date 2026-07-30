@@ -13,6 +13,7 @@ import {
 import { taskRequirementLabels } from './taskFidelity.mjs';
 import { resolveSkillInstallRequest } from './skillInstallRouting.mjs';
 import { isSkillDiscoveryRequest } from './skillHubSearch.mjs';
+import { inferCapabilityIds } from './capabilityGraph.mjs';
 
 export const TASK_DECISION_TOOL_NAME = 'compile_task_decision';
 
@@ -220,6 +221,7 @@ export function createFallbackTaskDecision(input = {}) {
       mode: 'execute', goal, primaryRoute,
       deliverableType: deliverableTypeForGoal(goal, primaryRoute),
       acceptanceCriteria: defaultAcceptance(primaryRoute, goal),
+      requiredCapabilities: inferCapabilityIds(goal),
       requiredConstraints,
       requiresEvidence: requiresObservableExecutionEvidence(goal) || primaryRoute !== 'direct_answer',
       needsUser: false, missingUserCondition: '',
@@ -235,6 +237,7 @@ export function createFallbackTaskDecision(input = {}) {
     primaryRoute: 'direct_answer',
     deliverableType: 'answer',
     acceptanceCriteria: defaultAcceptance('direct_answer', latestMessage),
+    requiredCapabilities: inferCapabilityIds(latestMessage),
     requiredConstraints,
     requiresEvidence: false, needsUser: false, missingUserCondition: '', searchQuery: '',
     decisionReason: '当前消息没有明确要求执行外部操作。', confidence: 0.72, source: 'rules',
@@ -303,7 +306,11 @@ export function normalizeTaskDecision(candidate, input = {}) {
     acceptanceCriteria,
     requiredConstraints,
     deliverables: normalizedDeliverables(candidate.deliverables, primaryRoute, deliverableType) ?? fallback.deliverables,
-    requiredCapabilities: Array.isArray(candidate.requiredCapabilities) ? candidate.requiredCapabilities.map((item) => clean(item, 120)).filter(Boolean).slice(0, 12) : fallback.requiredCapabilities,
+    // The model may add specialty requirements, but it cannot remove the
+    // deterministic baseline implied by a complete software product request.
+    requiredCapabilities: inferCapabilityIds(goal, Array.isArray(candidate.requiredCapabilities)
+      ? candidate.requiredCapabilities.map((item) => clean(item, 120)).filter(Boolean).slice(0, 12)
+      : fallback.requiredCapabilities),
     riskLevel: ['low', 'normal', 'high'].includes(candidate.riskLevel) ? candidate.riskLevel : fallback.riskLevel,
     teamPolicy: candidate.teamPolicy && typeof candidate.teamPolicy === 'object' ? candidate.teamPolicy : fallback.teamPolicy,
     requiresEvidence: mode === 'execute' && (Boolean(candidate.requiresEvidence) || fallback.requiresEvidence),

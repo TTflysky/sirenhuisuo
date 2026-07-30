@@ -37,7 +37,7 @@ export function messagesToMarkdown(msgs: { role: string; author?: string; conten
     lines.push('');
   }
   lines.push('---');
-  lines.push('_由 Hermes 助手导出_');
+  lines.push('_由太极助手导出_');
   return lines.join('\n');
 }
 

@@ -1,4 +1,4 @@
-export type CapabilityId = 'ui_ux' | 'frontend' | 'backend' | 'content' | 'research' | 'office_document' | 'connector' | 'skill' | 'coding' | 'review' | 'coordination';
+export type CapabilityId = 'ui_ux' | 'frontend' | 'backend' | 'architecture' | 'content' | 'research' | 'office_document' | 'connector' | 'skill' | 'coding' | 'review' | 'coordination';
 export function normalizeCapabilityId(value: unknown): CapabilityId | '';
 export function inferCapabilityIds(input: unknown, provided?: unknown[]): CapabilityId[];
 export function employeeCapabilityProfile(member: any): CapabilityId[];

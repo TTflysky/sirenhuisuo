@@ -1,5 +1,14 @@
 # 更新日志
 
+## v2.3.1 (Software-project roster fidelity and complete office navigation)
+
+- Compiled greenfield software, application, client, platform, system, website, and mini-program requests into a deterministic responsibility baseline covering coordination, software architecture, UI/UX, frontend/client implementation, backend services, engineering, and QA. Model-suggested capabilities are additive and can no longer erase this baseline.
+- Replaced generic set-cover fallback ordering with specialty-aware ownership. Stable employee identity and explicit capabilities drive core role selection, so incidental UI or testing words inside a long role prompt cannot make an architect impersonate a designer or reviewer.
+- Added structured roster rematching for correction turns such as “人员不对”, “重新看需求”, and “重新选人”. Corrections update the pending project in the same conversation using its original request instead of creating a new project from the correction sentence.
+- Recognized “安排人帮我做” as explicit team dispatch and added an end-to-end regression reproducing the reported creator-publishing-client conversation. The test requires product, architecture, UI, frontend, backend, and QA coverage and rejects unrelated Drupal, WordPress, and education candidates.
+- Added visible previous/next controls, vertical-wheel-to-horizontal navigation, active-category visibility, keyboard focus states, and narrow-window behavior to the office category strip. Verified the real 272-employee page at 1280×720 and 760×720 without page-level horizontal overflow.
+- Renamed the Markdown transcript footer from “Hermes 助手” to “太极助手”, added `docs/自我评分.md`, and included `verify:v231-dispatch-and-brand` in the complete v2 release gate.
+
 ## v2.3.0 (Employee navigation, staff badges, and dedicated utility models)
 
 - Added a horizontally scrollable office category navigator backed by live employee profiles. Product, design, engineering, data/AI, content, growth, business, finance/legal, people/education, GIS, and support counts update without maintaining a second employee list.

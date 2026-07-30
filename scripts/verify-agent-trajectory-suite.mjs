@@ -55,7 +55,7 @@ const team = selectCapabilityTeam(employees, {
   requiresReview: true,
 });
 const selectedIds = team.selected.map((member) => member.employeeId);
-assert.deepEqual(selectedIds, ['web', 'ux', 'review']);
+assert.deepEqual(selectedIds, ['ux', 'web', 'review']);
 assert.equal(selectedIds.includes('admin'), false);
 assert.equal(selectedIds.includes('teacher'), false);
 

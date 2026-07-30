@@ -35,6 +35,8 @@ const stations = fs.readFileSync(path.join(root, 'src', 'data', 'officeStations.
 assert(catalogAdapter.includes('materializeCatalogEmployees'), 'Catalog experts must be materialized into real office employees');
 assert(catalogAdapter.includes('avatarFrame: { presetId:'), 'Catalog employees must receive stable avatar frames');
 assert(initialLoad.includes('materializeCatalogEmployees(employees)'), 'Client initialization must migrate every missing catalog expert');
-assert(stations.includes('DEFAULT_OFFICE_STATIONS = 24'), 'Office must not render the old fixed 999 empty desks');
+assert(stations.includes('DEFAULT_OFFICE_STATIONS = 999'), 'Office must preserve the requested logical capacity');
+assert(stations.includes('DEFAULT_VISIBLE_OFFICE_STATIONS = 24'), 'The UI must not render all 999 reserved empty desks');
+assert(stations.includes('Math.max(DEFAULT_VISIBLE_OFFICE_STATIONS, highestStationIndex + 1)'), 'Visible seats must grow with the real employee roster');
 
 console.log(`Expert orchestration verification passed: ${catalog.length} bundled MIT-licensed experts, ${officeMigrationBytes} bytes for the office roster, catalog composition and live roster synchronization present.`);

@@ -31,9 +31,11 @@ import { executionControllerStatus } from '../../engine/executionController.mjs'
 import {
   applyProjectRosterMutation,
   isProjectApprovalIntent,
+  isProjectRosterRematchRequest,
   isTeamMemberAdditionRequest,
   isTeamMemberRemovalRequest,
   isTeamMemberReplacementRequest,
+  rematchProjectRoster,
   resolveMentionedEmployees,
   resolveTargetProject,
   resolveTargetTeam,
@@ -142,7 +144,7 @@ function saveHistory(msgs: ChatMessage[]): void {
   } catch {}
 }
 
-const EXPLICIT_TEAM_DISPATCH_RE = /(?:拉(?:个|起|一个)?团队|拉群|组建团队|组队|召集.{0,12}(?:员工|成员|团队)|叫.{0,12}(?:员工|成员).{0,12}(?:来|去|做|负责)|安排.{0,12}(?:员工|成员).{0,12}(?:做|负责|开发|设计))/u;
+const EXPLICIT_TEAM_DISPATCH_RE = /(?:拉(?:个|起|一个)?团队|拉群|组建团队|组队|召集.{0,12}(?:员工|成员|团队)|叫.{0,12}(?:员工|成员).{0,12}(?:来|去|做|负责)|安排.{0,12}(?:员工|成员|人|人手|专员|同事).{0,12}(?:帮|做|负责|开发|设计))/u;
 const SPECIALIST_DOMAIN_RE = /前端|后端|全栈|网页|网站|UI|界面|视觉|代码|开发|编程|脚本|文案|视频|分镜|报告|方案/u;
 const DELIVERABLE_ACTION_RE = /做|制作|开发|设计|编写|写|生成|实现|创建|完成|修复|优化|重写|起草|改造/u;
 
@@ -348,6 +350,31 @@ export default function AssistantChat() {
         id: `h-${Date.now()}-project-approval-missing`, authorId: 'assistant', roleId: 'custom',
         content: '当前聊天没有可批准的团队草案。我不会把“拉群”当成新项目重新猜成员；请先说明要做什么，或回到包含草案的聊天继续。',
         mentions: [], timestamp: Date.now(), kind: 'text',
+      });
+      return;
+    }
+
+    if (isProjectRosterRematchRequest(enriched)) {
+      const planningEmployees = employeePlanningPool(liveEmployees);
+      if (contextualProject?.status !== 'awaiting_approval') {
+        push({
+          id: `h-${Date.now()}-project-rematch-missing`, authorId: 'assistant', roleId: 'custom',
+          content: '当前聊天没有正在等待批准的团队草案。我不会根据这句纠正重新猜一个新项目；请先说明完整项目目标。',
+          mentions: [], timestamp: Date.now(), kind: 'text',
+        });
+        return;
+      }
+      const rematched = rematchProjectRoster(contextualProject, enriched, planningEmployees);
+      setProjectMembers(contextualProject.id, rematched.map((member) => member.employeeId));
+      const selectedEmployees = rematched
+        .map((member) => planningEmployees.find((employee) => employee.id === member.employeeId))
+        .filter((employee): employee is Employee => !!employee);
+      push({
+        id: `h-${Date.now()}-project-rematched`, authorId: 'assistant', roleId: 'custom',
+        content: selectedEmployees.length
+          ? `已按「${contextualProject.request}」的原始目标重新检查同一份团队草案，没有新建项目。当前成员是：${selectedEmployees.map((employee) => `${employee.name}（${employee.title}）`).join('、')}。你可以继续调整，确认后再批准。`
+          : `我保留了「${contextualProject.request}」的原始目标，但当前员工目录仍不能覆盖所需职责。草案没有塞入无关员工，请先补充对应专业员工后再批准。`,
+        mentions: rematched.map((member) => member.employeeId), timestamp: Date.now(), kind: 'text',
       });
       return;
     }

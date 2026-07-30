@@ -23,6 +23,7 @@ const checks = [
   'verify:skill-directory-contract',
   'verify:skill-install-e2e',
   'verify:v230-experience',
+  'verify:v231-dispatch-and-brand',
 ];
 
 for (const script of checks) {
