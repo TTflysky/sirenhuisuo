@@ -13,7 +13,9 @@
 
 性能规则：启动和故障恢复可全量读取任务账本；原生执行的高频通知必须按 `taskId` 读取并补丁合并单条任务。工具产出只在真实 `tool_result` 带有 artifact 时同步；IPC 通知只传简短预览，完整证据仍从主进程账本读取。
 
-必跑命令：`npm.cmd run verify:team-membership`、`verify:dispatch-intelligence`、`verify:orchestration-control`、`verify:project-board`、`verify:team-execution-protocol`、`verify:native-execution`、`verify:v2-core-gate`、`npm.cmd run dist:win`、`npm.cmd run verify:package`。
+发布记录：`ea64c9594dae8a790c05e4547d5447443fb9ed42` 已在 `main`，标签与 Release 均为 [v2.2.2](https://github.com/TTflysky/sirenhuisuo/releases/tag/v2.2.2)。Release 已包含 `taiji-office-setup-2.2.2.exe`（`175395904` 字节）、`.blockmap`（`181461` 字节）和 `latest.yml`（`353` 字节）；安装包 SHA-256 为 `6FDC81FB950D744207C3687B2EBF5FCF1A5E4D54A2B2C4AC77A3858464D8F944`。`verify:v2-core-gate` 与 `verify:package` 已通过；本机 Electron 图形 UI 自动化仍待图形环境正常的机器补跑。
+
+下次发布前必跑命令：`npm.cmd run verify:team-membership`、`verify:dispatch-intelligence`、`verify:orchestration-control`、`verify:project-board`、`verify:team-execution-protocol`、`verify:native-execution`、`verify:v2-core-gate`、`npm.cmd run dist:win`、`npm.cmd run verify:package`。
 
 ## v2.2.1 专家员工化与交接
 

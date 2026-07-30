@@ -2,12 +2,12 @@
 
 ## v2.2.2 团队方案连续性与顺序执行（2026-07-30）
 
-- 当前工作分支：`codex/v2.2.2-orchestration`；源码版本：`2.2.2`。发布前必须从该分支完成全部门禁、构建安装包、提交并推送，再合并到 `main`。
+- 发布完成：源码版本 `2.2.2` 已提交为 `ea64c9594dae8a790c05e4547d5447443fb9ed42`，并已快进到远端 `main` 与标签 `v2.2.2`。发布分支仍为 `codex/v2.2.2-orchestration`，后续开发应从远端 `main` 同步。
 - 已修复的 P0 组队问题：项目草案新增 `conversationId`、`rosterRevision`、`clarifying` 状态和方向确认记录。成员替换、添加、移除直接修改结构化名单；“可以”“就这个团队，拉群吧”优先批准当前会话的待批草案，绝不创建第二份草案或重新从专家池猜人。
 - 已修复的 P0 执行问题：审批只建立团队并提出方向/风格问题，不立即开工。收到确认后点击团队窗口的“确认方向并开始执行”才创建任务计划。计划按需求/架构、设计/数据、实现、审查的依赖关卡推进；未满足依赖的员工显示“等待前置步骤”，不再伪装为全员并行。
 - 已修复的性能问题：原生执行事件改为按 `taskId` 增量读取主进程任务投影。首次启动与恢复仍全量校准，实际产出才同步产出物；高频通知不会在每个窗口扫描所有任务和全部产出物。
 - 已通过：`npm.cmd run build`、`npm.cmd run lint`、`npm.cmd run verify:team-membership`、`verify:dispatch-intelligence`、`verify:orchestration-control`、`verify:project-board`、`verify:team-execution-protocol`、`verify:native-execution`、`verify:task-runner`、`verify:chat-session-isolation`、`verify:execution-controller`、`verify:execution-evidence`。
-- 待发布步骤：运行 `npm.cmd run verify:v2-core-gate`，然后 `npm.cmd run dist:win` 与 `npm.cmd run verify:package`；核对 `release/taiji-office-setup-2.2.2.exe`、`.blockmap`、`latest.yml` 与 SHA-256 后提交、推送和创建 GitHub Release。真实 Electron UI 截图若仍遇图形驱动退出，必须如实记录为未在本机跑通，不能伪称通过。
+- 发布校验已完成：`verify:v2-core-gate` 和 `verify:package` 均已通过。GitHub Release：[v2.2.2](https://github.com/TTflysky/sirenhuisuo/releases/tag/v2.2.2) 已上传 `taiji-office-setup-2.2.2.exe`（`175395904` 字节）、同名 `.blockmap`（`181461` 字节）和 `latest.yml`（`353` 字节）。安装包 SHA-256：`6FDC81FB950D744207C3687B2EBF5FCF1A5E4D54A2B2C4AC77A3858464D8F944`。真实 Electron UI 截图仍因本机图形驱动环境退出而未跑通，不能伪称通过。
 
 ## v2.2.1 专家团编排与办公室员工化（2026-07-30）
 
