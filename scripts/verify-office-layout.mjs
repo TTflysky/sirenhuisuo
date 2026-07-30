@@ -17,10 +17,12 @@ const repaired = layout.repairEmployeeStations(legacy);
 assert.equal(repaired.changed, true, '旧版重复工位应被识别');
 assert.deepEqual(repaired.employees.map((employee) => employee.stationIndex), [...Array(13).keys()]);
 assert.equal(layout.getOfficeStationCount(repaired.employees), 999, '办公室默认必须预留 999 个工位');
+assert.equal(layout.getVisibleOfficeStationCount(repaired.employees), 24, '界面不得一次渲染 999 个空工位');
 
 const largeOffice = Array.from({ length: 999 }, (_, stationIndex) => ({ stationIndex }));
 assert.equal(layout.findFreeStation(largeOffice), 999, '工位分配不得存在人数上限');
 assert.equal(layout.getOfficeStationCount(largeOffice), 999, '999 名员工必须全部拥有独立工位');
+assert.equal(layout.getVisibleOfficeStationCount(largeOffice), 999, '999 名员工必须全部可滚动查看');
 
 const beyondReservedCapacity = Array.from({ length: 1001 }, (_, stationIndex) => ({ stationIndex }));
 assert.equal(layout.findFreeStation(beyondReservedCapacity), 1001, '超过 999 人后仍须继续分配新工位');

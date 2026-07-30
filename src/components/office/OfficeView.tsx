@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { AppstoreOutlined } from '@ant-design/icons';
 import type { Employee } from '../../types';
-import { getOfficeStationCount, repairEmployeeStations } from '../../data/officeStations';
+import { getVisibleOfficeStationCount, repairEmployeeStations } from '../../data/officeStations';
 import { EMPLOYEE_CATEGORIES, employeeCategoryId, type EmployeeCategoryId } from '../../data/employeeProfiles';
 import Workstation from './Workstation';
 
@@ -35,7 +35,7 @@ export default function OfficeView({ employees, isWorking, onStationClick }: Pro
   }
 
   const stations = [];
-  const stationCount = category === 'all' ? getOfficeStationCount(repairedEmployees) : visibleEmployees.length;
+  const stationCount = category === 'all' ? getVisibleOfficeStationCount(repairedEmployees) : visibleEmployees.length;
   const onlineCount = employees.filter((employee) => employee.isOnline).length;
   const workingCount = employees.filter((employee) => employee.isOnline && (employee.isWorking || isWorking(employee))).length;
   for (let i = 0; i < stationCount; i++) {

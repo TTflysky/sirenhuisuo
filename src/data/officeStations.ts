@@ -1,7 +1,10 @@
 import type { Employee } from '../types';
 
-/** Keep a modest amount of empty space without rendering hundreds of fake desks. */
-export const DEFAULT_OFFICE_STATIONS = 24;
+/** Reserved capacity. Allocation continues past this value when the office grows. */
+export const DEFAULT_OFFICE_STATIONS = 999;
+
+/** Empty seats rendered in the office before the employee count fills them. */
+export const DEFAULT_VISIBLE_OFFICE_STATIONS = 24;
 
 type StationEmployee = Pick<Employee, 'stationIndex'>;
 
@@ -46,4 +49,13 @@ export function getOfficeStationCount(employees: StationEmployee[]): number {
   );
   const requiredStations = Math.max(DEFAULT_OFFICE_STATIONS, highestStationIndex + 1);
   return requiredStations;
+}
+
+/** Keep the UI responsive by rendering occupied seats plus a modest empty-seat buffer. */
+export function getVisibleOfficeStationCount(employees: StationEmployee[]): number {
+  const highestStationIndex = employees.reduce(
+    (highest, employee) => employee.stationIndex >= 0 ? Math.max(highest, employee.stationIndex) : highest,
+    -1,
+  );
+  return Math.max(DEFAULT_VISIBLE_OFFICE_STATIONS, highestStationIndex + 1);
 }
