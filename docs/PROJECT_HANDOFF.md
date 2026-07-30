@@ -13,7 +13,7 @@
 
 诊断优化模型通过 `diagnosticModelId` 单独指定。`diagnosticOptimizer.ts` 的自动动作白名单只能包含 `skill` 与 `permission`：前者只修复来源明确的用户安装 Skill，后者只恢复沙盒和两类低风险委托审核。模型、连接器、密钥、外部软件、路径、代码、系统运行时均不可由模型猜测修改；每次动作后必须重新执行确定性诊断并展示仍需用户处理的项目。
 
-专项门禁：`npm.cmd run verify:v230-experience`。该检查已进入 `verify:v2-core-gate` 与正式 GitHub 发布脚本。Vite 实测覆盖 `1440×960` 和 `1024×720`；Electron 原生 UI 仍需结合下文图形进程故障继续验证。发布候选 `taiji-office-setup-2.3.0.exe` 为 `175403350` 字节，`.blockmap` 为 `181355` 字节，`latest.yml` 为 `353` 字节，安装包 SHA-256 为 `F929BA87A3B7A64D0CC8CE78376D93EFAD6539B5BA0804C00AF1F83B39CDFD31`；提交、标签和 GitHub Release 仍需发布脚本最终核验。
+专项门禁：`npm.cmd run verify:v230-experience`。该检查已进入 `verify:v2-core-gate` 与正式 GitHub 发布脚本。Vite 实测覆盖 `1440×960` 和 `1024×720`；Electron 原生 UI 仍需结合下文图形进程故障继续验证。正式发布已由脚本核对发布源码提交 `ac6a3c389d5e6238561c72166a0945eec5ce7d6c`、标签和 [GitHub Release v2.3.0](https://github.com/TTflysky/sirenhuisuo/releases/tag/v2.3.0)。`taiji-office-setup-2.3.0.exe` 为 `175403350` 字节，`.blockmap` 为 `181355` 字节，`latest.yml` 为 `353` 字节，安装包 SHA-256 为 `F929BA87A3B7A64D0CC8CE78376D93EFAD6539B5BA0804C00AF1F83B39CDFD31`。办公室逻辑预留 999 个工位并可继续扩展；界面默认只渲染 24 个可见空位，避免以 999 张空工牌制造性能回归。
 
 ## v2.2.2 组队连续性与依赖执行
 

@@ -8,7 +8,8 @@
 - 新增员工头像库的 `AI 生成` 页签。必须从现有模型库显式指定生图模型，支持 OpenAI 兼容 `/images/generations` 的 Base64 和 URL 返回；结果先预览，点击“使用这个头像”后才保存为本地头像。
 - 诊断中心新增专用模型与“一键诊断并优化”。模型读取结构化报告并作判断，客户端确定性白名单只允许修复来源明确的用户 Skill 和恢复“沙盒开启、命令/连接器替我审核”；模型、API Key、连接器、外部软件、工作区和运行时故障不会被伪装为已修复。
 - 新增 `npm.cmd run verify:v230-experience`，已加入 `verify:v2-core-gate` 和正式发布脚本。真实 Vite 页面已在 `1440×960` 与 `1024×720` 检查办公室、分类导航、工牌、设置诊断页和 AI 头像页，无横向溢出或内容遮挡。
-- 发布候选已通过 `verify:v2-core-gate`、构建、Lint 和包内校验。安装包 `taiji-office-setup-2.3.0.exe` 为 `175403350` 字节，`.blockmap` 为 `181355` 字节，`latest.yml` 为 `353` 字节；安装包 SHA-256 为 `F929BA87A3B7A64D0CC8CE78376D93EFAD6539B5BA0804C00AF1F83B39CDFD31`。GitHub `main`、标签和 Release 仍需发布脚本做最终远端校验。
+- 正式发布已完成：发布脚本重新通过 `verify:v2-core-gate`、构建、Lint 和包内校验，并核对 GitHub 标签、提交与三个远端资产。Release：[v2.3.0](https://github.com/TTflysky/sirenhuisuo/releases/tag/v2.3.0)；发布源码提交：`ac6a3c389d5e6238561c72166a0945eec5ce7d6c`。安装包 `taiji-office-setup-2.3.0.exe` 为 `175403350` 字节，`.blockmap` 为 `181355` 字节，`latest.yml` 为 `353` 字节；安装包 SHA-256 为 `F929BA87A3B7A64D0CC8CE78376D93EFAD6539B5BA0804C00AF1F83B39CDFD31`。
+- 发布门禁曾发现办公室预设容量被误改为 24，现已拆分为“逻辑预留 999 个工位”和“默认只渲染 24 个可见空位”。员工超过 999 人仍继续分配，真实员工全部可滚动查看，但少量员工时不会绘制 999 张空工牌拖慢界面。
 - Electron 异常码 `-1073741515` 已确认是 Windows `0xC0000135`（进程启动时找不到 DLL），不是显卡算力不足。VC++、DirectX 和 Electron 自带 `libEGL/libGLES` 均存在，当前安装版 `v2.2.2` 主/子进程正常运行；现有事件日志只记录 `RADAR_PRE_LEAK_64` 内存压力，没有应用崩溃记录。因此不向正式版强制注入关闭硬件加速，后续只对开发测试子进程捕获加载路径和具体缺失模块。
 
 ## v2.2.2 团队方案连续性与顺序执行（2026-07-30）
