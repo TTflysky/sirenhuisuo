@@ -1128,7 +1128,12 @@ function isUsefulToolOutcome(name: string, success: boolean, output: string, goa
 
 /** Connector intent is a capability class, not a special case for one provider. */
 export function isConnectorTask(userText: string): boolean {
+  if (isKnowledgeDirectoryReadRequest(userText)) return false;
   return /连接器|知识库|外部服务|(?:^|[^a-z])mcp(?:[^a-z]|$)|obsidian|(?:^|[^a-z])ima(?:[^a-z]|$)|(?:GitHub|邮箱|企业微信|腾讯文档).{0,24}(?:连接|配置|关联|绑定|接入|调用)/iu.test(userText);
+}
+
+function isKnowledgeDirectoryReadRequest(userText: string): boolean {
+  return /(?:查看|读取|列出|浏览|统计|查询|查找).{0,12}(?:obsidian|知识库|vault).{0,24}(?:目录|文件夹|笔记|条目|清单|列表|多少)/iu.test(userText);
 }
 
 export function isConnectorSetupRequest(userText: string): boolean {

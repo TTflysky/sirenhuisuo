@@ -21,6 +21,7 @@ import {
   buildTaskContract,
   classifyTaskTurnIntent,
   createFallbackTaskDecision,
+  isKnowledgeDirectoryReadRequest,
   normalizeTaskDecision,
 } from '../src/engine/taskDecisionKernel.mjs';
 import {
@@ -66,6 +67,15 @@ const connectorDecision = createFallbackTaskDecision({
 });
 assert.equal(connectorDecision.primaryRoute, 'inspect_connectors');
 assert.ok(connectorDecision.acceptanceCriteria.some((item) => /连接测试/u.test(item)));
+
+const knowledgeDirectoryGoal = '查看 Obsidian 知识库目录，并告诉我有哪些笔记';
+assert.equal(isKnowledgeDirectoryReadRequest(knowledgeDirectoryGoal), true);
+const knowledgeDirectoryDecision = createFallbackTaskDecision({
+  latestMessage: knowledgeDirectoryGoal,
+  availableTools: allToolNames,
+});
+assert.equal(knowledgeDirectoryDecision.primaryRoute, 'run_command', 'Reading a knowledge directory must not be misclassified as connector setup');
+assert.equal(knowledgeDirectoryDecision.deliverableType, 'operation');
 
 const outputDecision = createFallbackTaskDecision({
   latestMessage: '生成一份 Word 报告并保存到产出物',
@@ -269,6 +279,7 @@ assert.match(mainSource, /const height = Math\.min\(spec\.height,/u);
 assert.match(clientSource, /maxTotalToolAttempts = connectorSetupTask \? 18 : 48/u);
 assert.match(clientSource, /export function isConnectorSetupRequest/u);
 assert.match(clientSource, /export function isConnectorVerificationOnlyRequest/u);
+assert.match(clientSource, /isKnowledgeDirectoryReadRequest/u);
 assert.doesNotMatch(clientSource, /model: 'client-connector-adapter'/u);
 assert.doesNotMatch(clientSource, /model: 'client-skill-installer'/u);
 assert.doesNotMatch(clientSource, /required-skill-/u);

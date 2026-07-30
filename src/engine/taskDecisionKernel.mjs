@@ -140,6 +140,10 @@ function routeForGoal(goal, availableTools) {
   if (resolveSkillInstallRequest(goal)?.sourceUrl && tools.has('install_skill')) return 'install_skill';
   if (isSkillDiscoveryRequest(goal) && tools.has('search_skills')) return 'search_skills';
   if (requiresFreshWebResearch(goal) && tools.has('web_search')) return 'web_search';
+  // Reading a knowledge directory is a query, not a connector setup request.
+  // Keep the execution route local so the final answer can report the directory
+  // contents instead of demanding an unrelated connection verification.
+  if (isKnowledgeDirectoryReadRequest(goal) && tools.has('run_command')) return 'run_command';
   if (/连接器|知识库|MCP|Obsidian|Vault|(?:^|[^a-z])ima(?:[^a-z]|$)/iu.test(goal)
       && /配置|安装|接入|连接|关联|验证|测试|检查|诊断/iu.test(goal)
       && tools.has('inspect_connectors')) return 'inspect_connectors';
@@ -150,6 +154,10 @@ function routeForGoal(goal, availableTools) {
   if (/运行|执行|构建|打包|安装|部署|测试|验证|修复/u.test(goal) && tools.has('run_command')) return 'run_command';
   if (/团队|员工|成员|调度|分工|协作/u.test(goal)) return 'team_dispatch';
   return 'general_tools';
+}
+
+export function isKnowledgeDirectoryReadRequest(goal) {
+  return /(?:查看|读取|列出|浏览|统计|查询|查找).{0,12}(?:obsidian|知识库|vault).{0,24}(?:目录|文件夹|笔记|条目|清单|列表|多少)/iu.test(goal);
 }
 
 function deliverableTypeForGoal(goal, route, provided) {
@@ -264,6 +272,9 @@ export function normalizeTaskDecision(candidate, input = {}) {
   let primaryRoute = ROUTES.has(candidate.primaryRoute) ? candidate.primaryRoute : fallback.primaryRoute;
   if (mode !== 'execute') primaryRoute = 'direct_answer';
   if (capabilityCorrection && mode === 'execute') primaryRoute = fallback.primaryRoute;
+  if (mode === 'execute' && isKnowledgeDirectoryReadRequest(goal) && (input.availableTools ?? []).includes('run_command')) {
+    primaryRoute = 'run_command';
+  }
   // An explicit Skill package or repository is a typed install operation. Keep
   // the model in charge of deciding whether installation is needed, while the
   // runtime guarantees that an accepted source uses the atomic native installer
