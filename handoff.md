@@ -8,6 +8,9 @@
 - 办公室分类导航已增加左右图标、鼠标纵向滚轮转横向、当前标签自动显现和焦点反馈。在真实 272 人目录的 `1280×720`、`760×720` 页面中，12 个分类可完整浏览，页面没有横向溢出。
 - Markdown 聊天导出页脚已统一为“由太极助手导出”。系统评分和 Coding Runtime 路线已写入 `docs/自我评分.md`，综合评分为 `67/100`。
 - 已通过专项回归、`verify:dispatch-intelligence`、`verify:team-membership`、`verify:expert-orchestration`、Build 和 Lint。完整 `verify:v2-core-gate`、Windows 安装包及 GitHub Release 状态见本节后续发布记录。
+- 已于 2026-07-31 发布 [GitHub Release v2.3.1](https://github.com/TTflysky/sirenhuisuo/releases/tag/v2.3.1)，发布提交为 `2e1913fc96bfca21e71873be5e9fe45037740b80`。
+- Windows 安装包 `taiji-office-setup-2.3.1.exe` 为 `175406335` 字节，SHA-256 为 `07C273E525981F250414125745BF75C973B761D4405F9237D07BAA41CAA09CE7`；配套 blockmap 为 `181422` 字节，`latest.yml` 为 `353` 字节。
+- 发布前完整 `verify:v2-core-gate`、发布脚本全部专项验证、`dist:win` 和 `verify:package` 均通过。GitHub 已核对远端 `main`、Release 标签、安装包、blockmap、`latest.yml` 与本地 SHA-256 一致。
 
 ## v2.3.0 员工导航、主题工牌与专用模型（2026-07-30）
 
