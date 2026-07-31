@@ -22,6 +22,7 @@ export interface DiscussionHandlers {
   onRunFailed?: (error: string) => void;
   onSteeringReply?: (emp: Employee, content: string, tokens?: number, contextUsage?: ContextUsage, stepId?: string) => void;
   onExecutionState?: (state: ExecutionControllerSnapshot, emp?: Employee, stepId?: string) => void;
+  onTextDelta?: (emp: Employee, accumulated: string, stepId?: string) => void;
 }
 
 export interface TeamDiscussionOptions {
@@ -85,6 +86,7 @@ async function memberSpeak(
   initialExecutionState?: ExecutionControllerSnapshot,
   onExecutionState?: (state: ExecutionControllerSnapshot) => void,
   executionRouteScope?: string,
+  onTextDelta?: (accumulated: string) => void,
 ): Promise<{ text: string; tokens?: number; contextUsage?: ContextUsage; failed?: boolean; producedFile?: boolean; reviewDecision?: ReviewSubmissionEvidence; executionState?: ExecutionControllerSnapshot }> {
   const effectiveModel = getEmployeeModel(emp);
   if (!resolveApiBase(effectiveModel)) {
@@ -107,6 +109,7 @@ async function memberSpeak(
   let producedFile = false;
   let reviewDecision: ReviewSubmissionEvidence | undefined;
   let latestExecutionState = initialExecutionState;
+  let lastStreamUpdateAt = 0;
   try {
     if (/读取并继承|审查|修订/u.test(extraInstruction)) {
       const listArgs = JSON.stringify({ filter: '' });
@@ -148,6 +151,12 @@ async function memberSpeak(
       },
       onModelRetry(_attempt, _maxAttempts, error) {
         onToolCall('model_summary', '', error, false);
+      },
+      onTextDelta(_delta, accumulated) {
+        const now = Date.now();
+        if (now - lastStreamUpdateAt < 200) return;
+        lastStreamUpdateAt = now;
+        onTextDelta?.(accumulated);
       },
       shouldStop,
       consumeSteeringMessages,
@@ -374,6 +383,7 @@ export async function runTeamDiscussion(
           handlers.onExecutionState?.(state, emp, step.id);
         },
         `${opts.runId ?? opts.discussionId ?? team.id}:${step.id}`,
+        (accumulated) => handlers.onTextDelta?.(emp, accumulated, step.id),
       );
       if (r.executionState) sharedExecutionState = r.executionState;
       content = r.text;

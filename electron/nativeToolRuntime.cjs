@@ -53,6 +53,18 @@ const NATIVE_TOOL_DEFINITIONS = [
   tool('coding_checkpoint', 'Create a coding checkpoint with the current patch and untracked-file evidence before a risky edit or review handoff.', {
     label: stringField('Checkpoint label'),
   }, []),
+  tool('coding_apply_patch', 'Atomically validate and apply a unified diff inside the active Git worktree. A rollback checkpoint is created before any file changes.', {
+    patch: stringField('Complete unified diff patch'), label: stringField('Optional checkpoint label'),
+  }, ['patch']),
+  tool('coding_impact', 'Recursively identify files that depend on the changed files before verification and review.', {
+    changedFiles: { type: 'array', items: { type: 'string' } },
+  }, ['changedFiles']),
+  tool('coding_select_tests', 'Select repository test, build, and lint commands from the actual changed files and package scripts.', {
+    changedFiles: { type: 'array', items: { type: 'string' } },
+  }, ['changedFiles']),
+  tool('coding_delivery', 'Build a structured delivery report containing files, diff, impact, command evidence, risks, and rollback point.', {
+    label: stringField('Optional delivery checkpoint label'),
+  }, []),
   tool('run_command', '在当前任务工作区执行 Windows PowerShell 命令，必须遵守沙盒与审批策略。', {
     cmd: stringField('完整 PowerShell 命令'), verification: { type: 'boolean' }, connector: stringField('可选连接器 ID'),
   }, ['cmd']),
@@ -280,7 +292,8 @@ function createNativeToolRuntime(options) {
         const rows = await listWorkspace(context, args.filter);
         return succeeded(name, rows.length ? rows.map((item) => `- ${item.path} (${item.size} 字节)`).join('\n') : '工作区目前没有可交付文件。');
       }
-      if (name === 'coding_repository_index' || name === 'coding_search' || name === 'coding_dependencies' || name === 'coding_checkpoint') {
+      if (name === 'coding_repository_index' || name === 'coding_search' || name === 'coding_dependencies' || name === 'coding_checkpoint'
+        || name === 'coding_apply_patch' || name === 'coding_impact' || name === 'coding_select_tests' || name === 'coding_delivery') {
         if (!options.codingRuntime || !context.worktreePath) return failed(name, 'A Git worktree must be prepared before using Coding Runtime repository tools.');
         if (name === 'coding_repository_index') {
           const index = await options.codingRuntime.indexWorkspace({ workspacePath: context.worktreePath });
@@ -293,6 +306,24 @@ function createNativeToolRuntime(options) {
         if (name === 'coding_dependencies') {
           const result = await options.codingRuntime.dependencies({ workspacePath: context.worktreePath, path: args.path, symbol: args.symbol });
           return result.ok ? succeeded(name, JSON.stringify(result, null, 2)) : failed(name, result.error || 'Dependency lookup failed');
+        }
+        if (name === 'coding_apply_patch') {
+          const result = await options.codingRuntime.applyPatch({ taskId: context.taskId, workspacePath: context.worktreePath, patch: args.patch, label: args.label });
+          return result.ok
+            ? succeeded(name, `Atomic patch applied to ${result.changedFiles.length} file(s):\n${result.changedFiles.join('\n')}`, { codingPatch: result })
+            : failed(name, result.error || 'Atomic patch failed');
+        }
+        if (name === 'coding_impact') {
+          const result = await options.codingRuntime.impactAnalysis({ workspacePath: context.worktreePath, changedFiles: args.changedFiles });
+          return succeeded(name, JSON.stringify(result, null, 2), { codingImpact: result });
+        }
+        if (name === 'coding_select_tests') {
+          const result = await options.codingRuntime.selectTests({ workspacePath: context.worktreePath, changedFiles: args.changedFiles });
+          return succeeded(name, JSON.stringify(result, null, 2), { codingTestSelection: result });
+        }
+        if (name === 'coding_delivery') {
+          const result = await options.codingRuntime.deliveryReport({ taskId: context.taskId, workspacePath: context.worktreePath, label: args.label });
+          return succeeded(name, JSON.stringify(result, null, 2), { codingDelivery: result, worktreeCheckpoint: result.rollbackCheckpoint });
         }
         const result = await options.codingRuntime.checkpoint({ taskId: context.taskId, workspacePath: context.worktreePath, label: args.label });
         return result.ok ? succeeded(name, `Coding checkpoint saved: ${result.checkpoint?.checkpointId || result.checkpoint?.id || 'checkpoint'}`, { worktreeCheckpoint: result.checkpoint }) : failed(name, result.error || 'Coding checkpoint failed');

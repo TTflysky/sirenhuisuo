@@ -1096,6 +1096,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             if (step) step.events.push({ ts: Date.now(), type: 'status', detail: `已回应运行中新增要求：${content.slice(0, 220)}` });
           });
         },
+        onTextDelta(emp, accumulated, stepId) {
+          dispatch({ type: 'UPDATE_EMPLOYEE', id: emp.id, partial: { isWorking: true, currentTask: '正在生成回复' } });
+          updateRun((run) => {
+            const step = run.steps.find((item) => item.id === stepId)
+              ?? run.steps.find((item) => item.employeeId === emp.id && item.status === 'running');
+            if (!step) return;
+            const detail = `正在生成回复：${accumulated.slice(-900)}`;
+            const last = step.events.at(-1);
+            if (last?.type === 'status' && last.detail.startsWith('正在生成回复：')) last.detail = detail;
+            else step.events.push({ ts: Date.now(), type: 'status', detail });
+          });
+        },
         onTaskAdvance(taskId, lane) {
           dispatch({ type: 'ADVANCE_TASK', teamId, taskId, lane });
         },

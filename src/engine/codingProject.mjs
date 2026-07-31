@@ -1,6 +1,6 @@
 import { employeeCapabilityProfile, inferCapabilityIds } from './capabilityGraph.mjs';
 
-export const CODING_PROJECT_VERSION = 1;
+export const CODING_PROJECT_VERSION = 2;
 
 const ROLE_SPECS = Object.freeze({
   product: { capability: 'coordination', title: 'Product brief', output: 'scope, user flows, and acceptance criteria' },
@@ -11,6 +11,17 @@ const ROLE_SPECS = Object.freeze({
   test: { capability: 'review', title: 'Test and verification', output: 'test cases, execution result, and defect list' },
   review: { capability: 'review', title: 'Code review and acceptance', output: 'review decision tied to the responsible steps' },
   delivery: { capability: 'coordination', title: 'Delivery handoff', output: 'verified artifact list, diffs, and rollback point' },
+});
+
+const ARTIFACT_CONTRACTS = Object.freeze({
+  product: { type: 'product-brief', required: ['goal', 'scope', 'userFlows', 'acceptanceCriteria'] },
+  architecture: { type: 'architecture-decision', required: ['components', 'dependencies', 'dataFlow', 'risks'] },
+  ux: { type: 'ux-ui-spec', required: ['screens', 'states', 'interactionRules', 'visualTokens'] },
+  frontend: { type: 'frontend-implementation', required: ['sourceFiles', 'buildResult', 'visualVerification'] },
+  backend: { type: 'backend-implementation', required: ['sourceFiles', 'apiContract', 'testResult'] },
+  test: { type: 'verification-report', required: ['testPlan', 'runResults', 'defects'] },
+  review: { type: 'review-decision', required: ['decision', 'checkedArtifacts', 'responsibleStepId'] },
+  delivery: { type: 'delivery-report', required: ['changedFiles', 'diff', 'testEvidence', 'risks', 'rollbackCheckpoint'] },
 });
 
 function text(value, max = 4000) {
@@ -38,9 +49,14 @@ function needsBackend(value, capabilities) {
 function candidateOwners(members, allowedIds, capability) {
   const candidates = members.filter((member) => !allowedIds.size || allowedIds.has(member.id));
   return candidates
-    .map((member) => ({ member, profile: employeeCapabilityProfile(member) }))
+    .map((member) => ({
+      member,
+      profile: employeeCapabilityProfile(member),
+      explicitMatch: Array.isArray(member.capabilities) && member.capabilities.includes(capability) ? 1 : 0,
+      load: Math.max(0, Number(member.currentLoad ?? member.activeTaskCount) || 0) + (member.isWorking === true ? 1 : 0),
+    }))
     .filter(({ profile }) => profile.includes(capability))
-    .sort((left, right) => Number(left.member.isWorking === true) - Number(right.member.isWorking === true)
+    .sort((left, right) => right.explicitMatch - left.explicitMatch || left.load - right.load
       || String(left.member.name || '').localeCompare(String(right.member.name || ''), 'zh-CN'));
 }
 
@@ -67,6 +83,9 @@ function node(id, role, dependencies, owner, input) {
     assignment: `${spec.title}: ${input.goal}. Produce ${spec.output}.`,
     deliverableType: role === 'product' || role === 'architecture' || role === 'ux' || role === 'review' ? 'decision' : role === 'delivery' ? 'mixed' : 'file',
     reviewPoint: review,
+    status: 'queued',
+    artifactContract: structuredClone(ARTIFACT_CONTRACTS[role]),
+    artifacts: [],
   };
 }
 
@@ -143,6 +162,92 @@ export function addCodingProjectMember(project, input = {}) {
     newAcceptanceCriteria: unique(input.newAcceptanceCriteria),
     createdAt: Date.now(),
   }].slice(-100);
+  for (const stageId of affectedStageIds) {
+    const stage = next.stages.find((item) => item.id === stageId);
+    if (stage && (input.replaceOwner === true || !stage.ownerEmployeeId)) {
+      stage.ownerEmployeeId = employeeId;
+      stage.ownerName = text(input.employeeName, 200) || employeeId;
+      stage.status = stage.status === 'completed' ? 'queued' : stage.status;
+    }
+  }
+  next.staffingGaps = next.stages.filter((stage) => !stage.ownerEmployeeId).map((stage) => ({ stageId: stage.id, role: stage.role, capability: stage.requiredCapability }));
+  next.status = next.staffingGaps.length ? 'needs_staffing' : 'ready';
+  next.revision = Number(next.revision || 0) + 1;
+  return next;
+}
+
+export function replaceCodingProjectOwner(project, input = {}) {
+  if (!project?.codingProjectVersion) throw new Error('Coding project is required');
+  const stageId = text(input.stageId, 160);
+  const employeeId = text(input.employeeId, 160);
+  const reason = text(input.reason, 800);
+  if (!stageId || !employeeId || !reason) throw new Error('stageId, employeeId and reason are required');
+  const next = structuredClone(project);
+  const stage = next.stages.find((item) => item.id === stageId);
+  if (!stage) throw new Error('Target coding stage was not found');
+  const previousEmployeeId = stage.ownerEmployeeId;
+  stage.ownerEmployeeId = employeeId;
+  stage.ownerName = text(input.employeeName, 200) || employeeId;
+  if (stage.status === 'running' || stage.status === 'completed' || stage.status === 'failed') stage.status = 'queued';
+  stage.artifacts = [];
+  next.teamChanges = [...(next.teamChanges || []), {
+    id: `replacement-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    type: 'replace', stageId, previousEmployeeId, employeeId, reason, createdAt: Date.now(),
+  }].slice(-100);
+  next.revision = Number(next.revision || 0) + 1;
+  return next;
+}
+
+export function registerCodingArtifact(project, input = {}) {
+  if (!project?.codingProjectVersion) throw new Error('Coding project is required');
+  const stageId = text(input.stageId, 160);
+  const artifact = input.artifact && typeof input.artifact === 'object' ? structuredClone(input.artifact) : undefined;
+  if (!stageId || !artifact) throw new Error('stageId and artifact are required');
+  const next = structuredClone(project);
+  const stage = next.stages.find((item) => item.id === stageId);
+  if (!stage) throw new Error('Target coding stage was not found');
+  const record = {
+    ...artifact,
+    id: text(artifact.id, 180) || `artifact-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    type: text(artifact.type, 160) || stage.artifactContract.type,
+    verified: artifact.verified === true,
+    registeredAt: Date.now(),
+  };
+  stage.artifacts = [...(stage.artifacts || []).filter((item) => item.id !== record.id), record].slice(-40);
+  next.artifactRegistry = [...(next.artifactRegistry || []).filter((item) => item.id !== record.id), { ...record, stageId }].slice(-240);
+  next.revision = Number(next.revision || 0) + 1;
+  return next;
+}
+
+export function validateCodingStageArtifacts(project, stageId) {
+  const stage = project?.stages?.find((item) => item.id === stageId);
+  if (!stage) return { passed: false, missing: ['stage'], verifiedArtifacts: [] };
+  const verifiedArtifacts = (stage.artifacts || []).filter((item) => item.verified);
+  const provided = new Set(verifiedArtifacts.flatMap((item) => [item.type, ...Object.keys(item.data || {}), ...Object.keys(item)]));
+  const missing = (stage.artifactContract?.required || []).filter((field) => !provided.has(field));
+  return { passed: missing.length === 0 && verifiedArtifacts.length > 0, missing, verifiedArtifacts };
+}
+
+export function reopenCodingProjectResponsibility(project, input = {}) {
+  if (!project?.codingProjectVersion) throw new Error('Coding project is required');
+  const responsibleStepId = text(input.responsibleStepId, 160);
+  const reason = text(input.reason, 1000);
+  if (!responsibleStepId || !reason) throw new Error('responsibleStepId and reason are required');
+  const next = structuredClone(project);
+  const responsible = next.stages.find((stage) => stage.id === responsibleStepId);
+  if (!responsible) throw new Error('Responsible coding stage was not found');
+  responsible.status = 'queued';
+  responsible.reworkReason = reason;
+  responsible.artifacts = [];
+  const reopenIds = new Set([responsibleStepId]);
+  for (const stage of next.stages) {
+    if (stage.role === 'review' || stage.role === 'delivery') {
+      stage.status = 'queued';
+      stage.artifacts = [];
+      reopenIds.add(stage.id);
+    }
+  }
+  next.reworkHistory = [...(next.reworkHistory || []), { id: `rework-${Date.now()}`, responsibleStepId, reopenedStepIds: [...reopenIds], reason, createdAt: Date.now() }].slice(-100);
   next.revision = Number(next.revision || 0) + 1;
   return next;
 }

@@ -11,6 +11,12 @@ import { ensureDistinctEmployeeColors } from './employeeColors';
 import { materializeCatalogEmployees, normalizeCatalogEmployeePersonas } from './expertCatalog';
 import { parseGeneratedAvatarPayload } from './generatedAvatar';
 import { buildImageEditFormData, selectEditableImage } from '../engine/imageRequest.mjs';
+import { consumeOpenAIChatStream } from '../engine/chatStream.mjs';
+import {
+  resolveImageSpecification,
+  type ImageGenerationOptions,
+  type ImageSpecification,
+} from '../engine/imageSpecifications.mjs';
 import {
   canonicalToolCallKey,
   buildFreshWebQuery,
@@ -46,6 +52,7 @@ import {
   executionControllerGuidance,
   markExecutionBudgetReached,
   observeExecutionResult,
+  recordExecutionUsage,
   restoreExecutionController,
   type ExecutionControllerSnapshot,
 } from '../engine/executionController.mjs';
@@ -185,6 +192,8 @@ export interface AppSettings {
   imageModelId?: string;        // 员工头像生图模型（OpenAI 兼容 images/generations）
   /** The model selected from each chat composer. Keeps a temporary image switch out of default assignments. */
   chatModelOverrides?: Partial<Record<ChatModelScene, string>>;
+  /** Per-chat image output controls. They do not change the assigned text model. */
+  imageGenerationOptions?: Partial<Record<ChatModelScene, ImageGenerationOptions>>;
   memoryWriteApproval?: boolean; // 独立审查模型提出的记忆更新是否需要人工审核（默认 true）
   skillsWriteApproval?: boolean; // 自动 Skill 草案是否需要审核（固定默认 true）
   showThoughtChain?: boolean;   // 助理是否显示思维链（默认 true）
@@ -250,6 +259,7 @@ export function loadSettings(): AppSettings {
 export function saveSettings(s: AppSettings): void {
   try {
     localStorage.setItem(LS_SETTINGS, JSON.stringify(s));
+    if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('taiji-settings:changed', { detail: s }));
   } catch {}
 }
 
@@ -683,6 +693,7 @@ export interface GeneratedAvatarImage {
   dataUrl: string;
   model: string;
   revisedPrompt?: string;
+  specification?: ImageSpecification;
 }
 
 export interface ImageGenerationRequest {
@@ -690,6 +701,7 @@ export interface ImageGenerationRequest {
   prompt: string;
   n: 1;
   size: string;
+  quality?: 'auto' | 'low' | 'medium' | 'high';
   output_format?: 'png';
   response_format?: 'b64_json';
 }
@@ -698,8 +710,10 @@ export interface ImageGenerationRequest {
  * GPT Image 2 always returns Base64 image data and rejects the legacy
  * response_format option. Retain it only for older OpenAI-compatible APIs.
  */
-export function buildImageGenerationRequest(model: string, prompt: string): ImageGenerationRequest {
-  const request: ImageGenerationRequest = { model, prompt, n: 1, size: '1024x1024' };
+export function buildImageGenerationRequest(model: string, prompt: string, options: Partial<ImageGenerationOptions> = {}): ImageGenerationRequest {
+  const specification = resolveImageSpecification(model, options);
+  const request: ImageGenerationRequest = { model, prompt, n: 1, size: specification.size };
+  if (/^gpt-image-/iu.test(model.trim())) request.quality = specification.quality;
   if (/^gpt-image-2$/iu.test(model.trim())) request.output_format = 'png';
   else request.response_format = 'b64_json';
   return request;
@@ -715,18 +729,19 @@ function blobAsDataUrl(blob: Blob): Promise<string> {
 }
 
 /** Generate an image, or edit the first image attached to the current turn. */
-export async function generateImage(prompt: string, modelConfig = getImageGenerationModel(), attachments: Attachment[] = []): Promise<GeneratedAvatarImage> {
+export async function generateImage(prompt: string, modelConfig = getImageGenerationModel(), attachments: Attachment[] = [], options: Partial<ImageGenerationOptions> = {}): Promise<GeneratedAvatarImage> {
   const sourceImage = selectEditableImage(attachments);
   const cleanPrompt = prompt.trim();
   if (!cleanPrompt) throw new Error(sourceImage ? '请说明要如何修改这张图片' : '请先填写图片描述');
   if (!modelConfig?.apiHost?.trim() || !modelConfig.model?.trim()) throw new Error('还没有配置头像生图模型，请先在模型库中指定一个生图模型');
   const base = resolveApiBase(modelConfig as AppSettings);
   const model = modelConfig.model.trim();
+  const specification = resolveImageSpecification(model, options);
   const response = await apiFetch(sourceImage ? '/images/edits' : '/images/generations', {
     method: 'POST',
     body: sourceImage
-      ? buildImageEditFormData(model, cleanPrompt, sourceImage)
-      : JSON.stringify(buildImageGenerationRequest(model, cleanPrompt)),
+      ? buildImageEditFormData(model, cleanPrompt, sourceImage, specification)
+      : JSON.stringify(buildImageGenerationRequest(model, cleanPrompt, specification)),
   }, 180000, modelConfig.apiKey, base);
   const raw = await response.text().catch(() => '');
   if (!response.ok) throw new Error(`${sourceImage ? '图片编辑' : '生图'}接口返回 ${response.status}：${apiErrorMessage(raw)}`);
@@ -734,7 +749,7 @@ export async function generateImage(prompt: string, modelConfig = getImageGenera
   try { payload = JSON.parse(raw); }
   catch { throw new Error('生图接口返回的不是有效 JSON'); }
   const result = parseGeneratedAvatarPayload(payload);
-  if (result.kind === 'data') return { dataUrl: result.dataUrl, model, revisedPrompt: result.revisedPrompt };
+  if (result.kind === 'data') return { dataUrl: result.dataUrl, model, revisedPrompt: result.revisedPrompt, specification };
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 60000);
   try {
@@ -742,8 +757,8 @@ export async function generateImage(prompt: string, modelConfig = getImageGenera
     if (!downloaded.ok) throw new Error(`生成图片下载失败（HTTP ${downloaded.status}）`);
     const blob = await downloaded.blob();
     if (!blob.type.startsWith('image/')) throw new Error('生图地址返回的不是图片');
-    if (blob.size > 10 * 1024 * 1024) throw new Error('生成图片超过 10MB，请在生图服务中降低图片尺寸');
-    return { dataUrl: await blobAsDataUrl(blob), model, revisedPrompt: result.revisedPrompt };
+    if (blob.size > 48 * 1024 * 1024) throw new Error('生成图片超过 48MB，请降低清晰度或图片规格');
+    return { dataUrl: await blobAsDataUrl(blob), model, revisedPrompt: result.revisedPrompt, specification };
   } catch (error: any) {
     if (error?.name === 'AbortError') throw new Error('生成图片下载超过 60 秒，请稍后重试');
     throw error;
@@ -761,7 +776,7 @@ export function generatedImageAttachment(image: GeneratedAvatarImage): Attachmen
   const comma = image.dataUrl.indexOf(',');
   const base64 = comma >= 0 ? image.dataUrl.slice(comma + 1) : image.dataUrl;
   return {
-    name: `generated-${Date.now()}.png`,
+    name: `generated-${image.specification?.size ?? 'image'}-${Date.now()}.png`,
     mime: 'image/png',
     dataUrl: image.dataUrl,
     size: Math.floor(base64.length * 0.75),
@@ -873,6 +888,8 @@ export interface ChatCompletionRequestOptions {
   timeoutMs?: number;
   /** 内核分类调用可关闭自动用户记忆注入，改用显式筛选后的上下文。 */
   injectUserContext?: boolean;
+  /** Receives public answer text as it arrives. It is display-only until final validation completes. */
+  onTextDelta?: (delta: string, accumulated: string) => void;
 }
 
 // ===== Token 消耗日志 =====
@@ -974,12 +991,13 @@ export async function chatCompletion(
       }
     }
   }
+  const streaming = typeof requestOptions.onTextDelta === 'function';
   const res = await apiFetch('/chat/completions', {
     method: 'POST',
     body: JSON.stringify({
       model,
       messages: finalTurns,
-      stream: false,
+      stream: streaming,
       ...(tools && tools.length > 0 ? { tools, tool_choice: requestOptions.toolChoice ?? 'auto' } : {}),
     }),
   }, requestOptions.timeoutMs ?? 300000, merged.apiKey, base, requestSignal); // Long-running model/tool requests may take minutes on a busy provider.
@@ -987,10 +1005,14 @@ export async function chatCompletion(
     const txt = await res.text().catch(() => '');
     throw new Error(`模型响应 ${res.status}: ${txt.slice(0, 120)}`);
   }
-  const data = await res.json();
+  const streamed = streaming
+    ? await consumeOpenAIChatStream(res, { onTextDelta: requestOptions.onTextDelta })
+    : undefined;
+  const data = streamed ? undefined : await res.json();
   const msg = data?.choices?.[0]?.message ?? {};
-  const content: string | null = typeof msg.content === 'string' && msg.content.trim() ? msg.content.trim() : null;
-  const u = data?.usage ?? {};
+  const content: string | null = streamed?.content
+    ?? (typeof msg.content === 'string' && msg.content.trim() ? msg.content.trim() : null);
+  const u = streamed?.usage ?? data?.usage ?? {};
   const apiPromptTokens = Number.isFinite(Number(u.prompt_tokens)) ? Number(u.prompt_tokens) : undefined;
   const usage: TokenUsage = {
     promptTokens: apiPromptTokens ?? estimateTokens(finalTurns.map((t) => typeof t.content === 'string' ? t.content : t.content.map((part) => part.type === 'text' ? part.text ?? '' : '[图片]').join('\n')).join('')),
@@ -1006,8 +1028,8 @@ export async function chatCompletion(
   };
   // 记账（简化：单行 append 以避免匹配问题）
   appendTokenLog({ ts: Date.now(), model, promptTokens: usage.promptTokens, completionTokens: usage.completionTokens, totalTokens: usage.totalTokens, scene, label });
-  let toolCalls: ToolCallResult[] | undefined;
-  if (msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+  let toolCalls: ToolCallResult[] | undefined = streamed?.toolCalls.length ? streamed.toolCalls : undefined;
+  if (!streamed && msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
     toolCalls = msg.tool_calls.map((tc: any) => ({
       id: tc.id ?? `tc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       name: tc.function?.name ?? '',
@@ -1015,7 +1037,7 @@ export async function chatCompletion(
     }));
   }
   if (!content && !toolCalls) throw new Error('模型返回为空');
-  return { content, usage, contextUsage, model, toolCalls };
+  return { content, usage, contextUsage, model: streamed?.model || model, toolCalls };
 }
 
 /**
@@ -1177,6 +1199,8 @@ export interface AgentLoopOpts {
   getModelRequestSignal?: () => AbortSignal; // 新指令可以中断正在等待的模型响应
   onSteeringReply?: (content: string, usage: TokenUsage, contextUsage?: ContextUsage) => void;
   onModelRetry?: (attempt: number, maxAttempts: number, error: string, nextDelayMs: number) => void;
+  /** Public model output stream. Partial text is never completion evidence. */
+  onTextDelta?: (delta: string, accumulated: string) => void;
   /** 恢复中的统一执行状态；未提供时从当前用户目标创建。 */
   initialExecutionState?: ExecutionControllerSnapshot;
   /** 每次观察、恢复决策或验收状态变化时通知调用方。 */
@@ -1252,7 +1276,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   const {
     turns, tools, scene, label, onToolCall, onToolResult, modelConfig, extraSystemContext,
     scope, attachments, shouldStop, waitIfPaused, consumeSteeringMessages,
-    getModelRequestSignal, onSteeringReply, onModelRetry, initialExecutionState, onExecutionState, onTurnLifecycle, onTaskPrepared, taskDecisionCompilation,
+    getModelRequestSignal, onSteeringReply, onModelRetry, onTextDelta, initialExecutionState, onExecutionState, onTurnLifecycle, onTaskPrepared, taskDecisionCompilation,
   } = opts;
   let currentTurns = [...turns];
   let totalUsage: TokenUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
@@ -1389,7 +1413,17 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   const maxResearchSummaryAttempts = 2;
   let executionState = initialExecutionState
     ? restoreExecutionController(initialExecutionState, { goal: originalUserText, acceptanceCriteria: taskDecision.acceptanceCriteria, requiresEvidence: requiresExecutionEvidence, maxAttempts: maxTotalToolAttempts })
-    : createExecutionController({ goal: originalUserText, acceptanceCriteria: taskDecision.acceptanceCriteria, requiresEvidence: requiresExecutionEvidence, maxAttempts: maxTotalToolAttempts });
+    : createExecutionController({
+      goal: originalUserText,
+      acceptanceCriteria: taskDecision.acceptanceCriteria,
+      requiresEvidence: requiresExecutionEvidence,
+      maxAttempts: maxTotalToolAttempts,
+      maxToolCalls: maxTotalToolAttempts,
+      maxModelCalls: maxIter + 8,
+      maxRetries: connectorSetupTask ? 8 : 12,
+      maxElapsedMs: connectorSetupTask ? 20 * 60 * 1000 : 45 * 60 * 1000,
+      maxTokens: connectorSetupTask ? 240_000 : 480_000,
+    });
   const publishExecutionState = (next: ExecutionControllerSnapshot) => {
     executionState = next;
     onExecutionState?.(executionState);
@@ -1432,6 +1466,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         totalUsage.promptTokens += response.usage.promptTokens;
         totalUsage.completionTokens += response.usage.completionTokens;
         totalUsage.totalTokens += response.usage.totalTokens;
+        publishExecutionState(recordExecutionUsage(executionState, { modelCalls: 1, tokens: response.usage.totalTokens }));
         latestContextUsage = response.contextUsage;
         if (!finalModel) finalModel = response.model;
 
@@ -1561,7 +1596,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         extraSystemContext,
         undefined,
         getModelRequestSignal?.(),
-        undefined,
+        { onTextDelta },
       );
       const observedDecision = observeTurnModelDecision(turnRuntime, {
         content: r.content,
@@ -1645,6 +1680,11 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     totalUsage.promptTokens += r.usage.promptTokens;
     totalUsage.completionTokens += r.usage.completionTokens;
     totalUsage.totalTokens += r.usage.totalTokens;
+    publishExecutionState(recordExecutionUsage(executionState, { modelCalls: 1, tokens: r.usage.totalTokens }));
+    if (executionState.status === 'blocked' && executionState.budgetStopReason) {
+      executionBudgetReached = true;
+      break;
+    }
     latestContextUsage = r.contextUsage;
     if (!finalModel) finalModel = r.model;
 
@@ -1947,6 +1987,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       totalUsage.promptTokens += handoff.usage.promptTokens;
       totalUsage.completionTokens += handoff.usage.completionTokens;
       totalUsage.totalTokens += handoff.usage.totalTokens;
+      publishExecutionState(recordExecutionUsage(executionState, { modelCalls: 1, tokens: handoff.usage.totalTokens }));
       latestContextUsage = handoff.contextUsage;
       if (!finalModel) finalModel = handoff.model;
       if (handoff.content) finalContent = handoff.content;

@@ -1,5 +1,18 @@
 # 太极项目当前交接
 
+## v2.8.4 第二阶段：长期执行与 Coding Runtime（2026-07-31，正式版本）
+
+- 当前源码版本为 `2.8.4`，一次性收口升级计划中的 v2.8.0-v2.8.4。不要重新实现第一阶段资源合同、语义基准或状态边界。
+- `src/engine/executionController.mjs` 已升级为 v2：失败分类、路线差异、结果指纹、无进展停止、模型/工具/时间/重试/Token 独立预算、检查点、证据和未决问题均为可恢复状态；v1 快照自动迁移。
+- `src/engine/chatStream.mjs` 负责 SSE 正文和流式工具参数拼接。助手与员工私聊实时显示，团队事件在 UI 侧以 200ms 合并，不能退回每个心跳全量刷新。
+- `electron/codingRuntime.cjs` 提供原子补丁、修改前恢复点、递归影响分析、测试选择、增量命令会话和带风险/回滚点的交付报告。`verify:coding-runtime-repositories` 已在三个独立 Git 仓库验证修改到交付闭环。
+- `src/engine/codingProject.mjs` 按能力和负载选人，并为每个阶段保存工件合同。执行中补人、替换负责人和定向返工必须修改同一项目状态，不能从聊天文字重新猜团队。
+- GPT Image 2 输出规格由 `imageSpecifications.mjs` 和 `ImageGenerationOptions.tsx` 统一管理，已接入助手、员工和团队：五种画幅、标准/2K/2.7K/4K、四档质量，界面显示解析后的实际像素。
+- Electron 已锁定 `43.2.0`。`verify:phase2-electron-e2e` 已真实通过办公室、设置、助手、员工私聊、团队、新建聊天和暂停/继续；12 窗口冒烟驻留中节点/文档数稳定，堆内存增长 `0.15 MB`。
+- 统一门禁 `verify:phase2` 已通过 35 条 Vitest、Lint、ExecutionController、Coding Runtime、三仓库、项目 DAG、真实 Electron E2E、12 窗口驻留冒烟和 Build。正式 8 小时门禁 `verify:phase2-soak:8h` 尚未执行，不得写成已通过。
+- 人格版本为 v17。下一阶段从 v2.9.0 开始：模型/图片兼容矩阵、Skill Runtime、连接器/MCP 凭据安全、真实更新回滚和发布治理。
+- 发布资产：`taiji-office-setup-2.8.4.exe` 为 `195822199` 字节，SHA-256 `5FC2E8E0922FF27E2108D1DD61710FA20959753FE7ED0E6E2EEBC97785B5BE3A`；Blockmap 为 `206372` 字节，SHA-256 `29DCD73E098A468E37660CE65FE0581BBFCBDAD2A0B23CC9856FC8393C9C58A6`；`latest.yml` 为 `353` 字节，SHA-256 `B5757498C34257334C080971BF1FB2DD6042E9BC475B1B4E62A59E2AA30442C8`。
+
 ## v2.7.4 第一阶段：工程内核标准化（2026-07-31，正式版本）
 
 - 当前源码版本为 `2.7.4`。本阶段一次性收口升级计划中的 v2.7.0-v2.7.4，不把中间小版本分别发布。

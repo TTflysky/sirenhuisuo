@@ -4,7 +4,7 @@ const fs = require('fs/promises');
 const path = require('path');
 const { spawn } = require('child_process');
 
-const CODING_RUNTIME_VERSION = 1;
+const CODING_RUNTIME_VERSION = 2;
 const MAX_INDEX_FILES = 5000;
 const MAX_FILE_BYTES = 512 * 1024;
 const MAX_LOG_BYTES = 1024 * 1024;
@@ -65,6 +65,34 @@ function importsFor(source) {
 function outputSummary(output) {
   const compact = String(output || '').replace(/\s+/gu, ' ').trim();
   return compact.slice(0, 1200);
+}
+
+function runProcess(command, args, cwd, timeoutMs = 120000) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { cwd, windowsHide: true, shell: false });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => { child.kill(); reject(new Error(`${command} timed out`)); }, timeoutMs);
+    child.stdout.on('data', (chunk) => { stdout = `${stdout}${chunk}`.slice(-MAX_LOG_BYTES); });
+    child.stderr.on('data', (chunk) => { stderr = `${stderr}${chunk}`.slice(-MAX_LOG_BYTES); });
+    child.on('error', (error) => { clearTimeout(timer); reject(error); });
+    child.on('close', (exitCode) => {
+      clearTimeout(timer);
+      if (exitCode === 0) resolve({ stdout: stdout.replace(/\s+$/u, ''), stderr: stderr.replace(/\s+$/u, ''), exitCode });
+      else reject(Object.assign(new Error(stderr.trim() || stdout.trim() || `${command} exited with ${exitCode}`), { stdout, stderr, exitCode }));
+    });
+  });
+}
+
+function changedPath(row) {
+  return String(row || '').slice(3).split(' -> ').at(-1)?.trim().replace(/\\/gu, '/') || '';
+}
+
+function resolveImportPath(fromPath, specifier, available) {
+  if (!specifier?.startsWith('.')) return undefined;
+  const base = path.posix.normalize(path.posix.join(path.posix.dirname(fromPath), specifier));
+  const candidates = [base, ...[...SOURCE_EXTENSIONS].map((extension) => `${base}${extension}`), ...[...SOURCE_EXTENSIONS].map((extension) => `${base}/index${extension}`)];
+  return candidates.find((candidate) => available.has(candidate));
 }
 
 function createCodingRuntime(options = {}) {
@@ -163,6 +191,108 @@ function createCodingRuntime(options = {}) {
     return { ok: true, path: file.path, imports: file.imports || [], importedBy: importedBy.slice(0, 100), symbols: file.symbols || [] };
   }
 
+  async function impactAnalysis(input = {}) {
+    const workspacePath = resolveWorkspace(input);
+    const index = indexes.get(workspacePath) || await indexWorkspace({ workspacePath });
+    const changedFiles = [...new Set((Array.isArray(input.changedFiles) ? input.changedFiles : [input.path]).map((item) => text(item, 600).replace(/\\/gu, '/')).filter(Boolean))];
+    if (!changedFiles.length) throw new Error('At least one changed file is required for impact analysis');
+    const available = new Set(index.files.map((file) => file.path));
+    const reverse = new Map();
+    for (const file of index.files) {
+      for (const specifier of file.imports || []) {
+        const resolved = resolveImportPath(file.path, specifier, available);
+        if (resolved) reverse.set(resolved, [...(reverse.get(resolved) || []), file.path]);
+      }
+    }
+    const impacted = [];
+    const seen = new Set(changedFiles);
+    const queue = changedFiles.map((file) => ({ file, depth: 0, via: undefined }));
+    while (queue.length && impacted.length < 1000) {
+      const current = queue.shift();
+      impacted.push(current);
+      for (const dependent of reverse.get(current.file) || []) {
+        if (seen.has(dependent)) continue;
+        seen.add(dependent);
+        queue.push({ file: dependent, depth: current.depth + 1, via: current.file });
+      }
+    }
+    return { ok: true, workspacePath, changedFiles, impacted, truncated: impacted.length >= 1000 };
+  }
+
+  async function selectTests(input = {}) {
+    const workspacePath = resolveWorkspace(input);
+    const changedFiles = [...new Set((Array.isArray(input.changedFiles) ? input.changedFiles : []).map((item) => text(item, 600).replace(/\\/gu, '/')).filter(Boolean))];
+    const packagePath = path.join(workspacePath, 'package.json');
+    let scripts = {};
+    try { scripts = JSON.parse(await fs.readFile(packagePath, 'utf8')).scripts || {}; } catch {}
+    const commands = [];
+    const add = (script, reason, args = '') => {
+      if (!scripts[script] || commands.some((item) => item.script === script && item.args === args)) return;
+      commands.push({ script, command: `npm run ${script}${args ? ` -- ${args}` : ''}`, args, reason });
+    };
+    const testFiles = changedFiles.filter((file) => /(?:^|\/)(?:test|tests|__tests__)(?:\/|$)|\.(?:test|spec)\.[cm]?[jt]sx?$/iu.test(file));
+    if (testFiles.length && scripts['test:run']) add('test:run', 'Run the directly changed tests first', testFiles.join(' '));
+    else if (changedFiles.some((file) => /\.[cm]?[jt]sx?$/iu.test(file))) add(scripts['test:run'] ? 'test:run' : 'test', 'Source code changed; run the repository test suite');
+    if (changedFiles.some((file) => /\.(?:ts|tsx|js|jsx|mjs|cjs|css|html)$/iu.test(file))) add('build', 'Compile and bundle affected application code');
+    if (changedFiles.some((file) => /\.(?:ts|tsx|js|jsx|mjs|cjs)$/iu.test(file))) add('lint', 'Check changed source against static rules');
+    if (changedFiles.some((file) => /(?:^|\/)(?:package|package-lock|npm-shrinkwrap)\.json$/iu.test(file))) commands.unshift({ script: 'dependency-check', command: 'npm install --ignore-scripts --package-lock-only --dry-run', args: '', reason: 'Dependency metadata changed; validate the lockfile without modifying the workspace' });
+    return { ok: true, workspacePath, changedFiles, commands, coverage: commands.length ? 'targeted' : 'manual', note: commands.length ? '' : 'No repository test script matched these files; record manual verification evidence.' };
+  }
+
+  async function applyPatch(input = {}) {
+    const workspacePath = resolveWorkspace(input);
+    const patchText = String(input.patch || '');
+    if (!patchText.trim()) throw new Error('A unified diff patch is required');
+    if (Buffer.byteLength(patchText, 'utf8') > 4 * 1024 * 1024) throw new Error('Patch exceeds the 4MB atomic-edit limit');
+    const before = input.taskId && worktreeManager
+      ? await checkpoint({ taskId: input.taskId, workspacePath, label: input.label || 'Before atomic patch' })
+      : await checkpoint({ workspacePath, label: input.label || 'Before atomic patch' });
+    if (!before.ok) return before;
+    const patchPath = path.join(workspacePath, `.taiji-patch-${crypto.randomUUID()}.diff`);
+    try {
+      await fs.writeFile(patchPath, patchText, 'utf8');
+      await runProcess('git', ['apply', '--check', '--whitespace=nowarn', patchPath], workspacePath);
+      await runProcess('git', ['apply', '--whitespace=nowarn', patchPath], workspacePath);
+      await fs.rm(patchPath, { force: true });
+      indexes.delete(workspacePath);
+      const status = await runProcess('git', ['status', '--porcelain=v1'], workspacePath);
+      const changedFiles = status.stdout.split(/\r?\n/u).filter(Boolean).map(changedPath).filter(Boolean);
+      return { ok: true, workspacePath, changedFiles, rollbackCheckpoint: before.checkpoint, patchSha256: digest(patchText) };
+    } catch (error) {
+      return { ok: false, error: `Atomic patch was not applied: ${error?.stderr || error?.message || String(error)}`, rollbackCheckpoint: before.checkpoint };
+    } finally {
+      await fs.rm(patchPath, { force: true }).catch(() => {});
+    }
+  }
+
+  async function deliveryReport(input = {}) {
+    const workspacePath = resolveWorkspace(input);
+    const status = await runProcess('git', ['status', '--porcelain=v1'], workspacePath).catch(() => ({ stdout: '' }));
+    const changedFiles = status.stdout.split(/\r?\n/u).filter(Boolean).map(changedPath).filter(Boolean);
+    const patch = await runProcess('git', ['diff', '--stat', 'HEAD'], workspacePath).catch(() => ({ stdout: '' }));
+    const impact = await impactAnalysis({ workspacePath, changedFiles });
+    const selectedTests = await selectTests({ workspacePath, changedFiles });
+    const commandEvidence = [...sessions.values()].filter((session) => session.workspacePath === workspacePath && session.status !== 'running').slice(-12).map((session) => ({
+      sessionId: session.sessionId, command: session.command, status: session.status, exitCode: session.exitCode, summary: session.summary,
+    }));
+    const checkpointResult = input.taskId && worktreeManager
+      ? await checkpoint({ taskId: input.taskId, workspacePath, label: input.label || 'Delivery checkpoint' })
+      : undefined;
+    return {
+      ok: true,
+      codingRuntimeVersion: CODING_RUNTIME_VERSION,
+      workspacePath,
+      changedFiles,
+      diffStat: patch.stdout,
+      impactedFiles: impact.impacted,
+      selectedTests: selectedTests.commands,
+      commandEvidence,
+      unverifiedRisks: selectedTests.commands.filter((candidate) => !commandEvidence.some((evidence) => evidence.command.includes(candidate.script) && evidence.status === 'succeeded')).map((candidate) => candidate.reason),
+      rollbackCheckpoint: checkpointResult?.ok ? checkpointResult.checkpoint : input.rollbackCheckpoint,
+      generatedAt: Date.now(),
+    };
+  }
+
   async function diff(input = {}) {
     const workspacePath = resolveWorkspace(input);
     if (input.taskId && worktreeManager) {
@@ -228,7 +358,7 @@ function createCodingRuntime(options = {}) {
     return { ok: true, checkpoint: { id: `coding-index-${Date.now()}`, label: text(input.label, 160) || 'Coding runtime index checkpoint', workspacePath, indexedAt: index.indexedAt, fileCount: index.fileCount } };
   }
 
-  return { codingRuntimeVersion: CODING_RUNTIME_VERSION, workspaceRoot, codingRoot, prepareTask, indexWorkspace, search, dependencies, diff, startCommand, commandStatus, checkpoint };
+  return { codingRuntimeVersion: CODING_RUNTIME_VERSION, workspaceRoot, codingRoot, prepareTask, indexWorkspace, search, dependencies, impactAnalysis, selectTests, applyPatch, deliveryReport, diff, startCommand, commandStatus, checkpoint };
 }
 
 module.exports = { CODING_RUNTIME_VERSION, createCodingRuntime, classifyCodingFailure: classifyFailure };

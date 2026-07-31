@@ -1,4 +1,13 @@
-const CONTROLLER_VERSION = 1;
+const CONTROLLER_VERSION = 2;
+
+const NORMALIZED_FAILURE_CLASS = Object.freeze({
+  approval: 'user_decision', authentication: 'credential', authorization: 'user_decision',
+  rate_limit: 'network', timeout: 'timeout', network: 'network', server: 'network',
+  permission: 'permission', dependency: 'execution_environment', not_found: 'resource_not_found',
+  invalid_input: 'input', conflict: 'protocol', duplicate: 'evidence_insufficient',
+  unsupported: 'protocol', business: 'protocol', off_target: 'model_misjudgment',
+  unknown: 'evidence_insufficient', none: 'none',
+});
 
 const FAILURE_DEFINITIONS = [
   { code: 'approval', pattern: /没有获得.{0,12}批准|审批.{0,8}(?:拒绝|取消)|用户取消/u, retryable: false, needsUser: true, label: '操作尚未获得批准' },
@@ -32,6 +41,41 @@ function hashRoute(value) {
   return `route-${(hash >>> 0).toString(36)}`;
 }
 
+function hashResult(value) {
+  const normalized = String(value ?? '').replace(/\s+/gu, ' ').trim().slice(0, 12000);
+  return hashRoute(normalized).replace(/^route-/u, 'result-');
+}
+
+function normalizedFailure(code) {
+  return NORMALIZED_FAILURE_CLASS[code] ?? 'evidence_insufficient';
+}
+
+function defaultBudgets(options = {}) {
+  return {
+    modelCalls: Number.isFinite(options.maxModelCalls) ? options.maxModelCalls : 48,
+    toolCalls: Number.isFinite(options.maxToolCalls) ? options.maxToolCalls : (Number.isFinite(options.maxAttempts) ? options.maxAttempts : 96),
+    elapsedMs: Number.isFinite(options.maxElapsedMs) ? options.maxElapsedMs : 30 * 60 * 1000,
+    retries: Number.isFinite(options.maxRetries) ? options.maxRetries : 12,
+    tokens: Number.isFinite(options.maxTokens) ? options.maxTokens : 400_000,
+  };
+}
+
+function emptyUsage(now) {
+  return { modelCalls: 0, toolCalls: 0, elapsedMs: 0, retries: 0, tokens: 0, lastUpdatedAt: now };
+}
+
+function budgetExceeded(state, now = Date.now()) {
+  const usage = state.usage ?? emptyUsage(now);
+  const budgets = state.budgets ?? defaultBudgets({ maxAttempts: state.maxAttempts });
+  const elapsedMs = Math.max(usage.elapsedMs ?? 0, now - (state.createdAt ?? now));
+  if (usage.modelCalls >= budgets.modelCalls) return { dimension: 'modelCalls', reason: `模型调用已达到 ${budgets.modelCalls} 次上限` };
+  if (usage.toolCalls >= budgets.toolCalls) return { dimension: 'toolCalls', reason: `工具调用已达到 ${budgets.toolCalls} 次上限` };
+  if (elapsedMs >= budgets.elapsedMs) return { dimension: 'elapsedMs', reason: `连续执行已达到 ${Math.round(budgets.elapsedMs / 60000)} 分钟上限` };
+  if (usage.retries >= budgets.retries) return { dimension: 'retries', reason: `恢复重试已达到 ${budgets.retries} 次上限` };
+  if (usage.tokens >= budgets.tokens) return { dimension: 'tokens', reason: `上下文与输出已使用约 ${budgets.tokens.toLocaleString()} Token` };
+  return undefined;
+}
+
 function decision(kind, reason, extra = {}) {
   return { kind, reason, at: Date.now(), ...extra };
 }
@@ -39,7 +83,7 @@ function decision(kind, reason, extra = {}) {
 function routeRecord(state, routeId, toolName) {
   let route = state.routeHistory.find((item) => item.id === routeId);
   if (!route) {
-    route = { id: routeId, toolName, attempts: 0, failures: 0, successes: 0, lastOutcome: 'pending', updatedAt: Date.now() };
+    route = { id: routeId, toolName, strategySignature: routeId, routeDifference: '', attempts: 0, failures: 0, successes: 0, lastOutcome: 'pending', resultFingerprints: [], updatedAt: Date.now() };
     state.routeHistory.push(route);
     state.routeHistory = state.routeHistory.slice(-24);
   }
@@ -54,8 +98,9 @@ export function classifyExecutionFailure(input = {}) {
   if (input.success) return { code: 'none', retryable: false, needsUser: false, label: '执行成功' };
   const raw = `${input.result ?? ''}\n${input.reason ?? ''}`;
   const matched = FAILURE_DEFINITIONS.find((item) => item.pattern.test(raw));
-  return matched ? { code: matched.code, retryable: matched.retryable, needsUser: matched.needsUser, label: matched.label }
+  const base = matched ? { code: matched.code, retryable: matched.retryable, needsUser: matched.needsUser, label: matched.label }
     : { code: 'unknown', retryable: false, needsUser: false, label: '执行结果没有达到预期' };
+  return { ...base, category: normalizedFailure(base.code) };
 }
 
 export function createExecutionController(options = {}) {
@@ -76,10 +121,17 @@ export function createExecutionController(options = {}) {
     maxAttempts: Number.isFinite(options.maxAttempts) ? options.maxAttempts : 96,
     maxSameRouteRetries: Number.isFinite(options.maxSameRouteRetries) ? options.maxSameRouteRetries : 1,
     maxRouteChanges: Number.isFinite(options.maxRouteChanges) ? options.maxRouteChanges : 6,
+    budgets: defaultBudgets(options),
+    usage: emptyUsage(now),
+    budgetStopReason: undefined,
     routeHistory: [],
     forbiddenRouteIds: [],
+    resultFingerprints: [],
     observations: [],
     evidence: [],
+    checkpoints: [],
+    lastCheckpoint: undefined,
+    unresolvedQuestions: [],
     failures: [],
     activeFailureId: undefined,
     conclusionReviews: 0,
@@ -91,8 +143,14 @@ export function createExecutionController(options = {}) {
 }
 
 export function restoreExecutionController(snapshot, options = {}) {
-  if (!snapshot || snapshot.version !== CONTROLLER_VERSION) return createExecutionController(options);
-  const restored = { ...createExecutionController(options), ...clone(snapshot), status: 'running', phase: 'observe', updatedAt: Date.now() };
+  if (!snapshot || ![1, CONTROLLER_VERSION].includes(snapshot.version)) return createExecutionController(options);
+  const restored = { ...createExecutionController(options), ...clone(snapshot), version: CONTROLLER_VERSION, status: 'running', phase: 'observe', updatedAt: Date.now() };
+  restored.budgets = { ...defaultBudgets({ ...options, maxAttempts: restored.maxAttempts }), ...(snapshot.budgets ?? {}) };
+  restored.usage = { ...emptyUsage(Date.now()), ...(snapshot.usage ?? {}) };
+  restored.resultFingerprints = Array.isArray(snapshot.resultFingerprints) ? snapshot.resultFingerprints : [];
+  restored.checkpoints = Array.isArray(snapshot.checkpoints) ? snapshot.checkpoints : [];
+  restored.unresolvedQuestions = Array.isArray(snapshot.unresolvedQuestions) ? snapshot.unresolvedQuestions : [];
+  restored.routeHistory = restored.routeHistory.map((route) => ({ strategySignature: route.id, routeDifference: '', resultFingerprints: [], ...route }));
   const active = restored.failures.find((item) => item.id === restored.activeFailureId && !item.resolved);
   restored.decision = active
     ? decision(active.needsUser ? 'await_user' : active.retryable ? 'retry' : 'switch_route', `继续处理上次未解决的问题：${active.label}`, { failureClass: active.classification, routeId: active.routeId, requiresUser: active.needsUser })
@@ -110,6 +168,8 @@ export function canExecuteRoute(state, input = {}) {
   const routeId = hashRoute(input.routeKey ?? `${input.toolName ?? 'tool'}`);
   if (state.status === 'awaiting_user') return { allowed: false, routeId, reason: '当前缺少只有用户才能提供的凭据、授权或批准，不能继续假装执行。' };
   if (state.status === 'blocked' || state.status === 'stopped' || state.status === 'completed') return { allowed: false, routeId, reason: '执行控制器已经停止当前任务路线。' };
+  const exceeded = budgetExceeded(state);
+  if (exceeded) return { allowed: false, routeId, reason: `${exceeded.reason}，必须保存检查点并交接，不能继续消耗预算。` };
   const route = state.routeHistory.find((item) => item.id === routeId);
   if (route?.lastOutcome === 'success') return { allowed: false, routeId, reason: '这一步已经成功并留下证据，重复执行不会推进目标。' };
   if (state.forbiddenRouteIds.includes(routeId) && !(state.decision.kind === 'retry' && state.decision.routeId === routeId)) {
@@ -125,11 +185,29 @@ export function observeExecutionResult(snapshot, input = {}) {
   const route = routeRecord(state, routeId, input.toolName ?? 'tool');
   const now = Date.now();
   const success = Boolean(input.success);
+  const resultFingerprint = hashResult(input.result ?? input.reason ?? '');
+  const outcomeFingerprint = `${routeId}:${success ? 'success' : 'failure'}:${resultFingerprint}`;
+  const duplicateOutcome = state.resultFingerprints.includes(outcomeFingerprint);
+  const previousRoute = state.decision?.kind === 'switch_route'
+    ? state.routeHistory.find((item) => item.id === state.decision.routeId)
+    : undefined;
+  route.strategySignature = String(input.strategySignature ?? routeId);
+  if (previousRoute && previousRoute.id !== routeId) {
+    route.routeDifference = String(input.routeDifference ?? `${previousRoute.toolName}/${previousRoute.strategySignature} -> ${route.toolName}/${route.strategySignature}`).slice(0, 600);
+  }
+  route.resultFingerprints = [...new Set([...(route.resultFingerprints ?? []), resultFingerprint])].slice(-12);
   route.attempts += 1;
   route.updatedAt = now;
   state.attemptCount += 1;
+  state.usage = { ...emptyUsage(now), ...(state.usage ?? {}) };
+  if (input.toolName === 'model_request') state.usage.modelCalls += 1;
+  else state.usage.toolCalls += 1;
+  state.usage.elapsedMs = Math.max(state.usage.elapsedMs, now - state.createdAt);
+  state.usage.tokens += Math.max(0, Number(input.tokenUsage) || 0);
+  state.usage.lastUpdatedAt = now;
+  state.resultFingerprints = [...new Set([...(state.resultFingerprints ?? []), outcomeFingerprint])].slice(-80);
   state.phase = 'observe';
-  state.observations.push({ ts: now, toolName: input.toolName ?? 'tool', routeId, success });
+  state.observations.push({ ts: now, toolName: input.toolName ?? 'tool', routeId, success, resultFingerprint, duplicate: duplicateOutcome });
   state.observations = state.observations.slice(-40);
 
   if (success) {
@@ -138,8 +216,21 @@ export function observeExecutionResult(snapshot, input = {}) {
     state.progressCount += 1;
     state.consecutiveFailures = 0;
     if (input.contributesEvidence !== false) {
-      state.evidence.push({ ts: now, toolName: input.toolName ?? 'tool', routeId, verified: input.verified !== false, kind: input.evidenceKind ?? 'progress' });
+      const evidenceId = `evidence-${now}-${state.evidence.length + 1}`;
+      state.evidence.push({ id: evidenceId, ts: now, toolName: input.toolName ?? 'tool', routeId, resultFingerprint, verified: input.verified !== false, kind: input.evidenceKind ?? 'progress', summary: String(input.result ?? '').replace(/\s+/gu, ' ').trim().slice(0, 240) });
       state.evidence = state.evidence.slice(-30);
+      const checkpoint = {
+        id: `checkpoint-${now}`,
+        ts: now,
+        phase: state.phase,
+        goal: state.goal,
+        latestInstruction: state.latestInstruction,
+        routeId,
+        evidenceIds: state.evidence.filter((item) => item.verified).slice(-12).map((item) => item.id),
+        unresolvedQuestions: [...(state.unresolvedQuestions ?? [])],
+      };
+      state.lastCheckpoint = checkpoint;
+      state.checkpoints = [...(state.checkpoints ?? []), checkpoint].slice(-12);
     }
     // A successful alternate route is evidence that the preceding recovery problem
     // was overcome. Keeping older attempts unresolved would deadlock completion.
@@ -154,7 +245,9 @@ export function observeExecutionResult(snapshot, input = {}) {
   route.failures += 1;
   route.lastOutcome = 'failure';
   state.consecutiveFailures += 1;
-  const failure = classifyExecutionFailure(input);
+  const failure = duplicateOutcome
+    ? { code: 'duplicate', category: 'evidence_insufficient', retryable: false, needsUser: false, label: '同一路线返回了完全相同的结果' }
+    : classifyExecutionFailure(input);
   const failureId = `failure-${now}-${state.failures.length + 1}`;
   state.failures.push({
     id: failureId,
@@ -162,6 +255,7 @@ export function observeExecutionResult(snapshot, input = {}) {
     toolName: input.toolName ?? 'tool',
     routeId,
     classification: failure.code,
+    category: failure.category,
     label: failure.label,
     retryable: failure.retryable,
     needsUser: failure.needsUser,
@@ -169,11 +263,13 @@ export function observeExecutionResult(snapshot, input = {}) {
   });
   state.failures = state.failures.slice(-20);
   state.activeFailureId = failureId;
+  if (route.failures > 1 || duplicateOutcome) state.usage.retries += 1;
 
   if (failure.needsUser) {
     state.status = 'awaiting_user';
     state.phase = 'blocked';
     state.decision = decision('await_user', failure.label, { failureClass: failure.code, routeId, requiresUser: true });
+    state.unresolvedQuestions = [...new Set([...(state.unresolvedQuestions ?? []), failure.label])].slice(-8);
   } else if (failure.retryable && route.failures <= (Number.isFinite(input.retryLimit) ? input.retryLimit : state.maxSameRouteRetries)) {
     state.status = 'running';
     state.phase = 'recover';
@@ -190,6 +286,34 @@ export function observeExecutionResult(snapshot, input = {}) {
     state.status = 'blocked';
     state.phase = 'blocked';
     state.decision = decision('stop', '多条替代路线均未形成新证据，已停止重复尝试并保留现有成果。', { failureClass: failure.code, routeId });
+  }
+  const exceeded = budgetExceeded(state, now);
+  if (exceeded) {
+    state.status = 'blocked';
+    state.phase = 'blocked';
+    state.budgetStopReason = exceeded.dimension;
+    state.decision = decision('stop', `${exceeded.reason}。已保存最后检查点和已有证据。`, { failureClass: 'duplicate' });
+  }
+  state.updatedAt = now;
+  return state;
+}
+
+export function recordExecutionUsage(snapshot, delta = {}) {
+  const state = clone(snapshot);
+  const now = Date.now();
+  state.usage = { ...emptyUsage(now), ...(state.usage ?? {}) };
+  for (const key of ['modelCalls', 'toolCalls', 'elapsedMs', 'retries', 'tokens']) {
+    const amount = Math.max(0, Number(delta[key]) || 0);
+    state.usage[key] += amount;
+  }
+  state.usage.elapsedMs = Math.max(state.usage.elapsedMs, now - state.createdAt);
+  state.usage.lastUpdatedAt = now;
+  const exceeded = budgetExceeded(state, now);
+  if (exceeded && state.status === 'running') {
+    state.status = 'blocked';
+    state.phase = 'blocked';
+    state.budgetStopReason = exceeded.dimension;
+    state.decision = decision('stop', `${exceeded.reason}。已保存最后检查点和已有证据。`);
   }
   state.updatedAt = now;
   return state;
@@ -254,6 +378,12 @@ export function applyExecutionSteering(snapshot, instruction) {
   const state = clone(snapshot);
   if (state.status === 'completed' || state.status === 'stopped') return state;
   state.latestInstruction = String(instruction ?? '').trim().slice(0, 1000);
+  const active = state.failures.find((item) => item.id === state.activeFailureId && !item.resolved);
+  if (active?.needsUser && state.latestInstruction) {
+    active.resolved = true;
+    state.activeFailureId = undefined;
+    state.unresolvedQuestions = [];
+  }
   state.status = 'running';
   state.phase = 'observe';
   state.decision = decision('act', '已吸收用户最新要求，先重新判断目标与现有证据，再选择下一步。');
@@ -261,8 +391,10 @@ export function applyExecutionSteering(snapshot, instruction) {
   return state;
 }
 
-export function markExecutionBudgetReached(snapshot) {
-  return blockExecution(snapshot, '执行预算已达到安全上限，停止重复操作并保留全部证据。');
+export function markExecutionBudgetReached(snapshot, dimension = 'toolCalls') {
+  const state = blockExecution(snapshot, '执行预算已达到安全上限，停止重复操作并保留全部证据。');
+  state.budgetStopReason = dimension;
+  return state;
 }
 
 export function blockExecution(snapshot, reason, failureClass) {
@@ -297,4 +429,20 @@ export function executionControllerStatus(state) {
     stop: '已停止无效重复并保留进度',
   };
   return labels[state.decision?.kind] ?? '正在观察执行结果…';
+}
+
+export function buildExecutionHandoff(state) {
+  const verified = (state.evidence ?? []).filter((item) => item.verified);
+  const active = (state.failures ?? []).filter((item) => !item.resolved).at(-1);
+  const status = state.status === 'completed' ? '整个目标已经完成并通过验收。' : '整个目标还没有完成。';
+  const completed = verified.length
+    ? verified.slice(-5).map((item) => item.summary || `${item.toolName} 已留下可验证结果`).join('；')
+    : '暂时没有可以确认的完成项';
+  const blocked = active?.label ?? state.decision?.reason ?? '仍需继续核对完成条件';
+  const next = state.unresolvedQuestions?.[0]
+    ? `请处理这一项：${state.unresolvedQuestions[0]}。完成后可以从保存的检查点继续。`
+    : state.status === 'completed'
+      ? '不需要额外操作。'
+      : '不需要重复前面的步骤；恢复任务后将从最后检查点改用不同路线继续。';
+  return `${status}\n\n已保留：${completed}。\n\n当前卡点：${blocked}。\n\n下一步：${next}`;
 }

@@ -1,3 +1,5 @@
+import { resolveImageSpecification } from './imageSpecifications.mjs';
+
 const DATA_URL_PATTERN = /^data:([^;,]+)?((?:;[^,]*)*?),(.*)$/su;
 
 export function isEditableImageAttachment(attachment) {
@@ -31,15 +33,16 @@ export function dataUrlToBlob(dataUrl, fallbackMime = 'image/png') {
   return new Blob([bytes], { type: mime });
 }
 
-export function buildImageEditFormData(model, prompt, attachment) {
+export function buildImageEditFormData(model, prompt, attachment, options = {}) {
   if (!isEditableImageAttachment(attachment)) throw new Error('当前附件中没有可编辑的图片');
+  const specification = resolveImageSpecification(model, options);
   const form = new FormData();
   form.append('model', String(model || '').trim());
   form.append('prompt', String(prompt || '').trim());
   form.append('image', dataUrlToBlob(attachment.dataUrl, attachment.mime), attachment.name || 'source.png');
   form.append('n', '1');
-  form.append('size', '1024x1024');
-  form.append('quality', 'auto');
+  form.append('size', specification.size);
+  form.append('quality', specification.quality);
   if (/^gpt-image-2$/iu.test(String(model || '').trim())) form.append('output_format', 'png');
   else form.append('response_format', 'b64_json');
   return form;

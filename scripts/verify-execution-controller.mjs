@@ -6,8 +6,10 @@ import {
   createExecutionController,
   evaluateExecutionConclusion,
   executionControllerGuidance,
+  buildExecutionHandoff,
   markExecutionBudgetReached,
   observeExecutionResult,
+  recordExecutionUsage,
   restoreExecutionController,
 } from '../src/engine/executionController.mjs';
 
@@ -66,15 +68,35 @@ const stopped = markExecutionBudgetReached(steered);
 assert.equal(stopped.decision.kind, 'stop');
 
 let modelRetry = createExecutionController({ goal: '等待模型完成长上下文任务' });
-for (let attempt = 0; attempt < 4; attempt += 1) {
-  modelRetry = observeExecutionResult(modelRetry, { toolName: 'model_request', routeKey: 'primary-model', success: false, result: '模型响应超时', retryLimit: 4 });
-  assert.equal(modelRetry.decision.kind, 'retry');
-}
+modelRetry = observeExecutionResult(modelRetry, { toolName: 'model_request', routeKey: 'primary-model', success: false, result: '模型响应超时', retryLimit: 4 });
+assert.equal(modelRetry.decision.kind, 'retry');
 modelRetry = observeExecutionResult(modelRetry, { toolName: 'model_request', routeKey: 'primary-model', success: false, result: '模型响应超时', retryLimit: 4 });
 assert.equal(modelRetry.decision.kind, 'switch_route');
+assert.equal(modelRetry.failures.at(-1).classification, 'duplicate');
+assert.equal(modelRetry.failures.at(-1).category, 'evidence_insufficient');
 modelRetry = blockExecution(modelRetry, '没有可用的替代模型路线', 'timeout');
 assert.equal(modelRetry.status, 'blocked');
 assert.equal(modelRetry.decision.kind, 'stop');
+
+let budgeted = createExecutionController({ goal: '长任务', maxModelCalls: 2, maxToolCalls: 5, maxTokens: 1000 });
+budgeted = recordExecutionUsage(budgeted, { modelCalls: 1, tokens: 400 });
+assert.equal(budgeted.status, 'running');
+budgeted = recordExecutionUsage(budgeted, { modelCalls: 1, tokens: 400 });
+assert.equal(budgeted.status, 'blocked');
+assert.equal(budgeted.budgetStopReason, 'modelCalls');
+
+const legacySnapshot = { ...transient, version: 1 };
+delete legacySnapshot.budgets;
+delete legacySnapshot.usage;
+delete legacySnapshot.checkpoints;
+const migrated = restoreExecutionController(legacySnapshot, { goal: legacySnapshot.goal });
+assert.equal(migrated.version, 2);
+assert.equal(migrated.progressCount, transient.progressCount);
+assert.ok(migrated.budgets.toolCalls > 0);
+
+const handoff = buildExecutionHandoff(auth);
+assert.match(handoff, /还没有完成/u);
+assert.match(handoff, /下一步/u);
 
 console.log(JSON.stringify({
   passed: true,
@@ -83,4 +105,6 @@ console.log(JSON.stringify({
   userBoundary: auth.failures.at(-1).classification,
   finalDecision: evidence.decision.kind,
   modelAttemptsBeforeRouteChange: modelRetry.routeHistory[0].attempts,
+  migratedVersion: migrated.version,
+  independentBudgetStop: budgeted.budgetStopReason,
 }, null, 2));

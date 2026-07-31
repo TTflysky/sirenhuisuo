@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { ChatMessage, ThoughtChainStep, SkillUsageEvidence } from '../../types';
 import { compileTaskDecision, generatedImageAttachment, generateImage, getConversationModel, isImageGenerationModel, runAgentLoop, resolveApiBase, resolveChatSettings, extractUserInsights, fetchInitial, loadSettings, type ChatTurn, type Attachment } from '../../data/hermesClient';
+import { getImageGenerationOptions } from '../../data/imageGenerationSettings';
 import { getRegisteredTools } from '../../engine/toolCatalog';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
 import ProjectApprovalCard from './ProjectApprovalCard';
@@ -10,6 +11,7 @@ import ThoughtChainView from './ThoughtChainView';
 import { copyAndArchiveChatTranscript, copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
 import GeneratedImagePreview from './GeneratedImagePreview';
+import ImageGenerationOptions from './ImageGenerationOptions';
 import SkillMentionInput from '../skills/SkillMentionInput';
 import { resolveSkillContextWithEvidence } from '../../engine/skillContext';
 import SkillPickerButton from '../skills/SkillPickerButton';
@@ -179,6 +181,7 @@ export default function AssistantChat() {
   const [pendingRequest, setPendingRequest] = useState<PendingAssistantRequest | null>(null);
   const [liveActivities, setLiveActivities] = useState<Array<{ id: string; matchKey: string; label: string; args: string; state: 'active' | 'error' }>>([]);
   const [liveExecutionSteps, setLiveExecutionSteps] = useState<ThoughtChainStep[]>([]);
+  const [liveText, setLiveText] = useState('');
   const [showOutputs, setShowOutputs] = useState(false);
   const [selectedOutputFilename, setSelectedOutputFilename] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -285,7 +288,7 @@ export default function AssistantChat() {
       setBusy(true);
       setStatus('Generating image...');
       try {
-        const image = await generateImage(content, conversationModel, atts);
+        const image = await generateImage(content, conversationModel, atts, getImageGenerationOptions('assistant'));
         push({
           id: `h-${Date.now()}-image`, authorId: 'assistant', roleId: 'custom',
           content: `${atts.some((attachment) => attachment.kind === 'image') ? 'Image edited' : 'Image generated'} with ${image.model}.`, mentions: [], timestamp: Date.now(), kind: 'text',
@@ -631,6 +634,7 @@ export default function AssistantChat() {
     setCompletedActionCount(0);
     setLiveActivities([]);
     setLiveExecutionSteps([]);
+    setLiveText('');
     executionControl.reset();
 
     const workspaceId = createTaskWorkspaceId('assistant');
@@ -737,6 +741,7 @@ ${employeeDirectory}
           taskBridge.lifecycle(state);
         },
         onSteeringReply(content, usage, contextUsage) {
+          setLiveText('');
           push({
             id: `h-${Date.now()}-steering`, authorId: 'assistant', roleId: 'custom',
             content: simplifyLegacyAssistantContent(content), mentions: [], timestamp: Date.now(), kind: 'text',
@@ -744,7 +749,12 @@ ${employeeDirectory}
           });
           setStatus('已结合新要求重新判断…');
         },
+        onTextDelta(_delta, accumulated) {
+          setLiveText(accumulated);
+          setStatus('正在生成回复…');
+        },
         onToolCall(name, args) {
+          setLiveText('');
           taskBridge.toolStarted(name, args ?? '');
           lastStage = getToolStage(name);
           setStatus(getToolActivity(name, args));
@@ -828,6 +838,7 @@ ${employeeDirectory}
         lifecycle: r.turnLifecycle,
       });
       setStatus('正在整理清楚的结果…');
+      setLiveText('');
       push({
         id: `h-${ts}-ai`, authorId: 'assistant', roleId: 'custom',
         content: simplifyLegacyAssistantContent(r.content), mentions: [], timestamp: ts, kind: 'text',
@@ -858,6 +869,7 @@ ${employeeDirectory}
       });
     }
     setBusy(false);
+    setLiveText('');
     if (activeWorkspaceIdRef.current === workspaceId) activeWorkspaceIdRef.current = undefined;
     if (activeTaskGoalRef.current === (taskDecisionCompilation?.decision.goal || enriched)) activeTaskGoalRef.current = '';
     setStatus('');
@@ -1127,6 +1139,7 @@ ${employeeDirectory}
                   ) : (
                     <div className="assistant-live-content">
                       <strong>{status}</strong>
+                      {liveText && <p className="assistant-live-stream-text">{liveText}</p>}
                       {liveActivities.length > 0 && <div className="assistant-live-activities">
                         {liveActivities.map((item) => <details key={item.id} className={`assistant-live-activity is-${item.state}`}>
                           <summary>
@@ -1197,6 +1210,7 @@ ${employeeDirectory}
                 ))}
               </div>
             )}
+            <ImageGenerationOptions scene="assistant" />
             <SkillMentionInput ref={textareaRef} value={text} onChange={setText} selected={skillRefs} onSelectedChange={setSkillRefs} onKeyDown={onKeyDown} onPaste={handlePaste} rows={2} placeholder={busy ? '助手正在处理，可继续输入以引导当前运行…' : '输入任何问题或需求…（输入 @ 选择技能）'} />
             <div style={{ display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'flex-end', marginTop: 4 }}>
               <ModelSelector messages={msgs} />

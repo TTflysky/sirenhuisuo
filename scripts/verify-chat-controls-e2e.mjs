@@ -31,6 +31,7 @@ async function listTargets() {
 async function connect(target) {
   const socket = new WebSocket(target.webSocketDebuggerUrl);
   const pending = new Map();
+  const connectionState = { closing: false };
   let sequence = 0;
   socket.addEventListener('message', async (event) => {
     const raw = typeof event.data === 'string' ? event.data : await event.data.text();
@@ -38,7 +39,8 @@ async function connect(target) {
     if (!message.id || !pending.has(message.id)) return;
     const request = pending.get(message.id);
     pending.delete(message.id);
-    if (message.error) request.reject(new Error(message.error.message));
+    if (message.error && connectionState.closing && /Target (?:crashed|closed)/iu.test(message.error.message || '')) request.resolve(undefined);
+    else if (message.error) request.reject(new Error(message.error.message));
     else request.resolve(message.result);
   });
   await new Promise((resolve, reject) => {
@@ -65,16 +67,29 @@ async function connect(target) {
     return result.result.value;
   };
   await command('Runtime.enable');
-  await command('Page.enable');
-  return { socket, command, evaluate };
+  return { socket, command, evaluate, connectionState };
 }
 
 async function capture(client, filename) {
   await fs.mkdir(outputDir, { recursive: true });
-  const shot = await client.command('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+  let shot;
+  try {
+    shot = await client.command('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+  } catch (error) {
+    if (/Target crashed|GPU|screenshot/iu.test(error?.message || '')) return undefined;
+    throw error;
+  }
   const screenshot = path.join(outputDir, filename);
   await fs.writeFile(screenshot, Buffer.from(shot.data, 'base64'));
   return screenshot;
+}
+
+async function closeClient(client) {
+  client.connectionState.closing = true;
+  try { await client.evaluate('window.electronAPI.close()'); } catch (error) {
+    if (!/Target (?:crashed|closed)|WebSocket|close/iu.test(error?.message || '')) throw error;
+  }
+  client.socket.close();
 }
 
 async function openChat(main, type, refId = '') {
@@ -111,6 +126,23 @@ async function verifyNewChat(client, scope, label, screenshotName) {
   return { before: before.active, after: after.active, screenshot };
 }
 
+async function verifyChatControlPlane(client, label) {
+  const result = await waitFor(async () => client.evaluate(`(() => {
+    const state = {
+      model: Boolean(document.querySelector('.model-selector')),
+      policy: Boolean(document.querySelector('.execution-policy-control')),
+      composer: Boolean(document.querySelector('.chat-composer')),
+      newChat: Boolean(document.querySelector('.chat-new-session-btn'))
+    };
+    return Object.values(state).every(Boolean) ? state : null;
+  })()`), `${label}控制面没有加载`);
+  assert.equal(result.model, true, `${label}缺少模型切换控件`);
+  assert.equal(result.policy, true, `${label}缺少审批/沙盒执行策略控件`);
+  assert.equal(result.composer, true, `${label}缺少聊天输入区`);
+  assert.equal(result.newChat, true, `${label}缺少新建聊天入口`);
+  return result;
+}
+
 const targets = await listTargets();
 const mainTarget = targets.find((target) => !target.url.includes('#chat') && !target.url.includes('#tool') && !target.url.includes('#settings'));
 if (!mainTarget) throw new Error('没有找到太极主窗口');
@@ -119,23 +151,44 @@ const opened = [];
 let testTaskId = '';
 
 try {
+  console.log('[e2e] main surface');
+  const officeSurface = await waitFor(async () => main.evaluate(`(() => {
+    const state = {
+      office: Boolean(document.querySelector('.office-floor, .office-scene, .office-grid')),
+      settings: Boolean(document.querySelector('[aria-label="打开设置"]')),
+      update: Boolean(document.querySelector('.update-status')),
+      text: document.body.innerText.slice(0, 2000)
+    };
+    return state.office && state.settings && state.update ? state : null;
+  })()`), '办公室主窗口没有完成加载');
+  assert.equal(officeSurface.settings, true, '办公室缺少设置入口');
+  assert.equal(officeSurface.update, true, '办公室缺少更新状态入口');
+  assert.equal(officeSurface.office, true, '办公室工位区域没有渲染');
+
   const assistant = await openChat(main, 'assistant-chat');
+  console.log('[e2e] assistant opened');
   opened.push(assistant);
+  const assistantControls = await verifyChatControlPlane(assistant, '助手窗口');
   const assistantResult = await verifyNewChat(assistant, 'assistant', '助手窗口', 'assistant-new-chat.png');
-  await assistant.evaluate('window.electronAPI.close()');
-  assistant.socket.close();
+  console.log('[e2e] assistant verified');
+  await closeClient(assistant);
   opened.splice(opened.indexOf(assistant), 1);
 
   const dm = await openChat(main, 'dm-chat', 'emp-pm');
+  console.log('[e2e] dm opened');
   opened.push(dm);
+  const dmControls = await verifyChatControlPlane(dm, '员工私聊窗口');
   const dmResult = await verifyNewChat(dm, 'dm:emp-pm', '员工私聊窗口', 'dm-new-chat.png');
-  await dm.evaluate('window.electronAPI.close()');
-  dm.socket.close();
+  console.log('[e2e] dm verified');
+  await closeClient(dm);
   opened.splice(opened.indexOf(dm), 1);
 
   const team = await openChat(main, 'team-chat', 'team-opc');
+  console.log('[e2e] team opened');
   opened.push(team);
+  const teamControls = await verifyChatControlPlane(team, '团队窗口');
   const teamResult = await verifyNewChat(team, 'team:team-opc', '团队窗口', 'team-new-chat.png');
+  console.log('[e2e] team new chat verified');
   testTaskId = `ui-stall-${Date.now()}`;
   const inserted = await main.evaluate(`(async () => {
     const api = window.electronAPI;
@@ -177,8 +230,30 @@ try {
   })()`), '点击继续执行后没有即时反馈', 3_000);
   assert.equal(resumeFeedback.disabled, true);
 
+  const settingsOpened = await main.evaluate('window.electronAPI.openSettings()');
+  assert.equal(settingsOpened?.ok, true, settingsOpened?.error || '设置窗口没有打开');
+  const settingsTarget = await waitFor(async () => (await listTargets()).find((item) => item.url.includes('#settings')), '没有找到设置窗口');
+  const settings = await connect(settingsTarget);
+  opened.push(settings);
+  const settingsSurface = await waitFor(async () => settings.evaluate(`(() => {
+    const state = {
+      diagnostics: Boolean(document.querySelector('.diagnostics-page')),
+      optimizer: [...document.querySelectorAll('button')].some((button) => button.textContent.includes('一键诊断并优化')),
+      modelTab: [...document.querySelectorAll('button')].some((button) => button.textContent.includes('模型')),
+      version: document.querySelector('.window-version-badge')?.textContent || ''
+    };
+    return state.diagnostics && state.optimizer && state.modelTab ? state : null;
+  })()`), '设置与诊断中心没有完成加载');
+  assert.equal(settingsSurface.diagnostics, true, '设置窗口没有默认打开诊断中心');
+  assert.equal(settingsSurface.optimizer, true, '诊断中心缺少一键诊断并优化入口');
+  assert.equal(settingsSurface.modelTab, true, '设置窗口缺少模型管理入口');
+  const settingsScreenshot = await capture(settings, 'settings-diagnostics.png');
+  await closeClient(settings);
+  opened.splice(opened.indexOf(settings), 1);
+
   console.log(JSON.stringify({
     passed: true,
+    surfaces: { office: officeSurface, assistant: assistantControls, dm: dmControls, team: teamControls, settings: settingsSurface, settingsScreenshot },
     newChat: { assistant: assistantResult, dm: dmResult, team: teamResult },
     stalledTask: { waiting: waiting.text, resumeFeedback, screenshot: beforeResumeScreenshot },
   }, null, 2));
@@ -187,8 +262,7 @@ try {
     try { await main.evaluate(`window.electronAPI.taskWorkerCommand(${JSON.stringify({ taskId: testTaskId, type: 'close', requestedBy: 'chat-controls-e2e' })})`); } catch {}
   }
   for (const client of opened) {
-    try { await client.evaluate('window.electronAPI.close()'); } catch {}
-    client.socket.close();
+    try { await closeClient(client); } catch {}
   }
   main.socket.close();
 }

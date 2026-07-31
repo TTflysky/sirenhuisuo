@@ -83,46 +83,7 @@ Assert-VersionReferences $version
 Invoke-CheckedCommand git @('diff', '--check')
 
 if (-not $SkipTests) {
-  $verificationScripts = @(
-    'lint',
-    'verify:execution-controller',
-    'verify:execution-evidence',
-    'verify:unified-turn-runtime',
-    'verify:turn-lifecycle',
-    'verify:agent-trajectory-suite',
-    'verify:agent-kernel',
-    'verify:dispatch-intelligence',
-    'verify:foundation',
-    'verify:task-runner',
-    'verify:task-context',
-    'verify:context-router',
-    'verify:context-tool-pairs',
-    'verify:layered-memory',
-    'verify:learning-review',
-    'verify:skill-drafts',
-    'verify:task-history',
-    'verify:task-delegation',
-    'verify:worktree',
-    'verify:ecosystem-health',
-    'verify:app-identity-migration',
-    'verify:connector-adapters',
-    'verify:connector-protocol',
-    'verify:task-runtime-store',
-    'verify:task-worker',
-    'verify:chat-session-isolation',
-    'verify:tool-registry',
-    'verify:native-execution',
-    'verify:office-layout',
-    'verify:v230-experience',
-    'verify:v231-dispatch-and-brand',
-    'verify:team-membership',
-    'verify:execution-detail-contract',
-    'verify:skill-atomic',
-    'verify:skill-install-e2e',
-    'verify:update-download',
-    'verify:web-search',
-    'verify:docx'
-  )
+  $verificationScripts = @('verify:phase2')
   foreach ($script in $verificationScripts) {
     Invoke-CheckedCommand npm.cmd @('run', $script)
   }

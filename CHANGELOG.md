@@ -1,5 +1,16 @@
 # 更新日志
 
+## v2.8.4 (Phase 2: long-running execution, Coding Runtime, and Electron E2E)
+
+- Added ExecutionController v2 with normalized failure classes, route/result fingerprints, no-progress retry prevention, independent model/tool/time/retry/token budgets, versioned checkpoints, evidence, unresolved questions, and plain-language recovery handoffs. Version 1 snapshots migrate without losing progress.
+- Added streaming chat completion and incremental tool-argument assembly across assistant, direct-message, and team execution. Team updates are coalesced at 200ms to avoid high-frequency full-panel rerenders.
+- Upgraded Coding Runtime to atomic patches, pre-edit recovery points, recursive impact analysis, targeted test/build/lint selection, command evidence, delivery diffs, risk reporting, and rollback checkpoints. Three independent Git repository scenarios now verify the full edit-to-delivery loop.
+- Upgraded professional project collaboration with capability-and-load staffing, stage artifact contracts, in-flight staffing/replacement, and targeted review rework that preserves unrelated completed steps.
+- Added GPT Image 2 output controls to assistant, employee, and team chats: 1:1, 4:3, 3:4, 16:9, and 9:16 aspect ratios; standard, 2K, 2.7K, and 4K resolution tiers; automatic, fast, balanced, and detailed quality presets; and resolved pixel dimensions.
+- Upgraded Electron from 33.4.11 to 43.2.0 and hardened the Windows build script to verify the exact runtime version and restore the locked binary through a checksum-verified mirror when needed.
+- Added real Electron E2E coverage for the office, settings/diagnostics, assistant, employee DM, team chat, new-session controls, and stalled-task resume feedback. A 12-window smoke soak held nodes/documents stable with 0.15MB renderer-heap growth.
+- Added the unified `verify:phase2` gate and upgraded the built-in assistant persona to v17. The formal eight-hour soak remains a separate `verify:phase2-soak:8h` gate and was not represented as completed in this release.
+
 ## v2.7.4 (Phase 1: standardized kernel, resource acquisition, and semantic baseline)
 
 - Added a standard Vitest test stack with unit, component, and integration suites, jsdom, Testing Library, V8 coverage, and enforceable core-logic thresholds. The release baseline reaches 90.44% statements, 75.73% branches, 89.69% functions, and 93.96% lines.

@@ -3,6 +3,7 @@ import { ArrowLeftOutlined, EditOutlined, HistoryOutlined, PauseCircleOutlined, 
 import type { Team, Employee, TaskRun, ThoughtChainStep } from '../../types';
 import { useStore } from '../../storeContext';
 import { generatedImageAttachment, generateImage, getConversationModel, isImageGenerationModel, type Attachment } from '../../data/hermesClient';
+import { getImageGenerationOptions } from '../../data/imageGenerationSettings';
 import AgentAvatar from '../office/AgentAvatar';
 import { loadOutputsByScope, type OutputRecord } from '../../data/outputs';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
@@ -13,6 +14,7 @@ import ManageTeamMembersModal from '../sidebar/ManageTeamMembersModal';
 import { copyAndArchiveChatTranscript, copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
 import GeneratedImagePreview from './GeneratedImagePreview';
+import ImageGenerationOptions from './ImageGenerationOptions';
 import SkillMentionInput from '../skills/SkillMentionInput';
 import { resolveSkillContext } from '../../engine/skillContext';
 import SkillPickerButton from '../skills/SkillPickerButton';
@@ -294,7 +296,7 @@ export default function TeamChatApp({ teamId }: Props) {
       setAttachments([]);
       setImageGenerating(true);
       try {
-        const image = await generateImage(content, conversationModel, attachments);
+        const image = await generateImage(content, conversationModel, attachments, getImageGenerationOptions('team'));
         dispatch({
           type: 'APPEND_CHAT', teamId, conversationId: conversationIdRef.current,
           msgs: [{ id: `msg-image-${Date.now()}-assistant`, authorId: 'assistant', roleId: 'custom', content: `${attachments.some((attachment) => attachment.kind === 'image') ? 'Image edited' : 'Image generated'} with ${image.model}.`, mentions: [], timestamp: Date.now(), kind: 'text', attachments: [generatedImageAttachment(image)] }],
@@ -975,6 +977,7 @@ export default function TeamChatApp({ teamId }: Props) {
                 ))}
               </div>
             )}
+            <ImageGenerationOptions scene="team" />
             <SkillMentionInput ref={textareaRef} value={text} onChange={setText} onChangeEvent={handleTextChange} selected={skillRefs} onSelectedChange={setSkillRefs} onKeyDown={handleKeyDown} onPaste={handlePaste} rows={2} placeholder="输入消息... 输入 @ 选择技能或提及员工" />
             {/* @ 弹窗 */}
             {mentionOpen && mentionCandidates.length > 0 && (

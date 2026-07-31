@@ -3,6 +3,7 @@ import { CloseOutlined, CopyOutlined, ExportOutlined, PaperClipOutlined, PauseCi
 import type { ChatMessage, ConversationReference, SkillUsageEvidence, ThoughtChainStep } from '../../types';
 import { useStore } from '../../storeContext';
 import { generatedImageAttachment, generateImage, getConversationModel, isImageGenerationModel, loadDm, appendDm, replaceDm, runAgentLoop, resolveApiBase, extractUserInsights, getEmployeeModel, loadSettings, type ChatTurn, type Attachment, type ContextUsage } from '../../data/hermesClient';
+import { getImageGenerationOptions } from '../../data/imageGenerationSettings';
 import AgentAvatar from '../office/AgentAvatar';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
 import ChatMessageText from './ChatMessageText';
@@ -11,6 +12,7 @@ import ThoughtChainView from './ThoughtChainView';
 import { copyAndArchiveChatTranscript, copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
 import GeneratedImagePreview from './GeneratedImagePreview';
+import ImageGenerationOptions from './ImageGenerationOptions';
 import SkillMentionInput from '../skills/SkillMentionInput';
 import { resolveSkillContextWithEvidence } from '../../engine/skillContext';
 import SkillPickerButton from '../skills/SkillPickerButton';
@@ -153,6 +155,7 @@ export default function DmChatApp({ empId }: Props) {
   const [completedActionCount, setCompletedActionCount] = useState(0);
   const [liveActivities, setLiveActivities] = useState<Array<{ id: string; matchKey: string; label: string; args: string; state: 'active' | 'error' }>>([]);
   const [liveExecutionSteps, setLiveExecutionSteps] = useState<ThoughtChainStep[]>([]);
+  const [liveText, setLiveText] = useState('');
   const [showOutputs, setShowOutputs] = useState(false);
   const [selectedOutputFilename, setSelectedOutputFilename] = useState<string | null>(null);
   const [outputsWidth, setOutputsWidth] = useState(320);
@@ -236,6 +239,7 @@ export default function DmChatApp({ empId }: Props) {
     setCompletedActionCount(0);
     setLiveActivities([]);
     setLiveExecutionSteps([]);
+    setLiveText('');
     setStatus('');
     setRetryJob(null);
     saveRetryJob(empId, null);
@@ -417,6 +421,7 @@ export default function DmChatApp({ empId }: Props) {
         job.conversationId,
       );
       setStatus('正在整理清晰的结果…');
+      setLiveText('');
       push({ id: `dm-${Date.now()}-${empId}`, authorId: empId, roleId: emp.role, content: reply, mentions: [], timestamp: Date.now(), kind: 'text', tokens: usage, contextUsage, thoughtChain, attachments: generatedAttachments, skillRefs: job.skillRefs.length ? job.skillRefs : undefined, skillEvidence: skillEvidence?.length ? skillEvidence : undefined, references: references?.length ? references : undefined }, job.conversationId);
       setRetryJob(null);
       saveRetryJob(empId, null);
@@ -438,6 +443,7 @@ export default function DmChatApp({ empId }: Props) {
       setStatus('');
       setLiveActivities([]);
       setLiveExecutionSteps([]);
+      setLiveText('');
       dispatch({ type: 'UPDATE_EMPLOYEE', id: empId, partial: { isWorking: false, currentTask: undefined } });
       const queued = queuedFollowUpsRef.current.shift();
       if (queued) {
@@ -494,7 +500,7 @@ export default function DmChatApp({ empId }: Props) {
     const conversationModel = getConversationModel('dm', emp);
     if (isImageGenerationModel(conversationModel)) {
       setStatus('Generating image...');
-      const image = await generateImage(userText, conversationModel, imageAtts);
+      const image = await generateImage(userText, conversationModel, imageAtts, getImageGenerationOptions('dm'));
       return {
         text: `${imageAtts.length > 0 ? 'Image edited' : 'Image generated'} with ${image.model}.`,
         attachments: [generatedImageAttachment(image)],
@@ -543,6 +549,7 @@ export default function DmChatApp({ empId }: Props) {
         taskBridge?.lifecycle(state);
       },
       onSteeringReply(content, usage, contextUsage) {
+        setLiveText('');
         push({
           id: `dm-${Date.now()}-${empId}-steering`, authorId: empId, roleId: emp.role,
           content, mentions: [], timestamp: Date.now(), kind: 'text',
@@ -550,7 +557,12 @@ export default function DmChatApp({ empId }: Props) {
         }, targetConversationId);
         setStatus('已结合新要求重新判断…');
       },
+      onTextDelta(_delta, accumulated) {
+        setLiveText(accumulated);
+        setStatus('正在生成回复…');
+      },
       onToolCall(name, args) {
+        setLiveText('');
         taskBridge?.toolStarted(name, args ?? '');
         setStatus(getToolActivity(name, args));
         const matchKey = `${name}:${args}`;
@@ -780,6 +792,7 @@ export default function DmChatApp({ empId }: Props) {
                   ) : (
                     <div className="assistant-live-content">
                       <strong>{status}</strong>
+                      {liveText && <p className="assistant-live-stream-text">{liveText}</p>}
                       {liveActivities.length > 0 && <div className="assistant-live-activities">
                         {liveActivities.map((item) => <details key={item.id} className={`assistant-live-activity is-${item.state}`}>
                           <summary>
@@ -854,6 +867,7 @@ export default function DmChatApp({ empId }: Props) {
                 ))}
               </div>
             )}
+            <ImageGenerationOptions scene="dm" modelConfig={getEmployeeModel(emp)} />
             <SkillMentionInput value={text} onChange={setText} selected={skillRefs} onSelectedChange={setSkillRefs} onKeyDown={onKeyDown} onPaste={handlePaste} rows={2} disabled={!!retryJob} placeholder={typing ? `正在处理，可继续引导 ${emp.name}…` : `发消息给 ${emp.name}...（输入 @ 选择技能）`} />
             <button className="btn btn-primary btn-sm" style={{ alignSelf: 'flex-end' }} onClick={handleSend} disabled={!!retryJob || (!text.trim() && attachments.length === 0)}>
               {typing ? (loadSettings().followUpMode === 'queue' ? '排队' : '引导') : '发送'}

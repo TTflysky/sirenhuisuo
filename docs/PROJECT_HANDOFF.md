@@ -1,9 +1,22 @@
 # 项目交接手册
 
 > 最后整理：2026-07-31
-> 当前源码版本：`v2.7.4`（第一阶段正式版本）
+> 当前源码版本：`v2.8.4`（第二阶段正式版本）
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+
+## v2.8.4 长任务、Coding Runtime 与真实 Electron
+
+- 第二阶段统一门禁是 `npm.cmd run verify:phase2`，顺序执行 Lint、标准测试、ExecutionController v2、Coding Runtime v2、三个独立 Git 仓库、项目 DAG、真实 Electron E2E、12 窗口驻留冒烟和生产构建。正式八小时长驻必须单独运行 `npm.cmd run verify:phase2-soak:8h`。
+- `executionController.mjs` 保存版本化预算、路线历史、结果指纹、失败分类、检查点、证据与未决问题。没有新证据的同一路线不得机械重试；恢复时使用保存的决策和检查点，不从聊天文本重建。
+- `chatStream.mjs` 是 OpenAI 兼容 SSE 的唯一增量解析入口。工具参数可能跨多个 chunk，只有完整合并后才能执行。团队 UI 使用 200ms 合并刷新，心跳不得触发全任务与产出物扫描。
+- `codingRuntime.cjs` 负责受控工作区中的索引、符号查找、原子补丁、影响分析、测试选择、命令会话、Diff、风险和回滚点。交付面板应消费结构化报告，不解析模型自述。
+- `codingProject.mjs` 编译能力/负载匹配与阶段工件合同。执行中补人和替换负责人修改同一项目；审查失败只重开责任步骤、复审和交付，保留无关完成步骤。
+- `imageSpecifications.mjs` 定义 GPT Image 2 的画幅、清晰度、质量与像素解析；`ImageGenerationOptions.tsx` 在助手、员工和团队复用。非 GPT Image 2 模型会降级到兼容标准尺寸并明确提示。
+- Electron 锁定 `43.2.0`。`build-windows.ps1` 必须核对 `dist/version`，运行时缺失或版本不符时通过 Electron 官方安装器恢复锁定版本；不能只检查 `electron.exe` 是否存在。
+- 本机真实 E2E 已通过。12 窗口短驻留结果为 DOM 节点/文档数稳定、渲染堆增长 `0.15 MB`；这不是八小时证据，交接和发布说明不得混写。
+- 发布资产：`taiji-office-setup-2.8.4.exe` 为 `195822199` 字节，SHA-256 `5FC2E8E0922FF27E2108D1DD61710FA20959753FE7ED0E6E2EEBC97785B5BE3A`；Blockmap 为 `206372` 字节，SHA-256 `29DCD73E098A468E37660CE65FE0581BBFCBDAD2A0B23CC9856FC8393C9C58A6`；`latest.yml` 为 `353` 字节，SHA-256 `B5757498C34257334C080971BF1FB2DD6042E9BC475B1B4E62A59E2AA30442C8`。
+- 人格版本为 v17。第三阶段从 v2.9.0 的模型与图片兼容矩阵开始，随后依次完成 Skill Runtime、连接器/MCP 安全、更新回滚演练和发布治理。
 
 ## v2.7.4 工程内核标准化
 
