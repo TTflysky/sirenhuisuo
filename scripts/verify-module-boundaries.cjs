@@ -5,7 +5,12 @@ const limits = {
   'electron/nativeExecutionAdapter.cjs': 2200,
   'src/data/hermesClient.ts': 2300,
   'src/store.tsx': 2550,
-  'src/theme.css': 3850,
+  'src/theme.css': 8,
+  'src/styles/core.css': 500,
+  'src/styles/collaboration.css': 1500,
+  'src/styles/appearance.css': 500,
+  'src/styles/settings.css': 400,
+  'src/styles/workspace.css': 1800,
 };
 const lines = {};
 for (const [file, maximum] of Object.entries(limits)) {

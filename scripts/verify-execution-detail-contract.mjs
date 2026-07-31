@@ -7,7 +7,8 @@ const assistant = read('src/components/chat/AssistantChat.tsx');
 const directMessage = read('src/components/chat/DmChatApp.tsx');
 const team = read('src/components/chat/TeamChatApp.tsx');
 const appearance = read('src/data/appearance.ts');
-const theme = read('src/theme.css');
+const theme = ['core', 'collaboration', 'appearance', 'settings', 'workspace']
+  .map((name) => read(`src/styles/${name}.css`)).join('\n');
 const packageVerification = read('scripts/verify-packaged-app.cjs');
 
 for (const [surface, source] of [['assistant', assistant], ['employee direct message', directMessage], ['team', team]]) {

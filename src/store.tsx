@@ -4,13 +4,14 @@ import React, {
   type ReactNode,
 } from 'react';
 import { StoreContext } from './storeContext';
+import { initialAppState, reduceAppState, type AppStateAction } from './store/appStateReducer';
+import { persistAppStateTransition } from './store/appStatePersistence';
 import type {
   Employee,
   Team,
   ChatMessage,
   TeamTask,
   TaskLane,
-  AgentStatus,
   OpcRoleId,
   AppState,
   RoleId,
@@ -30,7 +31,7 @@ import { evaluateDiscussionTrigger } from './engine/discussionTrigger';
 import { findFreeStation } from './data/hermesClient';
 import { isTeamMemberAdditionRequest, resolveMentionedEmployees } from './engine/teamMembership';
 import { sendBus, onBus, BUS_CHANNELS } from './ipcBus';
-import { appendTaskRunContext, createTaskRun, formalPlanStepForRun, getExecutionSessionId, hydrateTaskRunFromMainStore, hydrateTaskRunsFromMainStore, saveTaskRuns, sendTaskWorkerCommand, taskRunContextPrompt, updateTaskRun } from './data/taskRuns';
+import { appendTaskRunContext, createTaskRun, formalPlanStepForRun, getExecutionSessionId, hydrateTaskRunFromMainStore, hydrateTaskRunsFromMainStore, sendTaskWorkerCommand, taskRunContextPrompt, updateTaskRun } from './data/taskRuns';
 import { buildTaskPlan, matchProjectMembers, matchTeamMembers } from './engine/taskMatcher';
 import { employeePlanningPool, expertToEmployee, findExpertCatalogEntry } from './data/expertCatalog';
 import { briefExecutionContext, buildProfessionalProjectBrief } from './engine/expertOrchestration';
@@ -55,280 +56,16 @@ import { classifyLocalOfficeQuery, formatLocalOfficeAnswer } from './engine/offi
 import { getRegisteredTools } from './engine/toolCatalog';
 import { ensureActiveChatSession, legacyConversationId, messageBelongsToConversation } from './data/chatSessions';
 
-// ===== Action =====
-type Action =
-  | { type: 'INIT'; state: AppState }
-  | { type: 'HYDRATE_TASK_RUNS'; runs: TaskRun[] }
-  | { type: 'PATCH_TASK_RUN'; run: TaskRun }
-  | { type: 'ADD_EMPLOYEE'; emp: Employee }
-  | { type: 'UPDATE_EMPLOYEE'; id: string; partial: Partial<Employee> }
-  | { type: 'REMOVE_EMPLOYEE'; id: string }
-  | { type: 'ADD_TEAM'; team: Team }
-  | { type: 'UPDATE_TEAM'; id: string; partial: Partial<Team> }
-  | { type: 'REMOVE_TEAM'; id: string }
-  | { type: 'CREATE_PROJECT'; project: Project }
-  | { type: 'UPDATE_PROJECT'; id: string; partial: Partial<Project> }
-  | { type: 'APPEND_CHAT'; teamId: string; msgs: ChatMessage[]; conversationId?: string }
-  | { type: 'ADD_TASK'; teamId: string; task: TeamTask }
-  | { type: 'ADVANCE_TASK'; teamId: string; taskId: string; lane: TaskLane }
-  | { type: 'CLAIM_TASK'; teamId: string; taskId: string; claimerId: string }
-  | { type: 'SET_STATUS'; partial: Partial<AgentStatus> }
-  | { type: 'SET_PROGRESS'; progress: DiscussionProgress | null }
-  | { type: 'CREATE_TASK_RUN'; run: TaskRun }
-  | { type: 'UPDATE_TASK_RUN'; run: TaskRun }
-  | { type: 'REMOVE_TASK_RUN'; runId: string }
-  | { type: 'CLEAR_TEAM_EXECUTION'; teamId: string };
-
-// ===== State =====
-const initialState: AppState = {
-  employees: [],
-  teams: [],
-  projects: [],
-  taskRuns: [],
-  status: { backendOnline: false, demoRunning: false },
+const reducer = (state: AppState, action: AppStateAction): AppState => {
+  const next = reduceAppState(state, action);
+  persistAppStateTransition(state, action, next);
+  return next;
 };
-
-// ===== Reducer =====
-function mergeTaskExecutionMessages(s: AppState, runs: TaskRun[]): AppState {
-  const byTeam = new Map<string, ChatMessage[]>();
-  for (const run of runs) {
-    if (!run.executionMessages?.length) continue;
-    const current = byTeam.get(run.teamId) ?? [];
-    current.push(...run.executionMessages.map((message) => message.conversationId || !run.conversationId
-      ? message
-      : { ...message, conversationId: run.conversationId }));
-    byTeam.set(run.teamId, current);
-  }
-  if (!byTeam.size) return { ...s, taskRuns: runs };
-  const teams = s.teams.map((team) => {
-    const incoming = byTeam.get(team.id);
-    if (!incoming?.length) return team;
-    const seen = new Set(team.chatMessages.map((message) => message.id));
-    const appended = incoming.filter((message) => !seen.has(message.id));
-    if (!appended.length) return team;
-    return { ...team, chatMessages: [...team.chatMessages, ...appended].sort((a, b) => a.timestamp - b.timestamp).slice(-1200) };
-  });
-  return { ...s, teams, taskRuns: runs };
-}
-
-function reducer(s: AppState, a: Action): AppState {
-  switch (a.type) {
-    case 'INIT':
-      return a.state;
-
-    case 'HYDRATE_TASK_RUNS':
-      return mergeTaskExecutionMessages(s, a.runs);
-
-    case 'PATCH_TASK_RUN': {
-      const taskRuns = s.taskRuns.some((run) => run.id === a.run.id)
-        ? s.taskRuns.map((run) => run.id === a.run.id ? a.run : run)
-        : [...s.taskRuns, a.run].slice(-120);
-      return mergeTaskExecutionMessages(s, taskRuns);
-    }
-
-    case 'ADD_EMPLOYEE': {
-      const next = client.upsertEmployee(a.emp, s.employees);
-      return { ...s, employees: next };
-    }
-
-    case 'UPDATE_EMPLOYEE': {
-      const next = s.employees.map((e) =>
-        e.id === a.id ? { ...e, ...a.partial } : e
-      );
-      client.saveEmployees(next);
-      return { ...s, employees: next };
-    }
-
-    case 'REMOVE_EMPLOYEE': {
-      const next = client.removeEmployee(a.id, s.employees);
-      const teams = s.teams.map((team) => ({
-        ...team,
-        memberIds: team.memberIds.filter((memberId) => memberId !== a.id),
-      }));
-      client.saveTeams(teams);
-      return { ...s, employees: next, teams };
-    }
-
-    case 'ADD_TEAM': {
-      const next = [...s.teams, a.team];
-      client.saveTeams(next);
-      // Team metadata and its first messages use separate storage keys. Persist
-      // the welcome message here as well so a newly opened child window can
-      // render the same team immediately.
-      if (a.team.chatMessages?.length) client.appendChat(a.team.id, a.team.chatMessages);
-      return { ...s, teams: next };
-    }
-
-    case 'UPDATE_TEAM': {
-      const next = s.teams.map((t) =>
-        t.id === a.id ? { ...t, ...a.partial } : t
-      );
-      client.saveTeams(next);
-      const renamed = a.partial.name?.trim();
-      const target = s.teams.find((team) => team.id === a.id);
-      const projects = renamed && target?.projectId
-        ? s.projects.map((project) => project.id === target.projectId
-          ? { ...project, title: renamed, updatedAt: Date.now() }
-          : project)
-        : s.projects;
-      if (projects !== s.projects) client.saveProjects(projects);
-      return { ...s, teams: next, projects };
-    }
-
-    case 'REMOVE_TEAM': {
-      const next = s.teams.filter((t) => t.id !== a.id);
-      client.saveTeams(next);
-      const employees = s.employees.map((employee) =>
-        employee.currentTeamId === a.id ? { ...employee, currentTeamId: undefined } : employee,
-      );
-      client.saveEmployees(employees);
-      const projects = s.projects.map((project) =>
-        project.teamId === a.id ? { ...project, teamId: undefined, updatedAt: Date.now() } : project,
-      );
-      client.saveProjects(projects);
-      return { ...s, teams: next, employees, projects };
-    }
-
-    case 'CREATE_PROJECT': {
-      const projects = [...s.projects, a.project].slice(-80);
-      client.saveProjects(projects);
-      return { ...s, projects };
-    }
-
-    case 'UPDATE_PROJECT': {
-      const projects = s.projects.map((project) => project.id === a.id
-        ? { ...project, ...a.partial, updatedAt: Date.now() }
-        : project);
-      client.saveProjects(projects);
-      return { ...s, projects };
-    }
-
-    case 'APPEND_CHAT': {
-      const sessionId = a.conversationId ?? ensureActiveChatSession(`team:${a.teamId}`);
-      const messages = a.msgs.map((message) => message.conversationId ? message : { ...message, conversationId: sessionId });
-      client.appendChat(a.teamId, messages);
-      const next = s.teams.map((t) =>
-        t.id === a.teamId ? { ...t, chatMessages: [...(t.chatMessages || []), ...messages] } : t
-      );
-      return { ...s, teams: next };
-    }
-
-    case 'ADD_TASK': {
-      const task = a.task;
-      const next = s.teams.map((t) =>
-        t.id === a.teamId ? { ...t, tasks: [...(t.tasks || []), task] } : t
-      );
-      client.saveTeams(next);
-      // 同时插入任务卡消息
-      const taskMsg: ChatMessage = {
-        id: `msg-task-${Date.now()}`,
-        authorId: 'emp-me',
-        roleId: 'human',
-        content: `[新任务] ${task.title}`,
-        mentions: [],
-        timestamp: Date.now(),
-        kind: 'task',
-        taskRef: task.id,
-        conversationId: ensureActiveChatSession(`team:${a.teamId}`),
-      };
-      client.appendChat(a.teamId, [taskMsg]);
-      const withMsg = next.map((t) =>
-        t.id === a.teamId ? { ...t, chatMessages: [...(t.chatMessages || []), taskMsg] } : t
-      );
-      return { ...s, teams: withMsg };
-    }
-
-    case 'ADVANCE_TASK': {
-      const next = s.teams.map((t) => {
-        if (t.id !== a.teamId) return t;
-        const tasks = (t.tasks || []).map((tk) =>
-          tk.id === a.taskId ? { ...tk, lane: a.lane } : tk
-        );
-        const updated = { ...t, tasks };
-        client.saveTeams([updated]);
-        return updated;
-      });
-      return { ...s, teams: next };
-    }
-
-    case 'CLAIM_TASK': {
-      const next = s.teams.map((t) => {
-        if (t.id !== a.teamId) return t;
-        const tasks = (t.tasks || []).map((tk) =>
-          tk.id === a.taskId
-            ? { ...tk, claimedBy: a.claimerId, assigneeId: a.claimerId, lane: (tk.lane as TaskLane) === 'PLANNING' ? 'CODING' as TaskLane : tk.lane }
-            : tk
-        );
-        const updated = { ...t, tasks };
-        client.saveTeams([updated]);
-        return updated;
-      });
-      // 更新员工 currentTask
-      const empNext = s.employees.map((e) => {
-        if (e.id === a.claimerId) return { ...e, isWorking: true, currentTask: '' };
-        return e;
-      });
-      client.saveEmployees(empNext);
-      return { ...s, teams: next, employees: empNext };
-    }
-
-    case 'SET_STATUS':
-      return { ...s, status: { ...s.status, ...a.partial } };
-
-    case 'SET_PROGRESS':
-      return { ...s, status: { ...s.status, progress: a.progress ?? undefined } };
-
-    case 'CREATE_TASK_RUN': {
-      const taskRuns = [...s.taskRuns, a.run].slice(-120);
-      saveTaskRuns(taskRuns);
-      return { ...s, taskRuns };
-    }
-
-    case 'UPDATE_TASK_RUN': {
-      const taskRuns = s.taskRuns.map((run) => run.id === a.run.id ? a.run : run);
-      saveTaskRuns(taskRuns);
-      const project = a.run.projectId && (a.run.status === 'completed' || a.run.status === 'failed')
-        ? s.projects.find((item) => item.id === a.run.projectId)
-        : undefined;
-      const projects = project
-        ? s.projects.map((item) => item.id === project.id ? { ...item, status: (a.run.status === 'completed' ? 'completed' : 'failed') as Project['status'], updatedAt: Date.now() } : item)
-        : s.projects;
-      if (project) client.saveProjects(projects);
-      return { ...s, taskRuns, projects };
-    }
-
-    case 'REMOVE_TASK_RUN': {
-      const target = s.taskRuns.find((run) => run.id === a.runId);
-      const taskRuns = s.taskRuns.filter((run) => run.id !== a.runId);
-      const teams = target ? s.teams.map((team) => {
-        if (team.id !== target.teamId) return team;
-        const chatMessages = team.chatMessages.filter((message) => !(message.kind === 'execution' && message.discussionId === a.runId));
-        client.replaceChat(team.id, chatMessages);
-        return { ...team, chatMessages };
-      }) : s.teams;
-      saveTaskRuns(taskRuns, { removedTaskIds: [a.runId] });
-      return { ...s, taskRuns, teams };
-    }
-
-    case 'CLEAR_TEAM_EXECUTION': {
-      const teams = s.teams.map((team) => {
-        if (team.id !== a.teamId) return team;
-        const chatMessages = team.chatMessages.filter((message) => message.kind !== 'execution');
-        client.replaceChat(team.id, chatMessages);
-        return { ...team, chatMessages };
-      });
-      return { ...s, teams };
-    }
-
-    default:
-      return s;
-  }
-}
 
 // ===== Context =====
 export interface StoreCtx {
   state: AppState;
-  dispatch: React.Dispatch<Action>;
+  dispatch: React.Dispatch<AppStateAction>;
   // 便捷方法
   sendMessage: (teamId: string, authorId: string, roleId: RoleId, content: string, mentions?: string[], attachments?: import('./data/hermesClient').Attachment[], skillRefs?: import('./types').SkillReference[], conversationId?: string) => void;
   startTeamDemo: (teamId: string) => void;
@@ -360,17 +97,17 @@ export interface StoreCtx {
 }
 
 // INIT 是各窗口自己的初始化加载，不应跨窗口广播。
-const SKIP_BROADCAST = new Set<Action['type']>(['INIT', 'HYDRATE_TASK_RUNS', 'PATCH_TASK_RUN']);
+const SKIP_BROADCAST = new Set<AppStateAction['type']>(['INIT', 'HYDRATE_TASK_RUNS', 'PATCH_TASK_RUN']);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
-  const [state, rawDispatch] = useReducer(reducer, initialState);
+  const [state, rawDispatch] = useReducer(reducer, initialAppState);
   const nativeWorkingEmployeesRef = React.useRef<Set<string>>(new Set());
 
   // 标记当前是否正在应用「来自其他窗口」的广播，避免回环广播
   const applyingRemote = React.useRef(false);
 
   // 包装后的 dispatch：本地执行 + 向其他窗口广播
-  const dispatch = React.useCallback((action: Action) => {
+  const dispatch = React.useCallback((action: AppStateAction) => {
     rawDispatch(action);
     if (!SKIP_BROADCAST.has(action.type)) {
       sendBus(BUS_CHANNELS.STORE_ACTION, action);
@@ -382,7 +119,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const off = onBus(BUS_CHANNELS.STORE_ACTION, (action) => {
       applyingRemote.current = true;
       try {
-        rawDispatch(action as Action);
+        rawDispatch(action as AppStateAction);
       } finally {
         applyingRemote.current = false;
       }

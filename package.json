@@ -1,7 +1,7 @@
 {
   "name": "taiji-office",
   "private": true,
-  "version": "2.6.2",
+  "version": "2.7.4",
   "description": "太极 AI 办公会所 - 面向 Windows 的多模型协作与可恢复任务执行平台",
   "author": "TTflysky",
   "type": "module",
@@ -10,6 +10,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "preview": "vite preview",
     "start": "electron .",
     "status:project": "powershell -ExecutionPolicy Bypass -File scripts/project-status.ps1",
@@ -105,7 +108,10 @@
     "verify:module-boundaries": "node scripts/verify-module-boundaries.cjs",
     "verify:phase3-performance": "node scripts/verify-phase3-performance.mjs",
     "verify:explicit-resource-contract": "node scripts/verify-explicit-resource-contract.mjs",
+    "verify:web-page-read": "node scripts/verify-web-page-read.cjs",
+    "verify:known-url-live": "electron --disable-gpu --disable-gpu-compositing --in-process-gpu scripts/verify-known-url-live.cjs",
     "verify:update-control": "node scripts/verify-update-control.mjs",
+    "verify:phase1": "npm.cmd run test:run && node scripts/verify-phase1-architecture.mjs && node scripts/verify-task-semantics-benchmark.mjs",
     "dist:win": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1",
     "publish:release": "powershell -ExecutionPolicy Bypass -File scripts/publish-github-release.ps1",
     "release:win": "npm.cmd run publish:release",
@@ -125,15 +131,20 @@
     "yauzl": "2.10.0"
   },
   "devDependencies": {
+    "@testing-library/dom": "^10.4.1",
+    "@testing-library/react": "^16.3.2",
     "@types/node": "^24.13.2",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
+    "@vitest/coverage-v8": "^4.1.10",
     "electron": "^33.4.11",
     "electron-builder": "^25.1.8",
+    "jsdom": "^30.0.1",
     "oxlint": "^1.71.0",
     "typescript": "~6.0.2",
-    "vite": "^8.1.1"
+    "vite": "^8.1.1",
+    "vitest": "^4.1.10"
   },
   "build": {
     "appId": "com.taiji.office",

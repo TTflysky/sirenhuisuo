@@ -24,6 +24,8 @@ const { createCodingRuntime } = require('./codingRuntime.cjs');
 const { createEcosystemHealth } = require('./ecosystemHealth.cjs');
 const { createMemoryManager } = require('./memoryManager.cjs');
 const { createLearningReviewQueue } = require('./learningReviewQueue.cjs');
+const { createWebResourceAcquirer } = require('./resourceAcquisition.cjs');
+const { createBrowserPageReader } = require('./browserPageReader.cjs');
 const { configureAppUserData } = require('./appIdentityMigration.cjs');
 // Configure the canonical Taiji data root before any module resolves userData.
 // Automated Electron verification remains isolated from a user's real data.
@@ -97,6 +99,12 @@ const taskWorker = createTaskWorker({
     }
   },
 });
+const acquireWebResource = createWebResourceAcquirer({
+  directReader: (url) => fetchKnowledgeUrl(url, { fetchImpl: (target, options) => net.fetch(target, options) }),
+  browserReader: createBrowserPageReader(BrowserWindow, {
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Taiji/2.7',
+  }),
+});
 const nativeToolRuntime = createNativeToolRuntime({
   workspaceRoot: WORKSPACE,
   projectRoot: PROJECT_ROOT,
@@ -108,7 +116,7 @@ const nativeToolRuntime = createNativeToolRuntime({
   testObsidianVault,
   searchObsidianVault,
   readObsidianNote,
-  fetchKnowledgeUrl,
+  fetchKnowledgeUrl: acquireWebResource,
   searchWeb,
   createWordDocument: createVerifiedWordDocument,
   readWorkspaceFile,
@@ -1057,7 +1065,7 @@ function createWindow() {
     catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
   });
   ipcMain.handle('knowledge:fetchUrl', async (_event, url) => {
-    try { return await fetchKnowledgeUrl(url, { fetchImpl: (target, options) => net.fetch(target, options) }); }
+    try { return await acquireWebResource(url); }
     catch (e) {
       log.warn('[knowledge] page fetch failed:', String(e?.message ?? e));
       return { ok: false, error: String(e?.message ?? e) };

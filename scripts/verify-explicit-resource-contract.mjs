@@ -21,7 +21,7 @@ assert.match(buildExplicitResourceGuidance(contract), /read_web_page/u);
 
 const unrelatedSearch = validateExplicitResourceToolCall(contract, 'web_search', { query: '微信公众号文章' }, []);
 assert.equal(unrelatedSearch.allowed, false, 'Explicit URL content requests must not start with search');
-assert.match(unrelatedSearch.reason, /原始地址|明确网页地址/u);
+assert.match(unrelatedSearch.reason, /原始地址|明确网页地址|指定网页地址/u);
 
 const wrongRead = validateExplicitResourceToolCall(contract, 'read_web_page', { url: 'https://example.com/article' }, []);
 assert.equal(wrongRead.allowed, false, 'A similar or substitute page must be rejected');

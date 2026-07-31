@@ -117,7 +117,7 @@ function hasExplicitIndependentGoal(message) {
 
 function isTaskCorrection(message) {
   return isActionableCapabilityCorrection(message)
-    || /(?:不对|错了|不是这个|理解错|偏题|没有意义|别再重复|重新理解|重新看(?:一下)?需求|重新选人|胡说)/u.test(clean(message, 1200));
+    || /(?:不对|不满意|有问题|错了|不是这个|不是.{0,24}(?:而是|我是让你|是让你|要你|让你)|理解错|偏题|没有意义|别再重复|重新理解|重新看(?:一下)?需求|重新选人|胡说)/u.test(clean(message, 1200));
 }
 
 function isTaskStatusQuestion(message) {
@@ -153,10 +153,11 @@ export function classifyTaskTurnIntent(message) {
   if (control) return 'resume_control';
 
   const asksQuestion = /[？?]|(?:为什么|为何|怎么|怎样|是不是|对不对|能不能|可以吗|什么意思|理解了吗|看懂了吗|判断一下)/u.test(text);
-  const refersToConversation = /(?:这句话|这次的话|我的意思|刚才(?:那)?句|上一句|上面(?:的)?(?:回答|回复|结果)|之前(?:的)?(?:回答|回复|结果)|基于(?:上面|之前|刚才)|针对(?:上面|之前|刚才)|你(?:到底)?理解|你自己判断|你说的|你的(?:回答|回复|判断))/u.test(text);
+  const refersToConversation = /(?:这句话|这次的话|我的意思|这个(?:回答|回复|结果|方案)|(?:你)?刚才(?:那)?(?:句|的回答|的回复|的结果)|上一句|上面(?:的)?(?:回答|回复|结果)|之前(?:的)?(?:回答|回复|结果)|基于(?:上面|之前|刚才)|针对(?:上面|之前|刚才)|你(?:到底)?理解|你自己判断|你说的|你的(?:回答|回复|判断))/u.test(text);
   // A question about the meaning, scope, or correctness of the current
   // exchange is an answer turn even when it repeats verbs from the old task.
   if (asksQuestion && refersToConversation) return 'follow_up_question';
+  if (refersToConversation && /(?:不满意|不对|不好|有问题|不行|偏题|错误)/u.test(text)) return 'feedback_or_correction';
 
   if (isActionableCapabilityCorrection(text)) return 'execute_request';
   if (requiresFreshWebResearch(text) || requiresObservableExecutionEvidence(text) || !isConversationOnlyMessage(text)) return 'execute_request';
@@ -252,7 +253,7 @@ export function createFallbackTaskDecision(input = {}) {
 
   if (control === 'stop' || control === 'pause' || feedbackOnly || turnIntent === 'follow_up_question' || turnIntent === 'feedback_or_correction') {
     return {
-      mode: 'conversation', goal: latestMessage, primaryRoute: 'direct_answer',
+      mode: turnIntent === 'follow_up_question' ? 'answer' : 'conversation', goal: latestMessage, primaryRoute: 'direct_answer',
       turnRelation,
       deliverableType: 'answer',
       acceptanceCriteria: ['回应用户当前控制指令、追问或反馈，不偷跑旧任务'],
@@ -314,11 +315,12 @@ export function normalizeTaskDecision(candidate, input = {}) {
   const taskCorrection = isTaskCorrection(latestMessage);
   const fallbackRelation = fallback.turnRelation;
   const hardExecute = capabilityCorrection || Boolean(createExplicitResourceContract(fallback.goal)) || requiresFreshWebResearch(fallback.goal) || requiresObservableExecutionEvidence(fallback.goal);
-  const hardHold = turnIntent === 'follow_up_question' || turnIntent === 'feedback_or_correction'
+  const hardAnswer = turnIntent === 'follow_up_question';
+  const hardHold = turnIntent === 'feedback_or_correction'
     || control === 'stop' || control === 'pause'
     || (shouldHoldTaskForFeedback(latestMessage) && isConversationOnlyMessage(latestMessage));
   const proposedMode = ['conversation', 'answer', 'execute'].includes(candidate.mode) ? candidate.mode : fallback.mode;
-  const mode = hardHold ? 'conversation' : hardExecute ? 'execute' : proposedMode;
+  const mode = hardAnswer ? 'answer' : hardHold ? 'conversation' : hardExecute ? 'execute' : proposedMode;
   const proposedRelation = TURN_RELATIONS.has(candidate.turnRelation) ? candidate.turnRelation : fallbackRelation;
   const turnRelation = control ? 'control'
     : taskCorrection ? 'correction'

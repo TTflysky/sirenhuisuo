@@ -133,7 +133,7 @@ const modelMisclassifiedFollowUp = normalizeTaskDecision({
   mode: 'execute', goal: '重新查找技能', primaryRoute: 'search_skills', acceptanceCriteria: ['重新检索'],
   requiresEvidence: true, needsUser: false, missingUserCondition: '', searchQuery: '技能', decisionReason: '误把追问当命令', confidence: 0.9,
 }, { latestMessage: contextualFollowUp, previousUserMessage: '重新查一下本地已安装技能数量', availableTools: allToolNames });
-assert.equal(modelMisclassifiedFollowUp.mode, 'conversation', 'The kernel must deny tools even when the model misclassifies a discourse follow-up');
+assert.equal(modelMisclassifiedFollowUp.mode, 'answer', 'The kernel must keep a discourse follow-up in an answer-only mode even when the model requests tools');
 assert.equal(modelMisclassifiedFollowUp.primaryRoute, 'direct_answer');
 
 const pausedButNewWorkDecision = createFallbackTaskDecision({

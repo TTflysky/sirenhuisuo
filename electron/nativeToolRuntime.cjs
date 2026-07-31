@@ -306,7 +306,15 @@ function createNativeToolRuntime(options) {
       }
       if (name === 'read_web_page') {
         const result = await options.fetchKnowledgeUrl(String(args.url || ''), { fetchImpl: options.fetchImpl });
-        return result?.ok ? succeeded(name, String(result.content || result.data || '').slice(0, 50000)) : failed(name, result?.error || '网页读取失败');
+        return result?.ok
+          ? succeeded(name, String(result.content || result.data || '').slice(0, 50000), {
+            webResource: {
+              url: result.url || String(args.url || ''),
+              title: result.title || '',
+              acquisition: result.acquisition,
+            },
+          })
+          : failed(name, result?.error || '网页读取失败');
       }
       if (name === 'search_skills') {
         const skills = await options.listSkills(projectRoot);

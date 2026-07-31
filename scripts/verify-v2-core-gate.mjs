@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const checks = [
   'build',
+  'verify:phase1',
   'verify:unified-turn-runtime',
   'verify:turn-lifecycle',
   'verify:agent-trajectory-suite',

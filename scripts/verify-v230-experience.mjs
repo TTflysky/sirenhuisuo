@@ -3,11 +3,14 @@ import fs from 'node:fs/promises';
 import ts from 'typescript';
 
 const read = (file) => fs.readFile(new URL(`../${file}`, import.meta.url), 'utf8');
+const readThemeModules = async () => (await Promise.all([
+  'core', 'collaboration', 'appearance', 'settings', 'workspace',
+].map((name) => read(`src/styles/${name}.css`)))).join('\n');
 const [office, workstation, profiles, theme, settingsUi, avatarUi, client, optimizer, parserSource] = await Promise.all([
   read('src/components/office/OfficeView.tsx'),
   read('src/components/office/Workstation.tsx'),
   read('src/data/employeeProfiles.ts'),
-  read('src/theme.css'),
+  readThemeModules(),
   read('src/components/settings/SettingsModal.tsx'),
   read('src/components/sidebar/EmployeeAvatarPicker.tsx'),
   read('src/data/hermesClient.ts'),

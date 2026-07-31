@@ -1,5 +1,18 @@
 # 太极项目当前交接
 
+## v2.7.4 第一阶段：工程内核标准化（2026-07-31，正式版本）
+
+- 当前源码版本为 `2.7.4`。本阶段一次性收口升级计划中的 v2.7.0-v2.7.4，不把中间小版本分别发布。
+- 标准测试入口为 `test:run` 与 `test:coverage`。目前 6 个测试文件、31 条标准测试全部通过；核心纯逻辑覆盖率为语句 90.44%、分支 75.73%、函数 89.69%、行 93.96%。`verify:phase1` 同时执行标准测试、架构边界和 200 条语义基准。
+- `src/store/appStateReducer.ts` 只负责纯状态转换，`src/store/appStatePersistence.ts` 负责保存副作用；`store.tsx` 通过两者组合。`src/theme.css` 只导入 `core/collaboration/appearance/settings/workspace` 五个样式模块，顺序保持原样。
+- `src/engine/resourceContract.mjs` 是网页、文件、附件、Skill、连接器、员工和任务的通用对象身份与证据合同；`explicitResourceContract.mjs` 仅保留兼容适配。模型可以决定如何处理，但不能改掉用户指定对象。
+- `electron/resourceAcquisition.cjs` 按失败分类选择获取器，`browserPageReader.cjs` 使用隐藏、隔离、禁用 Node 的浏览器窗口读取动态正文。指定 URL 不得回退为主题搜索；404 不继续，其他失败保留每次尝试证据。
+- `KNOWN-URL-001` 已真实联网验收：微信 URL 直连得到验证拦截，浏览器会话约 8 秒取得 1219 字正文，`unrelatedSearches=0`。验收脚本为 `verify:known-url-live`。
+- 200 条语义轨迹准确率为 95%（190/200）。本轮同时修复“你刚才的回答……”被误当普通问题，以及“这个结果我不满意”可能继承旧任务执行权的问题。
+- 内置人格为 v16，自定义人格按章节追加新协议，不覆盖用户原文。下一阶段从 v2.8.0 ExecutionController v2 开始；真实长驻 Electron、Coding Runtime v2、专业协作 v2 和跨版本回滚仍未完成。
+- Windows 安装包为 `release/taiji-office-setup-2.7.4.exe`，大小 `175437030` 字节，SHA-256 为 `770A5A95C18B2F6ADD5A6DBBD7604730E006DED138473D946338E8C0FB6BA24F`；Blockmap 大小 `181343` 字节，SHA-256 为 `6E7DBDBAE0570E3D4DF771AA345F5424B683D8B477C4D38563458546331C243D`；`latest.yml` SHA-256 为 `0EFEA2F59001D66031F56E37261EA0D36433EA5946C6675076CB92CF1128CE1A`。
+- 本机已覆盖安装并启动。安装目录 ASAR 为 `taiji-office 2.7.4`，Windows 产品版本为 `2.7.4.0`，启动后 5 个 Electron 进程正常驻留；用户数据目录覆盖前 264 个文件、停止时 263 个、启动后 265 个，差异来自运行时锁与会话文件，业务目录未清理。
+
 ## v2.6.2 阶段三：明确资源忠实与更新入口恢复（2026-07-31，正式版本）
 
 - 当前源码版本为 `2.6.2`，基于已推送的 `v2.6.1`。安装包为 `release/taiji-office-setup-2.6.2.exe`，大小 `175439262` 字节，SHA-256 为 `DF421190A3F3A728F0D32724E0EB7BED8DEEDB572A81C236E8018994C8C777C0`。
@@ -9,6 +22,7 @@
 - 自动更新入口现在始终可见。`idle/not-available/error` 可点击检查，`checking/available/downloading` 防重复点击，`downloaded` 触发备份后安装；主进程错误可见，45 秒无结果会变成可重试错误。
 - 人格版本为 v15。专项回归为 `verify:explicit-resource-contract` 与 `verify:update-control`，均进入 `verify:v2-core-gate`。微信公众号示例 `https://mp.weixin.qq.com/s/6d_2gn2jK3lVTJaeookHkA` 已作为精确地址回归样例。
 - `verify:v2-core-gate`、Build、Lint 与安装包 20 项必需文件检查均通过。本机安装目录已覆盖为 `2.6.2`，关键合同文件存在；覆盖前后用户数据文件均为 259 个，配置、员工、会话、任务和记忆未清理。
+- 已知未解决问题 `KNOWN-URL-001`：微信公众号指定链接仍可能无法取得正文，执行器随后扩散到搜索、终端和文件检查。v2.6.2 只阻止替代网页和无证据完成声明，没有解决受限网页的可靠获取；本轮不再修改，统一纳入 `docs/TAIJI_UPGRADE_PLAN_V2.7_TO_V3.0.md` 的 v2.7.3 资源获取改造。
 
 ## v2.6.1 阶段三：图片编辑、记忆质量与性能基线（2026-07-31，本地开发版）
 

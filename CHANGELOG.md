@@ -1,5 +1,15 @@
 # 更新日志
 
+## v2.7.4 (Phase 1: standardized kernel, resource acquisition, and semantic baseline)
+
+- Added a standard Vitest test stack with unit, component, and integration suites, jsdom, Testing Library, V8 coverage, and enforceable core-logic thresholds. The release baseline reaches 90.44% statements, 75.73% branches, 89.69% functions, and 93.96% lines.
+- Split pure application-state reduction and persistence side effects out of `store.tsx`; converted `theme.css` into an import-only manifest for five responsibility-based style modules.
+- Generalized explicit URL protection into a resource contract for web pages, files, attachments, Skills, connectors, employees, and tasks, while retaining the old explicit-web adapter for compatibility.
+- Added classified web acquisition with direct HTTP first and an isolated Electron browser-session fallback. Definitive 404 responses stop immediately; blocked, authentication, timeout, network, empty-body, protocol, and unknown failures retain separate evidence.
+- Added live `KNOWN-URL-001` verification for the reported WeChat article. Direct HTTP was correctly classified as blocked, the browser session acquired 1219 characters of source content, and no unrelated search route ran.
+- Added a 200-case semantic trajectory benchmark covering exact resources, fresh research, local files, Skill discovery and installation, team dispatch, independent goals, questions, corrections, and execution controls. The protected goal/relation/route accuracy is 95%.
+- Corrected follow-up and result-feedback isolation so model candidates cannot silently restart old tool execution. Upgraded the built-in assistant persona to v16 while preserving custom persona sections.
+
 ## v2.6.2 (Phase 3: explicit-resource fidelity and update recovery)
 
 - Added a generic explicit-resource contract. A request to summarize, analyze, translate, or rewrite a supplied webpage must read that exact normalized URL before completion; `web_search`, substitute pages, and unsupported completion claims are rejected.

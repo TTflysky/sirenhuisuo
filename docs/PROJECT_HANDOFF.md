@@ -1,9 +1,22 @@
 # 项目交接手册
 
 > 最后整理：2026-07-31
-> 当前源码版本：`v2.6.2`（阶段三正式版本）
+> 当前源码版本：`v2.7.4`（第一阶段正式版本）
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+
+## v2.7.4 工程内核标准化
+
+- 标准测试栈为 Vitest + Testing Library + jsdom + V8 coverage。`test/` 按 unit、components、integration、fixtures 组织；`verify:phase1` 是阶段一入口，覆盖率阈值不得为了发布临时降低。
+- `appStateReducer.ts` 与 `appStatePersistence.ts` 分别承载纯状态转换和持久化副作用；新增 action 时必须同时说明状态变化、持久化位置和对应测试，禁止把副作用写回 reducer。
+- `theme.css` 是导入清单。新增或移动样式应进入 `styles/core.css`、`collaboration.css`、`appearance.css`、`settings.css` 或 `workspace.css`，并保持稳定导入顺序。
+- `resourceContract.mjs` 统一保护 web/file/attachment/skill/connector/employee/task。`explicitResourceContract.mjs` 是旧 API 兼容层，不应再增加只适用于网页的新规则。
+- `resourceAcquisition.cjs` 先直接读取，失败后按类别决定是否进入 `browserPageReader.cjs`。不得增加主题搜索作为指定 URL 的正文替代；404 必须终止，获取尝试必须进入证据。
+- `verify:known-url-live` 使用独立 Electron 用户目录和软件渲染参数。当前微信实机结果为 direct-http blocked -> browser-session success，正文 1219 字，无无关搜索。
+- `taskDecisionKernel` 的模型候选只负责语义判断；规范化层保护目标、对象、任务关系、工具权限和证据边界。200 条轨迹门槛为 95%，失败样例要加入 fixtures 后按类别修复。
+- 人格版本为 v16。下一阶段不要重做本阶段模块，直接进入 v2.8.0-v2.8.4：ExecutionController v2、流式预算、Coding Runtime v2、专业团队协作和真实 Electron 长驻。
+- v2.7.4 安装包大小为 `175437030` 字节，SHA-256 为 `770A5A95C18B2F6ADD5A6DBBD7604730E006DED138473D946338E8C0FB6BA24F`；Blockmap 为 `181343` 字节，`latest.yml` 与安装包版本一致。包内验收确认 20 个必需文件和 6 个字体均存在。
+- 本机覆盖安装后的 ASAR 包版本为 `2.7.4`，可执行文件产品版本为 `2.7.4.0`，启动后进程正常。用户数据文件数只随运行时锁和会话文件在 263-265 间变化，没有执行清空或重建。
 
 ## v2.6.2 明确资源合同与更新状态机
 

@@ -1,0 +1,386 @@
+/* ===== Apple-like shell and appearance modes ===== */
+:root {
+  color-scheme: light;
+  --apple-glass: rgba(255, 255, 255, 0.78);
+  --apple-glass-strong: rgba(255, 255, 255, 0.92);
+  --apple-accent: #007aff;
+  --apple-shadow: 0 12px 32px rgba(31, 41, 55, 0.10);
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #202124;
+  --bg-deep: #292a2e;
+  --surface: #26272b;
+  --surface-raised: #303136;
+  --border: #414247;
+  --border-light: #34353a;
+  --text: #f1f1f3;
+  --text-secondary: #c2c3c8;
+  --text-muted: #999ba3;
+  --office-floor: #222327;
+  --desk: #303136;
+  --desk-shadow: rgba(0, 0, 0, 0.22);
+  --monitor-off: #15161a;
+  --win-bg: #26272b;
+  --win-title-bg: #2c2d31;
+  --win-title-border: #3b3c41;
+  --sidebar-bg: #242529;
+  --sidebar-border: #35363b;
+  --dock-bg: rgba(43, 44, 49, 0.90);
+  --dock-border: rgba(87, 88, 96, 0.58);
+  --apple-glass: rgba(42, 43, 48, 0.84);
+  --apple-glass-strong: rgba(48, 49, 54, 0.96);
+  --apple-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
+}
+
+:root[data-theme='eye-care'] {
+  color-scheme: light;
+  --bg: #e8eee6;
+  --bg-deep: #dce6da;
+  --surface: #f4f7f2;
+  --surface-raised: #fbfcfa;
+  --border: #b8c7b5;
+  --border-light: #ced9cb;
+  --text: #263229;
+  --text-secondary: #53645a;
+  --text-muted: #77867c;
+  --win-bg: #f4f7f2;
+  --win-title-bg: #e5ede2;
+  --win-title-border: #bdcbbb;
+  --sidebar-bg: #e3ebe1;
+  --sidebar-border: #bccbb9;
+  --desk: #f4f7f2;
+  --desk-shadow: rgba(52, 76, 58, .11);
+  --office-floor: linear-gradient(135deg, #edf2eb, #dfe8dd);
+  --dock-bg: rgba(244, 247, 242, .88);
+  --dock-border: rgba(163, 181, 159, .7);
+  --apple-glass: rgba(237, 243, 235, .84);
+  --apple-glass-strong: rgba(244, 247, 242, .95);
+  --apple-accent: #3f7d5b;
+  --apple-shadow: 0 12px 32px rgba(54, 79, 60, .12);
+}
+
+:root[data-theme='soft-gray'] {
+  color-scheme: light;
+  --bg: #eceef1;
+  --bg-deep: #dfe2e7;
+  --surface: #f7f8fa;
+  --surface-raised: #ffffff;
+  --border: #c4c9d1;
+  --border-light: #d7dbe1;
+  --text: #262a31;
+  --text-secondary: #59616e;
+  --text-muted: #818a98;
+  --win-bg: #f7f8fa;
+  --win-title-bg: #e8ebef;
+  --win-title-border: #c9ced6;
+  --sidebar-bg: #e7eaee;
+  --sidebar-border: #c7ccd4;
+  --desk: #f7f8fa;
+  --office-floor: linear-gradient(135deg, #f1f2f4, #e1e4e8);
+  --dock-bg: rgba(247, 248, 250, .86);
+  --dock-border: rgba(183, 189, 199, .7);
+  --apple-glass: rgba(239, 241, 244, .84);
+  --apple-glass-strong: rgba(247, 248, 250, .95);
+  --apple-accent: #4b73a9;
+  --apple-shadow: 0 12px 32px rgba(51, 60, 73, .12);
+}
+
+:root[data-theme='ocean-blue'] {
+  color-scheme: light;
+  --bg: #e8f2fb; --bg-deep: #d8e8f6; --surface: #f7fbff; --surface-raised: #ffffff;
+  --border: #a9c4dd; --border-light: #c9dced; --text: #18324a; --text-secondary: #46657f; --text-muted: #718da5;
+  --win-bg: #f7fbff; --win-title-bg: #deedf9; --win-title-border: #adc7de;
+  --sidebar-bg: #dcebf7; --sidebar-border: #abc5dc; --desk: #f7fbff;
+  --office-floor: linear-gradient(135deg, #eef7ff, #d9eaf7); --dock-bg: rgba(247,251,255,.9); --dock-border: rgba(138,174,205,.72);
+  --apple-glass: rgba(228,241,251,.86); --apple-glass-strong: rgba(247,251,255,.96); --apple-accent: #1677c8;
+  --apple-shadow: 0 13px 34px rgba(31,91,139,.16);
+}
+
+:root[data-theme='quiet-blue'] {
+  color-scheme: dark;
+  --bg: #1e2c3c; --bg-deep: #172433; --surface: #26384b; --surface-raised: #30465c;
+  --border: #58748f; --border-light: #3e5871; --text: #eff7ff; --text-secondary: #c1d4e5; --text-muted: #8fa9c0;
+  --win-bg: #26384b; --win-title-bg: #213448; --win-title-border: #526d87;
+  --sidebar-bg: #1c2e40; --sidebar-border: #49647e; --desk: #2b4055; --office-floor: #1b2a3a;
+  --dock-bg: rgba(35,53,72,.9); --dock-border: rgba(102,133,161,.62);
+  --apple-glass: rgba(35,54,74,.84); --apple-glass-strong: rgba(43,65,87,.94); --apple-accent: #67b7ff;
+  --apple-shadow: 0 18px 44px rgba(4,14,25,.44);
+}
+
+:root[data-theme='glass-light'] {
+  color-scheme: light;
+  --bg: #dfeaf3; --bg-deep: #cbdbe8; --surface: rgba(249,252,255,.68); --surface-raised: rgba(255,255,255,.82);
+  --border: rgba(118,145,169,.62); --border-light: rgba(151,174,193,.48); --text: #203344; --text-secondary: #536a7d; --text-muted: #74899a;
+  --win-bg: rgba(249,252,255,.7); --win-title-bg: rgba(239,247,253,.72); --win-title-border: rgba(120,148,172,.6);
+  --sidebar-bg: rgba(231,241,248,.66); --sidebar-border: rgba(113,143,168,.58); --desk: rgba(250,253,255,.7);
+  --office-floor: linear-gradient(135deg, #e9f3fb, #cddfec); --dock-bg: rgba(249,252,255,.58); --dock-border: rgba(120,151,176,.55);
+  --apple-glass: rgba(241,248,253,.58); --apple-glass-strong: rgba(250,253,255,.72); --apple-accent: #087fc1;
+  --apple-shadow: 0 18px 42px rgba(40,77,105,.18);
+}
+
+:root[data-theme='glass-dark'] {
+  color-scheme: dark;
+  --bg: #17212b; --bg-deep: #101922; --surface: rgba(39,53,67,.7); --surface-raised: rgba(52,69,85,.82);
+  --border: rgba(119,145,169,.68); --border-light: rgba(82,106,128,.58); --text: #f2f7fb; --text-secondary: #c3d0dc; --text-muted: #91a3b3;
+  --win-bg: rgba(39,53,67,.72); --win-title-bg: rgba(31,45,59,.76); --win-title-border: rgba(112,139,164,.65);
+  --sidebar-bg: rgba(27,40,53,.72); --sidebar-border: rgba(98,125,149,.62); --desk: rgba(45,61,76,.74); --office-floor: #14202a;
+  --dock-bg: rgba(34,48,62,.64); --dock-border: rgba(104,132,157,.58);
+  --apple-glass: rgba(34,48,62,.62); --apple-glass-strong: rgba(43,59,74,.76); --apple-accent: #70c5ff;
+  --apple-shadow: 0 22px 50px rgba(0,0,0,.48);
+}
+
+:root[data-theme='spruce'] {
+  color-scheme: dark;
+  --bg: #20332f; --bg-deep: #182824; --surface: #29413b; --surface-raised: #355149;
+  --border: #5e7b72; --border-light: #435f57; --text: #f0f7f4; --text-secondary: #bfd2cb; --text-muted: #8fa9a0;
+  --win-bg: #29413b; --win-title-bg: #243a35; --win-title-border: #58756c;
+  --sidebar-bg: #1d302c; --sidebar-border: #4b685f; --desk: #304a43; --office-floor: #1c2d29;
+  --dock-bg: rgba(38,60,54,.9); --dock-border: rgba(102,133,123,.6);
+  --apple-glass: rgba(39,62,56,.84); --apple-glass-strong: rgba(48,73,66,.95); --apple-accent: #6bc89f;
+  --apple-shadow: 0 18px 44px rgba(2,17,12,.43);
+}
+
+:root[data-theme='graphite'] {
+  color-scheme: dark;
+  --bg: #303238; --bg-deep: #27292e; --surface: #393c43; --surface-raised: #464a52;
+  --border: #686d77; --border-light: #50545d; --text: #f5f6f8; --text-secondary: #ced1d7; --text-muted: #9da2ac;
+  --win-bg: #393c43; --win-title-bg: #34373d; --win-title-border: #626771;
+  --sidebar-bg: #2d3035; --sidebar-border: #555a64; --desk: #41454d; --office-floor: #2b2d32;
+  --dock-bg: rgba(57,60,67,.9); --dock-border: rgba(116,121,132,.58);
+  --apple-glass: rgba(57,60,67,.84); --apple-glass-strong: rgba(68,72,80,.96); --apple-accent: #8ab4f8;
+  --apple-shadow: 0 18px 44px rgba(0,0,0,.42);
+}
+
+:root[data-theme='cyberpunk'] {
+  color-scheme: dark;
+  --bg: #070a12;
+  --bg-deep: #0b1020;
+  --surface: #101624;
+  --surface-raised: #161f32;
+  --border: #294861;
+  --border-light: #1d3245;
+  --text: #ecfbff;
+  --text-secondary: #a7c9d5;
+  --text-muted: #6f93a5;
+  --office-floor: #090e18;
+  --desk: #111c2a;
+  --desk-shadow: rgba(0, 0, 0, .5);
+  --monitor-off: #03060c;
+  --win-bg: #0e1522;
+  --win-title-bg: #121b2a;
+  --win-title-border: #285069;
+  --sidebar-bg: #0b111d;
+  --sidebar-border: #224259;
+  --dock-bg: rgba(10, 18, 31, .94);
+  --dock-border: rgba(32, 227, 255, .34);
+  --apple-glass: rgba(11, 18, 31, .88);
+  --apple-glass-strong: rgba(16, 25, 41, .96);
+  --apple-accent: #20e3ff;
+  --online: #45f3a3;
+  --apple-shadow: 0 18px 46px rgba(0, 0, 0, .52);
+}
+:root[data-theme='cyberpunk'] .titlebar-version,
+:root[data-theme='cyberpunk'] .station-frame-title { color: #ff4fd8; border-color: color-mix(in srgb, #ff4fd8 48%, var(--border)); }
+:root[data-theme='cyberpunk'] [data-role='pm'] .station-avatar-ring,
+:root[data-theme='cyberpunk'] [data-role='pm'] .station-title,
+:root[data-theme='cyberpunk'] [data-role='pm'] .emp-title { border-color: #ff4fd8 !important; color: #ff72df !important; }
+:root[data-theme='cyberpunk'] [data-role='planner'] .station-avatar-ring,
+:root[data-theme='cyberpunk'] [data-role='planner'] .station-title,
+:root[data-theme='cyberpunk'] [data-role='planner'] .emp-title { border-color: #20e3ff !important; color: #6ff0ff !important; }
+:root[data-theme='cyberpunk'] [data-role='coder'] .station-avatar-ring,
+:root[data-theme='cyberpunk'] [data-role='coder'] .station-title,
+:root[data-theme='cyberpunk'] [data-role='coder'] .emp-title { border-color: #45f3a3 !important; color: #6effb7 !important; }
+:root[data-theme='cyberpunk'] [data-role='checker'] .station-avatar-ring,
+:root[data-theme='cyberpunk'] [data-role='checker'] .station-title,
+:root[data-theme='cyberpunk'] [data-role='checker'] .emp-title { border-color: #ffd84d !important; color: #ffe176 !important; }
+
+/* Keep role colors readable at night without the neon-on-black contrast. */
+:root[data-theme='dark'] [data-role='pm'] .station-avatar-ring,
+:root[data-theme='dark'] [data-role='pm'] .station-title,
+:root[data-theme='dark'] [data-role='pm'] .emp-title { border-color: #d47a7d !important; color: #d47a7d !important; }
+:root[data-theme='dark'] [data-role='planner'] .station-avatar-ring,
+:root[data-theme='dark'] [data-role='planner'] .station-title,
+:root[data-theme='dark'] [data-role='planner'] .emp-title { border-color: #6bbcc8 !important; color: #6bbcc8 !important; }
+:root[data-theme='dark'] [data-role='coder'] .station-avatar-ring,
+:root[data-theme='dark'] [data-role='coder'] .station-title,
+:root[data-theme='dark'] [data-role='coder'] .emp-title { border-color: #72bb8c !important; color: #72bb8c !important; }
+:root[data-theme='dark'] [data-role='checker'] .station-avatar-ring,
+:root[data-theme='dark'] [data-role='checker'] .station-title,
+:root[data-theme='dark'] [data-role='checker'] .emp-title { border-color: #a894c7 !important; color: #a894c7 !important; }
+:root[data-theme='dark'] [data-role='custom'] .station-avatar-ring,
+:root[data-theme='dark'] [data-role='custom'] .station-title,
+:root[data-theme='dark'] [data-role='custom'] .emp-title { border-color: #a0a7b3 !important; color: #a0a7b3 !important; }
+
+/* Human bubbles cannot use --text as a background in dark mode: --text is white. */
+:root[data-theme='dark'] .msg.human .msg-bubble {
+  background: #0a84ff;
+  color: #ffffff;
+  box-shadow: 0 2px 10px rgba(0, 122, 255, 0.18);
+}
+
+/* Ant Design is configured at bootstrap for light mode; make its compact
+   controls inherit the night palette when the document switches theme. */
+:root[data-theme='dark'] .ant-segmented,
+:root[data-theme='dark'] .ant-select-selector,
+:root[data-theme='dark'] .ant-btn:not(.ant-btn-primary),
+:root[data-theme='dark'] .ant-input,
+:root[data-theme='dark'] .ant-input-affix-wrapper {
+  background: #2c2d31 !important;
+  border-color: #45464c !important;
+  color: #f1f1f3 !important;
+}
+:root[data-theme='dark'] .ant-segmented-item,
+:root[data-theme='dark'] .ant-segmented-item-label,
+:root[data-theme='dark'] .ant-btn:not(.ant-btn-primary),
+:root[data-theme='dark'] .ant-select-selection-item,
+:root[data-theme='dark'] .ant-select-arrow,
+:root[data-theme='dark'] .ant-input {
+  color: #d7d8dc !important;
+}
+:root[data-theme='dark'] .ant-segmented-item-selected {
+  background: #41434a !important;
+  box-shadow: inset 0 0 0 1px #565861 !important;
+}
+:root[data-theme='dark'] .ant-btn-primary {
+  background: #0a84ff !important;
+  border-color: #0a84ff !important;
+  color: #ffffff !important;
+}
+:root[data-theme='dark'] .ant-input::placeholder { color: #8f9199 !important; }
+
+:root[data-theme='dark'] .btn.btn-primary:disabled,
+:root[data-theme='dark'] .btn.btn-primary:disabled:hover {
+  background: #494b52 !important;
+  border-color: #55575e !important;
+  color: #a4a6ad !important;
+  box-shadow: none;
+}
+:root[data-theme='dark'] .btn.btn-primary:not(:disabled) {
+  background: #0a84ff;
+  border-color: #0a84ff;
+  color: #ffffff;
+}
+:root[data-theme='dark'] .btn.btn-primary:not(:disabled):hover { background: #0074e8; }
+:root[data-theme='dark'] .connector-panel {
+  background: #242529;
+  border-top-color: #393a40 !important;
+}
+:root[data-theme='dark'] .connector-toggle {
+  color: #b7b9c0 !important;
+  background: #2a2b30;
+}
+:root[data-theme='dark'] .connector-toggle:hover { background: #33343a; }
+:root[data-theme='dark'] .connector-item {
+  background: #303136 !important;
+  border-color: #414249 !important;
+  color: #e4e5e8;
+}
+:root[data-theme='dark'] .connector-add-btn {
+  background: #34353b !important;
+  border-color: #4b4d55 !important;
+  color: #e4e5e8 !important;
+}
+.connector-panel { margin-top: auto; border-top: 1px solid var(--border-light); background: var(--sidebar-bg); }
+.connector-toggle { width: 100%; min-height: 36px; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; border: 0; background: transparent; color: var(--text-muted); cursor: pointer; font: inherit; font-size: 11px; font-weight: 600; }
+.connector-toggle > span:first-child { display: flex; align-items: center; gap: 6px; }
+.connector-toggle b { min-width: 16px; padding: 1px 4px; border-radius: 4px; background: rgba(34,197,94,.12); color: #16803b; font-size: 9px; text-align: center; }
+.knowledge-manager { min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.knowledge-manager--compact { max-height: 310px; padding: 0 8px 9px; overflow-y: auto; }
+.knowledge-manager-actions { display: block; }
+.knowledge-add-menu { width: 100%; min-height: 30px; display: flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--border-light); border-radius: 5px; background: var(--surface); color: var(--text); cursor: pointer; font: inherit; font-size: 11px; }
+.knowledge-add-menu:hover { border-color: var(--primary); color: var(--primary); }
+.knowledge-connector-list { display: flex; flex-direction: column; gap: 5px; }
+.knowledge-empty { padding: 16px; color: var(--text-muted); text-align: center; font-size: 11px; }
+.knowledge-connector-row { min-width: 0; min-height: 48px; display: grid; grid-template-columns: 30px minmax(0,1fr) auto; align-items: center; gap: 7px; padding: 6px 7px; border: 1px solid var(--border-light); border-radius: 6px; background: var(--surface); }
+.knowledge-connector-row.enabled { border-color: rgba(34,197,94,.28); }
+.knowledge-connector-icon { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; background: var(--bg-deep); color: #0877c9; font-size: 14px; }
+.knowledge-connector-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.knowledge-connector-main strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); font-size: 11px; }
+.knowledge-connector-main small { font-size: 9px; color: var(--text-muted); }
+.knowledge-connector-main .status-connected { color: #16803b; }
+.knowledge-connector-main .status-disconnected { color: #d14343; }
+.knowledge-connector-tools { display: flex; gap: 1px; }
+.knowledge-connector-tools button { width: 24px; height: 24px; display: grid; place-items: center; border: 0; border-radius: 4px; background: transparent; color: var(--text-muted); cursor: pointer; }
+.knowledge-connector-tools button:hover { background: var(--bg-deep); color: var(--text); }
+.knowledge-connector-tools button:disabled { opacity: .55; cursor: wait; }
+.knowledge-config-form { display: flex; flex-direction: column; gap: 14px; padding-top: 4px; }
+.knowledge-config-form > label { display: flex; flex-direction: column; gap: 6px; }
+.knowledge-config-form > label > span { color: var(--text-secondary); font-size: 11px; font-weight: 600; }
+.knowledge-config-summary { display: grid; grid-template-columns: 38px minmax(0,1fr); align-items: center; gap: 10px; padding: 10px; border: 1px solid var(--border-light); border-radius: 6px; background: var(--bg-deep); }
+.knowledge-config-summary > span { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 6px; background: var(--surface); color: #0877c9; font-size: 18px; }
+.knowledge-config-summary > div { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.knowledge-config-summary strong { font-size: 13px; }
+.knowledge-config-summary small { color: var(--text-muted); font-size: 10px; }
+.knowledge-skill-status { padding: 7px 9px; border: 1px solid rgba(34,197,94,.3); border-radius: 5px; background: rgba(34,197,94,.08); color: #16803b; font-size: 11px; }
+.knowledge-path-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 7px; }
+.knowledge-enable-row { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; border-top: 1px solid var(--border-light); border-bottom: 1px solid var(--border-light); font-size: 12px; }
+.knowledge-config-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Connector setup is a compact operational flow, shared by modal and tool window. */
+.connector-config-modal { top: 4vh; padding-bottom: 0; }
+.connector-config-modal .ant-modal-container,
+.connector-config-modal .ant-modal-content {
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--elevation-3);
+}
+.connector-config-modal .ant-modal-header {
+  min-height: 48px;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-raised);
+}
+.connector-config-modal .ant-modal-title { color: var(--text); font-size: 14px; font-weight: 680; }
+.connector-config-modal .ant-modal-close { top: 9px; color: var(--text-muted); }
+.connector-config-modal .ant-modal-body { background: var(--surface); }
+.connector-config-modal .connector-config-form { max-height: min(720px, calc(92vh - 48px)); box-sizing: border-box; gap: 0; padding: 0; overflow: hidden; }
+.connector-config-scroll { min-height: 0; flex: 1; display: flex; flex-direction: column; gap: 13px; padding: 16px 18px; overflow-y: auto; }
+.connector-config-form label { display: flex; flex-direction: column; gap: 6px; }
+.connector-config-form label > span { color: var(--text-secondary); font-size: 12px; font-weight: 600; }
+.connector-config-form .ant-input,
+.connector-config-form .ant-input-affix-wrapper,
+.connector-config-form .ant-select-selector { min-height: 34px; border-radius: 6px !important; background: var(--bg-deep) !important; border-color: var(--border) !important; color: var(--text) !important; }
+.connector-config-form .ant-input::placeholder { color: var(--text-muted); }
+.connector-config-form .knowledge-config-summary { min-height: 58px; padding: 10px 12px; border-color: var(--border); background: var(--bg-deep); }
+.connector-config-form .knowledge-config-summary > span { background: color-mix(in srgb, var(--apple-accent) 11%, var(--surface)); color: var(--apple-accent); }
+.connector-config-form .knowledge-config-summary strong { color: var(--text); font-size: 14px; }
+.connector-config-form .knowledge-config-summary small { font-size: 11px; line-height: 1.45; }
+.connector-config-steps { min-height: 38px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: center; gap: 8px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg-deep); }
+.connector-config-steps > span { min-width: 0; display: flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 10px; white-space: nowrap; }
+.connector-config-steps i { width: 19px; height: 19px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 50%; background: var(--surface); color: var(--text-muted); font-style: normal; font-size: 9px; }
+.connector-config-steps .is-current { color: var(--text); font-weight: 650; }
+.connector-config-steps .is-current i { border-color: var(--apple-accent); color: var(--apple-accent); }
+.connector-config-steps .is-done { color: var(--online); }
+.connector-config-steps .is-done i { border-color: color-mix(in srgb, var(--online) 55%, var(--border)); color: var(--online); }
+.connector-config-form .knowledge-skill-status { display: flex; align-items: center; gap: 7px; border-color: color-mix(in srgb, var(--online) 42%, var(--border)); background: color-mix(in srgb, var(--online) 8%, var(--surface)); color: var(--online); }
+.connector-config-form .knowledge-enable-row { padding: 10px 2px; border-color: var(--border); }
+.connector-config-form .knowledge-enable-row > span { display: flex; flex-direction: column; gap: 2px; }
+.connector-config-form .knowledge-enable-row strong { color: var(--text); font-size: 12px; }
+.connector-config-form .knowledge-enable-row small { color: var(--text-muted); font-size: 10px; }
+.connector-credential-note { display: flex; align-items: flex-start; gap: 7px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--apple-accent) 30%, var(--border)); border-radius: 6px; background: color-mix(in srgb, var(--apple-accent) 6%, var(--surface)); color: var(--text-secondary); font-size: 10px; line-height: 1.5; }
+.connector-credential-note .anticon { margin-top: 2px; color: var(--apple-accent); }
+.connector-config-form .knowledge-config-actions { flex: 0 0 auto; margin: 0; padding: 12px 18px; border-top: 1px solid var(--border); background: color-mix(in srgb, var(--surface) 94%, transparent); }
+.connector-config-form .knowledge-config-actions .ant-btn { min-height: 34px; border-radius: 6px; }
+.connector-config-form .knowledge-config-actions .ant-btn-primary { min-width: 182px; }
+
+.tool-window-body > .ant-modal-root .ant-modal-wrap { position: absolute; inset: 0; overflow: hidden auto; }
+.tool-window-body > .ant-modal-root .connector-config-modal.is-standalone { top: 0; width: 100% !important; max-width: none; margin: 0; padding: 12px; }
+.connector-config-modal.is-standalone .ant-modal-container,
+.connector-config-modal.is-standalone .ant-modal-content { min-height: calc(100vh - 64px); box-shadow: var(--elevation-1); }
+.connector-config-modal.is-standalone .connector-config-form { max-height: calc(100vh - 113px); }
+
+:root[data-color-mode='dark'] .connector-config-modal .ant-modal-container,
+:root[data-color-mode='dark'] .connector-config-modal .ant-modal-content,
+:root[data-color-mode='dark'] .connector-config-modal .ant-modal-header,
+:root[data-color-mode='dark'] .connector-config-modal .ant-modal-body { background: var(--surface) !important; color: var(--text) !important; }
+:root[data-color-mode='dark'] .connector-config-modal .ant-modal-header { background: var(--surface-raised) !important; }
+:root[data-color-mode='dark'] .connector-config-form .ant-input-password-icon { color: var(--text-muted); }
+:root[data-theme='dark'] .knowledge-connector-row,.knowledge-market-card { background: #2d2e33; }

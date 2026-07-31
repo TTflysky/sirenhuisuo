@@ -1,8 +1,13 @@
 export interface ExplicitResourceContract {
+  version: 1;
   kind: 'web-content';
   operation: 'read-transform';
   urls: string[];
   requiredTool: 'read_web_page';
+  resources: Array<{ kind: string; id: string; locator: string; source: string; metadata: Record<string, unknown> }>;
+  acquisitionRequired: boolean;
+  evidenceRequired: boolean;
+  substitutionAllowed: boolean;
 }
 export interface ExplicitResourceCall { name: string; args?: string | Record<string, unknown>; arguments?: string | Record<string, unknown>; success?: boolean }
 export function normalizeExplicitUrl(value: unknown): string;

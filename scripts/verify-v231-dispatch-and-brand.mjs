@@ -74,7 +74,8 @@ assert.doesNotMatch(markdown, /Hermes 助手导出/u);
 const [assistantSource, officeSource, themeSource] = await Promise.all([
   fs.readFile('src/components/chat/AssistantChat.tsx', 'utf8'),
   fs.readFile('src/components/office/OfficeView.tsx', 'utf8'),
-  fs.readFile('src/theme.css', 'utf8'),
+  Promise.all(['core', 'collaboration', 'appearance', 'settings', 'workspace']
+    .map((name) => fs.readFile(`src/styles/${name}.css`, 'utf8'))).then((sources) => sources.join('\n')),
 ]);
 assert.ok(assistantSource.indexOf('isProjectRosterRematchRequest(enriched)') < assistantSource.indexOf('isTeamMemberAdditionRequest(enriched)'), '草案重匹配必须先于单人添加处理');
 assert.match(assistantSource, /安排\.\{0,12\}\(\?:员工\|成员\|人\|人手\|专员\|同事\)/u, '“安排人”必须进入显式团队调度');
