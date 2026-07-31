@@ -1,9 +1,17 @@
 # 项目交接手册
 
 > 最后整理：2026-07-31
-> 当前源码版本：`v2.4.0`（阶段一开发中，未发布）
+> 当前源码版本：`v2.5.0`（阶段二开发中，未发布）
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+
+## v2.5.0 阶段二：专家人格数据与团队入口
+
+- `expertToEmployee()` 现在把简明角色职责写入 `prompt`，将完整 `instructions` 写入 `soul`。这对应运行时的职责分层：`prompt` 提供身份和回复边界，`soul` 作为深层工作规则被私聊和团队执行共同注入。
+- `normalizeCatalogEmployeePersonas()` 在 `fetchInitial()` 中执行。它只迁移带 `catalogId` 的内置专家，识别旧版精确拼接或“专业工作规则”标记；自定义 `prompt` 保留，空 `soul` 补为官方专家规则。该迁移可重复执行。
+- `OfficeView`/`Workstation` 增加 `onStationEdit` 和设置图标，调用 Electron 工具窗口中的既有 `EditEmployeeModal`，无 Electron 时回退为主窗口编辑弹窗。
+- `SidebarPanel` 不再导入或渲染 `TeamList`；团队生命周期操作只由 `TeamHallPanel` 承担，避免两个列表在状态和操作上漂移。
+- 回归入口：`npm.cmd run verify:v250-personas-and-office`。当前版本尚未打包或发布。
 
 ## v2.4.0 阶段一：轮次语义与平台级图片模型
 

@@ -155,6 +155,7 @@ html, body, #root, .app-root {
 .sidebar-resizable-panel { display: flex; min-height: 0; flex-direction: column; overflow: hidden; }
 .sidebar-resizable-panel.is-collapsed { flex: 0 0 auto; height: auto; }
 .employee-panel { flex: 0 0 auto; }
+.employee-panel.is-standalone { flex: 1 1 auto; min-height: 0; }
 .team-panel { flex: 1 1 120px; min-height: 54px; }
 .team-panel > .sidebar-section { display: flex; min-height: 0; height: 100%; flex-direction: column; overflow-y: auto; }
 .sidebar-section-heading { min-height: 30px; display: flex; align-items: center; justify-content: space-between; margin: 0 7px 5px; padding: 5px 9px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); color: var(--text); font-size: 11px; font-weight: 700; }
@@ -3304,6 +3305,13 @@ body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
   color: var(--text-muted);
   cursor: pointer;
 }
+.employee-id-settings {
+  position: absolute; z-index: 3; top: 10px; left: 10px;
+  width: 24px; height: 24px; padding: 0; border: 1px solid var(--border);
+  border-radius: 7px; background: color-mix(in srgb, var(--surface) 86%, transparent);
+  color: var(--text-muted); display: inline-grid; place-items: center; cursor: pointer;
+}
+.employee-id-settings:hover { border-color: var(--apple-accent); color: var(--apple-accent); }
 .employee-id-flip:hover { border-color: var(--apple-accent); color: var(--apple-accent); }
 .employee-id-inner {
   position: absolute;

@@ -47,6 +47,14 @@ const EXPERT_FRAME_IDS = AVATAR_FRAME_PRESETS
   .filter((frame) => !['slacking', 'vacation', 'intern', 'emeritus'].includes(frame.id))
   .map((frame) => frame.id);
 
+function catalogPrompt(expert: ExpertCatalogEntry): string {
+  return `你是「${expert.name}」，${expert.title}。专业职责：${expert.summary}`;
+}
+
+function legacyCatalogPrompt(expert: ExpertCatalogEntry): string {
+  return `${expert.summary}\n\n专业工作规则：\n${expert.instructions}`;
+}
+
 export function expertToEmployee(expert: ExpertCatalogEntry, visualSeed = 0, stationIndex = -1): Employee {
   const role = roleForExpert(expert);
   const hash = stableHash(`${expert.id}:${visualSeed}`);
@@ -62,11 +70,37 @@ export function expertToEmployee(expert: ExpertCatalogEntry, visualSeed = 0, sta
     statusColor: ROLE_SCARF[role],
     avatarFrame: { presetId: EXPERT_FRAME_IDS[hash % EXPERT_FRAME_IDS.length] },
     stationIndex,
-    prompt: `${expert.summary}\n\n专业工作规则：\n${expert.instructions}`,
+    // Keep the concise public role prompt separate from the full operating manual.
+    // Chat and team runtimes inject soul as higher-priority working context.
+    prompt: catalogPrompt(expert),
+    soul: expert.instructions,
     isOnline: true,
     isWorking: false,
     capabilities: expertCapabilities(expert),
   };
+}
+
+/**
+ * Repairs catalog experts created before their role prompt and soul were
+ * separated. It is deliberately idempotent and leaves user-authored prompt
+ * customizations intact.
+ */
+export function normalizeCatalogEmployeePersonas(employees: Employee[]): { employees: Employee[]; changed: boolean } {
+  let changed = false;
+  const next = employees.map((employee) => {
+    const expert = employee.catalogId ? findExpertCatalogEntry(employee.catalogId) : undefined;
+    if (!expert) return employee;
+
+    const prompt = employee.prompt?.trim() ?? '';
+    const legacy = prompt === legacyCatalogPrompt(expert)
+      || (prompt.includes('专业工作规则：') && prompt.includes(expert.instructions.slice(0, 120)));
+    const nextPrompt = legacy || !prompt ? catalogPrompt(expert) : employee.prompt;
+    const nextSoul = employee.soul?.trim() || expert.instructions;
+    if (nextPrompt === employee.prompt && nextSoul === employee.soul) return employee;
+    changed = true;
+    return { ...employee, prompt: nextPrompt, soul: nextSoul };
+  });
+  return { employees: changed ? next : employees, changed };
 }
 
 /** Adds every built-in expert to the real office roster without touching user-created profiles. */

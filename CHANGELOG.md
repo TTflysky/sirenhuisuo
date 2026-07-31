@@ -1,5 +1,13 @@
 # 更新日志
 
+## v2.5.0 (Phase 2: expert personas and office navigation)
+
+- Split bundled Agency expert data into a concise role prompt and a full `soul` operating manual. New experts now receive their detailed instructions in `soul`, where employee direct messages and team execution consume them as working context.
+- Added an idempotent startup migration for previously materialized catalog experts. It moves the known legacy instruction payload out of `prompt`, fills an empty `soul`, and preserves user-authored prompt customizations.
+- Added an employee-settings button to every occupied office staff card. It opens the same employee configuration surface used by the sidebar, including model, personality, avatar, and status settings.
+- Removed the duplicate team list from the left employee sidebar. Teams are now managed from Team Hall, which remains the single surface for opening, renaming, archiving, and deleting teams.
+- Added `verify:v250-personas-and-office` and included it in the complete v2 release gate.
+
 ## v2.4.0 (Phase 1: turn isolation and platform-wide GPT Image 2)
 
 - Added turn-relation classification before task planning. A new independent goal, continuation, correction, control command, and status question are now treated as different conversational acts, so a new request no longer gets silently merged into an in-flight task.

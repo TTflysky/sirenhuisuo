@@ -4,7 +4,6 @@ import {
   DoubleRightOutlined,
   DownOutlined,
   ReloadOutlined,
-  TeamOutlined,
   UpOutlined,
   UserAddOutlined,
   UserOutlined,
@@ -13,9 +12,7 @@ import {
 import { useStore } from '../../storeContext';
 import type { Employee } from '../../types';
 import EmployeeCard from './EmployeeCard';
-import TeamList from './TeamList';
 import AddEmployeeModal from './AddEmployeeModal';
-import CreateTeamModal from './CreateTeamModal';
 import EditEmployeeModal from './EditEmployeeModal';
 import AssistantModelSelector from './AssistantModelSelector';
 import ConnectorPanel from './ConnectorPanel';
@@ -24,15 +21,12 @@ import { applySyncProfile } from '../../utils/configSync';
 type Filter = 'all' | 'online' | 'working' | 'idle';
 
 export default function SidebarPanel() {
-  const { state, openTeamChat, openDmChat } = useStore();
+  const { state, openDmChat } = useStore();
   const [collapsed, setCollapsed] = useState(false);
   const [employeesCollapsed, setEmployeesCollapsed] = useState(() => localStorage.getItem('hermes_office_sidebar_employees_collapsed') === '1');
-  const [teamsCollapsed, setTeamsCollapsed] = useState(() => localStorage.getItem('hermes_office_sidebar_teams_collapsed') === '1');
   const [sidebarWidth, setSidebarWidth] = useState(() => Number(localStorage.getItem('hermes_office_sidebar_width')) || 260);
-  const [employeeHeight, setEmployeeHeight] = useState(() => Number(localStorage.getItem('hermes_office_sidebar_employee_height')) || 300);
   const [filter, setFilter] = useState<Filter>('all');
   const [showAddEmp, setShowAddEmp] = useState(false);
-  const [showNewTeam, setShowNewTeam] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const syncInputRef = useRef<HTMLInputElement>(null);
 
@@ -58,31 +52,10 @@ export default function SidebarPanel() {
     window.addEventListener('pointerup', end);
   };
 
-  const startSectionResize = (event: React.PointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const startY = event.clientY;
-    const initial = employeeHeight;
-    const move = (moveEvent: PointerEvent) => setEmployeeHeight(Math.max(130, Math.min(520, initial + moveEvent.clientY - startY)));
-    const end = (endEvent: PointerEvent) => {
-      const next = Math.max(130, Math.min(520, initial + endEvent.clientY - startY));
-      setEmployeeHeight(next);
-      localStorage.setItem('hermes_office_sidebar_employee_height', String(next));
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', end);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', end);
-  };
-
   const toggleEmployees = () => setEmployeesCollapsed((value) => {
     localStorage.setItem('hermes_office_sidebar_employees_collapsed', value ? '0' : '1');
     return !value;
   });
-  const toggleTeams = () => setTeamsCollapsed((value) => {
-    localStorage.setItem('hermes_office_sidebar_teams_collapsed', value ? '0' : '1');
-    return !value;
-  });
-
   const handleSyncImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -120,7 +93,7 @@ export default function SidebarPanel() {
 
         {!collapsed && (
           <>
-            <div className={`sidebar-resizable-panel employee-panel ${employeesCollapsed ? 'is-collapsed' : ''}`} style={employeesCollapsed ? undefined : { height: employeeHeight }}>
+            <div className={`sidebar-resizable-panel employee-panel is-standalone ${employeesCollapsed ? 'is-collapsed' : ''}`}>
               <div className="sidebar-section-heading">
                 <span>员工列表 <small>{filtered.length}</small></span>
                 <button className="sidebar-fold-btn" onClick={toggleEmployees} title={employeesCollapsed ? '展开员工' : '折叠员工'} aria-label={employeesCollapsed ? '展开员工' : '折叠员工'}>{employeesCollapsed ? <DownOutlined /> : <UpOutlined />}</button>
@@ -156,13 +129,6 @@ export default function SidebarPanel() {
               </div>}
             </div>
 
-            {!employeesCollapsed && !teamsCollapsed && <div className="sidebar-section-resizer" onPointerDown={startSectionResize} title="拖动调整员工与团队区域高度" />}
-
-            {/* 团队列表 */}
-            <div className={`sidebar-resizable-panel team-panel ${teamsCollapsed ? 'is-collapsed' : ''}`}>
-              <TeamList onTeamClick={openTeamChat} onNewTeam={() => void openToolWindow({ type: 'create-team' }, () => setShowNewTeam(true))} collapsed={teamsCollapsed} onToggle={toggleTeams} />
-            </div>
-
             {/* 连接器区域 */}
             <ConnectorPanel />
 
@@ -175,9 +141,6 @@ export default function SidebarPanel() {
               <div className="sidebar-footer-tools">
                 <button className="btn btn-sm" title="导入员工、团队和模型同步配置" onClick={() => syncInputRef.current?.click()}>
                   <UploadOutlined /> 同步
-                </button>
-                <button className="btn btn-sm" onClick={() => void openToolWindow({ type: 'create-team' }, () => setShowNewTeam(true))} title="新建团队">
-                  <TeamOutlined /> 团队
                 </button>
                 <button
                   className="btn btn-sm"
@@ -202,7 +165,6 @@ export default function SidebarPanel() {
 
       {/* Modals */}
       {showAddEmp && <AddEmployeeModal onClose={() => setShowAddEmp(false)} />}
-      {showNewTeam && <CreateTeamModal onClose={() => setShowNewTeam(false)} />}
       {editingEmployee && (
         <EditEmployeeModal
           employee={editingEmployee}

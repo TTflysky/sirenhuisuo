@@ -26,6 +26,7 @@ const checks = [
   'verify:image-model-routing',
   'verify:v231-dispatch-and-brand',
   'verify:task-turn-isolation',
+  'verify:v250-personas-and-office',
 ];
 
 for (const script of checks) {

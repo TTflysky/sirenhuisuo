@@ -27,6 +27,7 @@ import Analytics from './components/analytics/Analytics';
 import TeamHallPanel from './components/team/TeamHallPanel';
 import ChatOnlyView from './components/chat/ChatOnlyView';
 import ToolWindowView from './components/windows/ToolWindowView';
+import EditEmployeeModal from './components/sidebar/EditEmployeeModal';
 import SkillLibraryView from './components/skills/SkillLibraryView';
 import { checkBackend } from './data/hermesClient';
 import { APP_VERSION } from './appVersion';
@@ -65,6 +66,7 @@ export default function App() {
 
   // ===== ALL hooks first (Rules of Hooks) =====
   const [showSettings, setShowSettings] = useState(false);
+  const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [view, setView] = useState<View>('office');
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [assistantLocked, setAssistantLocked] = useState(false);
@@ -173,6 +175,10 @@ export default function App() {
   }
 
   const handleStationClick = (emp: Employee) => openDmChat(emp.id);
+  const handleStationEdit = async (emp: Employee) => {
+    const result = await window.electronAPI?.openTool?.({ type: 'edit-employee', refId: emp.id });
+    if (!result?.ok) setEditingEmployee(emp);
+  };
 
   const handleDemo = () => {
     openTeamChat('team-opc');
@@ -334,6 +340,7 @@ export default function App() {
               employees={state.employees}
               isWorking={(e) => e.isWorking}
               onStationClick={handleStationClick}
+              onStationEdit={(employee) => void handleStationEdit(employee)}
             />
           </>
         ) : view === 'team-hall' ? (
@@ -347,6 +354,7 @@ export default function App() {
 
       {/* 设置弹窗 */}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} onSaved={handleSettingsSaved} />}
+      {editingEmployee && <EditEmployeeModal employee={editingEmployee} onClose={() => setEditingEmployee(null)} />}
     </div>
   );
 }

@@ -8,7 +8,7 @@ import type { ToolExecutionEvidence } from '../engine/executionEvidence.mjs';
 import { loadTaskRuns } from './taskRuns';
 import { redactToolArguments } from '../engine/securityBoundary';
 import { ensureDistinctEmployeeColors } from './employeeColors';
-import { materializeCatalogEmployees } from './expertCatalog';
+import { materializeCatalogEmployees, normalizeCatalogEmployeePersonas } from './expertCatalog';
 import { parseGeneratedAvatarPayload } from './generatedAvatar';
 import {
   canonicalToolCallKey,
@@ -2262,11 +2262,13 @@ export function fetchInitial(): AppState {
   // catalog IDs are appended during this one-way migration.
   const catalogMigration = materializeCatalogEmployees(employees);
   employees = catalogMigration.employees;
+  const catalogPersonaMigration = normalizeCatalogEmployeePersonas(employees);
+  employees = catalogPersonaMigration.employees;
   const distinctColors = ensureDistinctEmployeeColors(employees);
   employees = distinctColors.employees;
   const repairedStations = repairEmployeeStations(employees);
   employees = repairedStations.employees;
-  if (catalogMigration.added.length || distinctColors.changed || repairedStations.changed) saveEmployees(employees);
+  if (catalogMigration.added.length || catalogPersonaMigration.changed || distinctColors.changed || repairedStations.changed) saveEmployees(employees);
 
   // Teams (不含 chatMessages)
   let teams: Team[] = [];

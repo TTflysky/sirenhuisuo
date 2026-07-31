@@ -9,13 +9,14 @@ interface Props {
   employees: Employee[];
   isWorking: (emp: Employee) => boolean;
   onStationClick: (emp: Employee) => void;
+  onStationEdit: (emp: Employee) => void;
 }
 
 /**
  * 正俯视办公室：4×3 工位网格平铺，无 3D 斜视。
  * 每个工位一块桌面，员工形象清晰可见。
  */
-export default function OfficeView({ employees, isWorking, onStationClick }: Props) {
+export default function OfficeView({ employees, isWorking, onStationClick, onStationEdit }: Props) {
   const [category, setCategory] = useState<'all' | EmployeeCategoryId>('all');
   const categoryScrollRef = useRef<HTMLDivElement>(null);
   const [categoryScrollState, setCategoryScrollState] = useState({ canBack: false, canForward: false });
@@ -84,6 +85,7 @@ export default function OfficeView({ employees, isWorking, onStationClick }: Pro
         employee={emp ?? null}
         isWorking={emp ? isWorking(emp) : false}
         onClick={emp ? () => onStationClick(emp) : undefined}
+        onEdit={emp ? () => onStationEdit(emp) : undefined}
       />
     );
   }

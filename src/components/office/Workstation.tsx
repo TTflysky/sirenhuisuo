@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { MessageOutlined, SwapOutlined } from '@ant-design/icons';
+import { MessageOutlined, SettingOutlined, SwapOutlined } from '@ant-design/icons';
 import type { Employee } from '../../types';
 import AgentAvatar from './AgentAvatar';
 import { resolveAvatarFrame } from '../../data/avatarFrames';
@@ -10,13 +10,14 @@ interface Props {
   employee: Employee | null;
   isWorking: boolean;
   onClick?: () => void;
+  onEdit?: () => void;
 }
 
 /**
  * 纯头像工位卡：大圆形头像（角色色环）+ 名字 + 身份牌 + 状态点。
  * 无桌椅显示器，干净网格。点击员工弹私聊。
  */
-export default function Workstation({ stationIndex, employee, isWorking, onClick }: Props) {
+export default function Workstation({ stationIndex, employee, isWorking, onClick, onEdit }: Props) {
   const [flipped, setFlipped] = useState(false);
   const hasEmp = employee !== null;
   const frame = employee ? resolveAvatarFrame(employee.avatarFrame) : null;
@@ -36,6 +37,7 @@ export default function Workstation({ stationIndex, employee, isWorking, onClick
       {hasEmp ? (
         <>
           <div className="employee-id-strap" aria-hidden><i /></div>
+          <button type="button" className="employee-id-settings" onClick={(event) => { event.stopPropagation(); onEdit?.(); }} title={`编辑${employee.name}的设置`} aria-label={`编辑${employee.name}的设置`}><SettingOutlined /></button>
           <button type="button" className="employee-id-flip" onClick={flip} title={flipped ? '查看工牌正面' : '查看详细能力'} aria-label={flipped ? '查看工牌正面' : '查看详细能力'}><SwapOutlined /></button>
           <div className="employee-id-inner">
             <section
