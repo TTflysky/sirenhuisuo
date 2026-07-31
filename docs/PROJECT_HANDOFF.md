@@ -1,7 +1,7 @@
 # 项目交接手册
 
 > 最后整理：2026-07-31
-> 当前源码版本：`v2.5.1`（阶段二开发中，未发布）
+> 当前源码版本：`v2.5.2`（阶段二开发中，未发布）
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 

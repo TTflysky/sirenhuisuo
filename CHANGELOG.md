@@ -1,5 +1,9 @@
 # 更新日志
 
+## v2.5.2 (Office card action placement)
+
+- Moved the office employee-card settings action from the top-left text area to a compact three-dot action at the bottom-right, preserving the existing employee configuration entry point while keeping identity information unobstructed.
+
 ## v2.5.1 (Phase 2: Coding Runtime foundation)
 
 - Added an independent Coding Runtime for software tasks. It prepares a task workspace or isolated Git worktree, indexes files and symbols, resolves import relationships, captures diffs/checkpoints, and keeps bounded incremental command-session logs with classified failures.

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { MessageOutlined, SettingOutlined, SwapOutlined } from '@ant-design/icons';
+import { EllipsisOutlined, MessageOutlined, SwapOutlined } from '@ant-design/icons';
 import type { Employee } from '../../types';
 import AgentAvatar from './AgentAvatar';
 import { resolveAvatarFrame } from '../../data/avatarFrames';
@@ -37,7 +37,7 @@ export default function Workstation({ stationIndex, employee, isWorking, onClick
       {hasEmp ? (
         <>
           <div className="employee-id-strap" aria-hidden><i /></div>
-          <button type="button" className="employee-id-settings" onClick={(event) => { event.stopPropagation(); onEdit?.(); }} title={`编辑${employee.name}的设置`} aria-label={`编辑${employee.name}的设置`}><SettingOutlined /></button>
+          <button type="button" className="employee-id-settings" onClick={(event) => { event.stopPropagation(); onEdit?.(); }} title={`编辑${employee.name}的设置`} aria-label={`编辑${employee.name}的设置`}><EllipsisOutlined /></button>
           <button type="button" className="employee-id-flip" onClick={flip} title={flipped ? '查看工牌正面' : '查看详细能力'} aria-label={flipped ? '查看工牌正面' : '查看详细能力'}><SwapOutlined /></button>
           <div className="employee-id-inner">
             <section

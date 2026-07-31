@@ -3306,7 +3306,7 @@ body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
   cursor: pointer;
 }
 .employee-id-settings {
-  position: absolute; z-index: 3; top: 10px; left: 10px;
+  position: absolute; z-index: 7; right: 9px; bottom: 9px;
   width: 24px; height: 24px; padding: 0; border: 1px solid var(--border);
   border-radius: 7px; background: color-mix(in srgb, var(--surface) 86%, transparent);
   color: var(--text-muted); display: inline-grid; place-items: center; cursor: pointer;
