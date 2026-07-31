@@ -1,5 +1,16 @@
 # 太极项目当前交接
 
+## v2.6.1 阶段三：图片编辑、记忆质量与性能基线（2026-07-31，本地开发版）
+
+- 当前源码版本为 `2.6.1`，基于已发布并完成本机安装迁移验收的 `v2.6.0`。本版本只做本地源码和回归收口，尚未打包、安装或发布 GitHub Release。
+- 图片模型链路已修正：`src/engine/imageRequest.mjs` 选择本轮真实图片、解码 data URL 并构造 multipart；`generateImage()` 有源图走 `/images/edits`，无源图走 `/images/generations`。助理、员工单聊、团队聊天都必须传入本轮附件，不能仅把图片显示在气泡里。
+- 用户记忆质量已从 `hermesClient` 抽离到 `userMemoryQuality.mjs` 与 `userMemory.ts`。重复、替换、冲突、重要度容量、过期复核和可见修改原因由统一引擎处理；待复核记忆不注入模型上下文。
+- `nativeExecutionPolicy.cjs` 从原生执行主循环抽出端点、交付类型、补偿审批、证据与父子任务交接判断；`eventFanout.mjs` 负责跨组件广播订阅并清理空频道。`verify:module-boundaries` 阻止这些职责回流到超大模块。
+- 新增回归：`verify:image-model-routing`、`verify:user-memory-quality`、`verify:native-execution-policy`、`verify:module-boundaries`、`verify:phase3-performance`。性能基线覆盖 268 名专家、320 员工、12000 条任务事件与 12 窗口广播；以上均进入 `verify:v2-core-gate`。
+- 内置章北海人格版本升至 v14。人格迁移已改为逐章节补齐，保留用户自定义内容，同时确保附件事实、图片编辑和记忆质量协议进入旧客户端。
+- v2.6.1 自我评分更新为 `78/100`：团队任务、Coding Runtime、诊断、记忆质量和可验证交付是主要优势；标准测试体系、真实 Electron 长驻性能、外部兼容矩阵、Store/Theme 拆分和跨版本回滚演练是主要短板。详细证据与 88 分门槛见 `docs/自我评分.md`。
+- 阶段三尚未完成：下一批继续拆分 `store.tsx` 与 `theme.css`，补真实 Electron 多窗口/长驻内存回归，并完成跨版本自动更新下载、迁移检查和回滚演练。不要把本地性能脚本冒充真实 Electron 长驻验收。
+
 ## v2.6.0 阶段三：执行观测、诊断账本与任务防误删（2026-07-31，正式版本）
 
 - 应用内部身份已正式迁移为 `taiji-office` / `com.taiji.office`。`electron/appIdentityMigration.cjs` 在任何 `userData` 消费者初始化前，将 `%APPDATA%/hermes-office-pro` 的业务数据无损复制到 `%APPDATA%/taiji-office`；不覆盖新文件、不复制缓存/锁/旧更新器 ID，成功后写版本标记。旧目录暂留作恢复备份。

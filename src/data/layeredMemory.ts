@@ -1,5 +1,5 @@
 import type { LayeredMemoryEntry, MemoryProposal } from '../electron';
-import { loadUserMemory, loadUserProfile } from './hermesClient';
+import { loadUserMemory, loadUserProfile } from './userMemory';
 import { loadTaskLearnings } from '../engine/taskLearningMemory';
 
 let legacySyncPromise: Promise<void> | undefined;

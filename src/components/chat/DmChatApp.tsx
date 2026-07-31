@@ -494,9 +494,9 @@ export default function DmChatApp({ empId }: Props) {
     const conversationModel = getConversationModel('dm', emp);
     if (isImageGenerationModel(conversationModel)) {
       setStatus('Generating image...');
-      const image = await generateImage(userText, conversationModel);
+      const image = await generateImage(userText, conversationModel, imageAtts);
       return {
-        text: `Image generated with ${image.model}.`,
+        text: `${imageAtts.length > 0 ? 'Image edited' : 'Image generated'} with ${image.model}.`,
         attachments: [generatedImageAttachment(image)],
         skillEvidence,
       };

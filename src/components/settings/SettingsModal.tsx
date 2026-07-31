@@ -12,10 +12,13 @@ import {
   type ModelEntry,
   testModelConnection, fetchAvailableModels, migrateToModelLibrary,
   loadUserProfile, saveUserProfile,
-  loadUserMemory, saveUserMemory, organizeUserMemory, upsertUserMemory,
-  USER_MEMORY_CATEGORY_LABELS, type UserMemoryCategory, type UserMemoryItem,
   getReviewModel,
 } from '../../data/hermesClient';
+import {
+  loadUserMemory, saveUserMemory, organizeUserMemory, upsertUserMemory, reviewUserMemory,
+  memoryQualitySummary, memoryReviewState, USER_MEMORY_CATEGORY_LABELS,
+  type UserMemoryCategory, type UserMemoryItem,
+} from '../../data/userMemory';
 import type { ModelConfig } from '../../types';
 import type { LayeredMemoryEntry, MemoryProposal, LearningReviewItem } from '../../electron';
 import { useStore } from '../../storeContext';
@@ -759,6 +762,7 @@ function MemoryTab() {
     && ((layeredScope === 'organization' || layeredScope === 'user') || entry.scopeId === layeredScopeId));
   const pendingProposals = memoryProposals.filter((proposal) => proposal.status === 'pending');
   const selectedUsage = layeredUsage[`${layeredScope}:${layeredScopeId}`] ?? { current: 0, max: 0, percent: 0 };
+  const legacyMemoryQuality = memoryQualitySummary(items);
 
   const addLayeredMemory = async () => {
     const content = layeredText.trim();
@@ -825,6 +829,12 @@ function MemoryTab() {
     const next = items.filter((_, i) => i !== idx);
     saveUserMemory(next);
     setItems(next);
+  };
+
+  const handleReviewMemory = (fingerprint?: string) => {
+    if (!fingerprint) return;
+    setItems(reviewUserMemory(fingerprint));
+    message.success('已确认这条记忆仍然有效，并重新计算下次复核时间');
   };
 
   const handleClearAll = () => {
@@ -896,6 +906,11 @@ function MemoryTab() {
       <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
         系统只保留以后仍然有用的稳定事实，并自动去重、归并和更新冲突信息；一次性任务、闲聊、工具报错和未确认推测不会写入。
       </p>
+      <div className="memory-quality-strip">
+        <span>有效 {legacyMemoryQuality.active}</span>
+        <span className={legacyMemoryQuality.reviewDue ? 'is-warning' : ''}>待复核 {legacyMemoryQuality.reviewDue}</span>
+        <span>低可信 {legacyMemoryQuality.lowConfidence}</span>
+      </div>
 
       <Space.Compact style={{ width: '100%', marginBottom: 12 }}>
         <Input
@@ -927,11 +942,14 @@ function MemoryTab() {
                 <Tag color="blue">{USER_MEMORY_CATEGORY_LABELS[(item.category ?? 'identity') as UserMemoryCategory]}</Tag>
                 <Tag color={(item.importance ?? 3) >= 4 ? 'gold' : 'default'}>重要性 {item.importance ?? 3}/5</Tag>
                 {(item.confidence ?? 0.8) < 0.75 && <Tag color="orange">待确认</Tag>}
+                {memoryReviewState(item) === 'review_due' && <Tag color="volcano">已到复核时间</Tag>}
               </div>
               <div style={{ color: 'var(--text)' }}>{item.content}</div>
               <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>
                 更新于 {new Date(item.updatedAt ?? item.ts).toLocaleString('zh-CN')} · 来源：{item.source}
               </div>
+              {item.lastChangeReason && <div className="memory-change-reason">{item.lastChangeReason}</div>}
+              {memoryReviewState(item) === 'review_due' && <Button size="small" type="link" style={{ padding: 0, height: 22 }} onClick={() => handleReviewMemory(item.fingerprint)}>确认仍然有效</Button>}
             </div>
             <Button
               size="small"

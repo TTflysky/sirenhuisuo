@@ -1,9 +1,18 @@
 # 项目交接手册
 
 > 最后整理：2026-07-31
-> 当前源码版本：`v2.6.0`（阶段三正式版本，本机安装验收通过）
+> 当前源码版本：`v2.6.1`（阶段三本地开发版，尚未打包发布）
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+
+## v2.6.1 阶段三：图片编辑、记忆质量、模块与性能门禁
+
+- `generateImage(prompt, model, attachments)` 是图片能力统一入口。本轮有可读图片时，必须经 `imageRequest.mjs` 走 `/images/edits` multipart 请求；无图片时才走 `/images/generations` JSON 请求。`apiFetch` 不得为 FormData 强制设置 `Content-Type`，边界参数由浏览器生成。
+- `userMemoryQuality.mjs` 是用户长期记忆质量规则，`userMemory.ts` 是本地持久化边界。过期待复核记忆不得注入模型；用户确认后更新复核时间和可见原因。不得把这套规则重新塞回 `hermesClient.ts`。
+- `nativeExecutionPolicy.cjs` 是原生执行的纯策略边界；`nativeExecutionAdapter.cjs` 保留执行时序、队列和副作用。`eventFanout.mjs` 负责本地订阅分发与注销清理。`verify:module-boundaries` 约束当前四个超大文件继续增长。
+- 性能基线为 268 名目录专家、320 员工、40 个任务共 12000 条事件、12 个窗口监听者与 5000 次广播。该测试是确定性内核基线，不等同于真实 Electron 长驻压测；后者仍是阶段三后续项。
+- v14 人格迁移按 `##` 章节检测缺失协议并增量附加，不覆盖自定义人格。附件存在时不得沿用旧失败结论声称没有图片。
+- 本版专项入口：`verify:image-model-routing`、`verify:user-memory-quality`、`verify:native-execution-policy`、`verify:module-boundaries`、`verify:phase3-performance`，均已纳入 `verify:v2-core-gate`。
 
 ## v2.6.0 阶段三：执行观测、错误诊断与账本保护
 

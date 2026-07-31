@@ -1,0 +1,30 @@
+export type UserMemoryCategory = 'identity' | 'preference' | 'constraint' | 'workflow' | 'decision' | 'project';
+export type UserMemoryReviewState = 'active' | 'review_due' | 'invalid';
+export interface UserMemoryItem {
+  ts: number;
+  content: string;
+  source: string;
+  category?: UserMemoryCategory;
+  importance?: number;
+  confidence?: number;
+  updatedAt?: number;
+  fingerprint?: string;
+  reviewAfter?: number;
+  lastReviewedAt?: number;
+  lastChangeReason?: string;
+  supersedes?: string;
+}
+export const USER_MEMORY_QUALITY_VERSION: number;
+export const MAX_USER_MEMORY_ITEMS: number;
+export const USER_MEMORY_CATEGORY_LABELS: Record<UserMemoryCategory, string>;
+export function clampMemoryValue(value: number, min: number, max: number): number;
+export function normalizeMemoryText(value: string): string;
+export function memoryFingerprint(value: string): string;
+export function memorySimilarity(left: string, right: string): number;
+export function inferMemoryCategory(content: string): UserMemoryCategory;
+export function normalizeMemoryItem(item: UserMemoryItem, options?: { now?: number }): UserMemoryItem | null;
+export function memoryReviewState(item: UserMemoryItem, now?: number): UserMemoryReviewState;
+export function organizeMemoryItems(items: UserMemoryItem[], options?: { now?: number }): UserMemoryItem[];
+export function upsertMemoryItems(items: UserMemoryItem[], item: UserMemoryItem, options?: { now?: number; replaces?: string }): { action: 'added' | 'updated' | 'ignored'; reason: string; items: UserMemoryItem[] };
+export function reviewMemoryItem(item: UserMemoryItem, options?: { now?: number; reason?: string }): UserMemoryItem | null;
+export function memoryQualitySummary(items: UserMemoryItem[], now?: number): { total: number; active: number; reviewDue: number; lowConfidence: number };

@@ -11,8 +11,7 @@
  */
 
 type BusHandler = (payload: unknown) => void;
-
-const handlers = new Map<string, Set<BusHandler>>();
+const fanout = createEventFanout();
 
 /** 向其他窗口广播一条消息。在普通浏览器环境（无 electronAPI）下为安全空操作。 */
 export function sendBus(channel: string, payload: unknown): void {
@@ -28,15 +27,7 @@ export function sendBus(channel: string, payload: unknown): void {
 
 /** 订阅某频道，返回取消订阅函数。 */
 export function onBus(channel: string, cb: BusHandler): () => void {
-  let set = handlers.get(channel);
-  if (!set) {
-    set = new Set();
-    handlers.set(channel, set);
-  }
-  set.add(cb);
-  return () => {
-    handlers.get(channel)?.delete(cb);
-  };
+  return fanout.subscribe(channel, cb);
 }
 
 /**
@@ -44,15 +35,7 @@ export function onBus(channel: string, cb: BusHandler): () => void {
  * 把来自其他窗口的广播分发给本进程内的本地订阅者。
  */
 export function deliverBus(channel: string, payload: unknown): void {
-  const set = handlers.get(channel);
-  if (!set) return;
-  for (const h of set) {
-    try {
-      h(payload);
-    } catch (e) {
-      console.warn('[ipcBus] handler error:', e);
-    }
-  }
+  fanout.deliver(channel, payload, (error) => console.warn('[ipcBus] handler error:', error));
 }
 
 // ===== 预定义频道名（避免拼写漂移）=====
@@ -68,3 +51,4 @@ export const BUS_CHANNELS = {
   ASSISTANT_ACTIVITY_CHANGED: 'assistant:activity-changed',
   ASSISTANT_EXECUTION_COMMAND: 'assistant:execution-command',
 } as const;
+import { createEventFanout } from './engine/eventFanout.mjs';

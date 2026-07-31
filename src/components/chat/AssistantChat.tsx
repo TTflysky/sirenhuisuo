@@ -285,10 +285,10 @@ export default function AssistantChat() {
       setBusy(true);
       setStatus('Generating image...');
       try {
-        const image = await generateImage(content, conversationModel);
+        const image = await generateImage(content, conversationModel, atts);
         push({
           id: `h-${Date.now()}-image`, authorId: 'assistant', roleId: 'custom',
-          content: `Image generated with ${image.model}.`, mentions: [], timestamp: Date.now(), kind: 'text',
+          content: `${atts.some((attachment) => attachment.kind === 'image') ? 'Image edited' : 'Image generated'} with ${image.model}.`, mentions: [], timestamp: Date.now(), kind: 'text',
           attachments: [generatedImageAttachment(image)],
         });
       } catch (error) {

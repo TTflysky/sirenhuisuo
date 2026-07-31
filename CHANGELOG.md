@@ -1,5 +1,14 @@
 # 更新日志
 
+## v2.6.1 (Phase 3: image editing, memory quality, and performance gates)
+
+- Fixed image editing across assistant chat, employee direct messages, and team chat. A current-turn image now routes to `/images/edits` as multipart form data with the real source image; text-only prompts continue to use `/images/generations`.
+- Added a dedicated image-request module and regression coverage for source selection, data-URL decoding, multipart payload fields, endpoint routing, and all three chat surfaces.
+- Extracted user-memory quality and persistence from the oversized client module. Memory now supports normalized deduplication, explicit replacement, polarity conflict handling, importance-aware capacity, expiry review, and visible change reasons; review-due memories are excluded from model context.
+- Extracted native execution policy from the runtime loop and added focused tests for endpoint normalization, deliverable inference, destructive compensation approval, verified artifacts, parent/child handoff, and public projections.
+- Added leak-resistant local event fanout and a Phase 3 performance baseline covering 268 catalog experts, 320 employees, 12000 task events, and 12 simulated windows.
+- Added module-size regression gates and upgraded the built-in assistant persona to v14. Persona migration now appends each missing protocol section independently while preserving user customization.
+
 ## v2.6.0 (Phase 3: execution observability and diagnostics)
 
 - Migrated the canonical package, Windows App ID, installation identity, MCP client identity, and user-data directory to `taiji-office` / `com.taiji.office`. A tested one-time migration copies legacy employees, teams, conversations, tasks, memory, workspaces, and Chromium storage without overwriting newer files; the old directory remains available for recovery.

@@ -10,6 +10,7 @@ import { redactToolArguments } from '../engine/securityBoundary';
 import { ensureDistinctEmployeeColors } from './employeeColors';
 import { materializeCatalogEmployees, normalizeCatalogEmployeePersonas } from './expertCatalog';
 import { parseGeneratedAvatarPayload } from './generatedAvatar';
+import { buildImageEditFormData, selectEditableImage } from '../engine/imageRequest.mjs';
 import {
   canonicalToolCallKey,
   buildFreshWebQuery,
@@ -90,6 +91,28 @@ import {
   synchronizeTurnLifecycle,
   type TurnLifecycleState,
 } from '../engine/turnLifecycle.mjs';
+import {
+  USER_MEMORY_CATEGORY_LABELS,
+  buildUserContext,
+  clampMemoryValue,
+  inferMemoryCategory,
+  loadUserMemory,
+  loadUserProfile,
+  upsertUserMemory,
+} from './userMemory';
+
+export {
+  USER_MEMORY_CATEGORY_LABELS,
+  appendUserMemory,
+  buildUserContext,
+  loadUserMemory,
+  loadUserProfile,
+  organizeUserMemory,
+  saveUserMemory,
+  saveUserProfile,
+  upsertUserMemory,
+} from './userMemory';
+export type { UserMemoryCategory, UserMemoryItem } from './userMemory';
 
 const LS_EMPLOYEES = 'hermes_office_employees';
 const LS_TEAMS = 'hermes_office_teams';
@@ -458,250 +481,6 @@ export function migrateToModelLibrary(): void {
   saveSettings(s);
 }
 
-// ===== 用户长期记忆 =====
-const LS_USER_MEMORY = 'hermes_office_user_memory';
-const LS_USER_PROFILE = 'hermes_office_user_profile';
-const MAX_MEMORY_ITEMS = 100;
-
-export type UserMemoryCategory = 'identity' | 'preference' | 'constraint' | 'workflow' | 'decision' | 'project';
-
-export interface UserMemoryItem {
-  ts: number;           // 记录时间
-  content: string;      // 记忆内容（如"用户偏好红色主题"）
-  source: string;       // 来源（如"私聊-张三"、"助手对话"）
-  category?: UserMemoryCategory;
-  importance?: number;  // 1-5，决定上下文注入和容量淘汰优先级
-  confidence?: number;  // 0-1，仅保留明确、可验证的信息
-  updatedAt?: number;
-  fingerprint?: string;
-}
-
-const MEMORY_CATEGORY_LABELS: Record<UserMemoryCategory, string> = {
-  identity: '身份背景',
-  preference: '长期偏好',
-  constraint: '明确约束',
-  workflow: '工作习惯',
-  decision: '长期决策',
-  project: '项目背景',
-};
-
-export const USER_MEMORY_CATEGORY_LABELS = MEMORY_CATEGORY_LABELS;
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-function normalizeMemoryText(text: string): string {
-  return text
-    .trim()
-    .toLowerCase()
-    .replace(/^(用户|老板|该用户)[：:，,\s]*/u, '')
-    .replace(/[\s\p{P}\p{S}]+/gu, '');
-}
-
-function memoryFingerprint(text: string): string {
-  const normalized = normalizeMemoryText(text);
-  let hash = 2166136261;
-  for (let i = 0; i < normalized.length; i += 1) {
-    hash ^= normalized.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(36);
-}
-
-function memoryTokens(text: string): Set<string> {
-  const normalized = normalizeMemoryText(text);
-  const tokens = new Set<string>();
-  const latinWords = text.toLowerCase().match(/[a-z0-9][a-z0-9._+-]*/g) ?? [];
-  latinWords.forEach((word) => tokens.add(word));
-  for (let i = 0; i < normalized.length - 1; i += 1) tokens.add(normalized.slice(i, i + 2));
-  if (normalized.length === 1) tokens.add(normalized);
-  return tokens;
-}
-
-function memorySimilarity(a: string, b: string): number {
-  const na = normalizeMemoryText(a);
-  const nb = normalizeMemoryText(b);
-  if (!na || !nb) return 0;
-  if (na === nb) return 1;
-  if ((na.includes(nb) || nb.includes(na)) && Math.min(na.length, nb.length) / Math.max(na.length, nb.length) >= 0.72) return 0.9;
-  const left = memoryTokens(a);
-  const right = memoryTokens(b);
-  const intersection = [...left].filter((token) => right.has(token)).length;
-  const union = new Set([...left, ...right]).size;
-  return union ? intersection / union : 0;
-}
-
-function inferMemoryCategory(content: string): UserMemoryCategory {
-  if (/(必须|不能|不要|禁止|务必|每次|一律|约束|要求)/u.test(content)) return 'constraint';
-  if (/(偏好|喜欢|倾向|风格|希望|更喜欢)/u.test(content)) return 'preference';
-  if (/(流程|习惯|先.+再|工作方式|验收|测试|提交|发布)/u.test(content)) return 'workflow';
-  if (/(决定|确定|以后|长期|统一|采用|改为)/u.test(content)) return 'decision';
-  if (/(项目|产品|仓库|版本|应用|团队)/u.test(content)) return 'project';
-  return 'identity';
-}
-
-function normalizeMemoryItem(item: UserMemoryItem): UserMemoryItem | null {
-  const content = String(item?.content ?? '').trim();
-  if (!content) return null;
-  const ts = Number.isFinite(item.ts) ? item.ts : Date.now();
-  const category = Object.hasOwn(MEMORY_CATEGORY_LABELS, item.category ?? '')
-    ? item.category as UserMemoryCategory
-    : inferMemoryCategory(content);
-  return {
-    ts,
-    content: content.slice(0, 240),
-    source: String(item.source || '历史记忆'),
-    category,
-    importance: clamp(Math.round(Number(item.importance) || 3), 1, 5),
-    confidence: clamp(Number(item.confidence) || (item.source === '手动添加' ? 1 : 0.8), 0, 1),
-    updatedAt: Number.isFinite(item.updatedAt) ? item.updatedAt : ts,
-    fingerprint: memoryFingerprint(content),
-  };
-}
-
-function mergeMemorySources(a: string, b: string): string {
-  return [...new Set([...a.split('、'), ...b.split('、')].filter(Boolean))].slice(-3).join('、');
-}
-
-function trimMemoryCapacity(items: UserMemoryItem[]): UserMemoryItem[] {
-  if (items.length <= MAX_MEMORY_ITEMS) return items;
-  const ranked = [...items].sort((a, b) => {
-    const scoreA = (a.importance ?? 3) * 20 + (a.confidence ?? 0.8) * 10 + (a.updatedAt ?? a.ts) / 1e12;
-    const scoreB = (b.importance ?? 3) * 20 + (b.confidence ?? 0.8) * 10 + (b.updatedAt ?? b.ts) / 1e12;
-    return scoreB - scoreA;
-  }).slice(0, MAX_MEMORY_ITEMS);
-  return ranked.sort((a, b) => a.ts - b.ts);
-}
-
-export function organizeUserMemory(items: UserMemoryItem[] = loadUserMemory()): UserMemoryItem[] {
-  const organized: UserMemoryItem[] = [];
-  for (const raw of items) {
-    const item = normalizeMemoryItem(raw);
-    if (!item) continue;
-    const duplicateIndex = organized.findIndex((existing) =>
-      existing.fingerprint === item.fingerprint ||
-      (existing.category === item.category && memorySimilarity(existing.content, item.content) >= 0.82));
-    if (duplicateIndex < 0) {
-      organized.push(item);
-      continue;
-    }
-    const existing = organized[duplicateIndex];
-    const preferIncoming = (item.updatedAt ?? item.ts) >= (existing.updatedAt ?? existing.ts) && item.content.length >= existing.content.length * 0.75;
-    organized[duplicateIndex] = {
-      ...(preferIncoming ? item : existing),
-      ts: Math.min(existing.ts, item.ts),
-      updatedAt: Math.max(existing.updatedAt ?? existing.ts, item.updatedAt ?? item.ts),
-      importance: Math.max(existing.importance ?? 3, item.importance ?? 3),
-      confidence: Math.max(existing.confidence ?? 0.8, item.confidence ?? 0.8),
-      source: mergeMemorySources(existing.source, item.source),
-    };
-  }
-  return trimMemoryCapacity(organized);
-}
-
-export function loadUserMemory(): UserMemoryItem[] {
-  try {
-    const raw = localStorage.getItem(LS_USER_MEMORY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      return Array.isArray(parsed) ? parsed.map(normalizeMemoryItem).filter((item): item is UserMemoryItem => Boolean(item)) : [];
-    }
-  } catch {}
-  return [];
-}
-export function saveUserMemory(items: UserMemoryItem[]): void {
-  try {
-    localStorage.setItem(LS_USER_MEMORY, JSON.stringify(trimMemoryCapacity(items.map(normalizeMemoryItem).filter((item): item is UserMemoryItem => Boolean(item)))));
-  } catch {}
-}
-export function upsertUserMemory(item: UserMemoryItem, replaces?: string): { action: 'added' | 'updated' | 'ignored'; items: UserMemoryItem[] } {
-  const list = loadUserMemory();
-  const incoming = normalizeMemoryItem(item);
-  if (!incoming) return { action: 'ignored', items: list };
-  let matchIndex = replaces
-    ? list.findIndex((existing) => memorySimilarity(existing.content, replaces) >= 0.72)
-    : -1;
-  if (matchIndex < 0) {
-    matchIndex = list.findIndex((existing) =>
-      existing.fingerprint === incoming.fingerprint ||
-      (existing.category === incoming.category && memorySimilarity(existing.content, incoming.content) >= 0.82));
-  }
-  if (matchIndex >= 0) {
-    const existing = list[matchIndex];
-    if (existing.fingerprint === incoming.fingerprint) {
-      return { action: 'ignored', items: list };
-    }
-    list[matchIndex] = {
-      ...incoming,
-      ts: existing.ts,
-      updatedAt: Date.now(),
-      source: mergeMemorySources(existing.source, incoming.source),
-    };
-    saveUserMemory(list);
-    return { action: 'updated', items: loadUserMemory() };
-  }
-  list.push(incoming);
-  saveUserMemory(list);
-  return { action: 'added', items: loadUserMemory() };
-}
-export function appendUserMemory(item: UserMemoryItem): void {
-  upsertUserMemory(item);
-}
-
-export function loadUserProfile(): string {
-  try {
-    return localStorage.getItem(LS_USER_PROFILE) ?? '';
-  } catch { return ''; }
-}
-export function saveUserProfile(text: string): void {
-  try {
-    localStorage.setItem(LS_USER_PROFILE, text);
-  } catch {}
-}
-
-// 构建用户上下文字符串（供注入系统提示用）
-export function buildUserContext(query = ''): string {
-  const profile = loadUserProfile().trim();
-  const memory = loadUserMemory();
-  let ctx = '';
-  if (profile) {
-    ctx += `## 用户画像\n${profile}\n\n`;
-  }
-  if (memory.length > 0) {
-    const selected: UserMemoryItem[] = [];
-    const now = Date.now();
-    const ranked = [...memory].sort((a, b) => {
-      const score = (item: UserMemoryItem) => {
-        const relevance = query.trim() ? memorySimilarity(query, item.content) * 100 : 0;
-        const importance = (item.importance ?? 3) * 8;
-        const confidence = (item.confidence ?? 0.8) * 5;
-        const recency = Math.max(0, 5 - (now - (item.updatedAt ?? item.ts)) / (90 * 24 * 60 * 60 * 1000));
-        return relevance + importance + confidence + recency;
-      };
-      return score(b) - score(a);
-    });
-    if (!query.trim()) {
-      for (const category of Object.keys(MEMORY_CATEGORY_LABELS) as UserMemoryCategory[]) {
-        const candidate = ranked.find((item) => item.category === category && (item.confidence ?? 0.8) >= 0.65);
-        if (candidate) selected.push(candidate);
-      }
-    } else {
-      for (const item of ranked) {
-        if (selected.length >= 8) break;
-        if ((item.confidence ?? 0.8) >= 0.65 && memorySimilarity(query, item.content) >= 0.08) selected.push(item);
-      }
-    }
-    for (const item of ranked) {
-      if (selected.length >= 12) break;
-      if (!selected.includes(item) && (item.confidence ?? 0.8) >= 0.65) selected.push(item);
-    }
-    const important = selected.map(m => `- [${MEMORY_CATEGORY_LABELS[m.category ?? 'identity']}] ${m.content}`).join('\n');
-    ctx += `## 经筛选的长期记忆（${selected.length} 条）\n${important}\n`;
-  }
-  return ctx;
-}
-
 // ===== 自动提炼用户习惯/思维模式 =====
 /**
  * 用 LLM 分析一段对话，提炼出关于用户的新认知（习惯、偏好、思维模式），
@@ -719,7 +498,7 @@ export async function extractUserInsights(conversation: string, source: string):
   const existingMemory = [...loadUserMemory()]
     .sort((a, b) => (b.importance ?? 3) - (a.importance ?? 3) || (b.updatedAt ?? b.ts) - (a.updatedAt ?? a.ts))
     .slice(0, 20)
-    .map(m => `[${MEMORY_CATEGORY_LABELS[m.category ?? 'identity']}] ${m.content}`)
+    .map(m => `[${USER_MEMORY_CATEGORY_LABELS[m.category ?? 'identity']}] ${m.content}`)
     .join('\n');
 
   try {
@@ -765,14 +544,14 @@ export async function extractUserInsights(conversation: string, source: string):
       const now = Date.now();
       for (const memory of data.memories.slice(0, 6)) {
         if (!memory || typeof memory.content !== 'string' || memory.action === 'ignore') continue;
-        const confidence = clamp(Number(memory.confidence) || 0, 0, 1);
+        const confidence = clampMemoryValue(Number(memory.confidence) || 0, 0, 1);
         if (confidence < 0.65) continue;
         upsertUserMemory({
           ts: now,
           content: memory.content,
           source,
-          category: Object.hasOwn(MEMORY_CATEGORY_LABELS, memory.category) ? memory.category : inferMemoryCategory(memory.content),
-          importance: clamp(Math.round(Number(memory.importance) || 3), 1, 5),
+          category: Object.hasOwn(USER_MEMORY_CATEGORY_LABELS, memory.category) ? memory.category : inferMemoryCategory(memory.content),
+          importance: clampMemoryValue(Math.round(Number(memory.importance) || 3), 1, 5),
           confidence,
           updatedAt: now,
         }, memory.action === 'update' && typeof memory.replaces === 'string' ? memory.replaces : undefined);
@@ -868,9 +647,10 @@ async function apiFetch(path: string, init: RequestInit = {}, timeoutMs = 4000, 
     controller.abort(new DOMException(`模型请求超过 ${Math.round(timeoutMs / 1000)} 秒未返回`, 'TimeoutError'));
   }, timeoutMs);
   const s = loadSettings();
+  const multipartBody = typeof FormData !== 'undefined' && init.body instanceof FormData;
   const headers: Record<string, string> = {
     Accept: 'application/json',
-    'Content-Type': 'application/json',
+    ...(!multipartBody ? { 'Content-Type': 'application/json' } : {}),
     ...((init.headers as Record<string, string>) ?? {}),
   };
   const key = overrideKey ?? s.apiKey;
@@ -928,19 +708,22 @@ function blobAsDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-/** Generate one square image through an explicitly selected image model. */
-export async function generateImage(prompt: string, modelConfig = getImageGenerationModel()): Promise<GeneratedAvatarImage> {
+/** Generate an image, or edit the first image attached to the current turn. */
+export async function generateImage(prompt: string, modelConfig = getImageGenerationModel(), attachments: Attachment[] = []): Promise<GeneratedAvatarImage> {
+  const sourceImage = selectEditableImage(attachments);
   const cleanPrompt = prompt.trim();
-  if (!cleanPrompt) throw new Error('请先填写头像描述');
+  if (!cleanPrompt) throw new Error(sourceImage ? '请说明要如何修改这张图片' : '请先填写图片描述');
   if (!modelConfig?.apiHost?.trim() || !modelConfig.model?.trim()) throw new Error('还没有配置头像生图模型，请先在模型库中指定一个生图模型');
   const base = resolveApiBase(modelConfig as AppSettings);
   const model = modelConfig.model.trim();
-  const response = await apiFetch('/images/generations', {
+  const response = await apiFetch(sourceImage ? '/images/edits' : '/images/generations', {
     method: 'POST',
-    body: JSON.stringify(buildImageGenerationRequest(model, cleanPrompt)),
+    body: sourceImage
+      ? buildImageEditFormData(model, cleanPrompt, sourceImage)
+      : JSON.stringify(buildImageGenerationRequest(model, cleanPrompt)),
   }, 180000, modelConfig.apiKey, base);
   const raw = await response.text().catch(() => '');
-  if (!response.ok) throw new Error(`生图接口返回 ${response.status}：${apiErrorMessage(raw)}`);
+  if (!response.ok) throw new Error(`${sourceImage ? '图片编辑' : '生图'}接口返回 ${response.status}：${apiErrorMessage(raw)}`);
   let payload: any;
   try { payload = JSON.parse(raw); }
   catch { throw new Error('生图接口返回的不是有效 JSON'); }

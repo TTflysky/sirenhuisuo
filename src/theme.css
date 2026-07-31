@@ -2079,6 +2079,10 @@ html, body, #root, .app-root {
 .memory-status-strip > div:last-child { border-right: 0; }
 .memory-status-strip strong { color: var(--text); font-size: 17px; font-variant-numeric: tabular-nums; }
 .memory-status-strip span { color: var(--text-secondary); font-size: 11px; }
+.memory-quality-strip { display: flex; gap: 8px; margin: -2px 0 10px; font-size: 11px; color: var(--text-muted); }
+.memory-quality-strip span { padding: 3px 7px; border: 1px solid var(--border-light); border-radius: 4px; }
+.memory-quality-strip .is-warning { color: #b45309; border-color: #f59e0b; }
+.memory-change-reason { margin-top: 3px; font-size: 10px; color: var(--text-muted); }
 .settings-memory-section { padding: 14px 0 0; border-top: 1px solid var(--border-light); }
 .settings-memory-layered { padding-top: 0; border-top: 0; }
 .settings-memory-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 10px; }

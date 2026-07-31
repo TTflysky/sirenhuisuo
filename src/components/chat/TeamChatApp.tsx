@@ -294,10 +294,10 @@ export default function TeamChatApp({ teamId }: Props) {
       setAttachments([]);
       setImageGenerating(true);
       try {
-        const image = await generateImage(content, conversationModel);
+        const image = await generateImage(content, conversationModel, attachments);
         dispatch({
           type: 'APPEND_CHAT', teamId, conversationId: conversationIdRef.current,
-          msgs: [{ id: `msg-image-${Date.now()}-assistant`, authorId: 'assistant', roleId: 'custom', content: `Image generated with ${image.model}.`, mentions: [], timestamp: Date.now(), kind: 'text', attachments: [generatedImageAttachment(image)] }],
+          msgs: [{ id: `msg-image-${Date.now()}-assistant`, authorId: 'assistant', roleId: 'custom', content: `${attachments.some((attachment) => attachment.kind === 'image') ? 'Image edited' : 'Image generated'} with ${image.model}.`, mentions: [], timestamp: Date.now(), kind: 'text', attachments: [generatedImageAttachment(image)] }],
         });
       } catch (error) {
         dispatch({

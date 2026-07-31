@@ -1,6 +1,6 @@
 import type { Employee, Team } from '../types';
 import { APP_VERSION } from '../appVersion';
-import type { UserMemoryItem } from '../data/hermesClient';
+import type { UserMemoryItem } from '../data/userMemory';
 import type { TaskLearning } from '../engine/taskLearningMemory';
 import type { LayeredMemoryEntry } from '../electron';
 

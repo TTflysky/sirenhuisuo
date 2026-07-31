@@ -31,6 +31,10 @@ const checks = [
   'verify:execution-observability',
   'verify:operation-diagnostics',
   'verify:app-identity-migration',
+  'verify:user-memory-quality',
+  'verify:native-execution-policy',
+  'verify:module-boundaries',
+  'verify:phase3-performance',
 ];
 
 for (const script of checks) {

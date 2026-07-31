@@ -10,10 +10,15 @@ export function getAssistantPrompt(
     const version = localStorage.getItem(LS_SYSTEM_PROMPT_VERSION);
     const raw = localStorage.getItem(LS_SYSTEM_PROMPT)?.trim();
     if (version !== defaultPromptVersion) {
+      const appendixSections = migrationAppendix.trim().split(/(?=^## )/gmu).filter(Boolean);
+      const missingSections = raw
+        ? appendixSections.filter((section) => {
+          const heading = section.split('\n', 1)[0]?.trim();
+          return heading && !raw.includes(heading);
+        })
+        : [];
       const next = raw
-        ? raw.includes('## v1 任务账本与恢复协议')
-          ? raw
-          : `${raw}${migrationAppendix}`
+        ? [raw, ...missingSections].filter(Boolean).join('\n\n')
         : defaultPrompt;
       localStorage.setItem(LS_SYSTEM_PROMPT, next);
       localStorage.setItem(LS_SYSTEM_PROMPT_VERSION, defaultPromptVersion);
