@@ -6,6 +6,7 @@ const MAX_NOTE_BYTES = 1024 * 1024;
 const MAX_VAULT_FILES = 3000;
 const DEFAULT_WEB_TIMEOUT_MS = 30000;
 const DEFAULT_SEARCH_ATTEMPTS = 2;
+const BLOCKED_PAGE_PATTERN = /(?:访问过于频繁|环境异常|完成验证后继续访问|请输入验证码|安全验证|人机验证|请在微信客户端打开链接|网页无法打开|内容已被发布者删除|access denied|verify you are human|captcha|unusual traffic|temporarily blocked)/iu;
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -131,7 +132,7 @@ async function fetchKnowledgeUrl(rawUrl, options = {}) {
   if (!['https:', 'http:'].includes(url.protocol)) throw new Error('知识库链接仅支持 HTTP/HTTPS');
   const response = await fetchWithTimeout(options.fetchImpl ?? globalThis.fetch, url.toString(), {
     redirect: 'follow',
-    headers: { 'User-Agent': 'Hermes-Office-Knowledge/1.0', Accept: 'text/html,text/markdown,text/plain,application/json' },
+    headers: { 'User-Agent': 'Taiji-Office-Knowledge/2.6', Accept: 'text/html,text/markdown,text/plain,application/json' },
   }, options.timeoutMs ?? DEFAULT_WEB_TIMEOUT_MS, '读取知识库页面超时');
   if (!response.ok) throw new Error(`知识库返回 HTTP ${response.status}`);
   const length = Number(response.headers.get('content-length') || 0);
@@ -140,6 +141,10 @@ async function fetchKnowledgeUrl(rawUrl, options = {}) {
   if (Buffer.byteLength(raw, 'utf8') > MAX_WEB_BYTES) throw new Error('知识库页面超过 2MB');
   const contentType = response.headers.get('content-type') || '';
   const content = /html/i.test(contentType) || /<html|<!doctype/i.test(raw.slice(0, 500)) ? htmlToText(raw) : raw.trim();
+  if (!content) throw new Error('网页没有返回可读取的正文');
+  if (BLOCKED_PAGE_PATTERN.test(content) && content.length < 8000) {
+    throw new Error('网页返回了访问验证或拦截页面，没有取得原文正文');
+  }
   return { ok: true, url: response.url, title: content.split('\n').find(Boolean)?.slice(0, 160) || url.hostname, content: content.slice(0, 50000) };
 }
 

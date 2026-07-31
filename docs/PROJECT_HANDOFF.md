@@ -1,9 +1,19 @@
 # 项目交接手册
 
 > 最后整理：2026-07-31
-> 当前源码版本：`v2.6.1`（阶段三本地开发版，尚未打包发布）
+> 当前源码版本：`v2.6.2`（阶段三正式版本）
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+
+## v2.6.2 明确资源合同与更新状态机
+
+- `explicitResourceContract.mjs` 负责从当前目标和已绑定对话引用中提取、规范化并锁定网页 URL。它不替模型写计划，只保护用户明确对象不被搜索结果、相似页面或旧上下文替换。
+- 指定网页的总结、分析、翻译和改写必须以原地址的 `read_web_page` 成功记录作为完成证据。助理循环与 `nativeExecutionAdapter` 使用同一调用前门禁和完成验收，不得只改提示词。
+- `fetchKnowledgeUrl` 必须拒绝空正文和常见访问验证/拦截页，不能让反爬提示成为成功证据；其 User-Agent 使用 Taiji 身份。
+- `taskDecisionKernel` 已将 `read_web_page` 纳入正式路由；模型误选 `web_search` 时，规范化层会恢复精确网页路线。
+- `autoUpdate.cjs` 负责检查超时、错误回传和统一状态发送；`App.tsx` 的按钮只负责展示与合法操作。源码版本与 GitHub Release 是两件事，没有对应 Release 安装包时客户端不会发现新版本。
+- 人格版本为 v15，旧自定义人格按章节追加明确对象协议。回归入口：`verify:explicit-resource-contract`、`verify:update-control`。
+- `v2.6.2` 安装包为 `175439262` 字节，SHA-256 为 `DF421190A3F3A728F0D32724E0EB7BED8DEEDB572A81C236E8018994C8C777C0`；Blockmap 为 `181810` 字节，`latest.yml` 为 `353` 字节。本机覆盖后安装包版本和关键内核文件均已核对，用户数据文件覆盖前后均为 259 个。
 
 ## v2.6.1 阶段三：图片编辑、记忆质量、模块与性能门禁
 

@@ -25,6 +25,7 @@ const requiredFiles = [
   'electron/executionObservability.cjs',
   'electron/operationDiagnostics.cjs',
   'src\\engine\\taskFidelity.mjs',
+  'src\\engine\\explicitResourceContract.mjs',
   'src\\engine\\taskRunner.mjs',
   'src\\engine\\toolRegistry.mjs',
   'src\\engine\\turnRuntime.mjs',

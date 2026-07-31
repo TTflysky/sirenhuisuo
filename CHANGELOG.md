@@ -1,5 +1,14 @@
 # 更新日志
 
+## v2.6.2 (Phase 3: explicit-resource fidelity and update recovery)
+
+- Added a generic explicit-resource contract. A request to summarize, analyze, translate, or rewrite a supplied webpage must read that exact normalized URL before completion; `web_search`, substitute pages, and unsupported completion claims are rejected.
+- Applied the same URL identity and evidence gate to the assistant loop and native team executor. Resolved follow-up references retain their original source URL, while read failures preserve the target and report the real error instead of asking for the URL again.
+- Added `read_web_page` as a first-class task route and protected exact resource constraints during model decision normalization.
+- Web-page reads now reject empty, CAPTCHA, access-verification, and blocked-page responses instead of treating them as article evidence; the internal fetch identity now uses the Taiji product name.
+- Replaced the transient update label with a persistent state-aware button. Manual retries are available after idle, no-update, and error states; update errors reach the renderer and a 45-second check timeout prevents permanent “checking” state.
+- Upgraded the built-in assistant persona to v15 and added explicit-resource and update-control regressions to the v2 core gate.
+
 ## v2.6.1 (Phase 3: image editing, memory quality, and performance gates)
 
 - Fixed image editing across assistant chat, employee direct messages, and team chat. A current-turn image now routes to `/images/edits` as multipart form data with the real source image; text-only prompts continue to use `/images/generations`.

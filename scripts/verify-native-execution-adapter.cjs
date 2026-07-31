@@ -149,6 +149,56 @@ async function main() {
   });
   assert.equal(completedDecision.verification.some((item) => item.kind === 'decision' && item.status === 'passed'), true, 'decision deliverable must not require a file artifact');
 
+  const explicitUrl = 'https://mp.weixin.qq.com/s/6d_2gn2jK3lVTJaeookHkA';
+  const resourceGoal = `${explicitUrl} 总结链接内容。`;
+  const resourceRun = singleStepRun('native-explicit-resource', resourceGoal);
+  resourceRun.steps[0] = {
+    ...resourceRun.steps[0], title: '总结指定网页', assignment: resourceGoal, deliverableType: 'answer',
+  };
+  let resourceRound = 0;
+  let searchExecutions = 0;
+  let pageReadExecutions = 0;
+  const resourceToolRuntime = {
+    definitions: [
+      { type: 'function', function: { name: 'web_search', description: '搜索网页', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } } },
+      { type: 'function', function: { name: 'read_web_page', description: '读取网页', parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } } },
+    ],
+    redact: (value) => value,
+    async execute(name, args) {
+      if (name === 'web_search') {
+        searchExecutions += 1;
+        return { name, success: true, output: '无关的搜索结果' };
+      }
+      if (name === 'read_web_page') {
+        pageReadExecutions += 1;
+        assert.equal(args.url, explicitUrl);
+        return { name, success: true, output: `来源：${explicitUrl}\n正文：这是一篇用于精确链接回归的文章。` };
+      }
+      return { name, success: false, output: '未知工具' };
+    },
+  };
+  const resourceAdapter = createNativeExecutionAdapter({
+    projectRoot: path.resolve(__dirname, '..'), store, worker, toolRuntime: resourceToolRuntime, sessionId: 'native-test-session',
+    fetchImpl: async () => {
+      resourceRound += 1;
+      if (resourceRound === 1) return modelResponse({ role: 'assistant', content: null, tool_calls: [{ id: 'drift-search', type: 'function', function: { name: 'web_search', arguments: JSON.stringify({ query: '微信公众号文章' }) } }] });
+      if (resourceRound === 2) return modelResponse({ role: 'assistant', content: null, tool_calls: [{ id: 'exact-read', type: 'function', function: { name: 'read_web_page', arguments: JSON.stringify({ url: explicitUrl }) } }] });
+      return modelResponse({ role: 'assistant', content: '该文章的核心内容是验证指定链接必须按原地址读取，不能由搜索结果替代。' });
+    },
+  });
+  const resourceStarted = await resourceAdapter.start({
+    taskId: resourceRun.id,
+    run: resourceRun,
+    members: resourceRun.memberSnapshot.map((member) => ({ ...member, modelConfig: { apiHost: 'https://mock.invalid/v1', model: 'mock-model' } })),
+  });
+  assert.equal(resourceStarted.ok, true, resourceStarted.error);
+  await waitFor(async () => {
+    const snapshot = await store.read();
+    return snapshot.runs.find((item) => item.id === resourceRun.id)?.status === 'completed';
+  });
+  assert.equal(searchExecutions, 0, 'Explicit URL contract must block the model from executing web_search');
+  assert.equal(pageReadExecutions, 1, 'The exact supplied webpage must be read once');
+
   const staleRendererRun = { ...completed, status: 'running', evidence: [], executionMessages: [] };
   const staleWrite = await store.write([staleRendererRun], { source: 'renderer', sessionId: 'stale-window' });
   assert.equal(staleWrite.ok, true);

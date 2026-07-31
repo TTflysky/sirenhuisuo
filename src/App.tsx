@@ -14,6 +14,7 @@ import {
   RobotOutlined,
   SettingOutlined,
   StopOutlined,
+  SyncOutlined,
   TeamOutlined,
   UnlockOutlined,
 } from '@ant-design/icons';
@@ -68,7 +69,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [view, setView] = useState<View>('office');
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ status: 'idle', message: '点击检查更新' });
   const [assistantLocked, setAssistantLocked] = useState(false);
   const [assistantActivity, setAssistantActivity] = useState<AssistantActivity>(() => {
     try {
@@ -153,9 +154,6 @@ export default function App() {
     if (window.electronAPI?.onUpdateStatus) {
       unsubRef.current = window.electronAPI.onUpdateStatus((status) => {
         setUpdateStatus(status);
-        if (status.status === 'not-available' || status.status === 'downloaded' || status.status === 'error') {
-          setTimeout(() => setUpdateStatus(null), 8000);
-        }
       });
     }
     return () => {
@@ -200,6 +198,18 @@ export default function App() {
     sendBus(BUS_CHANNELS.ASSISTANT_EXECUTION_COMMAND, { command, requestedAt: Date.now() });
   };
 
+  const handleUpdateControl = async () => {
+    if (updateStatus.status === 'downloaded') {
+      const result = await window.electronAPI?.installUpdate(createUpgradeSnapshot());
+      if (result && !result.ok) setUpdateStatus({ status: 'error', message: `更新前备份失败：${result.error ?? '未知错误'}` });
+      return;
+    }
+    if (!['idle', 'not-available', 'error'].includes(updateStatus.status)) return;
+    setUpdateStatus({ status: 'checking', message: '正在检查更新…' });
+    const result = await window.electronAPI?.checkUpdate();
+    if (result && !result.ok) setUpdateStatus({ status: 'error', message: `检查更新失败：${result.error ?? '未知错误'}。点击这里重试。` });
+  };
+
   const progress = state.status.progress;
 
   return (
@@ -241,24 +251,22 @@ export default function App() {
             </div>
           )}
           {/* 自动更新状态 */}
-          {updateStatus && (
-            <div className={`update-status update-${updateStatus.status}`} title={updateStatus.message}
-              onClick={() => {
-                if (updateStatus.status !== 'downloaded') return;
-                void window.electronAPI?.installUpdate(createUpgradeSnapshot()).then((result) => {
-                  if (!result.ok) setUpdateStatus({ status: 'error', message: `更新前备份失败：${result.error ?? '未知错误'}` });
-                });
-              }}
-              style={updateStatus.status === 'downloaded' ? { cursor: 'pointer', textDecoration: 'underline' } : {}}
-            >
-              {updateStatus.status === 'checking' && '🔍 检查更新…'}
-              {updateStatus.status === 'available' && '⬇️ 发现新版本'}
-              {updateStatus.status === 'downloading' && `⬇️ 下载中 ${Math.round(updateStatus.percent ?? 0)}%`}
-              {updateStatus.status === 'downloaded' && '🔄 点击重启安装更新'}
-              {updateStatus.status === 'not-available' && '✅ 已是最新版'}
-              {updateStatus.status === 'error' && '⚠️'}
-            </div>
-          )}
+          <button
+            type="button"
+            className={`update-status update-${updateStatus.status}`}
+            title={updateStatus.message}
+            onClick={() => void handleUpdateControl()}
+            disabled={['checking', 'available', 'downloading'].includes(updateStatus.status)}
+          >
+            <SyncOutlined spin={updateStatus.status === 'checking' || updateStatus.status === 'downloading'} />
+            {updateStatus.status === 'idle' && '检查更新'}
+            {updateStatus.status === 'checking' && '检查更新…'}
+            {updateStatus.status === 'available' && '发现新版本'}
+            {updateStatus.status === 'downloading' && `下载中 ${Math.round(updateStatus.percent ?? 0)}%`}
+            {updateStatus.status === 'downloaded' && '重启安装更新'}
+            {updateStatus.status === 'not-available' && '已是最新版 · 再检查'}
+            {updateStatus.status === 'error' && '更新失败 · 重试'}
+          </button>
           <span className="backend-status" title={state.status.backendOnline ? '默认模型连接正常' : '默认模型当前不可用'}>
             <i className={state.status.backendOnline ? 'is-online' : 'is-offline'} />
             <span>{state.status.backendOnline ? '模型可用' : '模型离线'}</span>

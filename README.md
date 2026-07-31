@@ -1,4 +1,4 @@
-# 太极 AI 办公会所 v2.6.1
+# 太极 AI 办公会所 v2.6.2
 
 > 面向 Windows 的多模型 AI 虚拟办公室。创建员工、组建团队，让不同模型按照职责协作完成真实任务。
 
@@ -6,13 +6,20 @@
 
 ## 项目状态
 
-- 当前版本：`2.6.1`
+- 当前版本：`2.6.2`
 - 发布分支：`main`
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 33、React 19、TypeScript 6、Ant Design 6、Vite 8
 - 模型接口：OpenAI 兼容的 `/chat/completions` API
 
 ## 核心能力
+
+### v2.6.2 阶段三：明确资源忠实与可恢复更新入口
+
+- 用户给出明确网页并要求总结、分析、翻译或改写时，任务内核会把原 URL 固定为不可替换的事实对象，首个证据必须来自对该地址的真实读取；主题搜索、相似网页和无原文证据的完成声明会被执行器拒绝。
+- 明确资源合同同时进入章北海聊天循环和团队原生执行器。读取失败时保留原地址和真实错误，不再要求用户重复发送已经记录的链接，也不再用无关搜索结果兜底。
+- 标题栏更新入口改为常驻按钮：空闲、已是最新版和失败状态均可手动重查，检查或下载中禁用重复点击，下载完成后执行备份与安装。主进程错误会回传，检查超过 45 秒会进入可重试状态。
+- 内置章北海人格升级到 v15；新增 `verify:explicit-resource-contract` 和 `verify:update-control` 并纳入 v2 核心门禁。`v2.6.2` 已完成打包、本机覆盖安装与 GitHub Release 发布验收。
 
 ### v2.6.1 阶段三：图片编辑、记忆质量与性能门禁
 
@@ -216,15 +223,15 @@
 
 ### 使用安装包
 
-`v2.0.1` 已完成发布级回归。源码和交接资料以 `main` 为准。
+`v2.6.2` 已完成核心回归、安装包完整性检查和本机覆盖安装。源码和交接资料以 `main` 为准。
 
-- [直接下载 v2.0.0 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v2.0.0/taiji-office-setup-2.0.0.exe)
-- [查看 v2.0.0 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v2.0.0)
+- [直接下载 v2.6.2 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v2.6.2/taiji-office-setup-2.6.2.exe)
+- [查看 v2.6.2 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v2.6.2)
 
 本地构建的安装程序生成在：
 
 ```text
-release/taiji-office-setup-2.0.0.exe
+release/taiji-office-setup-2.6.2.exe
 ```
 
 可以直接覆盖安装旧版本。应用数据保存在用户目录，正常覆盖安装不会删除员工、团队、聊天和模型配置。

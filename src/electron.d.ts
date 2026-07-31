@@ -411,7 +411,7 @@ export interface LearningReviewItem {
 }
 
 export interface UpdateStatus {
-  status: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
+  status: 'idle' | 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
   version?: string;
   percent?: number;
   bytesPerSecond?: number;

@@ -234,8 +234,9 @@ function createNativeExecutionAdapter(options) {
         import(pathToFileURL(path.join(projectRoot, 'src/engine/turnLifecycle.mjs')).href),
         import(pathToFileURL(path.join(projectRoot, 'src/engine/moaRuntime.mjs')).href),
         import(pathToFileURL(path.join(projectRoot, 'src/engine/capabilityGraph.mjs')).href),
-      ]).then(([fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol, turnRuntime, turnLifecycle, moaRuntime, capabilityGraph]) => ({
-        fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol, turnRuntime, turnLifecycle, moaRuntime, capabilityGraph,
+        import(pathToFileURL(path.join(projectRoot, 'src/engine/explicitResourceContract.mjs')).href),
+      ]).then(([fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol, turnRuntime, turnLifecycle, moaRuntime, capabilityGraph, explicitResource]) => ({
+        fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol, turnRuntime, turnLifecycle, moaRuntime, capabilityGraph, explicitResource,
       }));
     }
     return engineModulesPromise;
@@ -737,7 +738,7 @@ function createNativeExecutionAdapter(options) {
   }
 
   async function executeStep(job, run, step, member, executionOptions = {}) {
-    const { fidelity, toolRegistry, contextRouter, turnRuntime, turnLifecycle, moaRuntime } = await loadEngineModules();
+    const { fidelity, toolRegistry, contextRouter, turnRuntime, turnLifecycle, moaRuntime, explicitResource } = await loadEngineModules();
     const stepDeliverableType = inferStepDeliverableType(step, run);
     let runtime = turnRuntime.createTurnRuntime({
       taskId: job.taskId,
@@ -757,8 +758,10 @@ function createNativeExecutionAdapter(options) {
     const advisorGuidance = executionOptions.compensation
       ? ''
       : await consultStepAdvisors(job, run, step, member, moaRuntime, run.evidence || []);
+    const explicitResourceContract = explicitResource.createExplicitResourceContract(run.goal || run.request);
+    const explicitResourceGuidance = explicitResource.buildExplicitResourceGuidance(explicitResourceContract);
     const messages = [
-      { role: 'system', content: `${buildSystem(run, step, member, job, turnRuntime.buildTurnGuidance(runtime), advisorGuidance)}${layeredMemory.context ? `\n\n## 太极分层热记忆\n${layeredMemory.context}\n\n以上记忆只作为可复用背景；与老板当前明确要求冲突时，以当前要求为准。` : ''}${buildInheritedTaskContext(run)}${buildChildTaskContext(run)}\n\n${stepRecoveryPrompt}` },
+      { role: 'system', content: `${buildSystem(run, step, member, job, turnRuntime.buildTurnGuidance(runtime), advisorGuidance)}${explicitResourceGuidance ? `\n\n${explicitResourceGuidance}` : ''}${layeredMemory.context ? `\n\n## 太极分层热记忆\n${layeredMemory.context}\n\n以上记忆只作为可复用背景；与老板当前明确要求冲突时，以当前要求为准。` : ''}${buildInheritedTaskContext(run)}${buildChildTaskContext(run)}\n\n${stepRecoveryPrompt}` },
       buildUserTurn(run, step, job),
     ];
     const registry = toolRegistry.buildToolRegistry([...options.toolRuntime.definitions, ...(job.connectorTools || [])]);
@@ -930,7 +933,9 @@ function createNativeExecutionAdapter(options) {
           let result;
           const key = toolKey(name, args);
           const preflight = toolRegistry.preflightToolCall(registry, name, args, { approvalGranted: true });
+          const explicitResourceGate = explicitResource.validateExplicitResourceToolCall(explicitResourceContract, name, args, callLog);
           if (!normalizedCall.ok) result = { name, success: false, output: normalizedCall.error || '工具参数无效' };
+          else if (!explicitResourceGate.allowed) result = { name, success: false, output: explicitResourceGate.reason };
           else if (!preflight.ok) result = { name, success: false, output: `工具预检未通过：${preflight.message}` };
           else if (cache.has(key)) result = { name, success: false, output: '完全相同的工具调用已执行，不能重复消耗算力，必须更换路线。' };
           else {
@@ -1049,6 +1054,9 @@ function createNativeExecutionAdapter(options) {
         return { content: finalContent || '补偿步骤已完成真实工具执行。', review, callLog, usageModel: response.model, turnRuntime: runtime, turnFinalization: finalized.finalization };
       }
       const acceptance = fidelity.assessTaskCompletion(runtime.goal, finalContent, callLog);
+      const explicitAcceptance = explicitResource.assessExplicitResourceCompletion(explicitResourceContract, callLog);
+      acceptance.issues.push(...explicitAcceptance.issues);
+      acceptance.passed = acceptance.passed && explicitAcceptance.passed;
       if (!acceptance.passed) {
         forceActionCount += 1;
         messages.push({ role: 'assistant', content: finalContent });

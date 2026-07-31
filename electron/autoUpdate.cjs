@@ -35,10 +35,42 @@ autoUpdater.autoInstallOnAppQuit = false; // 必须先完成本机备份，再�
 autoUpdater.allowDowngrade = false;
 autoUpdater.allowPrerelease = false;
 
+let updateWindow;
+let checkTimeout;
+
+function clearCheckTimeout() {
+  if (checkTimeout) clearTimeout(checkTimeout);
+  checkTimeout = undefined;
+}
+
+function publishUpdateStatus(status) {
+  if (!updateWindow || updateWindow.isDestroyed()) return;
+  updateWindow.webContents.send('update:status', status);
+}
+
+function startCheckTimeout() {
+  clearCheckTimeout();
+  checkTimeout = setTimeout(() => {
+    publishUpdateStatus({ status: 'error', message: '检查更新超时。请确认网络可用后点击这里重试。' });
+  }, 45000);
+}
+
+async function checkForUpdates() {
+  publishUpdateStatus({ status: 'checking', message: '正在检查更新…' });
+  startCheckTimeout();
+  try {
+    return await autoUpdater.checkForUpdates();
+  } catch (error) {
+    clearCheckTimeout();
+    publishUpdateStatus({ status: 'error', message: `检查更新失败：${error?.message || '未知错误'}。点击这里重试。` });
+    throw error;
+  }
+}
+
 // ---- IPC：供 renderer 调用检查更新 ----
 ipcMain.handle('update:check', async () => {
   try {
-    await autoUpdater.checkForUpdates();
+    await checkForUpdates();
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e.message };
@@ -173,14 +205,17 @@ ipcMain.handle('upgrade:rollback', async () => {
 
 // ---- 对外暴露启动函数（main.cjs 中调用） ----
 function initAutoUpdater(mainWindow, options = {}) {
+  updateWindow = mainWindow;
   runtimeHealthProvider = typeof options.runtimeHealthProvider === 'function' ? options.runtimeHealthProvider : runtimeHealthProvider;
   // 事件 → IPC 转发给 renderer
   autoUpdater.on('checking-for-update', () => {
-    mainWindow.webContents.send('update:status', { status: 'checking', message: '正在检查更新…' });
+    publishUpdateStatus({ status: 'checking', message: '正在检查更新…' });
+    startCheckTimeout();
   });
 
   autoUpdater.on('update-available', (info) => {
-    mainWindow.webContents.send('update:status', {
+    clearCheckTimeout();
+    publishUpdateStatus({
       status: 'available',
       version: info.version,
       message: `发现新版本 v${info.version}，正在下载…`,
@@ -188,7 +223,8 @@ function initAutoUpdater(mainWindow, options = {}) {
   });
 
   autoUpdater.on('update-not-available', (info) => {
-    mainWindow.webContents.send('update:status', {
+    clearCheckTimeout();
+    publishUpdateStatus({
       status: 'not-available',
       version: info?.version,
       message: `已是最新版本 v${info?.version ?? '?'}`,
@@ -196,7 +232,8 @@ function initAutoUpdater(mainWindow, options = {}) {
   });
 
   autoUpdater.on('download-progress', (progressObj) => {
-    mainWindow.webContents.send('update:status', {
+    clearCheckTimeout();
+    publishUpdateStatus({
       status: 'downloading',
       percent: progressObj.percent,
       bytesPerSecond: progressObj.bytesPerSecond,
@@ -207,8 +244,9 @@ function initAutoUpdater(mainWindow, options = {}) {
   });
 
   autoUpdater.on('update-downloaded', (info) => {
+    clearCheckTimeout();
     downloadedVersion = info.version;
-    mainWindow.webContents.send('update:status', {
+    publishUpdateStatus({
       status: 'downloaded',
       version: info.version,
       message: `v${info.version} 已下载就绪。点击重启安装更新。`,
@@ -216,9 +254,9 @@ function initAutoUpdater(mainWindow, options = {}) {
   });
 
   autoUpdater.on('error', (err) => {
-    // Background update errors are diagnostic only. They are not application
-    // or model-network errors and should not be displayed as such.
+    clearCheckTimeout();
     log.warn('[autoUpdate] update check failed:', err?.message ?? err);
+    publishUpdateStatus({ status: 'error', message: `更新服务暂时不可用：${err?.message || '未知错误'}。点击这里重试。` });
   });
 
   // 启动后延迟 3 秒检查更新（让窗口先加载完成）
@@ -228,8 +266,8 @@ function initAutoUpdater(mainWindow, options = {}) {
       return;
     }
     log.info('[autoUpdate] 开始检查更新…');
-    autoUpdater.checkForUpdates().catch((e) => {
-      log.warn('[autoUpdate] 检查更新失败（静默忽略）:', e.message);
+    checkForUpdates().catch((e) => {
+      log.warn('[autoUpdate] 检查更新失败:', e.message);
     });
   }, 3000);
 }

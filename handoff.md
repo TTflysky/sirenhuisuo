@@ -1,5 +1,15 @@
 # 太极项目当前交接
 
+## v2.6.2 阶段三：明确资源忠实与更新入口恢复（2026-07-31，正式版本）
+
+- 当前源码版本为 `2.6.2`，基于已推送的 `v2.6.1`。安装包为 `release/taiji-office-setup-2.6.2.exe`，大小 `175439262` 字节，SHA-256 为 `DF421190A3F3A728F0D32724E0EB7BED8DEEDB572A81C236E8018994C8C777C0`。
+- `src/engine/explicitResourceContract.mjs` 是明确网页对象的统一身份与证据边界。用户要求处理指定网页正文时，`taskDecisionKernel` 强制优先 `read_web_page`；章北海聊天循环和原生团队执行器都会拒绝 `web_search`、其他地址和无原地址成功读取证据的完成声明。
+- 对话中的“这个链接”通过已有引用解析器把真实 `sourceUrl` 注入同一合同。上文失败不会覆盖本轮明确对象，已保存的 URL 不得再次向用户索要。
+- `electron/knowledge.cjs` 会拒绝空正文、验证码、访问异常和拦截页，避免把反爬提示当成文章证据；读取器标识已从旧 Hermes 名称改为 Taiji。
+- 自动更新入口现在始终可见。`idle/not-available/error` 可点击检查，`checking/available/downloading` 防重复点击，`downloaded` 触发备份后安装；主进程错误可见，45 秒无结果会变成可重试错误。
+- 人格版本为 v15。专项回归为 `verify:explicit-resource-contract` 与 `verify:update-control`，均进入 `verify:v2-core-gate`。微信公众号示例 `https://mp.weixin.qq.com/s/6d_2gn2jK3lVTJaeookHkA` 已作为精确地址回归样例。
+- `verify:v2-core-gate`、Build、Lint 与安装包 20 项必需文件检查均通过。本机安装目录已覆盖为 `2.6.2`，关键合同文件存在；覆盖前后用户数据文件均为 259 个，配置、员工、会话、任务和记忆未清理。
+
 ## v2.6.1 阶段三：图片编辑、记忆质量与性能基线（2026-07-31，本地开发版）
 
 - 当前源码版本为 `2.6.1`，基于已发布并完成本机安装迁移验收的 `v2.6.0`。本版本只做本地源码和回归收口，尚未打包、安装或发布 GitHub Release。

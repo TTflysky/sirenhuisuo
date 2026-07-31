@@ -1,4 +1,4 @@
-export interface TaskRequirement { id: string; kind: 'time' | 'location' | 'topic' | 'artifact' | 'entity'; label: string; terms: string[]; evidencePattern?: RegExp }
+export interface TaskRequirement { id: string; kind: 'time' | 'location' | 'topic' | 'artifact' | 'entity' | 'resource'; label: string; terms: string[]; evidencePattern?: RegExp }
 export interface FidelityAssessment { passed: boolean; issues: string[]; requirements: TaskRequirement[] }
 export function extractTaskRequirements(goal: string): TaskRequirement[];
 export function taskRequirementLabels(goal: string): string[];

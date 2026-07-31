@@ -1623,12 +1623,22 @@ html, body, #root, .app-root {
 
 /* ===== 自动更新状态指示器 ===== */
 .update-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
   font-size: 11px;
   padding: 2px 8px;
   border-radius: 10px;
   white-space: nowrap;
   line-height: 18px;
+  cursor: pointer;
 }
+.update-status:disabled { cursor: default; }
+.update-status:not(:disabled):hover { background: var(--border-light); }
+.update-idle { color: var(--text-muted); }
 .update-checking { color: var(--text-muted); }
 .update-available,
 .update-downloading { color: #2563eb; background: #dbeafe; }

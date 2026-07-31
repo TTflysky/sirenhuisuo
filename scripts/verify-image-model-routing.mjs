@@ -39,7 +39,7 @@ for (const [name, source] of [['assistant', assistant], ['dm', dm], ['team', tea
 assert.match(selector, /chatModelOverrides/u, '聊天内切换必须保存为场景覆盖，而不是污染默认职责模型');
 assert.match(selector, /getModelCapabilities\(entry\)\.includes\('image'\)/u, '聊天模型菜单必须标记图像模型');
 assert.match(preview, /download=\{image\.name\}/u, '生成图片必须可保存');
-assert.match(persona, /DEFAULT_PROMPT_VERSION = '14'/u, '内置助理人格必须随版本升级');
+assert.match(persona, /DEFAULT_PROMPT_VERSION = '15'/u, '内置助理人格必须随版本升级');
 assert.match(persona, /图片模型收到图片附件时，目标是编辑该图片/u, '人格必须承认当前图片是编辑输入');
 assert.match(personaStore, /appendixSections/u, '旧的自定义人格必须按章节补齐新协议');
 

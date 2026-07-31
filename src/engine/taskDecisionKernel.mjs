@@ -14,6 +14,7 @@ import { taskRequirementLabels } from './taskFidelity.mjs';
 import { resolveSkillInstallRequest } from './skillInstallRouting.mjs';
 import { isSkillDiscoveryRequest } from './skillHubSearch.mjs';
 import { inferCapabilityIds } from './capabilityGraph.mjs';
+import { createExplicitResourceContract } from './explicitResourceContract.mjs';
 
 export const TASK_DECISION_TOOL_NAME = 'compile_task_decision';
 const TURN_RELATIONS = new Set(['new_task', 'continuation', 'correction', 'control', 'question']);
@@ -52,6 +53,7 @@ export const TASK_DECISION_TOOL = {
           type: 'string',
           enum: [
             'direct_answer',
+            'read_web_page',
             'web_search',
             'inspect_connectors',
             'read_file',
@@ -164,6 +166,7 @@ export function classifyTaskTurnIntent(message) {
 }
 
 function defaultAcceptance(route, goal) {
+  if (route === 'read_web_page') return ['读取用户指定的原始网页地址', '总结或分析必须来自该网页正文，不得用搜索结果替代', '读取失败时报告原地址的真实错误'];
   if (route === 'web_search') return [`查询结果必须直接对应“${clean(goal, 160)}”中的对象、地点、时间和主题`, '取得当前可核验的外部资料，偏题结果不得交付', '直接回答用户问题并保留来源链接'];
   if (route === 'inspect_connectors') return ['识别真实接入方式和缺失条件', '完成保存并通过真实连接测试后才宣布可用'];
   if (route === 'read_file' || route === 'list_files') return ['读取真实目标内容', '根据读取结果回答，不凭空猜测'];
@@ -178,6 +181,7 @@ function defaultAcceptance(route, goal) {
 
 function routeForGoal(goal, availableTools) {
   const tools = new Set(availableTools ?? []);
+  if (createExplicitResourceContract(goal) && tools.has('read_web_page')) return 'read_web_page';
   if (resolveSkillInstallRequest(goal)?.sourceUrl && tools.has('install_skill')) return 'install_skill';
   if (isSkillDiscoveryRequest(goal) && tools.has('search_skills')) return 'search_skills';
   if (requiresFreshWebResearch(goal) && tools.has('web_search')) return 'web_search';
@@ -207,7 +211,7 @@ function deliverableTypeForGoal(goal, route, provided) {
   if (route === 'write_file') return 'file';
   if (route === 'inspect_connectors' || route === 'connector') return 'connection';
   if (['install_skill', 'run_command'].includes(route)) return 'operation';
-  if (route === 'direct_answer' || route === 'web_search' || route === 'read_file' || route === 'list_files') return 'answer';
+  if (route === 'direct_answer' || route === 'read_web_page' || route === 'web_search' || route === 'read_file' || route === 'list_files') return 'answer';
   if (['answer', 'file', 'connection', 'operation', 'decision', 'mixed'].includes(provided)) return provided;
   if (/(?:文件|文档|代码|网页|word|excel|ppt|pdf|markdown|安装包)/iu.test(goal)) return 'file';
   if (/选择|判断|比较|建议|分析|规划/u.test(goal)) return 'decision';
@@ -240,7 +244,8 @@ export function createFallbackTaskDecision(input = {}) {
   const feedbackOnly = shouldHoldTaskForFeedback(latestMessage) && isConversationOnlyMessage(latestMessage);
   const requiredConstraints = taskRequirementLabels(goal);
   const turnRelation = fallbackTurnRelation(input);
-  const mustExecute = turnIntent === 'execute_request' && (capabilityCorrection
+  const explicitResourceRequest = Boolean(createExplicitResourceContract(goal));
+  const mustExecute = explicitResourceRequest || turnIntent === 'execute_request' && (capabilityCorrection
     || requiresFreshWebResearch(goal)
     || requiresObservableExecutionEvidence(goal)
     || !isConversationOnlyMessage(latestMessage));
@@ -308,7 +313,7 @@ export function normalizeTaskDecision(candidate, input = {}) {
   const capabilityCorrection = isActionableCapabilityCorrection(latestMessage);
   const taskCorrection = isTaskCorrection(latestMessage);
   const fallbackRelation = fallback.turnRelation;
-  const hardExecute = capabilityCorrection || requiresFreshWebResearch(fallback.goal) || requiresObservableExecutionEvidence(fallback.goal);
+  const hardExecute = capabilityCorrection || Boolean(createExplicitResourceContract(fallback.goal)) || requiresFreshWebResearch(fallback.goal) || requiresObservableExecutionEvidence(fallback.goal);
   const hardHold = turnIntent === 'follow_up_question' || turnIntent === 'feedback_or_correction'
     || control === 'stop' || control === 'pause'
     || (shouldHoldTaskForFeedback(latestMessage) && isConversationOnlyMessage(latestMessage));
@@ -329,6 +334,9 @@ export function normalizeTaskDecision(candidate, input = {}) {
   if (capabilityCorrection && mode === 'execute') primaryRoute = fallback.primaryRoute;
   if (mode === 'execute' && isKnowledgeDirectoryReadRequest(goal) && (input.availableTools ?? []).includes('run_command')) {
     primaryRoute = 'run_command';
+  }
+  if (mode === 'execute' && createExplicitResourceContract(goal) && (input.availableTools ?? []).includes('read_web_page')) {
+    primaryRoute = 'read_web_page';
   }
   // An explicit Skill package or repository is a typed install operation. Keep
   // the model in charge of deciding whether installation is needed, while the

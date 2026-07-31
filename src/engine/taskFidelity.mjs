@@ -1,4 +1,5 @@
 import { resolveSkillInstallRequest } from './skillInstallRouting.mjs';
+import { createExplicitResourceContract } from './explicitResourceContract.mjs';
 
 const TOPIC_DEFINITIONS = [
   {
@@ -82,6 +83,13 @@ function extractLocationChain(goal) {
 export function extractTaskRequirements(goal) {
   const text = clean(goal);
   const requirements = [];
+  const explicitResource = createExplicitResourceContract(text);
+  explicitResource?.urls.forEach((url, index) => requirements.push({
+    id: `explicit-web-${index}`,
+    kind: 'resource',
+    label: `指定网页：${url}`,
+    terms: [url],
+  }));
   const timeMatch = text.match(/今天|今日|明天|后天|本周|本月|最近|最新|实时|当前|现在|\d{4}[年/-]\d{1,2}(?:[月/-]\d{1,2}日?)?/u)?.[0];
   if (timeMatch) {
     const terms = /今天|今日|当前|现在|实时|最新|最近/u.test(timeMatch) ? unique([timeMatch, '今天', '今日', '最新', ...localDateTerms()]) : [timeMatch];
@@ -123,6 +131,7 @@ export function validateSearchQueryAgainstGoal(goal, query) {
     if (requirement.kind === 'topic' && !requirement.evidencePattern.test(queryText)) issues.push(`搜索词丢失了${requirement.label}`);
     if (requirement.kind === 'time' && !containsAny(queryText, requirement.terms)) issues.push(`搜索词丢失了${requirement.label}`);
     if (requirement.kind === 'entity' && !containsAny(queryText, requirement.terms)) issues.push(`搜索词丢失了${requirement.label}`);
+    if (requirement.kind === 'resource' && !containsAny(queryText, requirement.terms)) issues.push(`搜索词丢失了${requirement.label}`);
   }
   return { passed: issues.length === 0, issues, requirements };
 }
@@ -157,6 +166,7 @@ export function assessEvidenceAlignment(goal, evidence, options = {}) {
     if (requirement.kind === 'location' && !containsAny(text, requirement.terms)) issues.push(`证据没有对应${requirement.label}`);
     if (requirement.kind === 'topic' && !requirement.evidencePattern.test(text)) issues.push(`证据没有包含${requirement.label}所需的数据`);
     if (requirement.kind === 'entity' && !containsAny(text, requirement.terms)) issues.push(`证据没有对应${requirement.label}`);
+    if (requirement.kind === 'resource' && !containsAny(text, requirement.terms)) issues.push(`证据没有对应${requirement.label}`);
     if (requirement.kind === 'time' && options.requireTime === true && !containsAny(text, requirement.terms)) issues.push(`证据没有对应${requirement.label}`);
   }
   return { passed: issues.length === 0, issues, requirements };

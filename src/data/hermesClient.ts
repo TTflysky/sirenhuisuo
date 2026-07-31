@@ -60,6 +60,12 @@ import {
   type TaskDecision,
 } from '../engine/taskDecisionKernel.mjs';
 import { assessTaskCompletion } from '../engine/taskFidelity.mjs';
+import {
+  assessExplicitResourceCompletion,
+  buildExplicitResourceGuidance,
+  createExplicitResourceContract,
+  validateExplicitResourceToolCall,
+} from '../engine/explicitResourceContract.mjs';
 import { isSkillInstallOnlyRequest, resolveSkillInstallInput, resolveSkillInstallRequest } from '../engine/skillInstallRouting.mjs';
 import { buildTaskLearningContext, recordTaskLearning } from '../engine/taskLearningMemory';
 import {
@@ -1291,6 +1297,11 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   const pinnedSkillInstruction = pinnedSkillSource
     ? `\n\n## 指定 Skill 来源合同\n用户已指定唯一来源：${pinnedSkillSource}\n先读取该来源的 SKILL.md，并按其中的引用关系读取必要配套文件，自己完成用途、规则和风险判断；禁止搜索 SkillsMP、SkillHub 或其他替代来源，禁止使用 npx/skills CLI。完成阅读与风险判断后，调用 install_skill，且 sourceUrl 必须保持为上述来源。客户端原生安装器会复制并校验完整目录。`
     : '';
+  const explicitResourceContract = createExplicitResourceContract(
+    `${originalUserText}\n${latestUserText}`,
+    opts.referenceSourceUrl ? [opts.referenceSourceUrl] : [],
+  );
+  const explicitResourceInstruction = buildExplicitResourceGuidance(explicitResourceContract);
   let turnRuntime = createTurnRuntime({
     scope: scope ?? scene,
     goal: originalUserText,
@@ -1311,7 +1322,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     ? [{ role: 'system', content: `${taskContract}\n\n当前消息不需要工具执行。直接结合最近上下文回应，不得自动恢复、重放或继续上一项任务。只有用户明确提出新的执行目标或明确要求继续时，才能重新开始执行。` }, ...currentTurns]
     : [{
       role: 'system',
-      content: `${taskContract}\n\n${buildTurnGuidance(turnRuntime)}\n\n${AUTONOMOUS_EXECUTION_GUIDE}\n\n${CAPABILITY_ROUTING_GUIDE}\n\n${SKILL_RECOVERY_GUIDE}${pinnedSkillInstruction}${resumedFromCapabilityCorrection
+      content: `${taskContract}\n\n${buildTurnGuidance(turnRuntime)}\n\n${AUTONOMOUS_EXECUTION_GUIDE}\n\n${CAPABILITY_ROUTING_GUIDE}\n\n${SKILL_RECOVERY_GUIDE}${pinnedSkillInstruction}${explicitResourceInstruction ? `\n\n${explicitResourceInstruction}` : ''}${resumedFromCapabilityCorrection
         ? `\n\n用户最新消息是在纠正上一轮没有行动的问题。当前仍未完成的目标是：\n${originalUserText.slice(0, 2000)}\n必须立即按纠正后的能力路线执行，不要再次道歉、解释能力或要求用户重复目标。`
         : ''}`,
     }, ...currentTurns];
@@ -1343,6 +1354,15 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   const maxTotalToolAttempts = connectorSetupTask ? 18 : 48;
   const maxPreparationOnlyStreak = connectorSetupTask ? 5 : 8;
   const callLog: Array<{ name: string; args: string; result: string; success: boolean }> = [];
+  const assessCurrentTaskCompletion = (content: string) => {
+    const base = assessTaskCompletion(originalUserText, content, callLog);
+    const explicit = assessExplicitResourceCompletion(explicitResourceContract, callLog);
+    return {
+      ...base,
+      passed: base.passed && explicit.passed,
+      issues: [...base.issues, ...explicit.issues],
+    };
+  };
   const toolResultCache = new Map<string, { output: string; success: boolean }>();
   const toolCallCounts = new Map<string, number>();
   const resourceReadCounts = new Map<string, number>();
@@ -1703,8 +1723,11 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
           : tc.name === 'read_file' ? (connectorSetupTask ? 4 : 12) : Number.POSITIVE_INFINITY;
         const toolLimitReached = toolCallCount > getToolCallLimit(tc.name, connectorSetupTask);
         const resourceLimitReached = Boolean(resourceKey) && resourceReadCount >= resourceLimit;
+        const explicitResourceGate = validateExplicitResourceToolCall(explicitResourceContract, tc.name, effectiveArguments, callLog);
         const blockedReason = !effectiveCallOk
           ? effectiveCallError ?? '工具参数无效，模型需要修正后再调用。'
+          : !explicitResourceGate.allowed
+          ? explicitResourceGate.reason
           : pinnedSkillSource && (tc.name === 'search_skills' || tc.name === 'web_search')
           ? '用户已给出明确的 Skill 来源。本次只允许阅读该来源及同仓库配套文件、完成风险判断并安装；禁止搜索候选或替代来源。'
           : pinnedSkillSource && tc.name === 'read_web_page' && !isAllowedPinnedSkillSource(lifecycleArgs.url, pinnedSkillSource)
@@ -1773,7 +1796,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         });
         publishTurnLifecycle();
         if (resultSuccess && tc.name === 'search_skills' && skillDiscoveryNeedsSelection) {
-          const acceptance = assessTaskCompletion(originalUserText, result.output, callLog);
+          const acceptance = assessCurrentTaskCompletion(result.output);
           publishExecutionState(evaluateExecutionConclusion(executionState, {
             content: result.output,
             reviewed: true,
@@ -1785,7 +1808,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
           break;
         }
         if (resultSuccess && tc.name === 'install_skill' && installOnlyTask) {
-          const acceptance = assessTaskCompletion(originalUserText, result.output, callLog);
+          const acceptance = assessCurrentTaskCompletion(result.output);
           publishExecutionState(evaluateExecutionConclusion(executionState, {
             content: result.output,
             reviewed: true,
@@ -1863,7 +1886,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     } else if (r.content) {
       if (!conversationOnly) {
         const cognitiveOnlyCompletion = !executionState.requiresEvidence && callLog.length === 0;
-        const acceptance = assessTaskCompletion(originalUserText, r.content, callLog);
+        const acceptance = assessCurrentTaskCompletion(r.content);
         publishExecutionState(evaluateExecutionConclusion(executionState, {
           content: r.content,
           reviewed: cognitiveOnlyCompletion || finalReviewRequested,
