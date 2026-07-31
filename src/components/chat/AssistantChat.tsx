@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import type { ChatMessage, ThoughtChainStep, SkillUsageEvidence } from '../../types';
-import { compileTaskDecision, runAgentLoop, resolveApiBase, resolveChatSettings, extractUserInsights, fetchInitial, loadSettings, type ChatTurn, type Attachment } from '../../data/hermesClient';
+import { compileTaskDecision, generatedImageAttachment, generateImage, getConversationModel, isImageGenerationModel, runAgentLoop, resolveApiBase, resolveChatSettings, extractUserInsights, fetchInitial, loadSettings, type ChatTurn, type Attachment } from '../../data/hermesClient';
 import { getRegisteredTools } from '../../engine/toolCatalog';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
 import ProjectApprovalCard from './ProjectApprovalCard';
@@ -9,6 +9,7 @@ import ChatMessageText from './ChatMessageText';
 import ThoughtChainView from './ThoughtChainView';
 import { copyAndArchiveChatTranscript, copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
+import GeneratedImagePreview from './GeneratedImagePreview';
 import SkillMentionInput from '../skills/SkillMentionInput';
 import { resolveSkillContextWithEvidence } from '../../engine/skillContext';
 import SkillPickerButton from '../skills/SkillPickerButton';
@@ -189,6 +190,7 @@ export default function AssistantChat() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const steeringMessagesRef = useRef<string[]>([]);
   const activeWorkspaceIdRef = useRef<string | undefined>(undefined);
+  const activeTaskGoalRef = useRef<string>('');
   const queuedFollowUpsRef = useRef<Array<{ prompt: string; display: string }>>([]);
   const previousExecutionStateRef = useRef<'running' | 'paused' | 'stopping'>('running');
   const executionControl = useAgentExecutionControl(busy);
@@ -266,6 +268,42 @@ export default function AssistantChat() {
       });
       return;
     }
+    const conversationModel = getConversationModel('assistant');
+    if (isImageGenerationModel(conversationModel)) {
+      const display = displayOverride ?? [content, ...atts.map((attachment) => `[image ${attachment.name}]`)].filter(Boolean).join('\n');
+      if (!externalRequest) {
+        setSkillRefs([]);
+        setText('');
+        setAttachments([]);
+      }
+      if (!alreadyDisplayed) {
+        push({
+          id: `h-${Date.now()}-me`, authorId: 'me', roleId: 'human', content: display,
+          mentions: [], timestamp: Date.now(), kind: 'text', attachments: atts,
+        });
+      }
+      setBusy(true);
+      setStatus('Generating image...');
+      try {
+        const image = await generateImage(content, conversationModel);
+        push({
+          id: `h-${Date.now()}-image`, authorId: 'assistant', roleId: 'custom',
+          content: `Image generated with ${image.model}.`, mentions: [], timestamp: Date.now(), kind: 'text',
+          attachments: [generatedImageAttachment(image)],
+        });
+      } catch (error) {
+        push({
+          id: `h-${Date.now()}-image-error`, authorId: 'assistant', roleId: 'custom',
+          content: `Image generation failed: ${error instanceof Error ? error.message : String(error)}`,
+          mentions: [], timestamp: Date.now(), kind: 'text',
+        });
+      } finally {
+        setBusy(false);
+        setStatus('');
+      }
+      return;
+    }
+
     const referenceResolution: ConversationReferenceResolution = externalRequest
       ? { status: 'none', references: [], skillRefs: [], context: '', action: 'refer' }
       : resolveConversationReferences({ input: content, history: msgs, selectedSkillRefs: skillRefs });
@@ -540,6 +578,23 @@ export default function AssistantChat() {
         setStatus('正在从暂停位置继续…');
         return;
       }
+      const followUpCompilation = await compileTaskDecision([
+        ...msgs.filter(isDialogMessage).slice(-8).map((message) => ({
+          role: message.roleId === 'human' ? 'user' as const : 'assistant' as const,
+          content: message.content,
+        })),
+        { role: 'user', content: enriched },
+      ], getRegisteredTools(), resolveChatSettings(), undefined, { activeTaskGoal: activeTaskGoalRef.current });
+      if (followUpCompilation.decision.turnRelation === 'new_task' && followUpCompilation.decision.mode === 'execute') {
+        queuedFollowUpsRef.current.push({ prompt: enriched, display });
+        push({
+          id: `h-${Date.now()}-independent-task-queued`, authorId: 'assistant', roleId: 'custom',
+          content: '我已识别这是一项独立新任务，已单独排队，不会混入当前任务。当前任务完成或停止后会自动开始处理它。',
+          mentions: [], timestamp: Date.now(), kind: 'text',
+        });
+        setStatus('当前任务继续执行，独立新任务已排队…');
+        return;
+      }
       const mode = loadSettings().followUpMode ?? 'steer';
       if (activeWorkspaceIdRef.current && atts.length) {
         try {
@@ -580,6 +635,7 @@ export default function AssistantChat() {
 
     const workspaceId = createTaskWorkspaceId('assistant');
     activeWorkspaceIdRef.current = workspaceId;
+    activeTaskGoalRef.current = taskDecisionCompilation?.decision.goal || enriched;
     const taskBridge = createChatTaskBridge({
       taskType: 'assistant',
       ownerId: 'assistant',
@@ -616,6 +672,7 @@ export default function AssistantChat() {
       setBusy(false);
       setStatus('');
       if (activeWorkspaceIdRef.current === workspaceId) activeWorkspaceIdRef.current = undefined;
+      if (activeTaskGoalRef.current === (taskDecisionCompilation?.decision.goal || enriched)) activeTaskGoalRef.current = '';
       const queued = queuedFollowUpsRef.current.shift();
       if (queued) setPendingRequest({ id: `queued-${Date.now()}`, prompt: queued.prompt, display: queued.display, createdAt: Date.now(), alreadyDisplayed: true });
       return;
@@ -802,6 +859,7 @@ ${employeeDirectory}
     }
     setBusy(false);
     if (activeWorkspaceIdRef.current === workspaceId) activeWorkspaceIdRef.current = undefined;
+    if (activeTaskGoalRef.current === (taskDecisionCompilation?.decision.goal || enriched)) activeTaskGoalRef.current = '';
     setStatus('');
     const queued = queuedFollowUpsRef.current.shift();
     if (queued) setPendingRequest({ id: `queued-${Date.now()}`, prompt: queued.prompt, display: queued.display, createdAt: Date.now(), alreadyDisplayed: true });
@@ -931,6 +989,7 @@ ${employeeDirectory}
     steeringMessagesRef.current.splice(0);
     queuedFollowUpsRef.current.splice(0);
     activeWorkspaceIdRef.current = undefined;
+    activeTaskGoalRef.current = '';
     localStorage.removeItem(LS_PENDING_REQUEST);
     executionControl.reset();
   };
@@ -1034,6 +1093,7 @@ ${employeeDirectory}
                       <CopyOutlined />
                     </button>
                   </div>
+                  <GeneratedImagePreview attachments={msg.attachments} />
                   {/* 思维链展示 */}
                   <MessageSkillEvidence refs={msg.skillRefs} evidence={msg.skillEvidence} />
                   {msg.thoughtChain && msg.thoughtChain.length > 0 && (

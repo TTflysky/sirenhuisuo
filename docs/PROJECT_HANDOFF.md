@@ -1,9 +1,17 @@
 # 项目交接手册
 
 > 最后整理：2026-07-31
-> 当前源码版本：`v2.3.1`
+> 当前源码版本：`v2.4.0`（阶段一开发中，未发布）
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+
+## v2.4.0 阶段一：轮次语义与平台级图片模型
+
+- `taskDecisionKernel` 现在输出 `turnRelation`，把新任务、续办、纠错、控制和询问作为不同类型处理。AssistantChat 仅把确认为 `new_task` 的独立目标放入新的执行队列。
+- `hermesClient` 提供模型能力推断、聊天场景覆盖和通用 `generateImage`。`gpt-image-2` 请求到 `/images/generations` 时发送 `output_format: "png"`，旧兼容模型才发送 `response_format: "b64_json"`。
+- `ModelSelector` 的图片模型选择保存到 `chatModelOverrides`；AssistantChat、DmChatApp、TeamChatApp 均检测图片能力并将生成的附件持久化到消息中。`GeneratedImagePreview` 统一展示和下载这些图片。
+- 回归入口：`npm.cmd run verify:image-model-routing` 与 `npm.cmd run verify:task-turn-isolation`。二者都已纳入 `verify:v2-core-gate`。
+- 本阶段没有制作 Windows 安装包或 GitHub Release。真实图片生成仍需在设置中配置可用的 OpenAI/API 兼容服务凭据后进行手动验收。
 
 ## v2.3.1 软件项目职责编译与导航完整性
 

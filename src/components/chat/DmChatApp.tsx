@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { CloseOutlined, CopyOutlined, ExportOutlined, PaperClipOutlined, PauseCircleOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined, SettingOutlined, StopOutlined } from '@ant-design/icons';
 import type { ChatMessage, ConversationReference, SkillUsageEvidence, ThoughtChainStep } from '../../types';
 import { useStore } from '../../storeContext';
-import { loadDm, appendDm, replaceDm, runAgentLoop, resolveApiBase, extractUserInsights, getEmployeeModel, loadSettings, type ChatTurn, type Attachment, type ContextUsage } from '../../data/hermesClient';
+import { generatedImageAttachment, generateImage, getConversationModel, isImageGenerationModel, loadDm, appendDm, replaceDm, runAgentLoop, resolveApiBase, extractUserInsights, getEmployeeModel, loadSettings, type ChatTurn, type Attachment, type ContextUsage } from '../../data/hermesClient';
 import AgentAvatar from '../office/AgentAvatar';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
 import ChatMessageText from './ChatMessageText';
@@ -10,6 +10,7 @@ import MessageSkillEvidence from './MessageSkillEvidence';
 import ThoughtChainView from './ThoughtChainView';
 import { copyAndArchiveChatTranscript, copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
+import GeneratedImagePreview from './GeneratedImagePreview';
 import SkillMentionInput from '../skills/SkillMentionInput';
 import { resolveSkillContextWithEvidence } from '../../engine/skillContext';
 import SkillPickerButton from '../skills/SkillPickerButton';
@@ -398,7 +399,7 @@ export default function DmChatApp({ empId }: Props) {
     try {
       await initializeTaskWorkspace(job.workspaceId, { kind: 'dm', label: `${emp.name} / ${job.userText.slice(0, 50) || '私聊任务'}`, taskId: job.id });
       await copyAttachmentsToWorkspace(`dm:${empId}`, job.workspaceId, job.attachments);
-      const { text: reply, usage, contextUsage, thoughtChain, skillEvidence, references } = await generateReply(
+      const { text: reply, usage, contextUsage, thoughtChain, skillEvidence, references, attachments: generatedAttachments } = await generateReply(
         job.userText,
         job.attachments,
         job.skillContext,
@@ -416,7 +417,7 @@ export default function DmChatApp({ empId }: Props) {
         job.conversationId,
       );
       setStatus('正在整理清晰的结果…');
-      push({ id: `dm-${Date.now()}-${empId}`, authorId: empId, roleId: emp.role, content: reply, mentions: [], timestamp: Date.now(), kind: 'text', tokens: usage, contextUsage, thoughtChain, skillRefs: job.skillRefs.length ? job.skillRefs : undefined, skillEvidence: skillEvidence?.length ? skillEvidence : undefined, references: references?.length ? references : undefined }, job.conversationId);
+      push({ id: `dm-${Date.now()}-${empId}`, authorId: empId, roleId: emp.role, content: reply, mentions: [], timestamp: Date.now(), kind: 'text', tokens: usage, contextUsage, thoughtChain, attachments: generatedAttachments, skillRefs: job.skillRefs.length ? job.skillRefs : undefined, skillEvidence: skillEvidence?.length ? skillEvidence : undefined, references: references?.length ? references : undefined }, job.conversationId);
       setRetryJob(null);
       saveRetryJob(empId, null);
     } catch (error) {
@@ -477,7 +478,7 @@ export default function DmChatApp({ empId }: Props) {
   };
 
   // 优先真调 OpenAI 兼容模型（带员工提示词），失败/未配置则回落本地剧本
-  const generateReply = async (userText: string, atts: Attachment[] = [], skillContext = '', skillEvidence: SkillUsageEvidence[] = [], historyOverride?: ChatTurn[], workspaceId?: string, initialExecutionState?: ExecutionControllerSnapshot, referenceContext = '', referenceSourceUrl = '', onExecutionState?: (state: ExecutionControllerSnapshot) => void, taskBridge?: ReturnType<typeof createChatTaskBridge>, targetConversationId = conversationIdRef.current): Promise<{ text: string; usage?: number; contextUsage?: ContextUsage; thoughtChain?: ThoughtChainStep[]; skillEvidence?: SkillUsageEvidence[]; references?: ConversationReference[]; executionState?: ExecutionControllerSnapshot }> => {
+  const generateReply = async (userText: string, atts: Attachment[] = [], skillContext = '', skillEvidence: SkillUsageEvidence[] = [], historyOverride?: ChatTurn[], workspaceId?: string, initialExecutionState?: ExecutionControllerSnapshot, referenceContext = '', referenceSourceUrl = '', onExecutionState?: (state: ExecutionControllerSnapshot) => void, taskBridge?: ReturnType<typeof createChatTaskBridge>, targetConversationId = conversationIdRef.current): Promise<{ text: string; usage?: number; contextUsage?: ContextUsage; thoughtChain?: ThoughtChainStep[]; skillEvidence?: SkillUsageEvidence[]; references?: ConversationReference[]; executionState?: ExecutionControllerSnapshot; attachments?: Attachment[] }> => {
     // 文本类附件：直接拼进用户文本作为上下文
     let enriched = userText;
     const textAtts = atts.filter((a) => a.kind === 'text' && a.dataUrl);
@@ -489,6 +490,17 @@ export default function DmChatApp({ empId }: Props) {
     enriched += attachmentWorkspaceContext(atts);
     // 图片类附件：走多模态视觉
     const imageAtts = atts.filter((a) => a.kind === 'image');
+
+    const conversationModel = getConversationModel('dm', emp);
+    if (isImageGenerationModel(conversationModel)) {
+      setStatus('Generating image...');
+      const image = await generateImage(userText, conversationModel);
+      return {
+        text: `Image generated with ${image.model}.`,
+        attachments: [generatedImageAttachment(image)],
+        skillEvidence,
+      };
+    }
 
     if (!resolveApiBase(getEmployeeModel(emp))) {
       // 未配置 API：本地剧本 + 短延迟模拟
@@ -748,6 +760,7 @@ export default function DmChatApp({ empId }: Props) {
                     <div className="msg-bubble"><ChatMessageText content={msg.content} scope={`dm:${empId}`} onOpenOutput={openOutputFromMessage} /></div>
                     <button className="msg-copy-btn" onClick={() => handleCopyMsg(msg.content)} title="复制">📋</button>
                   </div>
+                  <GeneratedImagePreview attachments={msg.attachments} />
                   <MessageSkillEvidence refs={msg.skillRefs} evidence={msg.skillEvidence} />
                   {msg.tokens != null && (
                     <div className="msg-tokens">≈ {msg.tokens.toLocaleString()} tokens</div>

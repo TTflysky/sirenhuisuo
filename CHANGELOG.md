@@ -1,5 +1,14 @@
 # 更新日志
 
+## v2.4.0 (Phase 1: turn isolation and platform-wide GPT Image 2)
+
+- Added turn-relation classification before task planning. A new independent goal, continuation, correction, control command, and status question are now treated as different conversational acts, so a new request no longer gets silently merged into an in-flight task.
+- Added `gpt-image-2` as a first-class image model. It uses the OpenAI image-generation endpoint and its `output_format` request contract instead of a chat-completions fallback or the legacy image response field.
+- Added a one-click `GPT Image 2` model entry in Settings. Image-capable entries are labelled clearly and can also be assigned to the existing employee-avatar generator.
+- Added image-mode model selection to the assistant, employee direct-message, and team-chat composers. Generated images are saved into chat history, can be opened or downloaded, and survive normal message rendering.
+- Kept temporary chat choices scoped to their chat surface. Switching a composer to an image model does not overwrite the assistant default, the active general model, or an employee's dedicated working model.
+- Added regressions for image endpoint routing and task-turn isolation; they are included in the v2 core release gate.
+
 ## v2.3.1 (Software-project roster fidelity and complete office navigation)
 
 - Compiled greenfield software, application, client, platform, system, website, and mini-program requests into a deterministic responsibility baseline covering coordination, software architecture, UI/UX, frontend/client implementation, backend services, engineering, and QA. Model-suggested capabilities are additive and can no longer erase this baseline.

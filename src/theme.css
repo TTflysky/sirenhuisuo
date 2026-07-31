@@ -3773,6 +3773,9 @@ body, .titlebar, .sidebar, .team-chat-header, .team-member-sidebar,
 .team-waiting-banner span { overflow: hidden; color: var(--text-secondary); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .team-live-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .team-live-actions .btn { flex: 0 0 auto; }
+.chat-generated-images { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 0; }
+.chat-generated-images a { display: block; max-width: min(100%, 420px); overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-deep); box-shadow: 0 6px 16px rgba(15, 23, 42, .14); }
+.chat-generated-images img { display: block; width: 100%; height: auto; max-height: 420px; object-fit: contain; }
 @media (max-width: 760px) {
   .chat-new-session-btn { min-width: 32px; }
   .chat-new-session-btn > span:last-child { display: none; }

@@ -1,7 +1,9 @@
 export type TaskDecisionMode = 'conversation' | 'answer' | 'execute';
+export type TaskTurnRelation = 'new_task' | 'continuation' | 'correction' | 'control' | 'question';
 export type TaskPrimaryRoute = 'direct_answer' | 'web_search' | 'inspect_connectors' | 'read_file' | 'list_files' | 'search_skills' | 'install_skill' | 'write_file' | 'run_command' | 'team_dispatch' | 'general_tools';
 export interface TaskDecision {
   mode: TaskDecisionMode;
+  turnRelation: TaskTurnRelation;
   goal: string;
   primaryRoute: TaskPrimaryRoute;
   deliverableType: 'answer' | 'file' | 'connection' | 'operation' | 'decision' | 'mixed';
@@ -22,6 +24,7 @@ export interface TaskDecision {
 export interface TaskDecisionInput {
   latestMessage?: string;
   previousUserMessage?: string;
+  activeTaskGoal?: string;
   recentHistory?: Array<{ role?: string; content?: string }>;
   availableTools?: string[];
   relevantUserContext?: string;

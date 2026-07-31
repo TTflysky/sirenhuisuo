@@ -16,6 +16,7 @@ import { isSkillDiscoveryRequest } from './skillHubSearch.mjs';
 import { inferCapabilityIds } from './capabilityGraph.mjs';
 
 export const TASK_DECISION_TOOL_NAME = 'compile_task_decision';
+const TURN_RELATIONS = new Set(['new_task', 'continuation', 'correction', 'control', 'question']);
 
 export const TASK_DECISION_TOOL = {
   type: 'function',
@@ -27,6 +28,7 @@ export const TASK_DECISION_TOOL = {
       additionalProperties: false,
       required: [
         'mode',
+        'turnRelation',
         'goal',
         'primaryRoute',
         'acceptanceCriteria',
@@ -40,6 +42,11 @@ export const TASK_DECISION_TOOL = {
       ],
       properties: {
         mode: { type: 'string', enum: ['conversation', 'answer', 'execute'] },
+        turnRelation: {
+          type: 'string',
+          enum: ['new_task', 'continuation', 'correction', 'control', 'question'],
+          description: '最新消息相对当前任务的关系。没有当前任务时使用 new_task。',
+        },
         goal: { type: 'string', description: '去掉抱怨、纠正措辞后的真实目标。' },
         primaryRoute: {
           type: 'string',
@@ -96,6 +103,39 @@ const ROUTES = new Set(TASK_DECISION_TOOL.function.parameters.properties.primary
 
 function clean(value, maxLength = 2000) {
   return String(value ?? '').trim().replace(/\s+/g, ' ').slice(0, maxLength);
+}
+
+function hasExplicitIndependentGoal(message) {
+  const value = clean(message, 1200);
+  if (!value || /(?:继续|恢复|暂停|停止|上面|刚才|之前|原任务|当前任务|这个任务|这件事)/u.test(value)) return false;
+  if (/^(?:另外|新任务|换个任务|先做这个|还有一件事|顺便)/u.test(value)) return true;
+  return /^(?:请|帮我|我要|我需要|麻烦你|替我).{0,16}(?:查看|查询|检查|安装|创建|生成|编写|搜索|查找|配置|测试|分析|整理|删除|导出)/u.test(value)
+    || /^(?:查看|查询|检查|安装|创建|生成|编写|搜索|查找|配置|测试|分析|整理|删除|导出)/u.test(value);
+}
+
+function isTaskCorrection(message) {
+  return isActionableCapabilityCorrection(message)
+    || /(?:不对|错了|不是这个|理解错|偏题|没有意义|别再重复|重新理解|重新看(?:一下)?需求|重新选人|胡说)/u.test(clean(message, 1200));
+}
+
+function isTaskStatusQuestion(message) {
+  const value = clean(message, 1200);
+  return /(?:现在|当前|目前|进度|做到哪|哪一步|为什么|怎么回事|卡住|还在做).{0,16}(?:吗|呢|了|\?|？)?$/u.test(value)
+    || /[？?]$/u.test(value);
+}
+
+function fallbackTurnRelation(input = {}) {
+  const latestMessage = clean(input.latestMessage);
+  const activeTaskGoal = clean(input.activeTaskGoal);
+  const control = getDirectExecutionControl(latestMessage);
+  if (control) return 'control';
+  if (!activeTaskGoal) return 'new_task';
+  if (isTaskCorrection(latestMessage)) return 'correction';
+  if (isTaskStatusQuestion(latestMessage)) return 'question';
+  const turnIntent = classifyTaskTurnIntent(latestMessage);
+  if (turnIntent === 'follow_up_question' || turnIntent === 'answer') return 'question';
+  if (hasExplicitIndependentGoal(latestMessage)) return 'new_task';
+  return 'continuation';
 }
 
 /**
@@ -199,6 +239,7 @@ export function createFallbackTaskDecision(input = {}) {
   const goal = clean(resolveActionableUserGoal(latestMessage, previousUserMessage)) || latestMessage;
   const feedbackOnly = shouldHoldTaskForFeedback(latestMessage) && isConversationOnlyMessage(latestMessage);
   const requiredConstraints = taskRequirementLabels(goal);
+  const turnRelation = fallbackTurnRelation(input);
   const mustExecute = turnIntent === 'execute_request' && (capabilityCorrection
     || requiresFreshWebResearch(goal)
     || requiresObservableExecutionEvidence(goal)
@@ -207,6 +248,7 @@ export function createFallbackTaskDecision(input = {}) {
   if (control === 'stop' || control === 'pause' || feedbackOnly || turnIntent === 'follow_up_question' || turnIntent === 'feedback_or_correction') {
     return {
       mode: 'conversation', goal: latestMessage, primaryRoute: 'direct_answer',
+      turnRelation,
       deliverableType: 'answer',
       acceptanceCriteria: ['回应用户当前控制指令、追问或反馈，不偷跑旧任务'],
       requiredConstraints,
@@ -219,6 +261,7 @@ export function createFallbackTaskDecision(input = {}) {
     const primaryRoute = routeForGoal(goal, input.availableTools);
     return {
       mode: 'execute', goal, primaryRoute,
+      turnRelation,
       deliverableType: deliverableTypeForGoal(goal, primaryRoute),
       acceptanceCriteria: defaultAcceptance(primaryRoute, goal),
       requiredCapabilities: inferCapabilityIds(goal),
@@ -233,6 +276,7 @@ export function createFallbackTaskDecision(input = {}) {
 
   return {
     mode: /[？?]|为什么|怎么|是什么|能否|可以吗|对么/u.test(latestMessage) ? 'answer' : 'conversation',
+    turnRelation,
     goal: latestMessage,
     primaryRoute: 'direct_answer',
     deliverableType: 'answer',
@@ -262,12 +306,20 @@ export function normalizeTaskDecision(candidate, input = {}) {
   const control = getDirectExecutionControl(latestMessage);
   const turnIntent = classifyTaskTurnIntent(latestMessage);
   const capabilityCorrection = isActionableCapabilityCorrection(latestMessage);
+  const taskCorrection = isTaskCorrection(latestMessage);
+  const fallbackRelation = fallback.turnRelation;
   const hardExecute = capabilityCorrection || requiresFreshWebResearch(fallback.goal) || requiresObservableExecutionEvidence(fallback.goal);
   const hardHold = turnIntent === 'follow_up_question' || turnIntent === 'feedback_or_correction'
     || control === 'stop' || control === 'pause'
     || (shouldHoldTaskForFeedback(latestMessage) && isConversationOnlyMessage(latestMessage));
   const proposedMode = ['conversation', 'answer', 'execute'].includes(candidate.mode) ? candidate.mode : fallback.mode;
   const mode = hardHold ? 'conversation' : hardExecute ? 'execute' : proposedMode;
+  const proposedRelation = TURN_RELATIONS.has(candidate.turnRelation) ? candidate.turnRelation : fallbackRelation;
+  const turnRelation = control ? 'control'
+    : taskCorrection ? 'correction'
+      : (turnIntent === 'follow_up_question' || turnIntent === 'answer') ? 'question'
+        : !clean(input.activeTaskGoal) ? 'new_task'
+          : proposedRelation;
   // The model may classify and plan the request, but it cannot rewrite away parts
   // of the user's authoritative goal. Capability corrections are already restored
   // by createFallbackTaskDecision.
@@ -300,6 +352,7 @@ export function normalizeTaskDecision(candidate, input = {}) {
     && /账号|密码|密钥|api.?key|验证码|登录|授权|批准|付费|业务选择|文件|目录位置/iu.test(missingUserCondition);
   return {
     mode,
+    turnRelation,
     goal,
     primaryRoute,
     deliverableType,
@@ -335,6 +388,7 @@ export function buildTaskDecisionMessages(input = {}) {
 
 判断原则：
 - 先理解完整语义、最近上下文和用户真正想达到的结果，不靠单个关键词分类。
+- 先判断 turnRelation：当前没有任务时为 new_task；明确新的独立目标为 new_task；针对当前目标的补充为 continuation；指出理解或路线错误为 correction；暂停、继续、停止为 control；状态或含义询问为 question。它决定新消息是进入当前任务还是独立排队，不能把新任务混进旧任务。
 - conversation 用于闲聊、情绪、状态询问、暂停/停止和单纯反馈；answer 用于不需要外部行动即可可靠回答的问题；execute 用于查询外部或本地事实、配置、安装、创建、修改、运行、验证、调度等任务。
 - 先判断本轮说话意图，再决定是否允许工具：用户问“我这句话是什么意思”“你理解的是不是对的”“基于刚才回答……”是在追问现有对话，即使复用了“查找、技能、安装”等词，也必须选 conversation 或 answer，禁止调用工具、重放旧任务或继承旧任务的工具权限。
 - 用户纠正“为什么不调用工具/不会搜索”时，要恢复最近尚未完成的真实目标，而不是把纠正句当作新目标。
@@ -350,6 +404,7 @@ export function buildTaskDecisionMessages(input = {}) {
       content: JSON.stringify({
         latestMessage: clean(input.latestMessage, 4000),
         previousUserMessage: clean(input.previousUserMessage, 2400),
+        activeTaskGoal: clean(input.activeTaskGoal, 2400),
         recentHistory: history.slice(-8).map((item) => ({ role: item.role, content: clean(item.content, 900) })),
         availableTools: input.availableTools ?? [],
         relevantUserContext: clean(input.relevantUserContext, 3000),

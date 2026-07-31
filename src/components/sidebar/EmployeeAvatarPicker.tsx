@@ -17,7 +17,7 @@ import {
   renderPresetAvatar,
   type AvatarPresetGroupId,
 } from '../../data/avatarPresets';
-import { generateEmployeeAvatarImage, loadSettings, saveSettings, type AppSettings } from '../../data/hermesClient';
+import { generateEmployeeAvatarImage, getModelCapabilities, loadSettings, saveSettings, type AppSettings } from '../../data/hermesClient';
 
 interface Props {
   avatar: string;
@@ -104,7 +104,7 @@ export default function EmployeeAvatarPicker({ avatar, avatarKind, onChange, emp
   const groupCount = (id: PickerGroupId) => id === 'pixel'
     ? ONLINE_PIXEL_COUNT
     : id === 'ai'
-      ? (settings.imageModelId ? 1 : 0)
+      ? ((settings.modelLibrary ?? []).filter((model) => getModelCapabilities(model).includes('image')).length)
       : AVATAR_PRESETS.filter((preset) => preset.group === id).length;
 
   const openLibrary = () => {
@@ -269,7 +269,7 @@ export default function EmployeeAvatarPicker({ avatar, avatarKind, onChange, emp
         {groupId === 'ai' ? (
           <section className="avatar-ai-generator">
             <div className="avatar-ai-fields">
-              <label><span>生图模型</span><Select value={settings.imageModelId} placeholder="选择模型库中的生图模型" onChange={selectImageModel} options={(settings.modelLibrary ?? []).map((model) => ({ value: model.id, label: `${model.label} · ${model.model ?? '未填写模型名'}` }))} /></label>
+              <label><span>生图模型</span><Select value={settings.imageModelId} placeholder="选择模型库中的生图模型" onChange={selectImageModel} options={(settings.modelLibrary ?? []).filter((model) => getModelCapabilities(model).includes('image')).map((model) => ({ value: model.id, label: `${model.label} · ${model.model ?? '未填写模型名'}` }))} /></label>
               <label><span>头像描述</span><Input.TextArea value={aiPrompt} rows={4} onChange={(event) => setAiPrompt(event.target.value)} maxLength={1200} showCount /></label>
               <div className="avatar-ai-actions">
                 <Button icon={<ReloadOutlined />} onClick={() => { setAiPrompt(randomAvatarPrompt(employeeName, employeeTitle)); setGeneratedAvatar(''); }}>换个创意</Button>

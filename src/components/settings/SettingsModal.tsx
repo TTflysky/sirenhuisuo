@@ -8,7 +8,7 @@ import {
 import {
   loadSettings, saveSettings,
   APPROVAL_MODE_OPTIONS, getExecutionPolicy, saveExecutionPolicy,
-  PROVIDER_PRESETS, getProvider, type AppSettings,
+  PROVIDER_PRESETS, getModelCapabilities, getProvider, type AppSettings,
   type ModelEntry,
   testModelConnection, fetchAvailableModels, migrateToModelLibrary,
   loadUserProfile, saveUserProfile,
@@ -247,6 +247,7 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
   const reviewId = settings.reviewModelId;
   const diagnosticId = settings.diagnosticModelId;
   const imageId = settings.imageModelId;
+  const imageModels = library.filter((model) => getModelCapabilities(model).includes('image'));
 
   const startAdd = () => {
     setEditingId('__new__');
@@ -258,6 +259,17 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
     setEditApiKey('');
     setEditContextWindow('');
     setAvailableModels([]);
+  };
+
+  const startAddGptImage2 = () => {
+    setEditingId('__new__');
+    setEditLabel('GPT Image 2');
+    setEditProvider('openai');
+    setEditHost(getProvider('openai').baseUrl);
+    setEditModel('gpt-image-2');
+    setEditApiKey('');
+    setEditContextWindow('');
+    setAvailableModels(['gpt-image-2']);
   };
 
   const startEdit = (entry: ModelEntry) => {
@@ -435,7 +447,10 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
         <h3 style={{ fontSize: 14, fontWeight: 600, margin: 0 }}>模型库</h3>
-        <Button size="small" type="primary" onClick={startAdd}>➕ 添加模型</Button>
+        <Space size="small">
+          <Button size="small" onClick={startAddGptImage2}>GPT Image 2</Button>
+          <Button size="small" type="primary" onClick={startAdd}>➕ 添加模型</Button>
+        </Space>
       </div>
 
       {/* 模型列表 */}
@@ -467,6 +482,7 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 6 }}>
                 {entry.label}
+                {getModelCapabilities(entry).includes('image') && <Tag color="magenta" style={{ fontSize: 10, margin: 0, lineHeight: '18px' }}>IMAGE</Tag>}
                 {entry.id === activeId && <Tag color="blue" style={{ fontSize: 10, margin: 0, lineHeight: '18px' }}>全局</Tag>}
                 {entry.id === assistantId && <Tag color="purple" style={{ fontSize: 10, margin: 0, lineHeight: '18px' }}>助理</Tag>}
                 {entry.id === reviewId && <Tag color="cyan" style={{ fontSize: 10, margin: 0, lineHeight: '18px' }}>审查</Tag>}
@@ -537,7 +553,7 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
             value={diagnosticId ?? '__none__'}
             onChange={(value) => handleSetSpecialModel('diagnosticModelId', value === '__none__' ? undefined : value)}
             style={{ width: 180 }}
-            options={[{ value: '__none__', label: '未指定' }, ...library.map((model) => ({ value: model.id, label: model.label }))]}
+            options={[{ value: '__none__', label: '未指定' }, ...imageModels.map((model) => ({ value: model.id, label: model.label }))]}
           />
           <span style={{ fontSize: 12, fontWeight: 500, marginLeft: 8 }}>头像生图：</span>
           <Select

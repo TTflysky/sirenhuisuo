@@ -23,7 +23,9 @@ const checks = [
   'verify:skill-directory-contract',
   'verify:skill-install-e2e',
   'verify:v230-experience',
+  'verify:image-model-routing',
   'verify:v231-dispatch-and-brand',
+  'verify:task-turn-isolation',
 ];
 
 for (const script of checks) {

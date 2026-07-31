@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { ArrowLeftOutlined, EditOutlined, HistoryOutlined, PauseCircleOutlined, PlayCircleOutlined, PlusOutlined, RobotOutlined, SearchOutlined, StopOutlined, UserAddOutlined } from '@ant-design/icons';
 import type { Team, Employee, TaskRun, ThoughtChainStep } from '../../types';
 import { useStore } from '../../storeContext';
-import { type Attachment } from '../../data/hermesClient';
+import { generatedImageAttachment, generateImage, getConversationModel, isImageGenerationModel, type Attachment } from '../../data/hermesClient';
 import AgentAvatar from '../office/AgentAvatar';
 import { loadOutputsByScope, type OutputRecord } from '../../data/outputs';
 import ChatOutputsPanel from '../outputs/ChatOutputsPanel';
@@ -12,6 +12,7 @@ import RenameTeamModal from '../sidebar/RenameTeamModal';
 import ManageTeamMembersModal from '../sidebar/ManageTeamMembersModal';
 import { copyAndArchiveChatTranscript, copyToClipboard, downloadTextFile, messagesToMarkdown } from '../../utils/clipboard';
 import ModelSelector from './ModelSelector';
+import GeneratedImagePreview from './GeneratedImagePreview';
 import SkillMentionInput from '../skills/SkillMentionInput';
 import { resolveSkillContext } from '../../engine/skillContext';
 import SkillPickerButton from '../skills/SkillPickerButton';
@@ -67,7 +68,7 @@ function SupervisorAvatar({ size = 34 }: { size?: number }) {
 
 export default function TeamChatApp({ teamId }: Props) {
   const {
-    state, sendMessage,
+    state, dispatch, sendMessage,
     publishTask, claimTask, advanceTask, triggerDiscussion, pauseTaskRun, resumeTaskRun, stopTaskRun, closeTaskRun, clearTeamExecution, archiveProject, startProjectExecution,
   } = useStore();
   const team = state.teams.find((t: Team) => t.id === teamId);
@@ -94,6 +95,7 @@ export default function TeamChatApp({ teamId }: Props) {
   const [replayWorkerCommands, setReplayWorkerCommands] = useState<TaskWorkerCommandRecord[]>([]);
   const [ledgerIntegrity, setLedgerIntegrity] = useState<TaskLedgerIntegrity | null>(() => getTaskLedgerIntegrity());
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [imageGenerating, setImageGenerating] = useState(false);
   const [skillRefs, setSkillRefs] = useState<SkillReference[]>([]);
   const [clarificationNotes, setClarificationNotes] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -278,6 +280,35 @@ export default function TeamChatApp({ teamId }: Props) {
     if (!text.trim() && attachments.length === 0) return;
     const content = text.trim();
     const refs = skillRefs;
+    const conversationModel = getConversationModel('team');
+    if (isImageGenerationModel(conversationModel)) {
+      const display = [content, ...attachments.map((attachment) => `[image ${attachment.name}]`)].filter(Boolean).join('\n');
+      const now = Date.now();
+      touchChatSession(sessionScope, conversationIdRef.current, content || attachments[0]?.name || team.name);
+      dispatch({
+        type: 'APPEND_CHAT', teamId, conversationId: conversationIdRef.current,
+        msgs: [{ id: `msg-image-${now}-me`, authorId: 'emp-me', roleId: 'human', content: display, mentions: [], timestamp: now, kind: 'text', attachments }],
+      });
+      setSkillRefs([]);
+      setText('');
+      setAttachments([]);
+      setImageGenerating(true);
+      try {
+        const image = await generateImage(content, conversationModel);
+        dispatch({
+          type: 'APPEND_CHAT', teamId, conversationId: conversationIdRef.current,
+          msgs: [{ id: `msg-image-${Date.now()}-assistant`, authorId: 'assistant', roleId: 'custom', content: `Image generated with ${image.model}.`, mentions: [], timestamp: Date.now(), kind: 'text', attachments: [generatedImageAttachment(image)] }],
+        });
+      } catch (error) {
+        dispatch({
+          type: 'APPEND_CHAT', teamId, conversationId: conversationIdRef.current,
+          msgs: [{ id: `msg-image-${Date.now()}-error`, authorId: 'assistant', roleId: 'custom', content: `Image generation failed: ${error instanceof Error ? error.message : String(error)}`, mentions: [], timestamp: Date.now(), kind: 'text' }],
+        });
+      } finally {
+        setImageGenerating(false);
+      }
+      return;
+    }
     await resolveSkillContext(refs);
     setSkillRefs([]);
     // 解析 @ 提及：找出消息里 @name 形式
@@ -833,6 +864,7 @@ export default function TeamChatApp({ teamId }: Props) {
                       <button className="msg-copy-btn" onClick={() => handleCopyMsg(msg.content)} title="复制">📋</button>
                     </div>
                   )}
+                  <GeneratedImagePreview attachments={msg.attachments} />
                   <MessageSkillEvidence refs={msg.skillRefs} evidence={msg.skillEvidence} />
                   {msg.tokens != null && (
                     <div className="msg-tokens">≈ {msg.tokens.toLocaleString()} tokens</div>
@@ -968,7 +1000,7 @@ export default function TeamChatApp({ teamId }: Props) {
                 <div className="mention-popup-tip">↑↓ 选择 · Enter 确认 · Esc 取消</div>
               </div>
             )}
-            <button className="btn btn-primary btn-sm" style={{ alignSelf: 'flex-end', marginTop: 4 }} onClick={handleSend}>
+            <button className="btn btn-primary btn-sm" style={{ alignSelf: 'flex-end', marginTop: 4 }} onClick={handleSend} disabled={imageGenerating}>
               发送
             </button>
             <input

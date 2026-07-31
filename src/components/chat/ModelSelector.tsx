@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { loadSettings, saveSettings, getProvider, resolveChatSettings, getActiveModel, getAssistantModel } from '../../data/hermesClient';
+import { getConversationModel, getModelCapabilities, loadSettings, saveSettings, getProvider, resolveChatSettings } from '../../data/hermesClient';
 import type { ModelEntry } from '../../data/hermesClient';
 import type { ChatMessage, ModelConfig } from '../../types';
 
@@ -36,6 +36,7 @@ export default function ModelSelector({ scene = 'assistant', employeeId: _employ
 
   // 读取当前实际使用的模型
   const settings = loadSettings();
+  const selectedModel = settings.chatModelOverrides?.[scene] ? getConversationModel(scene) : undefined;
   const resolved = resolveChatSettings(modelConfig);  // 解析当前窗口实际配置
 
   // 确定当前模型显示名
@@ -43,7 +44,11 @@ export default function ModelSelector({ scene = 'assistant', employeeId: _employ
   let currentProviderLabel: string;
   let usingLibrary: boolean = false;
 
-  if (scene === 'assistant' && settings.modelLibrary && settings.modelLibrary.length > 0 && settings.assistantModelId) {
+  if (selectedModel?.model) {
+    currentModel = selectedModel.model;
+    currentProviderLabel = getProvider(selectedModel.provider).label;
+    usingLibrary = Boolean(selectedModel.refModelId);
+  } else if (scene === 'assistant' && settings.modelLibrary && settings.modelLibrary.length > 0 && settings.assistantModelId) {
     // 助理场景：仅在明确选择 assistantModelId 时使用模型库
     const entry = settings.modelLibrary.find(e => e.id === settings.assistantModelId);
     if (entry) {
@@ -69,12 +74,12 @@ export default function ModelSelector({ scene = 'assistant', employeeId: _employ
     currentProviderLabel = getProvider().label;
   }
 
-  if (scene === 'dm' && modelConfig?.model) {
+  if (scene === 'dm' && modelConfig?.model && !selectedModel?.refModelId) {
     currentModel = modelConfig.model;
     currentProviderLabel = getProvider(modelConfig.provider).label;
   }
 
-  const effectiveModel = modelConfig ?? (scene === 'assistant' ? getAssistantModel() : getActiveModel());
+  const effectiveModel = selectedModel?.model ? selectedModel : (modelConfig ?? getConversationModel(scene));
   const currentEntry = libraryEntryForContext(settings.modelLibrary ?? [], currentModel, effectiveModel);
   const configuredLimit = effectiveModel.contextWindowTokens ?? currentEntry?.contextWindowTokens;
   const latestUsage = [...messages].reverse().find((message) => message.contextUsage)?.contextUsage;
@@ -128,11 +133,7 @@ export default function ModelSelector({ scene = 'assistant', employeeId: _employ
 
   const switchToLibraryModel = (entry: ModelEntry) => {
     const s = loadSettings();
-    if (scene === 'assistant') {
-      s.assistantModelId = entry.id;
-    } else {
-      s.activeModelId = entry.id;
-    }
+    s.chatModelOverrides = { ...s.chatModelOverrides, [scene]: entry.id };
     saveSettings(s);
     setOpen(false);
   };
@@ -140,6 +141,11 @@ export default function ModelSelector({ scene = 'assistant', employeeId: _employ
   const switchManualModel = (model: string) => {
     if (!model) return;
     const s = loadSettings();
+    if (s.chatModelOverrides) {
+      const next = { ...s.chatModelOverrides };
+      delete next[scene];
+      s.chatModelOverrides = next;
+    }
     if (scene === 'assistant') {
       s.assistantModelId = undefined;
       s.assistantModelConfig = {
@@ -216,6 +222,7 @@ export default function ModelSelector({ scene = 'assistant', employeeId: _employ
                     >
                       <span className="model-lib-icon">📦</span>
                       <span className="model-lib-name">{entry.model || entry.label}</span>
+                      {getModelCapabilities(entry).includes('image') && <span className="model-context-chip">Image</span>}
                       {entry.apiHost && <span className="model-lib-host" title={entry.apiHost}>{new URL(entry.apiHost).hostname}</span>}
                     </button>
                   ))}

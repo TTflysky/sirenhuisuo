@@ -127,7 +127,12 @@ export interface ModelEntry extends ModelConfig {
   lastHttpStatus?: number;
   lastTestMessage?: string;
   lastTestEndpoint?: string;
+  /** Explicit capabilities are optional. Older entries are inferred from the model id. */
+  capabilities?: ModelCapability[];
 }
+
+export type ModelCapability = 'chat' | 'image';
+export type ChatModelScene = 'assistant' | 'dm' | 'team';
 
 export interface AppSettings {
   provider?: string;  // 服务商 key（对应 PROVIDER_PRESETS），'custom' 为自定义（向后兼容）
@@ -149,6 +154,8 @@ export interface AppSettings {
   reviewModelId?: string;       // 独立任务复盘/责任审查模型，不设置时不自动调用复盘模型
   diagnosticModelId?: string;   // 诊断中心的一键优化模型
   imageModelId?: string;        // 员工头像生图模型（OpenAI 兼容 images/generations）
+  /** The model selected from each chat composer. Keeps a temporary image switch out of default assignments. */
+  chatModelOverrides?: Partial<Record<ChatModelScene, string>>;
   memoryWriteApproval?: boolean; // 独立审查模型提出的记忆更新是否需要人工审核（默认 true）
   skillsWriteApproval?: boolean; // 自动 Skill 草案是否需要审核（固定默认 true）
   showThoughtChain?: boolean;   // 助理是否显示思维链（默认 true）
@@ -300,6 +307,35 @@ export function getImageGenerationModel(): ModelConfig | undefined {
   return configuredModelById(loadSettings().imageModelId);
 }
 
+export function isImageGenerationModel(modelConfig?: Pick<ModelConfig, 'model'>): boolean {
+  return /^gpt-image-(?:1(?:\.5|-mini)?|2)$/iu.test(modelConfig?.model?.trim() ?? '');
+}
+
+export function getModelCapabilities(model: Pick<ModelConfig, 'model'> & Partial<ModelEntry>): ModelCapability[] {
+  if (model.capabilities?.length) return [...new Set(model.capabilities)];
+  return isImageGenerationModel(model) ? ['image'] : ['chat'];
+}
+
+/** Resolve the model selected in a chat composer without changing role-level defaults. */
+export function getConversationModel(scene: ChatModelScene, employee?: Employee): ModelConfig {
+  const settings = loadSettings();
+  const overrideId = settings.chatModelOverrides?.[scene];
+  const override = overrideId ? settings.modelLibrary?.find((entry) => entry.id === overrideId) : undefined;
+  if (override) {
+    return {
+      provider: override.provider,
+      apiHost: override.apiHost,
+      apiKey: override.apiKey,
+      model: override.model,
+      contextWindowTokens: override.contextWindowTokens,
+      refModelId: override.id,
+    };
+  }
+  if (scene === 'assistant') return getAssistantModel();
+  if (scene === 'dm' && employee) return getEmployeeModel(employee);
+  return getActiveModel();
+}
+
 /** 员工是否启用了独立模型。旧版数据没有开关字段时兼容已有 modelConfig。 */
 export function usesCustomEmployeeModel(employee: Employee): boolean {
   return employee.useCustomModel ?? !!employee.modelConfig;
@@ -362,7 +398,8 @@ function apiErrorMessage(raw: string): string {
 /** 使用真实的最小聊天请求测试模型，而不是只探测可能无关的 /models。 */
 export async function testModelConnection(mc: ModelConfig): Promise<ModelConnectionTestResult> {
   const base = (mc.apiHost ?? '').trim().replace(/\/+$/, '');
-  const endpoint = base ? endpointUrl(base, '/chat/completions') : '';
+  const imageModel = isImageGenerationModel(mc);
+  const endpoint = base ? endpointUrl(base, imageModel ? '/images/generations' : '/chat/completions') : '';
   if (!base) return { ok: false, message: '请先填写 API 地址', latencyMs: 0, endpoint };
   const model = mc.model?.trim() || getProvider(mc.provider).defaultModel;
   if (!model) return { ok: false, message: '请先填写模型名称', latencyMs: 0, endpoint };
@@ -374,11 +411,9 @@ export async function testModelConnection(mc: ModelConfig): Promise<ModelConnect
     if (mc.apiKey) headers['Authorization'] = `Bearer ${mc.apiKey}`;
     const res = await fetch(endpoint, {
       method: 'POST', headers, signal: controller.signal,
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'user', content: '连接测试：请只回复 OK' }],
-        stream: false,
-      }),
+      body: JSON.stringify(imageModel
+        ? buildImageGenerationRequest(model, 'A simple blue circle on a white background.')
+        : { model, messages: [{ role: 'user', content: '连接测试：请只回复 OK' }], stream: false }),
     });
     const latencyMs = Math.round(performance.now() - startedAt);
     const raw = await res.text().catch(() => '');
@@ -864,6 +899,26 @@ export interface GeneratedAvatarImage {
   revisedPrompt?: string;
 }
 
+export interface ImageGenerationRequest {
+  model: string;
+  prompt: string;
+  n: 1;
+  size: string;
+  output_format?: 'png';
+  response_format?: 'b64_json';
+}
+
+/**
+ * GPT Image 2 always returns Base64 image data and rejects the legacy
+ * response_format option. Retain it only for older OpenAI-compatible APIs.
+ */
+export function buildImageGenerationRequest(model: string, prompt: string): ImageGenerationRequest {
+  const request: ImageGenerationRequest = { model, prompt, n: 1, size: '1024x1024' };
+  if (/^gpt-image-2$/iu.test(model.trim())) request.output_format = 'png';
+  else request.response_format = 'b64_json';
+  return request;
+}
+
 function blobAsDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -873,8 +928,8 @@ function blobAsDataUrl(blob: Blob): Promise<string> {
   });
 }
 
-/** Generate one square employee portrait through an explicitly assigned image model. */
-export async function generateEmployeeAvatarImage(prompt: string, modelConfig = getImageGenerationModel()): Promise<GeneratedAvatarImage> {
+/** Generate one square image through an explicitly selected image model. */
+export async function generateImage(prompt: string, modelConfig = getImageGenerationModel()): Promise<GeneratedAvatarImage> {
   const cleanPrompt = prompt.trim();
   if (!cleanPrompt) throw new Error('请先填写头像描述');
   if (!modelConfig?.apiHost?.trim() || !modelConfig.model?.trim()) throw new Error('还没有配置头像生图模型，请先在模型库中指定一个生图模型');
@@ -882,7 +937,7 @@ export async function generateEmployeeAvatarImage(prompt: string, modelConfig = 
   const model = modelConfig.model.trim();
   const response = await apiFetch('/images/generations', {
     method: 'POST',
-    body: JSON.stringify({ model, prompt: cleanPrompt, n: 1, size: '1024x1024', response_format: 'b64_json' }),
+    body: JSON.stringify(buildImageGenerationRequest(model, cleanPrompt)),
   }, 180000, modelConfig.apiKey, base);
   const raw = await response.text().catch(() => '');
   if (!response.ok) throw new Error(`生图接口返回 ${response.status}：${apiErrorMessage(raw)}`);
@@ -906,6 +961,23 @@ export async function generateEmployeeAvatarImage(prompt: string, modelConfig = 
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** Backward-compatible avatar entry point. */
+export async function generateEmployeeAvatarImage(prompt: string, modelConfig = getImageGenerationModel()): Promise<GeneratedAvatarImage> {
+  return generateImage(prompt, modelConfig);
+}
+
+export function generatedImageAttachment(image: GeneratedAvatarImage): Attachment {
+  const comma = image.dataUrl.indexOf(',');
+  const base64 = comma >= 0 ? image.dataUrl.slice(comma + 1) : image.dataUrl;
+  return {
+    name: `generated-${Date.now()}.png`,
+    mime: 'image/png',
+    dataUrl: image.dataUrl,
+    size: Math.floor(base64.length * 0.75),
+    kind: 'image',
+  };
 }
 
 /** 读取 OpenAI 兼容服务的模型列表，用于设置页免手填模型 ID。 */
@@ -1230,6 +1302,7 @@ export async function compileTaskDecision(
   tools: any[],
   modelConfig?: ModelConfig,
   requestSignal?: AbortSignal,
+  decisionContext: { activeTaskGoal?: string } = {},
 ): Promise<{ decision: TaskDecision; usage: TokenUsage; contextUsage?: ContextUsage; model?: string }> {
   const userTurns = turns.filter((turn) => turn.role === 'user').map((turn) => typeof turn.content === 'string'
     ? turn.content
@@ -1248,6 +1321,7 @@ export async function compileTaskDecision(
   const input = {
     latestMessage,
     previousUserMessage,
+    activeTaskGoal: decisionContext.activeTaskGoal,
     availableTools,
     recentHistory,
     relevantUserContext: buildUserContext(fallback.goal),
