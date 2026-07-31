@@ -10,7 +10,7 @@ const tracked = git(['ls-files']).split(/\r?\n/u).filter(Boolean);
 const sourceDigest = createHash('sha256').update(tracked.join('\n')).digest('hex');
 // Release evidence must be reproducible; wall-clock timestamps dirty the
 // worktree every time the release gate runs.
-const sourceCommit = git(['log', '-1', '--format=%H', '--', '.', ':(exclude)docs/sbom-v*.json', ':(exclude)docs/release-provenance-v*.json']);
+const sourceCommit = git(['log', '-1', '--format=%H', '--', 'src', 'electron', 'scripts', 'public', 'skills', 'package.json', 'package-lock.json']);
 const generatedAt = git(['show', '-s', '--format=%cI', sourceCommit || 'HEAD']) || '1970-01-01T00:00:00.000Z';
 const provenance = {
   schema: 1, product: '太极 AI 办公会所', package: pkg.name, version: pkg.version,

@@ -9,7 +9,7 @@ const lock = JSON.parse(await fs.readFile(path.join(root, 'package-lock.json'), 
 // Release evidence must be reproducible; wall-clock timestamps dirty the
 // worktree every time the release gate runs.
 const git = (args) => { try { return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim(); } catch { return ''; } };
-const sourceCommit = git(['log', '-1', '--format=%H', '--', '.', ':(exclude)docs/sbom-v*.json', ':(exclude)docs/release-provenance-v*.json']);
+const sourceCommit = git(['log', '-1', '--format=%H', '--', 'src', 'electron', 'scripts', 'public', 'skills', 'package.json', 'package-lock.json']);
 const generatedAt = git(['show', '-s', '--format=%cI', sourceCommit || 'HEAD']) || '1970-01-01T00:00:00.000Z';
 const packages = Object.entries(lock.packages || {}).map(([name, value]) => ({
   name: name === '' ? pkg.name : name.replace(/^node_modules\//u, ''),
