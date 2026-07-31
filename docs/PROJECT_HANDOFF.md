@@ -11,9 +11,9 @@
 - `electron/skillRuntime.cjs` 只编排现有 `skills.cjs` 安装器，不重写原子替换逻辑。运行时清单在用户数据 `skill-runtime/runtime-manifest.json`，记录健康、来源、刷新、规则读取、调用次数和调用证据。主进程 IPC 为 `skills:runtime*`；指定来源安装仍调用原安装器。
 - `electron/credentialVault.cjs` 使用 Electron `safeStorage` 保存连接器密钥。`src/data/connectors.ts` 持久化时把 `credentials`/token 送入保险库，普通 localStorage 只留下 `credentialRef`；真实连接测试和连接器工具调用前通过 `hydrateConnectorCredentials()` 临时读取。系统加密不可用时拒绝写入明文。
 - `electron/updateTransaction.cjs` 在 `upgrade-backups/transaction.json` 保存升级阶段与证据。`autoUpdate.cjs` 在更新前备份、安装准备和启动后验证时推进事务；验证失败进入 rollback 状态。现有加密备份和旧版回滚下载逻辑仍是实际副作用 owner。
-- Windows 安装包已通过 `npm.cmd run dist:win` 与 `npm.cmd run verify:package`：`taiji-office-setup-2.9.4.exe` 195826979 字节，SHA-256 `3CEA3F69BBE3DD51273B098CA8F2FC5871A4859FEA3603C9A00C6FDDAA14109F`；Blockmap 206030 字节，SHA-256 `6B2A1A5834EAFE4FE4146CE336817391AFF1105BF30AE286AEF271CD7707FE96`；`latest.yml` SHA-256 `44E6AAB654CE02771F18137EACA1E177AF31F39A7FBE439EE967D2F6E8D429EA`。远端 GitHub 资产尚未核对。
+- Windows 安装包已通过 `npm.cmd run dist:win` 与 `npm.cmd run verify:package`：`taiji-office-setup-2.9.4.exe` 195826975 字节，SHA-256 `F1AFA846C979B1D90F4ED97BD9DDC977C1CF425A50BC60159599E81A7C2A41DE`；Blockmap 206051 字节，SHA-256 `9555F64DA5BAAC9CEC5D9F2707EE1D3BAF1D58052E1F4A78EC722DD829F40E8C`；`latest.yml` 353 字节，SHA-256 `FB18975C1FDF973C10F49450B1D7E82C36CAA7D485CDE9A19EE2C5BFA49FEEB5`。远端 GitHub Release 待发布脚本完成后核对。
 - 发布治理脚本：`generate-sbom.mjs`、`generate-release-provenance.mjs`、`verify-release-governance.mjs`；统一门禁为 `npm.cmd run verify:phase3`。它会生成 `docs/sbom-v2.9.4.json` 和 `docs/release-provenance-v2.9.4.json`，检查版本、必要文件、依赖清单和高置信度密钥模式。
-- 入口验证：`verify:model-compatibility`、`verify:skill-runtime`、`verify:credential-vault`、`verify:update-transaction`、`verify:phase3` 和 `npm.cmd run build` 已通过。`verify:phase2` 的纯逻辑门禁通过；真实 Electron E2E 在当前机器再次出现图形驱动进程崩溃（GPU exit `-1073741515`），不能冒充第三阶段通过，需在稳定图形环境复验。
+- 入口验证：`verify:model-compatibility`、`verify:skill-runtime`、`verify:credential-vault`、`verify:update-transaction`、`verify:phase3`、`verify:v2-core-gate` 和 `npm.cmd run build` 已通过；真实 Electron E2E 在当前机器再次出现图形驱动进程崩溃（GPU exit `-1073741515`），不能冒充第三阶段通过，需在稳定图形环境复验。
 - 正式八小时驻留、使用真实第三方账号的连接器矩阵、从已发布旧版安装包到 `v2.9.4` 的真实故障注入回滚，以及 GitHub 下载后的远端资产哈希核对，仍是 v3.0 候选验收项。本阶段代码不把这些未执行项目写成已完成。
 - 人格版本为 v18；自我评分见 `docs/自我评分.md`。后续优先先做真实打包/安装/回滚验收，再处理剩余 P1 稳定性问题。
 

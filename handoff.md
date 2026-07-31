@@ -6,9 +6,9 @@
 - 已完成模型/图片兼容矩阵（`src/engine/modelCompatibility.mjs`）、Skill Runtime（`electron/skillRuntime.cjs`）、safeStorage 凭据保险库（`electron/credentialVault.cjs`）、更新事务（`electron/updateTransaction.cjs`）和发布治理脚本（SBOM、provenance、敏感信息扫描）。
 - 模型设置测试现在会保存兼容矩阵状态；图片模型按真实 `data[].b64_json/url` 验收。连接器 localStorage 只保存 `credentialRef`，真实调用前由 `hydrateConnectorCredentials()` 临时读取。
 - `npm.cmd run verify:phase3` 已通过：模型矩阵、Skill Runtime、凭据保险库、更新事务、SBOM、来源证明和治理检查均通过；`npm.cmd run build`、`npm.cmd run lint` 通过，标准测试为 38 条。
-- Windows 安装包已由 `npm.cmd run dist:win` 生成并通过 `npm.cmd run verify:package`：`release/taiji-office-setup-2.9.4.exe` 为 `195826979` 字节，SHA-256 `3CEA3F69BBE3DD51273B098CA8F2FC5871A4859FEA3603C9A00C6FDDAA14109F`；Blockmap 为 `206030` 字节，SHA-256 `6B2A1A5834EAFE4FE4146CE336817391AFF1105BF30AE286AEF271CD7707FE96`；`latest.yml` SHA-256 `44E6AAB654CE02771F18137EACA1E177AF31F39A7FBE439EE967D2F6E8D429EA`。
-- `npm.cmd run verify:phase2` 的纯逻辑部分通过，但真实 Electron E2E 在本机仍被图形驱动进程终止（GPU exit `-1073741515`）。这不是第三阶段代码成功证据，后续需在稳定图形环境或真实安装包上复验。
-- 尚未声称完成：正式 8 小时驻留、真实第三方账号连接器矩阵、从已发布旧版到 `2.9.4` 的真实故障注入回滚、GitHub 下载后安装包资产 SHA-256 核对。
+- Windows 安装包已由 `npm.cmd run dist:win` 生成并通过 `npm.cmd run verify:package`：`release/taiji-office-setup-2.9.4.exe` 为 `195826975` 字节，SHA-256 `F1AFA846C979B1D90F4ED97BD9DDC977C1CF425A50BC60159599E81A7C2A41DE`；Blockmap 为 `206051` 字节，SHA-256 `9555F64DA5BAAC9CEC5D9F2707EE1D3BAF1D58052E1F4A78EC722DD829F40E8C`；`latest.yml` 为 `353` 字节，SHA-256 `FB18975C1FDF973C10F49450B1D7E82C36CAA7D485CDE9A19EE2C5BFA49FEEB5`。远端 GitHub Release 待发布脚本完成后核对。
+- `npm.cmd run verify:phase3` 与 `npm.cmd run verify:v2-core-gate` 已通过；真实 Electron E2E 在本机仍被图形驱动进程终止（GPU exit `-1073741515`），不能把它写成通过。
+- 尚未声称完成：正式 8 小时驻留、真实第三方账号连接器矩阵、从已发布旧版到 `2.9.4` 的真实故障注入回滚；GitHub Release 资产将在发布脚本完成后以远端 SHA-256 为准。
 - 人格升级为 v18；评分更新在 `docs/自我评分.md`，阶段计划结果在 `docs/TAIJI_UPGRADE_PLAN_V2.7_TO_V3.0.md`，发布证明在 `docs/sbom-v2.9.4.json` 与 `docs/release-provenance-v2.9.4.json`。
 
 
