@@ -265,6 +265,7 @@ async function atomicWrite(filePath, content) {
 }
 
 function createTaskRuntimeStore(rootDir, options = {}) {
+  const diagnostics = options.diagnostics;
   const maxRuns = Number.isInteger(options.maxRuns) && options.maxRuns > 0 ? options.maxRuns : DEFAULT_MAX_RUNS;
   const maxReturnedEvents = Number.isInteger(options.maxReturnedEvents) && options.maxReturnedEvents > 0
     ? options.maxReturnedEvents : DEFAULT_MAX_RETURNED_EVENTS;
@@ -278,6 +279,14 @@ function createTaskRuntimeStore(rootDir, options = {}) {
   let projected = new Map();
   let events = [];
   let integrity = { ok: true, recovered: false, snapshotValid: true, indexValid: true, lastSequence: 0, lastHash: '', eventCount: 0 };
+
+  async function reportFailure(operation, error, details = {}) {
+    const message = String(error?.message ?? error);
+    await diagnostics?.record({
+      scope: 'task-runtime-store', operation, taskId: details.taskId, teamId: details.teamId,
+      message, error, context: { source: details.source, sessionId: details.sessionId, detail: details.detail, runCount: details.runCount },
+    });
+  }
 
   async function readLegacyCheckpoint() {
     try {
@@ -619,12 +628,16 @@ function createTaskRuntimeStore(rootDir, options = {}) {
   function write(runs, metadata = {}) {
     if (!Array.isArray(runs) || !runs.every(isTaskRun)) return Promise.resolve({ ok: false, error: '任务快照写入内容无效' });
     const nextRuns = runs.slice(-maxRuns).map(clone);
+    const explicitRemovals = new Set(Array.isArray(metadata.removedTaskIds)
+      ? metadata.removedTaskIds.map((taskId) => String(taskId || '')).filter(Boolean)
+      : []);
     const operation = writeQueue.then(async () => {
       await initialize();
       const mergedRuns = nextRuns.map((run) => mergeWorkerAuthority(projected.get(run.id), run, metadata.source));
       const nextMap = new Map(mergedRuns.map((run) => [run.id, run]));
       const nextProjection = new Map([...projected].map(([id, run]) => [id, clone(run)]));
       const appended = [];
+      const skippedRemovals = [];
       let head = { sequence: integrity.lastSequence, hash: integrity.lastHash };
       const add = (input) => {
         const event = createEvent(input, head);
@@ -633,7 +646,18 @@ function createTaskRuntimeStore(rootDir, options = {}) {
         head = { sequence: event.sequence, hash: event.hash };
       };
       for (const current of [...nextProjection.values()]) {
-        if (!nextMap.has(current.id)) add({
+        if (nextMap.has(current.id)) continue;
+        // Renderer snapshots are advisory. A stale window must never turn an
+        // omitted background task into a durable task_removed event.
+        if (metadata.source === 'renderer' && !explicitRemovals.has(current.id)) {
+          skippedRemovals.push(current.id);
+          continue;
+        }
+        if (metadata.source === 'renderer' && ['queued', 'running', 'awaiting_user', 'paused'].includes(current.status)) {
+          skippedRemovals.push(current.id);
+          continue;
+        }
+        add({
           type: 'task_removed', taskId: current.id, teamId: current.teamId,
           source: metadata.source, sessionId: metadata.sessionId, previousStatus: current.status,
           domains: ['task'], detail: `任务已从列表移除：${current.title || current.id}`, payload: {},
@@ -668,13 +692,17 @@ function createTaskRuntimeStore(rootDir, options = {}) {
         schemaVersion: SCHEMA_VERSION,
         ledgerVersion: LEDGER_VERSION,
         count: nextRuns.length,
+        skippedRemovals,
         eventsAppended: appended.length,
         events: appended.map(clone),
         integrity: { ...integrity },
       };
     });
     writeQueue = operation.then(() => undefined, () => undefined);
-    return operation.catch((error) => ({ ok: false, error: `写入任务事件账本失败：${error?.message ?? String(error)}` }));
+    return operation.catch(async (error) => {
+      await reportFailure('write', error, { source: metadata.source, sessionId: metadata.sessionId, runCount: nextRuns.length });
+      return { ok: false, error: `写入任务事件账本失败：${error?.message ?? String(error)}` };
+    });
   }
 
   function updateTask(taskId, updater, metadata = {}) {
@@ -710,7 +738,10 @@ function createTaskRuntimeStore(rootDir, options = {}) {
       return { ok: true, unchanged: false, run: clone(candidate), events: [clone(event)], integrity: { ...integrity } };
     });
     writeQueue = operation.then(() => undefined, () => undefined);
-    return operation.catch((error) => ({ ok: false, error: `更新任务事件账本失败：${error?.message ?? String(error)}` }));
+    return operation.catch(async (error) => {
+      await reportFailure('update-task', error, { taskId, source: metadata.source, sessionId: metadata.sessionId, detail: metadata.detail });
+      return { ok: false, error: `更新任务事件账本失败：${error?.message ?? String(error)}` };
+    });
   }
 
   function removeTask(taskId, metadata = {}) {
@@ -734,7 +765,10 @@ function createTaskRuntimeStore(rootDir, options = {}) {
       return { ok: true, unchanged: false, events: [clone(event)], integrity: { ...integrity } };
     });
     writeQueue = operation.then(() => undefined, () => undefined);
-    return operation.catch((error) => ({ ok: false, error: `移除任务事件账本失败：${error?.message ?? String(error)}` }));
+    return operation.catch(async (error) => {
+      await reportFailure('remove-task', error, { taskId, source: metadata.source, sessionId: metadata.sessionId, detail: metadata.detail });
+      return { ok: false, error: `移除任务事件账本失败：${error?.message ?? String(error)}` };
+    });
   }
 
   return { checkpointPath, ledgerPath, indexPath, recoveryDir, filePath: checkpointPath, read, audit, rebuild, write, updateTask, removeTask, createRecoveryPoint, listRecoveryPoints, restoreRecoveryPoint };

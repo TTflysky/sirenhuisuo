@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const path = require('path');
+const { createExecutionObservability, projectExecutionState } = require('./executionObservability.cjs');
 const { pathToFileURL } = require('url');
 const { ADAPTER_PROTOCOL_VERSION } = require('./executionAdapterProtocol.cjs');
 
@@ -148,12 +149,15 @@ function safeJob(job) {
     toolCalls: job.toolCalls,
     lastError: job.lastError,
     eventSequence: job.eventSequence,
+    semanticState: projectExecutionState(job),
   };
 }
 
 function createNativeExecutionAdapter(options) {
   const jobs = new Map();
   const queue = [];
+  const observability = options.observability || createExecutionObservability();
+  const diagnostics = options.diagnostics;
   let drainingQueue = false;
   let activeJob;
   const projectRoot = path.resolve(options.projectRoot);
@@ -245,6 +249,15 @@ function createNativeExecutionAdapter(options) {
     };
     job.events.push(event);
     if (job.events.length > 500) job.events.splice(0, job.events.length - 500);
+    observability.record(event);
+    if (detail.success === false || /failed|stalled|timeout|error/u.test(type)) {
+      void diagnostics?.record({
+        scope: 'native-execution-adapter', operation: type, taskId: job.taskId,
+        teamId: detail.teamId, message: detail.error || job.lastError || type,
+        errorCode: detail.errorCode, failureClass: detail.failureClass,
+        context: { stepId: detail.stepId, toolName: detail.toolName, member: detail.member, activity: job.currentActivity },
+      });
+    }
     try { options.onChanged?.(clone(event)); } catch {}
     return event;
   }
@@ -350,7 +363,11 @@ function createNativeExecutionAdapter(options) {
     const result = await options.store.updateTask(taskId, mutate, {
       source: 'native-execution-adapter', sessionId: options.sessionId, detail,
     });
-    if (!result.ok) throw new Error(result.error || '任务投影更新失败');
+    if (!result.ok) {
+      const error = new Error(result.error || '任务投影更新失败');
+      void diagnostics?.record({ scope: 'native-execution-adapter', operation: 'update-run', taskId, message: error.message, error, context: { detail } });
+      throw error;
+    }
     return result.run;
   }
 
@@ -625,6 +642,7 @@ function createNativeExecutionAdapter(options) {
       toolName: name,
       arguments: safeArgs,
       success: result.success,
+      failureClass: result.success === true ? undefined : (result.errorCategory || result.error?.category),
       output: safeResult.output.slice(0, 1200),
       artifacts: (safeResult.structuredEvidence?.artifacts || []).map((artifact) => ({ ...artifact })),
     });
@@ -2205,6 +2223,13 @@ function createNativeExecutionAdapter(options) {
     return { ok: true, events: job ? job.events.filter((event) => event.sequence > Number(afterSequence || 0)).map(clone) : [] };
   }
 
+  function observabilityStatus(taskId) {
+    const queueState = { activeTaskId: activeJob?.taskId, queuedTaskIds: queue.map((item) => item.taskId), total: queue.length };
+    return taskId
+      ? { ok: true, task: observability.get(taskId), queue: queueState }
+      : { ok: true, tasks: observability.list(), queue: queueState };
+  }
+
   function stopAll() {
     for (const job of jobs.values()) {
       if (!ACTIVE_JOB_STATES.has(job.state)) continue;
@@ -2214,7 +2239,7 @@ function createNativeExecutionAdapter(options) {
     }
   }
 
-  return { start, steer, delegate, syncMembers, delegationStatus, status, events, handleControl, stopAll };
+  return { start, steer, delegate, syncMembers, delegationStatus, status, events, observability: observabilityStatus, handleControl, stopAll };
 }
 
 module.exports = {

@@ -14,6 +14,21 @@ try { migrateToModelLibrary(); } catch {}
 try { applyAppearanceSettings(loadAppearanceSettings()); } catch {}
 ensureBrandMigrationMarker();
 
+// Every renderer window shares the same durable diagnostic ledger in the
+// main process. UI failures remain available after a refresh or window close.
+const diagnosticsRecord = typeof window !== 'undefined' ? window.electronAPI?.diagnosticsRecord : undefined;
+if (diagnosticsRecord) {
+  const reportRendererFailure = (operation: string, reason: unknown) => {
+    const message = reason instanceof Error ? reason.message : String(reason || 'Unknown renderer error');
+    void diagnosticsRecord({
+      level: 'error', scope: 'renderer', operation, message,
+      context: { href: window.location.href, stack: reason instanceof Error ? reason.stack : undefined },
+    });
+  };
+  window.addEventListener('error', (event) => reportRendererFailure('window-error', event.error || event.message));
+  window.addEventListener('unhandledrejection', (event) => reportRendererFailure('unhandled-rejection', event.reason));
+}
+
 // 注册窗口间广播监听：任意窗口经 main 进程转发来的消息，统一交给本地总线分发
 if (typeof window !== 'undefined' && window.electronAPI?.onBroadcast) {
   window.electronAPI.onBroadcast((data) => {

@@ -1,9 +1,19 @@
 # 项目交接手册
 
 > 最后整理：2026-07-31
-> 当前源码版本：`v2.5.2`（阶段二开发中，未发布）
+> 当前源码版本：`v2.6.0`（阶段三正式版本，本机安装验收通过）
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+
+## v2.6.0 阶段三：执行观测、错误诊断与账本保护
+
+- 正式应用身份为 `taiji-office` / `com.taiji.office`。`electron/appIdentityMigration.cjs` 在主进程初始化最前面将旧 `%APPDATA%/hermes-office-pro` 业务数据复制到 `%APPDATA%/taiji-office`，已有目标文件不覆盖，缓存、进程锁和旧更新器 ID 不复制；迁移通过 `verify:app-identity-migration` 验证。
+- `electron/executionObservability.cjs` 将执行器的原始状态投影为用户可读的队列、运行、等待子任务、补偿、暂停与终态，并统计重试、工具结果、失败类型、证据完整度和持续时间。
+- `electron/operationDiagnostics.cjs` 是运行时唯一的错误证据源。诊断记录保留任务/团队、模块、操作、错误分类、可恢复性和脱敏上下文；主进程、渲染窗口、任务账本、恢复前置检查、IPC 和原生执行器都写入它。文件保存于客户端用户数据的 `task-runtime/diagnostics.jsonl`。
+- 诊断中心可查询摘要和导出 JSON。导出内容已经脱敏，可作为问题复现的附件；不要再依赖截图猜测实际异常。
+- `taskRuntimeStore.write()` 将渲染端快照视为建议数据：旧快照中遗漏的活跃任务不会触发 `task_removed`。只有 `removedTaskIds` 明确列出且任务已终态，才允许删除。此规则防止父任务被删除后执行器持续写入并报“找不到任务”。
+- 回归入口：`verify:execution-observability`、`verify:operation-diagnostics`、`verify:app-identity-migration`、`verify:task-runtime-store` 与 `verify:native-execution`，前三项已纳入 `verify:v2-core-gate`。阶段三后续仍需完成核心模块拆分、性能/内存压测、真实更新下载校验与回滚演练。
+- 本机已完成旧安装身份卸载、新目录安装和真实启动迁移：225 个业务文件复制成功、0 个失败，任务账本、记忆和工作区规模保持一致。安装包为 175428775 字节，SHA-256 为 `49A59EDD0FE78D6DDC296654014FF915F4B11102075E329CE047C0DA5916502D`。
 
 ## v2.5.1 阶段二：Coding Runtime 与项目 DAG
 
@@ -211,7 +221,7 @@
 
 以下内容是本机用户数据，**不要提交到 GitHub**：API Key、连接器凭据、员工和团队实际配置、聊天内容、长期记忆、任务运行记录、上传附件、工作区文件、安装包缓存。
 
-- 渲染进程配置、聊天与兼容缓存：Chromium `localStorage`，键以 `hermes_office_` 开头。
+- 渲染进程配置、聊天与兼容缓存：Chromium `localStorage`。现存 `hermes_office_*` 键是历史数据兼容层，不是应用身份；改键必须通过独立版本迁移和回滚验证，不能直接删除。
 - 任务运行事实源：`app.getPath('userData')/task-runtime/task-events.jsonl`；`task-runs.json` 是可从账本重建的投影缓存。两者都是本机用户数据，禁止提交 GitHub。
 - 真实工作区：Electron `app.getPath('userData')/workspace`；每个聊天 scope 下有独立目录。
 - 上传附件：`<scope>/uploads/<批次>/<原文件名>`。输入附件不会显示为最终产出物。

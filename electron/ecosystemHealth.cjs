@@ -16,11 +16,11 @@ function createEcosystemHealth(options) {
     try {
       const packageJson = JSON.parse(await fs.readFile(path.join(projectRoot, 'package.json'), 'utf8'));
       const valid = packageJson.version === options.appVersion
-        && packageJson.name === 'hermes-office-pro'
-        && packageJson.build?.appId === 'com.hermes.office'
+        && packageJson.name === 'taiji-office'
+        && packageJson.build?.appId === 'com.taiji.office'
         && /太极/u.test(String(packageJson.build?.productName || ''));
-      return result('identity', '版本与数据身份', valid ? 'ready' : 'blocked', valid ? `太极 v${options.appVersion}，兼容数据身份保持不变` : '版本或内部数据身份不一致',
-        valid ? '对外品牌为太极；内部 name、appId 与旧存储键未改动。' : 'package 版本、name、appId 或 productName 不符合迁移边界。', true);
+      return result('identity', '版本与数据身份', valid ? 'ready' : 'blocked', valid ? `太极 v${options.appVersion}，应用身份一致` : '版本或内部数据身份不一致',
+        valid ? '包名、Windows App ID、安装身份和数据目录均为太极；旧存储键仅用于兼容迁移。' : 'package 版本、name、appId 或 productName 不符合太极身份规范。', true);
     } catch (error) { return result('identity', '版本与数据身份', 'blocked', '无法读取应用身份', error?.message || String(error), true); }
   }
 

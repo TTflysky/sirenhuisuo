@@ -136,6 +136,7 @@ export interface NativeExecutionJob {
   toolCalls: number;
   lastError?: string;
   eventSequence: number;
+  semanticState?: { status: NativeExecutionJobState; phase: string; rawState: string; active: boolean; terminal: boolean; waiting: boolean };
 }
 export interface NativeExecutionStartInput {
   taskId: string;
@@ -299,6 +300,21 @@ export interface TaskStoreWriteResult {
   error?: string;
 }
 
+export interface OperationDiagnosticEntry {
+  id: string;
+  occurredAt: number;
+  level: 'info' | 'warning' | 'error';
+  scope: string;
+  operation: string;
+  taskId?: string;
+  teamId?: string;
+  errorCode?: string;
+  failureClass: string;
+  recoverable: boolean;
+  message: string;
+  context?: Record<string, unknown>;
+}
+
 export interface TaskServiceTask {
   id: string;
   taskServiceVersion?: number;
@@ -449,6 +465,11 @@ declare global {
     taskExecutionStart: (input: NativeExecutionStartInput) => Promise<NativeExecutionResult>;
     taskExecutionStatus: (taskId?: string) => Promise<NativeExecutionResult>;
     taskExecutionEvents: (input: { taskId: string; afterSequence?: number }) => Promise<{ ok: boolean; events: NativeExecutionEvent[] }>;
+    taskExecutionObservability: (taskId?: string) => Promise<{ ok: boolean; task?: Record<string, unknown>; tasks?: Array<Record<string, unknown>>; queue?: NativeExecutionResult['queue'] }>;
+    diagnosticsRecord: (input: Partial<OperationDiagnosticEntry> & { message: string }) => Promise<{ ok: boolean; error?: string }>;
+    diagnosticsQuery: (options?: { taskId?: string; teamId?: string; failureClass?: string; level?: OperationDiagnosticEntry['level']; limit?: number }) => Promise<{ ok: boolean; entries: OperationDiagnosticEntry[]; total: number; filePath?: string }>;
+    diagnosticsSummary: (options?: { taskId?: string; teamId?: string }) => Promise<{ ok: boolean; total: number; errors: number; recoverable: number; byFailureClass: Record<string, number>; latest: OperationDiagnosticEntry[] }>;
+    diagnosticsExport: (options?: { taskId?: string; teamId?: string }) => Promise<{ ok: boolean; canceled?: boolean; path?: string; count?: number; error?: string }>;
     taskExecutionSteer: (input: { taskId: string; message: string }) => Promise<NativeExecutionResult>;
     taskExecutionSyncMembers: (input: { taskId: string; members: Array<import('./types').TaskRunMemberSnapshot & { modelConfig: import('./types').ModelConfig }> }) => Promise<NativeExecutionResult>;
     taskDelegationCreate: (input: TaskDelegationCreateInput) => Promise<TaskDelegationResult>;

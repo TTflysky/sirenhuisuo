@@ -3,7 +3,7 @@ param(
   [string]$Mode = 'All',
   [string]$Destination,
   [switch]$Install,
-  [string]$InstallDirectory = 'E:\AI办公会所\hermes-office-pro'
+  [string]$InstallDirectory = 'E:\AI办公会所\taiji-office'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,7 +18,7 @@ $apiRoot = "https://api.github.com/repos/$owner/$repository"
 
 $headers = @{
   Accept = 'application/vnd.github+json'
-  'User-Agent' = 'hermes-office-project-sync'
+  'User-Agent' = 'taiji-office-project-sync'
   'X-GitHub-Api-Version' = '2022-11-28'
 }
 $token = Get-TaijiGitHubToken
@@ -72,7 +72,7 @@ function Sync-Source($State) {
     return $target
   }
 
-  $tempRoot = Join-Path ([IO.Path]::GetTempPath()) "hermes-office-sync-$([Guid]::NewGuid().ToString('N'))"
+  $tempRoot = Join-Path ([IO.Path]::GetTempPath()) "taiji-office-sync-$([Guid]::NewGuid().ToString('N'))"
   $archive = Join-Path $tempRoot 'source.zip'
   $expanded = Join-Path $tempRoot 'expanded'
   New-Item -ItemType Directory -Path $expanded -Force | Out-Null

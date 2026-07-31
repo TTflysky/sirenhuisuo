@@ -68,6 +68,28 @@ function assertValidChain(events) {
     const duplicate = await store.write([updatedOne, makeRun('two')]);
     assert.equal(duplicate.eventsAppended, 0);
 
+    // A renderer may still hold an old task list while a native job is
+    // running. Omitting that task must not append task_removed to the ledger.
+    const rendererRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'taiji-renderer-stale-'));
+    try {
+      const rendererStore = createTaskRuntimeStore(rendererRoot, { maxRuns: 10 });
+      const activeParent = makeRun('active-parent', { status: 'running' });
+      const terminalTask = makeRun('terminal-task', { status: 'completed' });
+      await rendererStore.write([activeParent, terminalTask], { source: 'native-execution-adapter' });
+      const staleSave = await rendererStore.write([terminalTask], { source: 'renderer' });
+      assert.equal(staleSave.eventsAppended, 0);
+      assert.deepEqual(staleSave.skippedRemovals, ['active-parent']);
+      assert.deepEqual((await rendererStore.read()).runs.map((run) => run.id).sort(), ['active-parent', 'terminal-task']);
+      const blockedExplicitRemoval = await rendererStore.write([terminalTask], { source: 'renderer', removedTaskIds: ['active-parent'] });
+      assert.deepEqual(blockedExplicitRemoval.skippedRemovals, ['active-parent']);
+      const acceptedRemoval = await rendererStore.write([activeParent], { source: 'renderer', removedTaskIds: ['terminal-task'] });
+      assert.equal(acceptedRemoval.eventsAppended, 1);
+      assert.equal(acceptedRemoval.events[0].type, 'task_removed');
+      assert.deepEqual((await rendererStore.read()).runs.map((run) => run.id), ['active-parent']);
+    } finally {
+      await fs.rm(rendererRoot, { recursive: true, force: true });
+    }
+
     const recovery = await store.createRecoveryPoint({ taskId: 'one', label: '运行中基线' });
     assert.equal(recovery.ok, true);
     assert.equal(verifyEnvelope(recovery.recoveryPoint), true);

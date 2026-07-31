@@ -205,10 +205,13 @@ function saveLocalTaskRuns(runs: TaskRun[]): TaskRun[] {
   return limited;
 }
 
-function writeMainTaskRuns(runs: TaskRun[]): void {
+function writeMainTaskRuns(runs: TaskRun[], options: { removedTaskIds?: string[] } = {}): void {
   try {
     const writer = typeof window !== 'undefined' ? window.electronAPI?.taskStoreWrite : undefined;
-    if (writer) void writer(runs.slice(-MAX_RUNS), { source: 'renderer', sessionId: getExecutionSessionId() })
+    if (writer) void writer(runs.slice(-MAX_RUNS), {
+      source: 'renderer', sessionId: getExecutionSessionId(),
+      ...(options.removedTaskIds?.length ? { removedTaskIds: options.removedTaskIds } : {}),
+    })
       .then((result) => {
         if (!result.ok) return;
         mergeTaskLedgerState(result.events, result.integrity, true);
@@ -317,9 +320,9 @@ export async function hydrateTaskRunFromMainStore(taskId: string): Promise<TaskR
   }
 }
 
-export function saveTaskRuns(runs: TaskRun[]): void {
+export function saveTaskRuns(runs: TaskRun[], options: { removedTaskIds?: string[] } = {}): void {
   const limited = saveLocalTaskRuns(runs);
-  writeMainTaskRuns(limited);
+  writeMainTaskRuns(limited, options);
 }
 
 export function appendTaskRunContext(run: TaskRun, event: TaskContextEventInput): void {

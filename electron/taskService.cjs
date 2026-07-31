@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const path = require('path');
 const { pathToFileURL } = require('url');
+const { buildTaskObservability } = require('./executionObservability.cjs');
 
 const TASK_SERVICE_VERSION = 3;
 const TASK_TYPES = new Set(['assistant', 'dm', 'team', 'child', 'coding']);
@@ -725,6 +726,7 @@ function createTaskService(store, options = {}) {
       artifacts: { total: task.artifacts?.length || 0, verified: (task.artifacts || []).filter((item) => item.verified).length, final: (task.artifacts || []).filter((item) => item.category === 'final').length },
       usage: clone(task.usage || {}),
       approvals: { total: task.approvals?.length || 0, pending: (task.approvals || []).filter((item) => item.status === 'pending').length },
+      observability: buildTaskObservability(task),
       integrity: snapshot.integrity,
     };
   }

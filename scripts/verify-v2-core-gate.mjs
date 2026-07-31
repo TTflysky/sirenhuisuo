@@ -28,6 +28,9 @@ const checks = [
   'verify:task-turn-isolation',
   'verify:v250-personas-and-office',
   'verify:coding-runtime',
+  'verify:execution-observability',
+  'verify:operation-diagnostics',
+  'verify:app-identity-migration',
 ];
 
 for (const script of checks) {

@@ -2124,6 +2124,8 @@ html, body, #root, .app-root {
 .diagnostics-summary strong { font-size: 14px; }
 .diagnostics-summary span { color: var(--text-secondary); font-size: 11px; }
 .diagnostics-summary small { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: var(--text-muted); font-size: 9px; }
+.diagnostic-log-preview { grid-column: 1 / -1; display: flex; align-items: flex-start; gap: 6px; min-width: 0; color: var(--text-secondary); font-size: 10px; line-height: 1.45; }
+.diagnostic-log-preview .ant-tag { margin-inline-end: 0; flex: 0 0 auto; }
 .diagnostics-optimization-result { overflow: hidden; border: 1px solid color-mix(in srgb, var(--apple-accent) 32%, var(--border-light)); border-radius: 6px; background: var(--surface); }
 .diagnostics-optimization-result > header { min-height: 54px; display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 10px 13px; border-bottom: 1px solid var(--border-light); background: color-mix(in srgb, var(--apple-accent) 7%, var(--surface)); }
 .diagnostics-optimization-result > header > div { min-width: 0; display: flex; flex-direction: column; gap: 3px; }

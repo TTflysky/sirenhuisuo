@@ -1,5 +1,15 @@
 # 太极项目当前交接
 
+## v2.6.0 阶段三：执行观测、诊断账本与任务防误删（2026-07-31，正式版本）
+
+- 应用内部身份已正式迁移为 `taiji-office` / `com.taiji.office`。`electron/appIdentityMigration.cjs` 在任何 `userData` 消费者初始化前，将 `%APPDATA%/hermes-office-pro` 的业务数据无损复制到 `%APPDATA%/taiji-office`；不覆盖新文件、不复制缓存/锁/旧更新器 ID，成功后写版本标记。旧目录暂留作恢复备份。
+- 当前源码版本为 `2.6.0`。`electron/executionObservability.cjs` 将执行状态投影为队列、运行、等待子任务、补偿、暂停和终态，并聚合重试、工具结果、失败类别、证据完整度与耗时。
+- `electron/operationDiagnostics.cjs` 是可持久化、可筛选、可导出的 JSONL 错误账本。它对 API Key、Token、密码、Authorization 和常见密钥字面量脱敏；记录 `taskId/teamId/scope/operation/failureClass/recoverable/context`，保留最近 5000 条。
+- 所有渲染窗口的未处理错误、主进程未处理异常、任务账本失败、任务恢复前置检查、原生执行器的工具/步骤失败与核心 IPC 失败都进入同一错误账本。设置 → 诊断中心显示摘要并可导出 JSON 给开发排查。
+- 已修复当前“继续执行”相关根因：旧渲染端快照不能再通过省略条目删除活跃父任务。只有用户显式请求且任务已终态时才允许移除；`verify:task-runtime-store` 覆盖旧快照、显式删除和活跃任务保护。
+- 专项回归：`npm.cmd run verify:execution-observability`、`npm.cmd run verify:operation-diagnostics`、`npm.cmd run verify:app-identity-migration`、`npm.cmd run verify:task-runtime-store`、`npm.cmd run verify:native-execution`、Build 与 Lint 均已通过。下一步继续阶段三的模块拆分、性能压测、真实更新与回滚演练。
+- 本机已卸载旧安装身份并安装到 `%LOCALAPPDATA%/Programs/taiji-office`，真实启动迁移 225 个业务文件、0 个失败；任务账本、记忆和工作区规模与迁移前一致。安装包 `release/taiji-office-setup-2.6.0.exe` 为 175428775 字节，SHA-256 为 `49A59EDD0FE78D6DDC296654014FF915F4B11102075E329CE047C0DA5916502D`。
+
 ## v2.5.2 办公室工位卡片（2026-07-31，开发中）
 
 - 员工工位卡片的配置入口已从左上角移至右下角，并改用三点更多图标，避免遮挡身份文字。入口仍打开同一套员工设置。
@@ -253,13 +263,14 @@ npm.cmd run verify:package
 - `scripts/build-windows.ps1` 在 Electron 运行时缺失时优先恢复 `%LOCALAPPDATA%\electron\Cache\electron-v<version>-win32-x64.zip`，缓存不存在才联网下载。
 - 服务器忽略 Range 时从头覆盖；等长损坏缓存、超出 Release 大小和 SHA-256 不匹配都会被丢弃，只有校验完成后才原子改名为可执行安装包。
 
-### 8. 太极品牌迁移：已完成
+### 8. 太极应用身份迁移：v2.6.0 完成
 
-- 版本升级为 `0.9.0`，产品、窗口、托盘、快捷方式、安装包和默认提示词统一为“太极”。
+- 产品、窗口、托盘、快捷方式、安装包、默认提示词和内部应用身份统一为“太极”。
 - 安装包名改为 `taiji-office-setup-<version>.exe`。
-- 内部包名仍为 `hermes-office-pro`，`appId` 仍为 `com.hermes.office`。
-- 所有 `hermes_office_*` 本地存储键保持不变，并新增品牌迁移标记。
-- 旧员工、团队、聊天、模型、任务和数据目录不迁移、不清空。
+- 内部包名为 `taiji-office`，Windows `appId` 为 `com.taiji.office`，新安装目录和用户数据目录均使用 `taiji-office`。
+- 首次启动在 Electron 初始化前把旧目录中的员工、团队、聊天、模型、任务、记忆、工作区和 Chromium 本地存储无损复制到新目录；已有新文件不覆盖，失败会在下次启动续迁。
+- 所有 `hermes_office_*` 本地存储键暂时保持为历史数据兼容层，不再代表产品或安装身份；后续只能通过带版本迁移和回滚测试逐步替换。
+- 旧用户数据目录迁移验证前不删除，可作为人工恢复备份；旧安装程序可在新客户端验证后移除。
 - “Hermes Agent Skills”等第三方来源名称保留，不冒充太极自有品牌。
 
 ## 本轮关键文件
@@ -360,7 +371,7 @@ npm.cmd run verify:package
 ## 踩过的坑
 
 - 源码快照不是 Git 工作树，不能用快照目录的 `git status/push` 判断远端；开发工作树统一运行 `npm.cmd run publish:release`，授权统一读取 Git Credential Manager OAuth。
-- 不要修改内部 `name`、`appId` 或 `hermes_office_*` 键，否则品牌改名会造成用户数据看似丢失。
+- `name` 和 `appId` 已由 v2.6.0 正式迁移为太极；不要删除 `appIdentityMigration.cjs` 或直接清理旧数据目录。`hermes_office_*` 历史键仍需兼容读取，后续改键必须增加独立版本迁移、数量核验和回滚测试。
 - 回滚不能先恢复配置再下载旧安装包；下载失败会让当前版本提前加载旧配置。
 - 系统 Node 24 与当前 ASAR 版本组合可能生成索引错位的不可启动包；必须使用 `npm.cmd run dist:win`。脚本固定复用项目缓存中的官方便携 Node 20.18.3，把临时目录定向到构建缓存，并在结束时自动验收 ASAR。
 - NSIS 构建中间会短暂出现 0 字节 `.7z`，必须等正式 `.exe`、`.blockmap` 和新 `latest.yml` 全部存在后再判断完成。

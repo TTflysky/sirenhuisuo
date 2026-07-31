@@ -1,5 +1,14 @@
 # 更新日志
 
+## v2.6.0 (Phase 3: execution observability and diagnostics)
+
+- Migrated the canonical package, Windows App ID, installation identity, MCP client identity, and user-data directory to `taiji-office` / `com.taiji.office`. A tested one-time migration copies legacy employees, teams, conversations, tasks, memory, workspaces, and Chromium storage without overwriting newer files; the old directory remains available for recovery.
+- Added a durable, redacted operation-diagnostics ledger for task storage, recovery preflight, native execution, IPC, main-process exceptions, and unhandled renderer-window errors. Records include task/team identity, module, operation, failure class, recoverability, and contextual evidence.
+- Added Diagnostics Center error summary and JSON export. Every window writes to the same diagnostic source, so an issue can be exported after the original window has been closed or refreshed.
+- Added execution-observability projections for queue, child-task waiting, compensation, retries, failure classes, evidence completeness, duration, and tool outcomes.
+- Prevented stale renderer task snapshots from removing active durable tasks. Explicit removal remains available only for terminal tasks, with regression coverage for active parent-task protection.
+- Added `verify:execution-observability`, `verify:operation-diagnostics`, and `verify:app-identity-migration` to the v2 core release gate.
+
 ## v2.5.2 (Office card action placement)
 
 - Moved the office employee-card settings action from the top-left text area to a compact three-dot action at the bottom-right, preserving the existing employee configuration entry point while keeping identity information unobstructed.

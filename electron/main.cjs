@@ -14,6 +14,7 @@ const { sanitizeInjectedEnv, redactInjectedValues } = require('./secretSafety.cj
 const { invokeConnectorAdapter, verifyConnectorAdapter } = require('./connectorAdapters.cjs');
 const { buildPowerShellCommand } = require('./commandShell.cjs');
 const { createTaskRuntimeStore } = require('./taskRuntimeStore.cjs');
+const { createOperationDiagnostics } = require('./operationDiagnostics.cjs');
 const { createTaskService } = require('./taskService.cjs');
 const { createTaskWorker } = require('./taskWorker.cjs');
 const { createNativeToolRuntime } = require('./nativeToolRuntime.cjs');
@@ -23,8 +24,10 @@ const { createCodingRuntime } = require('./codingRuntime.cjs');
 const { createEcosystemHealth } = require('./ecosystemHealth.cjs');
 const { createMemoryManager } = require('./memoryManager.cjs');
 const { createLearningReviewQueue } = require('./learningReviewQueue.cjs');
-// Isolate automated Electron verification from a user's real local data.
-if (process.env.TAIJI_TEST_USER_DATA) app.setPath('userData', path.resolve(process.env.TAIJI_TEST_USER_DATA));
+const { configureAppUserData } = require('./appIdentityMigration.cjs');
+// Configure the canonical Taiji data root before any module resolves userData.
+// Automated Electron verification remains isolated from a user's real data.
+const identityMigration = configureAppUserData(app, { testUserData: process.env.TAIJI_TEST_USER_DATA });
 if (process.env.TAIJI_TEST_USER_DATA || process.env.TAIJI_DISABLE_HARDWARE_ACCELERATION === '1') app.disableHardwareAcceleration();
 if (process.env.TAIJI_TEST_DEBUG_PORT) app.commandLine.appendSwitch('remote-debugging-port', String(process.env.TAIJI_TEST_DEBUG_PORT));
 const log = require('electron-log');
@@ -57,7 +60,25 @@ const worktreeManager = createWorktreeManager({
   stateRoot: path.join(app.getPath('userData'), 'task-runtime', 'git-worktrees'),
 });
 const PROJECT_ROOT = path.resolve(__dirname, '..');
-const taskRuntimeStore = createTaskRuntimeStore(path.join(app.getPath('userData'), 'task-runtime'));
+const TASK_RUNTIME_ROOT = path.join(app.getPath('userData'), 'task-runtime');
+const operationDiagnostics = createOperationDiagnostics(TASK_RUNTIME_ROOT);
+if (identityMigration.status === 'partial') {
+  void operationDiagnostics.record({
+    scope: 'app-identity',
+    operation: 'migrate-user-data',
+    failureClass: 'filesystem',
+    recoverable: true,
+    message: '太极数据目录迁移未完整完成，下次启动将继续迁移',
+    context: { failures: identityMigration.failures },
+  });
+}
+const taskRuntimeStore = createTaskRuntimeStore(TASK_RUNTIME_ROOT, { diagnostics: operationDiagnostics });
+process.on('uncaughtException', (error) => {
+  void operationDiagnostics.record({ scope: 'main-process', operation: 'uncaught-exception', message: error?.message || String(error), error });
+});
+process.on('unhandledRejection', (reason) => {
+  void operationDiagnostics.record({ scope: 'main-process', operation: 'unhandled-rejection', message: reason?.message || String(reason), error: reason });
+});
 const codingRuntime = createCodingRuntime({ workspaceRoot: WORKSPACE, worktreeManager });
 const taskService = createTaskService(taskRuntimeStore, { codingRuntime });
 const memoryManager = createMemoryManager(path.join(app.getPath('userData'), 'taiji-memory'));
@@ -115,6 +136,7 @@ const nativeExecutionAdapter = createNativeExecutionAdapter({
   worktreeManager,
   memoryManager,
   learningReviewQueue,
+  diagnostics: operationDiagnostics,
   sessionId: APP_SESSION_ID,
   fetchImpl: (url, options) => net.fetch(url, options),
   onChanged(event) {
@@ -822,6 +844,14 @@ function createWindow() {
 
   if (!ipcHandlersRegistered) {
     ipcHandlersRegistered = true;
+  const reportIpcResult = async (operation, input, result) => {
+    if (result?.ok !== false) return result;
+    await operationDiagnostics.record({
+      scope: 'ipc', operation, taskId: input?.taskId, teamId: input?.teamId,
+      message: result.error || `${operation} failed`, context: { input },
+    });
+    return result;
+  };
 
   // ===== 窗口控制：始终作用于发起事件的窗口（支持原生聊天子窗口）=====
   const senderWin = (event) => BrowserWindow.fromWebContents(event.sender);
@@ -1035,7 +1065,21 @@ function createWindow() {
   });
   ipcMain.handle('task-store:read', async () => taskRuntimeStore.read());
   ipcMain.handle('task-store:query', async (_event, options) => taskRuntimeStore.read(options));
-  ipcMain.handle('task-store:write', async (_event, runs, metadata) => taskRuntimeStore.write(runs, metadata));
+  ipcMain.handle('task-store:write', async (_event, runs, metadata) => reportIpcResult('task-store-write', metadata, await taskRuntimeStore.write(runs, metadata)));
+  ipcMain.handle('diagnostics:record', async (_event, input) => operationDiagnostics.record({ ...input, scope: input?.scope || 'renderer' }));
+  ipcMain.handle('diagnostics:query', async (_event, options) => operationDiagnostics.query(options));
+  ipcMain.handle('diagnostics:summary', async (_event, options) => operationDiagnostics.summary(options));
+  ipcMain.handle('diagnostics:export', async (_event, options) => {
+    const result = await dialog.showSaveDialog({
+      title: '导出错误诊断日志',
+      defaultPath: `taiji-diagnostics-${Date.now()}.json`,
+      filters: [{ name: 'JSON 文件', extensions: ['json'] }],
+    });
+    if (result.canceled || !result.filePath) return { ok: true, canceled: true };
+    const payload = await operationDiagnostics.exportData(options);
+    await fsp.writeFile(result.filePath, JSON.stringify(payload, null, 2), 'utf8');
+    return { ok: true, path: result.filePath, count: payload.diagnostics.length };
+  });
   ipcMain.handle('task-ledger:read', async (_event, options) => taskRuntimeStore.read(options));
   ipcMain.handle('task-ledger:audit', async (_event, options) => taskRuntimeStore.audit(options));
   ipcMain.handle('task-recovery:create', async (_event, options) => taskRuntimeStore.createRecoveryPoint(options));
@@ -1120,6 +1164,11 @@ function createWindow() {
         await taskService.repairDelegationCollisions(command?.taskId);
         const recovery = await taskService.recoveryPlan(command?.taskId);
         if (!recovery.plan?.ready) {
+          await operationDiagnostics.record({
+            scope: 'ipc', operation: 'task-worker-resume-preflight', taskId: command?.taskId,
+            message: recovery.plan?.nextAction || 'Task cannot resume yet',
+            context: { recoveryPlan: recovery.plan },
+          });
           return {
             ok: false,
             error: recovery.plan?.nextAction || '任务当前不满足继续条件',
@@ -1127,12 +1176,17 @@ function createWindow() {
           };
         }
       } catch (error) {
+        await operationDiagnostics.record({ scope: 'ipc', operation: 'task-worker-resume-preflight', taskId: command?.taskId, message: error?.message ?? String(error), error });
         return { ok: false, error: error?.message ?? String(error) };
       }
     }
-    const result = await taskWorker.dispatch(command);
-    await nativeExecutionAdapter.handleControl(command, result);
-    return result;
+    try {
+      const result = await taskWorker.dispatch(command);
+      await nativeExecutionAdapter.handleControl(command, result);
+      return reportIpcResult('task-worker-command', command, result);
+    } catch (error) {
+      return reportIpcResult('task-worker-command', command, { ok: false, error: error?.message ?? String(error) });
+    }
   });
   ipcMain.handle('skills:drafts', async () => {
     try { return { ok: true, drafts: await listSkillDrafts() }; } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
@@ -1142,11 +1196,12 @@ function createWindow() {
   });
   ipcMain.handle('task-worker:status', async () => taskWorker.status());
   ipcMain.handle('task-worker:commands', async (_event, options) => taskWorker.readCommands(options));
-  ipcMain.handle('task-execution:start', async (_event, input) => nativeExecutionAdapter.start(input));
+  ipcMain.handle('task-execution:start', async (_event, input) => reportIpcResult('task-execution-start', input, await nativeExecutionAdapter.start(input)));
   ipcMain.handle('task-execution:status', async (_event, taskId) => nativeExecutionAdapter.status(taskId));
   ipcMain.handle('task-execution:events', async (_event, input) => nativeExecutionAdapter.events(input?.taskId, input?.afterSequence));
-  ipcMain.handle('task-execution:steer', async (_event, input) => nativeExecutionAdapter.steer(input?.taskId, input?.message));
-  ipcMain.handle('task-execution:sync-members', async (_event, input) => nativeExecutionAdapter.syncMembers(input?.taskId, input));
+  ipcMain.handle('task-execution:observability', async (_event, taskId) => nativeExecutionAdapter.observability(taskId));
+  ipcMain.handle('task-execution:steer', async (_event, input) => reportIpcResult('task-execution-steer', input, await nativeExecutionAdapter.steer(input?.taskId, input?.message)));
+  ipcMain.handle('task-execution:sync-members', async (_event, input) => reportIpcResult('task-execution-sync-members', input, await nativeExecutionAdapter.syncMembers(input?.taskId, input)));
   ipcMain.handle('memory:list', async (_event, input) => memoryManager.list(input));
   ipcMain.handle('memory:context', async (_event, input) => memoryManager.context(input));
   ipcMain.handle('memory:upsert', async (_event, input) => {

@@ -104,6 +104,7 @@ if (-not $SkipTests) {
     'verify:task-delegation',
     'verify:worktree',
     'verify:ecosystem-health',
+    'verify:app-identity-migration',
     'verify:connector-adapters',
     'verify:connector-protocol',
     'verify:task-runtime-store',

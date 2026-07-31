@@ -37,7 +37,7 @@ powershell -ExecutionPolicy Bypass -File scripts/sync-project.ps1 -Mode Installe
 powershell -ExecutionPolicy Bypass -File scripts/sync-project.ps1 -Mode Installer -Install
 ```
 
-默认安装目录为 `E:\AI办公会所\hermes-office-pro`。其他电脑可通过 `-InstallDirectory` 指定路径。
+默认安装目录为 `E:\AI办公会所\taiji-office`。其他电脑可通过 `-InstallDirectory` 指定路径。
 
 ## 安全规则
 

@@ -1,7 +1,7 @@
 {
-  "name": "hermes-office-pro",
+  "name": "taiji-office",
   "private": true,
-  "version": "2.5.2",
+  "version": "2.6.0",
   "description": "太极 AI 办公会所 - 面向 Windows 的多模型协作与可恢复任务执行平台",
   "author": "TTflysky",
   "type": "module",
@@ -93,11 +93,14 @@
     "verify:foundation-ui": "node scripts/verify-foundation-e2e.mjs",
     "verify:v230-experience": "node scripts/verify-v230-experience.mjs",
     "verify:image-model-routing": "node scripts/verify-image-model-routing.mjs",
-      "verify:v231-dispatch-and-brand": "node scripts/verify-v231-dispatch-and-brand.mjs",
+    "verify:v231-dispatch-and-brand": "node scripts/verify-v231-dispatch-and-brand.mjs",
     "verify:task-turn-isolation": "node scripts/verify-task-turn-isolation.mjs",
     "verify:v250-personas-and-office": "node scripts/verify-v250-personas-and-office.mjs",
     "verify:coding-runtime": "node scripts/verify-coding-runtime.cjs",
-      "dist:win": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1",
+    "verify:execution-observability": "node scripts/verify-execution-observability.cjs",
+    "verify:operation-diagnostics": "node scripts/verify-operation-diagnostics.cjs",
+    "verify:app-identity-migration": "node scripts/verify-app-identity-migration.cjs",
+    "dist:win": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1",
     "publish:release": "powershell -ExecutionPolicy Bypass -File scripts/publish-github-release.ps1",
     "release:win": "npm.cmd run publish:release",
     "postinstall": "electron-builder install-app-deps"
@@ -127,7 +130,7 @@
     "vite": "^8.1.1"
   },
   "build": {
-    "appId": "com.hermes.office",
+    "appId": "com.taiji.office",
     "productName": "太极 AI 办公会所",
     "electronDist": "node_modules/electron/dist",
     "artifactName": "taiji-office-setup-${version}.${ext}",

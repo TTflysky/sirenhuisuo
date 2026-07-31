@@ -306,7 +306,7 @@ function reducer(s: AppState, a: Action): AppState {
         client.replaceChat(team.id, chatMessages);
         return { ...team, chatMessages };
       }) : s.teams;
-      saveTaskRuns(taskRuns);
+      saveTaskRuns(taskRuns, { removedTaskIds: [a.runId] });
       return { ...s, taskRuns, teams };
     }
 
