@@ -12,6 +12,7 @@ import { materializeCatalogEmployees, normalizeCatalogEmployeePersonas } from '.
 import { parseGeneratedAvatarPayload } from './generatedAvatar';
 import { buildImageEditFormData, selectEditableImage } from '../engine/imageRequest.mjs';
 import { consumeOpenAIChatStream } from '../engine/chatStream.mjs';
+import { createCompatibilityReport } from '../engine/modelCompatibility.mjs';
 import {
   resolveImageSpecification,
   type ImageGenerationOptions,
@@ -163,6 +164,7 @@ export interface ModelEntry extends ModelConfig {
   lastHttpStatus?: number;
   lastTestMessage?: string;
   lastTestEndpoint?: string;
+  lastCompatibilityReport?: ReturnType<typeof createCompatibilityReport>;
   /** Explicit capabilities are optional. Older entries are inferred from the model id. */
   capabilities?: ModelCapability[];
 }
@@ -416,6 +418,7 @@ export interface ModelConnectionTestResult {
   latencyMs: number;
   endpoint: string;
   httpStatus?: number;
+  compatibility: ReturnType<typeof createCompatibilityReport>;
 }
 
 export interface ModelListResult {
@@ -439,9 +442,11 @@ export async function testModelConnection(mc: ModelConfig): Promise<ModelConnect
   const base = (mc.apiHost ?? '').trim().replace(/\/+$/, '');
   const imageModel = isImageGenerationModel(mc);
   const endpoint = base ? endpointUrl(base, imageModel ? '/images/generations' : '/chat/completions') : '';
-  if (!base) return { ok: false, message: '请先填写 API 地址', latencyMs: 0, endpoint };
+  const capability = imageModel ? 'image_generation' : 'chat';
+  const compatibility = (probe: Record<string, unknown>) => createCompatibilityReport({ modelConfig: mc, probes: [{ capability, endpoint, ...probe }] });
+  if (!base) return { ok: false, message: '请先填写 API 地址', latencyMs: 0, endpoint, compatibility: compatibility({ missingConfig: true }) };
   const model = mc.model?.trim() || getProvider(mc.provider).defaultModel;
-  if (!model) return { ok: false, message: '请先填写模型名称', latencyMs: 0, endpoint };
+  if (!model) return { ok: false, message: '请先填写模型名称', latencyMs: 0, endpoint, compatibility: compatibility({ missingConfig: true }) };
   const startedAt = performance.now();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 20000);
@@ -457,23 +462,25 @@ export async function testModelConnection(mc: ModelConfig): Promise<ModelConnect
     const latencyMs = Math.round(performance.now() - startedAt);
     const raw = await res.text().catch(() => '');
     if (!res.ok) {
-      return { ok: false, message: `HTTP ${res.status}：${apiErrorMessage(raw)}`, latencyMs, endpoint, httpStatus: res.status };
+      return { ok: false, message: `HTTP ${res.status}：${apiErrorMessage(raw)}`, latencyMs, endpoint, httpStatus: res.status, compatibility: compatibility({ httpStatus: res.status, body: raw, ok: false }) };
     }
     let data: any;
     try { data = JSON.parse(raw); } catch {
-      return { ok: false, message: 'HTTP 200，但响应不是有效 JSON', latencyMs, endpoint, httpStatus: res.status };
+      return { ok: false, message: 'HTTP 200，但响应不是有效 JSON', latencyMs, endpoint, httpStatus: res.status, compatibility: compatibility({ httpStatus: res.status, body: raw, ok: false }) };
     }
     const reply = data?.choices?.[0]?.message?.content;
-    if (typeof reply !== 'string' || !reply.trim()) {
-      return { ok: false, message: 'HTTP 200，但模型没有返回可用的聊天内容', latencyMs, endpoint, httpStatus: res.status };
+    const generatedImage = data?.data?.[0]?.b64_json || data?.data?.[0]?.url;
+    if (imageModel ? !generatedImage : typeof reply !== 'string' || !reply.trim()) {
+      const message = imageModel ? 'HTTP 200，但图片接口没有返回 Base64 或图片地址' : 'HTTP 200，但模型没有返回可用的聊天内容';
+      return { ok: false, message, latencyMs, endpoint, httpStatus: res.status, compatibility: compatibility({ httpStatus: res.status, body: data, ok: false }) };
     }
-    return { ok: true, message: `聊天调用成功 · ${latencyMs} ms · HTTP ${res.status}`, latencyMs, endpoint, httpStatus: res.status };
+    return { ok: true, message: `${imageModel ? '图片' : '聊天'}调用成功 · ${latencyMs} ms · HTTP ${res.status}`, latencyMs, endpoint, httpStatus: res.status, compatibility: compatibility({ httpStatus: res.status, body: data, ok: true }) };
   } catch (e: any) {
     const latencyMs = Math.round(performance.now() - startedAt);
     const message = e?.name === 'AbortError'
       ? `请求超时：20 秒内模型没有返回结果`
       : `网络错误：${e?.message ?? '无法连接模型服务'}`;
-    return { ok: false, message, latencyMs, endpoint };
+    return { ok: false, message, latencyMs, endpoint, compatibility: compatibility({ timeout: e?.name === 'AbortError', networkError: e?.name !== 'AbortError', errorName: e?.name, error: e?.message }) };
   } finally {
     clearTimeout(timer);
   }

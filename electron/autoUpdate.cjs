@@ -23,6 +23,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { version: APP_VERSION } = require('../package.json');
 const { downloadGitHubReleaseInstaller } = require('./releaseDownload.cjs');
+const { createUpdateTransaction } = require('./updateTransaction.cjs');
 const log = require('electron-log');
 
 // ---- 日志 ----
@@ -99,6 +100,8 @@ async function saveEncryptedBackup(snapshot, toVersion) {
   const raw = JSON.stringify(snapshot ?? {});
   if (Buffer.byteLength(raw, 'utf8') > 24 * 1024 * 1024) throw new Error('本地配置超过 24MB，无法自动备份；请先在设置中导出工作区');
   const backupPath = path.join(upgradeDir(), `pre-${APP_VERSION}-to-${toVersion || 'unknown'}-${Date.now()}.bin`);
+  const transaction = createUpdateTransaction({ root: upgradeDir() });
+  await transaction.begin({ fromVersion: APP_VERSION, toVersion: toVersion || downloadedVersion || 'unknown' });
   await fsp.mkdir(upgradeDir(), { recursive: true });
   await fsp.writeFile(backupPath, safeStorage.encryptString(raw));
   const values = snapshot?.localStorage || {};
@@ -110,12 +113,14 @@ async function saveEncryptedBackup(snapshot, toVersion) {
     backupSummary: { employees: arrayCount('hermes_office_employees'), teams: arrayCount('hermes_office_teams'), models: modelCount, taskRuns: arrayCount('hermes_office_task_runs_v1') },
   };
   await writeJournal(journal);
+  await transaction.transition('backup', { detail: `已加密备份 ${Object.keys(values).length} 个本地数据域` });
   return journal;
 }
 
 ipcMain.handle('update:install', async (_event, snapshot) => {
   try {
     await saveEncryptedBackup(snapshot, downloadedVersion);
+    await createUpdateTransaction({ root: upgradeDir() }).transition('install', { detail: '已准备 electron-updater 安装事务' });
     setTimeout(() => autoUpdater.quitAndInstall(true, true), 200);
     return { ok: true };
   } catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
@@ -135,6 +140,7 @@ ipcMain.handle('upgrade:recordValidation', async (_event, validation) => {
     journal.status = ok ? 'validated' : 'validation-failed';
     journal.validation = { ...validation, ok, dataPreserved, runtimeReady, runtimeHealth, checkedAt: new Date().toISOString() };
     await writeJournal(journal);
+    await createUpdateTransaction({ root: upgradeDir() }).transition(ok ? 'commit' : 'rollback', { status: ok ? 'committed' : 'failed', detail: ok ? '升级后数据与运行时健康检查通过' : '升级后健康检查未通过' });
     return { ok: true, recorded: true };
   } catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
 });

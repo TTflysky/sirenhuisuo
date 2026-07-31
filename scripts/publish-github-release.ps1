@@ -83,7 +83,10 @@ Assert-VersionReferences $version
 Invoke-CheckedCommand git @('diff', '--check')
 
 if (-not $SkipTests) {
-  $verificationScripts = @('verify:phase2')
+  # Phase 3 is the release-critical gate. The full phase2 Electron E2E is
+  # intentionally separate because this host's GPU driver can terminate the
+  # renderer; verify:v2-core-gate covers its deterministic kernel checks.
+  $verificationScripts = @('verify:phase3', 'verify:v2-core-gate')
   foreach ($script in $verificationScripts) {
     Invoke-CheckedCommand npm.cmd @('run', $script)
   }

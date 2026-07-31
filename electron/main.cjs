@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, screen, shell, dialog, Tray, Menu, nativeImage, net } = require('electron');
+const { app, BrowserWindow, ipcMain, screen, shell, dialog, Tray, Menu, nativeImage, net, safeStorage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const fsp = require('fs/promises');
@@ -7,6 +7,8 @@ const officeParser = require('officeparser');
 const { AlignmentType, Document, HeadingLevel, Packer, Paragraph, TextRun } = require('docx');
 const { initAutoUpdater } = require('./autoUpdate.cjs');
 const { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill, inspectSkillSource, repairSkill, createSkillDraft, listSkillDrafts, reviewSkillDraft } = require('./skills.cjs');
+const { createSkillRuntime } = require('./skillRuntime.cjs');
+const { createCredentialVault } = require('./credentialVault.cjs');
 const { searchSkillHub } = require('./skillHubSearch.cjs');
 const { testObsidianVault, searchObsidianVault, readObsidianNote, fetchKnowledgeUrl, searchWeb } = require('./knowledge.cjs');
 const { version: APP_VERSION } = require('../package.json');
@@ -63,6 +65,15 @@ const worktreeManager = createWorktreeManager({
 });
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const TASK_RUNTIME_ROOT = path.join(app.getPath('userData'), 'task-runtime');
+const skillRuntime = createSkillRuntime({
+  stateRoot: path.join(app.getPath('userData'), 'skill-runtime'),
+  projectRoot: PROJECT_ROOT,
+  listSkills,
+  readSkill,
+  installSkill: (root, input) => installSkill(root, input, { fetchImpl: (url, options) => net.fetch(url, options) }),
+  repairSkill,
+});
+const credentialVault = createCredentialVault({ root: path.join(app.getPath('userData'), 'credential-vault'), safeStorage });
 const operationDiagnostics = createOperationDiagnostics(TASK_RUNTIME_ROOT);
 if (identityMigration.status === 'partial') {
   void operationDiagnostics.record({
@@ -1015,6 +1026,46 @@ function createWindow() {
   });
   ipcMain.handle('skills:repair', async (_event, id) => {
     try { return await repairSkill(path.resolve(__dirname, '..'), id); }
+    catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+  ipcMain.handle('skills:runtime', async () => {
+    try { return { ok: true, manifest: await skillRuntime.refresh('ipc') }; }
+    catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+  ipcMain.handle('skills:runtimeHealth', async () => {
+    try { return { ok: true, ...(await skillRuntime.health()) }; }
+    catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+  ipcMain.handle('skills:runtimeInspect', async (_event, id) => {
+    try { return await skillRuntime.inspect(id); }
+    catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+  ipcMain.handle('skills:runtimeInvocation', async (_event, input) => {
+    try { return { ok: true, evidence: await skillRuntime.recordInvocation(input) }; }
+    catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+  ipcMain.handle('skills:runtimeInstall', async (_event, input) => {
+    try { return await skillRuntime.install(input); }
+    catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+  ipcMain.handle('skills:runtimeRepair', async (_event, id) => {
+    try { return await skillRuntime.repair(id); }
+    catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+  ipcMain.handle('credentials:save', async (_event, input) => {
+    try { return await credentialVault.save(input?.credentialRef, input?.credentials); }
+    catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+  ipcMain.handle('credentials:read', async (_event, credentialRef) => {
+    try { return { ok: true, credentials: await credentialVault.read(credentialRef) }; }
+    catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+  ipcMain.handle('credentials:status', async (_event, credentialRef) => {
+    try { return await credentialVault.status(credentialRef); }
+    catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
+  });
+  ipcMain.handle('credentials:delete', async (_event, credentialRef) => {
+    try { return await credentialVault.remove(credentialRef); }
     catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
   });
   ipcMain.handle('sys:openExternal', async (_event, rawUrl) => {

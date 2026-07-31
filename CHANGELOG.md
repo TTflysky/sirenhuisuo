@@ -1,5 +1,15 @@
 # 更新日志
 
+## v2.9.4 (Phase 3: ecosystem compatibility, secure credentials, update transactions, and release governance)
+
+- Added a versioned model compatibility matrix covering chat, streaming, tool calls, GPT Image 2, legacy image endpoints, custom Base URLs, and actionable failure classes. Image connection tests now validate returned image data instead of expecting chat text.
+- Added `Skill Runtime` orchestration over the existing installer. Runtime manifests track health, refreshes, rule reads, invocations, and evidence without replacing the atomic installer.
+- Added an Electron `safeStorage` credential vault. Connector persistence keeps only a credential reference and hydrates secrets immediately before real tests or calls; legacy in-memory configurations remain compatible during migration.
+- Added a versioned update transaction journal covering prepare, download, verify, backup, install, migrate, health, commit, and rollback states. Automatic update validation records the transaction outcome.
+- Added CycloneDX-style SBOM generation, release provenance, high-confidence secret scanning, and the unified `verify:phase3` gate. Generated evidence is stored under `docs/` for release review.
+- Upgraded the built-in assistant persona to v18 with explicit external compatibility, Skill, credential, update, rollback, and evidence boundaries.
+- Phase 3 structural gates pass. A formal eight-hour Electron soak and a real cross-version rollback with external credentials remain explicitly unclaimed until run against a packaged client.
+
 ## v2.8.4 (Phase 2: long-running execution, Coding Runtime, and Electron E2E)
 
 - Added ExecutionController v2 with normalized failure classes, route/result fingerprints, no-progress retry prevention, independent model/tool/time/retry/token budgets, versioned checkpoints, evidence, unresolved questions, and plain-language recovery handoffs. Version 1 snapshots migrate without losing progress.

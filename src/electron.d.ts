@@ -505,6 +505,12 @@ declare global {
     skillsSearchMarket: (query: string) => Promise<SkillMarketSearchResult>;
     skillsInspectSource: (sourceUrl: string) => Promise<SkillInspectResult>;
     skillsRepair: (id: string) => Promise<SkillInstallResult>;
+    skillsRuntime: () => Promise<{ ok: boolean; manifest?: unknown; error?: string }>;
+    skillsRuntimeHealth: () => Promise<{ ok: boolean; total?: number; ready?: number; broken?: number; missing?: number; skills?: unknown[]; error?: string }>;
+    skillsRuntimeInspect: (id: string) => Promise<{ ok: boolean; skill?: unknown; error?: string }>;
+    skillsRuntimeInvocation: (input: { skillId: string; taskId?: string; ok?: boolean; evidence?: string }) => Promise<{ ok: boolean; evidence?: unknown; error?: string }>;
+    skillsRuntimeInstall: (input: { sourceUrl?: string; slug?: string; name?: string; requestText?: string }) => Promise<SkillInstallResult & { runtime?: unknown }>;
+    skillsRuntimeRepair: (id: string) => Promise<SkillInstallResult & { runtime?: unknown }>;
     skillDrafts: () => Promise<{ ok: boolean; drafts?: SkillDraft[]; error?: string }>;
     reviewSkillDraft: (input: { draftId: string; decision: 'approve' | 'reject'; note?: string }) => Promise<{ ok: boolean; action?: string; draft?: SkillDraft; error?: string }>;
     memoryList: (input?: { scope?: LayeredMemoryEntry['scope']; scopeId?: string; proposalStatus?: MemoryProposal['status']; includeAudit?: boolean }) => Promise<LayeredMemoryResult>;
@@ -555,6 +561,10 @@ declare global {
     connectorCall: (opts: ConnectorCallOpts) => Promise<ConnectorCallResult>;
     connectorVerifyPreset: (input: { adapter: string; credentials?: Record<string, string> }) => Promise<ConnectorPresetVerificationResult>;
     connectorInvokePreset: (input: { adapter: string; action: string; args?: Record<string, string>; credentials?: Record<string, string> }) => Promise<ConnectorPresetActionResult>;
+    credentialSave: (input: { credentialRef: string; credentials: Record<string, string> }) => Promise<{ ok: boolean; credentialRef?: string; fields?: string[]; error?: string }>;
+    credentialRead: (credentialRef: string) => Promise<{ ok: boolean; credentials?: Record<string, string>; error?: string }>;
+    credentialStatus: (credentialRef: string) => Promise<{ ok: boolean; available?: boolean; configured?: boolean; credentialRef?: string; error?: string }>;
+    credentialDelete: (credentialRef: string) => Promise<{ ok: boolean; error?: string }>;
     knowledgePickObsidian: () => Promise<KnowledgeVaultResult & { canceled?: boolean }>;
     knowledgeTestObsidian: (root: string) => Promise<KnowledgeVaultResult>;
     knowledgeSearchObsidian: (root: string, query: string) => Promise<{ ok: boolean; results?: Array<{ path: string; title: string; snippet: string }>; scanned?: number; error?: string }>;

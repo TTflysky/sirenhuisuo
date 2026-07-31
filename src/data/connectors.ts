@@ -57,6 +57,8 @@ export interface Connector {
   skillSourceUrl?: string;
   skillName?: string;
   installedSkillId?: string;
+  /** Reference into Electron safeStorage; secrets are not persisted in localStorage. */
+  credentialRef?: string;
 }
 
 /** 连接器操作（工具）定义 */
@@ -430,6 +432,7 @@ export function createConnectorDraft(preset: ConnectorPreset, existing?: Connect
     skillSourceUrl: existing?.skillSourceUrl ?? preset.skillSourceUrl,
     skillName: existing?.skillName ?? preset.skillName,
     installedSkillId: existing?.installedSkillId,
+    credentialRef: existing?.credentialRef ?? `connector:${existing?.id ?? `connector-${preset.key}`}`,
     discoveredActions: existing?.discoveredActions,
     lastChecked: existing?.lastChecked,
     error: existing?.error,
@@ -477,8 +480,30 @@ export function loadConnectors(): Connector[] {
 
 export function saveConnectors(list: Connector[]): void {
   try {
-    localStorage.setItem(LS_CONNECTORS, JSON.stringify(list));
+    const persisted = list.map((connector) => {
+      const credentialRef = connector.credentialRef || `connector:${connector.id}`;
+      const credentials = connector.credentials;
+      if (credentials && Object.keys(credentials).length > 0 && typeof window !== 'undefined') {
+        void window.electronAPI?.credentialSave?.({ credentialRef, credentials });
+      }
+      const auth = connector.auth ? { ...connector.auth, token: undefined, refreshToken: undefined } : connector.auth;
+      return { ...connector, credentialRef, credentials: undefined, auth };
+    });
+    localStorage.setItem(LS_CONNECTORS, JSON.stringify(persisted));
   } catch {}
+}
+
+/** Load secrets from Electron safeStorage just before a real connector action. */
+export async function hydrateConnectorCredentials(connector: Connector): Promise<Connector> {
+  if (!connector.credentialRef || typeof window === 'undefined' || !window.electronAPI?.credentialRead) return connector;
+  try {
+    const result = await window.electronAPI.credentialRead(connector.credentialRef);
+    if (result.ok && result.credentials) {
+      connector.credentials = { ...(connector.credentials ?? {}), ...result.credentials };
+      if (connector.auth && result.credentials.token) connector.auth.token = result.credentials.token;
+    }
+  } catch {}
+  return connector;
 }
 
 export function addConnector(c: Connector): void {
@@ -524,6 +549,7 @@ export async function ensureConnectorSkillAssociation(connector: Connector): Pro
 
 /** 快速 ping 检测连接器是否可达 */
 export async function checkConnector(c: Connector): Promise<{ status: Connector['status']; error?: string; runtimeStatus?: Connector['runtimeStatus']; actions?: ConnectorAction[] }> {
+  await hydrateConnectorCredentials(c);
   if (c.kind === 'knowledge-url') {
     if (!c.baseUrl) return { status: 'disconnected', error: '未配置知识库链接' };
     const result = await window.electronAPI?.knowledgeFetchUrl?.(c.baseUrl);
@@ -655,6 +681,7 @@ export async function executeConnectorAction(
   action: ConnectorAction,
   args: Record<string, string>,
 ): Promise<string> {
+  await hydrateConnectorCredentials(connector);
   if (action.local === 'knowledge-fetch-url') {
     if (!connector.baseUrl) throw new Error('知识库链接未配置');
     const result = await window.electronAPI?.knowledgeFetchUrl?.(connector.baseUrl);

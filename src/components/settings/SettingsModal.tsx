@@ -433,6 +433,7 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
           lastHttpStatus: r.httpStatus,
           lastTestMessage: r.message,
           lastTestEndpoint: r.endpoint,
+          lastCompatibilityReport: r.compatibility,
         };
         saveSettings(s);
         setSettings({ ...s });
@@ -506,6 +507,12 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
               {entry.lastTestEndpoint && (
                 <div style={{ fontSize: 10, marginTop: 2, color: 'var(--text-muted)', whiteSpace: 'normal', wordBreak: 'break-all' }}>
                   {entry.lastTestEndpoint}{entry.lastTested ? ` · ${new Date(entry.lastTested).toLocaleString()}` : ''}
+                </div>
+              )}
+              {entry.lastCompatibilityReport && (
+                <div style={{ fontSize: 10, marginTop: 2, color: 'var(--text-secondary)', whiteSpace: 'normal' }}>
+                  兼容矩阵：{entry.lastCompatibilityReport.status === 'compatible' ? '已通过' : entry.lastCompatibilityReport.status === 'partial' ? '部分能力待验证' : '存在阻塞'}
+                  {entry.lastCompatibilityReport.nextActions.length ? ` · ${entry.lastCompatibilityReport.nextActions[0]}` : ''}
                 </div>
               )}
             </div>

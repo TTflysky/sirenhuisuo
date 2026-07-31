@@ -19,6 +19,8 @@ export const RELEASE_GATE_CHECKS = [
   'verify:dynamic-delegation-v2',
   'verify:recovery-capsule-v2',
   'verify:team-execution-protocol',
+  'verify:phase3',
+  'verify:release-governance',
 ];
 
 function text(value, max = 180) {

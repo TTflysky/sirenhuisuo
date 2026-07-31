@@ -879,7 +879,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
       case 'test_connector': {
         const query = (args.connector ?? '').trim();
         if (!query) return { toolCallId: id, name, success: false, output: '连接器名称或 ID 不能为空。请先调用 inspect_connectors。' };
-        const { checkConnector, connectorMissingFields, ensureConnectorSkillAssociation, findConnectorPreset, loadConnectors, updateConnector } = await import('../data/connectors');
+        const { checkConnector, connectorMissingFields, ensureConnectorSkillAssociation, hydrateConnectorCredentials, findConnectorPreset, loadConnectors, updateConnector } = await import('../data/connectors');
         const normalized = query.toLocaleLowerCase();
         const preset = findConnectorPreset(query);
         const connector = loadConnectors().find((item) =>
@@ -892,6 +892,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
           return { toolCallId: id, name, success: false, output: `没有找到已配置的“${query}”连接器。请先调用 inspect_connectors，再用 prepare_connector 创建并打开配置。` };
         }
         await ensureConnectorSkillAssociation(connector);
+        await hydrateConnectorCredentials(connector);
         const missing = connectorMissingFields(connector);
         if (missing.length > 0) {
           return { toolCallId: id, name, success: false, output: `“${connector.label}”还不能测试，因为缺少：${missing.join('、')}。请调用 prepare_connector 打开配置窗口，让用户填写后再测试。` };
@@ -1026,10 +1027,11 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         let connectorForCommand: import('../data/connectors').Connector | undefined;
         const injectedEnv: Record<string, string> = {};
         if (args.connector?.trim()) {
-          const { connectorMissingFields, loadConnectors } = await import('../data/connectors');
+          const { connectorMissingFields, hydrateConnectorCredentials, loadConnectors } = await import('../data/connectors');
           const query = args.connector.trim().toLocaleLowerCase();
           connectorForCommand = loadConnectors().find((item) => item.id.toLocaleLowerCase() === query || item.label.toLocaleLowerCase() === query || item.mcpServerName?.toLocaleLowerCase() === query);
           if (!connectorForCommand) return { toolCallId: id, name, success: false, output: `没有找到要关联的连接器“${args.connector}”。请先调用 inspect_connectors。` };
+          await hydrateConnectorCredentials(connectorForCommand);
           const missing = connectorMissingFields(connectorForCommand);
           if (missing.length > 0) return { toolCallId: id, name, success: false, output: `“${connectorForCommand.label}”还缺少：${missing.join('、')}。请先完成配置，密钥不会交给模型查看。` };
           for (const field of connectorForCommand.credentialFields ?? []) {
