@@ -34,6 +34,7 @@ import { appendTaskRunContext, createTaskRun, formalPlanStepForRun, getExecution
 import { buildTaskPlan, matchProjectMembers, matchTeamMembers } from './engine/taskMatcher';
 import { employeePlanningPool, expertToEmployee, findExpertCatalogEntry } from './data/expertCatalog';
 import { briefExecutionContext, buildProfessionalProjectBrief } from './engine/expertOrchestration';
+import { codingProjectToTaskSteps, compileCodingProject } from './engine/codingProject.mjs';
 import { buildSkillContextWithEvidence, listSkills, matchSkills } from './data/skills';
 import { attachmentWorkspaceContext, copyAttachmentsToWorkspace, initializeTaskWorkspace } from './utils/attachments';
 import { syncNativeArtifacts, syncNativeRunArtifacts } from './data/outputs';
@@ -1899,11 +1900,38 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const conversationId = requestedConversationId
       ?? team.chatMessages.find((message) => message.id === sourceMessageId)?.conversationId
       ?? ensureActiveChatSession(`team:${teamId}`);
-    const plan = buildTaskPlan(team, current.employees, request, employeeIds);
+    let plan = buildTaskPlan(team, current.employees, request, employeeIds);
+    let codingProject: import('./engine/codingProject.mjs').CodingProject | undefined;
+    if (projectBrief) {
+      try {
+        codingProject = compileCodingProject({
+          goal: request,
+          projectBrief,
+          members: current.employees,
+          memberIds: employeeIds,
+        });
+        if (codingProject.status === 'ready') {
+          plan = codingProjectToTaskSteps(codingProject).map((step, index) => ({
+            id: String(step.id),
+            employeeId: String(step.employeeId || ''),
+            order: index + 1,
+            kind: step.kind === 'review' ? 'review' as const : 'work' as const,
+            title: String(step.title),
+            assignment: String(step.assignment),
+            deliverableType: step.deliverableType as import('./types').TaskPlanStep['deliverableType'],
+            dependsOnStepIds: Array.isArray(step.dependsOnStepIds) ? step.dependsOnStepIds.map(String) : [],
+          })).filter((step) => step.employeeId);
+        }
+      } catch {
+        // Non-software ProjectBriefs continue through the existing planner.
+        codingProject = undefined;
+      }
+    }
     const skillRefs = explicitSkillRefs.length ? explicitSkillRefs : await matchSkills(request);
     const skillBundle = await buildSkillContextWithEvidence(skillRefs);
     const skillContext = skillBundle.context;
     const run = createTaskRun(team, current.employees, request, plan, sourceMessageId, skillRefs, undefined, taskDecision, conversationId);
+    if (codingProject) run.codingProject = codingProject;
     const historyMatches = searchTaskRunHistory(current.taskRuns, request, { teams: current.teams, limit: 4 });
     const historyContext = buildTaskHistoryPrompt(historyMatches);
     const layeredMemoryContext = await buildLayeredMemoryContext({ query: request, teamId, limit: 18 });
@@ -1928,6 +1956,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         summary: `本任务遵循已批准的项目策划 v${projectBrief.version}，共 ${projectBrief.stages.length} 个阶段。`,
         data: { projectBriefVersion: projectBrief.version, stages: projectBrief.stages.map((stage) => stage.id) },
       });
+    }
+    if (codingProject) {
+      appendTaskRunContext(run, {
+        type: 'decision', source: 'system', verified: true,
+        summary: codingProject.status === 'ready'
+          ? `已将项目简报编译为 Coding DAG：${codingProject.stages.map((stage) => stage.title).join(' -> ')}。`
+          : `Coding DAG 发现 ${codingProject.staffingGaps.length} 个职责缺口，未把任务交给不匹配的成员。`,
+        data: { codingProjectVersion: codingProject.codingProjectVersion, status: codingProject.status, staffingGaps: codingProject.staffingGaps },
+      });
+      if (codingProject.status !== 'ready') {
+        run.status = 'awaiting_user';
+        run.phase = 'awaiting_user';
+        run.handoff = {
+          ts: Date.now(), completed: [],
+          blocked: `缺少可负责的职责：${codingProject.staffingGaps.map((gap) => gap.capability).join('、')}`,
+          nextAction: '补充对应专家到团队后再继续执行；系统会保留现有项目简报和已确定的职责边界。',
+        };
+        dispatch({ type: 'CREATE_TASK_RUN', run });
+        return;
+      }
     }
     run.memberSnapshot.forEach((snapshot) => {
       const employee = current.employees.find((item) => item.id === snapshot.id);

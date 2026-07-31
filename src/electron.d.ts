@@ -423,6 +423,7 @@ declare global {
     taskServiceContext: (input: { taskId: string; limit?: number }) => Promise<TaskServiceResult & { goal?: string; acceptanceCriteria?: string[]; references?: Array<Record<string, unknown>>; verifiedArtifacts?: Array<Record<string, unknown>> }>;
     taskServiceReadySteps: (taskId: string) => Promise<TaskServiceResult & { steps?: Array<Record<string, unknown>> }>;
     taskServiceCompleteStep: (input: Record<string, unknown> & { taskId: string; stepId: string }) => Promise<TaskServiceResult>;
+    taskServiceReviewDecision: (input: Record<string, unknown> & { taskId: string; reviewStepId: string; approved: boolean; responsibleStepId?: string }) => Promise<TaskServiceResult>;
     taskServiceFailStep: (input: Record<string, unknown> & { taskId: string; stepId: string }) => Promise<TaskServiceResult>;
     taskServiceRequestApproval: (input: Record<string, unknown> & { taskId: string; reason: string }) => Promise<TaskServiceResult>;
     taskServiceDecideApproval: (input: Record<string, unknown> & { taskId: string; approvalId: string; decision: 'approved' | 'rejected' }) => Promise<TaskServiceResult>;
@@ -459,6 +460,14 @@ declare global {
     worktreeRecover: (taskId: string) => Promise<WorktreeResult>;
     worktreeRelease: (taskId: string) => Promise<WorktreeResult>;
     worktreeHealth: () => Promise<WorktreeResult>;
+    codingPrepare: (input: { taskId: string; sourceRepo?: string; baseRef?: string }) => Promise<Record<string, unknown>>;
+    codingIndex: (input: { workspacePath: string }) => Promise<Record<string, unknown>>;
+    codingSearch: (input: { workspacePath: string; query: string }) => Promise<Record<string, unknown>>;
+    codingDependencies: (input: { workspacePath: string; path?: string; symbol?: string }) => Promise<Record<string, unknown>>;
+    codingDiff: (input: { workspacePath: string; taskId?: string }) => Promise<Record<string, unknown>>;
+    codingCheckpoint: (input: { workspacePath: string; taskId?: string; label?: string }) => Promise<Record<string, unknown>>;
+    codingStartCommand: (input: { workspacePath: string; command: string; timeoutMs?: number }) => Promise<Record<string, unknown>>;
+    codingCommandStatus: (input: { sessionId: string; after?: number }) => Promise<Record<string, unknown>>;
     ecosystemHealth: (input?: { mode?: 'runtime' | 'release' }) => Promise<EcosystemHealthReport>;
     onTaskWorkerChanged: (callback: (event: unknown) => void) => () => void;
     onTaskExecutionChanged: (callback: (event: NativeExecutionEvent) => void) => () => void;

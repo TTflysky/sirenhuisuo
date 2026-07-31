@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   taskServiceContext: (input) => ipcRenderer.invoke('task-service:context', input),
   taskServiceReadySteps: (taskId) => ipcRenderer.invoke('task-service:ready-steps', taskId),
   taskServiceCompleteStep: (input) => ipcRenderer.invoke('task-service:complete-step', input),
+  taskServiceReviewDecision: (input) => ipcRenderer.invoke('task-service:review-decision', input),
   taskServiceFailStep: (input) => ipcRenderer.invoke('task-service:fail-step', input),
   taskServiceRequestApproval: (input) => ipcRenderer.invoke('task-service:request-approval', input),
   taskServiceDecideApproval: (input) => ipcRenderer.invoke('task-service:decide-approval', input),
@@ -54,6 +55,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   worktreeRecover: (taskId) => ipcRenderer.invoke('worktree:recover', taskId),
   worktreeRelease: (taskId) => ipcRenderer.invoke('worktree:release', taskId),
   worktreeHealth: () => ipcRenderer.invoke('worktree:health'),
+  codingPrepare: (input) => ipcRenderer.invoke('coding:prepare', input),
+  codingIndex: (input) => ipcRenderer.invoke('coding:index', input),
+  codingSearch: (input) => ipcRenderer.invoke('coding:search', input),
+  codingDependencies: (input) => ipcRenderer.invoke('coding:dependencies', input),
+  codingDiff: (input) => ipcRenderer.invoke('coding:diff', input),
+  codingCheckpoint: (input) => ipcRenderer.invoke('coding:checkpoint', input),
+  codingStartCommand: (input) => ipcRenderer.invoke('coding:start-command', input),
+  codingCommandStatus: (input) => ipcRenderer.invoke('coding:command-status', input),
   ecosystemHealth: (input) => ipcRenderer.invoke('system:ecosystemHealth', input),
   onTaskWorkerChanged: (callback) => {
     const handler = (_event, data) => callback(data);

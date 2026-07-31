@@ -414,6 +414,8 @@ export interface TaskRun {
     updatedAt: number;
     lastCheckpointId?: string;
   };
+  /** Software projects retain the compiled responsibility DAG alongside live step state. */
+  codingProject?: import('./engine/codingProject.mjs').CodingProject;
   /** 标识真正执行此任务的客户端进程，供重启恢复判断。 */
   executionSessionId?: string;
   /** 主进程 Worker 持久租约。执行适配器必须在运行前领取并定期续租。 */

@@ -1,5 +1,13 @@
 # 太极项目当前交接
 
+## v2.5.1 阶段二：Coding Runtime 与项目 DAG（2026-07-31，开发中）
+
+- 当前源码版本为 `2.5.1`。本版开始落实“专业协作与 Coding Runtime”：独立受控工作区/可选 Git Worktree、仓库索引、符号与依赖定位、Diff/检查点、可追溯命令会话，以及 ProjectBrief 到责任 DAG 的编译。
+- `src/engine/codingProject.mjs` 是统一编译器；`electron/codingRuntime.cjs` 是实际运行时。不要退回用提示词或聊天文字代替项目图、工作区、补丁和验证证据。
+- 团队项目在 `ProjectBrief` 存在且目标属于软件实现时会调用同一个编译器。DAG 存在职责缺口时进入等待补人，不随机派给现有成员。审查退回必须指定 `responsibleStepId`，仅重开该步骤。
+- `npm.cmd run verify:coding-runtime` 覆盖工作树隔离、仓库索引、符号/依赖查找、检查点、原生 Coding 工具、ProjectBrief DAG 和定向返工；已纳入 `verify:v2-core-gate`。
+- 本轮已打包客户端 `release/taiji-office-setup-2.5.1.exe`，尚未创建 GitHub Release。下一小版本继续：把 Coding Runtime 的增量命令会话接入原生执行器，产出统一 Diff/测试/回滚交付面板，并将中途补人事件显示到项目阶段。
+
 ## v2.5.0 阶段二：专家人格归位与团队入口收口（2026-07-31，开发中）
 
 - 当前源码版本为 `2.5.0`，基线 `v2.4.0` 已推送至 GitHub `main`，提交 `b3e9ffd`；本节改动尚未提交、打包或发布。

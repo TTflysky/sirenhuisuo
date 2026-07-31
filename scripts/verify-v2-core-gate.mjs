@@ -27,6 +27,7 @@ const checks = [
   'verify:v231-dispatch-and-brand',
   'verify:task-turn-isolation',
   'verify:v250-personas-and-office',
+  'verify:coding-runtime',
 ];
 
 for (const script of checks) {

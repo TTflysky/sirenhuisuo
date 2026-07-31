@@ -2,8 +2,8 @@ const crypto = require('crypto');
 const path = require('path');
 const { pathToFileURL } = require('url');
 
-const TASK_SERVICE_VERSION = 2;
-const TASK_TYPES = new Set(['assistant', 'dm', 'team', 'child']);
+const TASK_SERVICE_VERSION = 3;
+const TASK_TYPES = new Set(['assistant', 'dm', 'team', 'child', 'coding']);
 const DELIVERABLE_TYPES = new Set(['answer', 'file', 'connection', 'operation', 'decision', 'mixed']);
 const ACTIVE_STATUSES = new Set(['queued', 'running', 'awaiting_user', 'paused']);
 const TERMINAL_STATUSES = new Set(['failed', 'completed', 'stopped']);
@@ -53,6 +53,10 @@ function normalizeStep(input, index) {
     compensationOnly: input?.compensationOnly === true,
     approvalRequired: input?.approvalRequired === true,
     kind: text(input?.kind, 40) || undefined,
+    codingRole: text(input?.codingRole, 80) || undefined,
+    reviewPoint: input?.reviewPoint === true,
+    acceptanceCriteria: list(input?.acceptanceCriteria, []),
+    maxRetries: Number.isInteger(input?.maxRetries) ? Math.max(0, Math.min(10, input.maxRetries)) : undefined,
     deliverableType: normalizeDeliverableType(input?.deliverableType),
     status: 'queued',
     attempts: 0,
@@ -67,7 +71,7 @@ function normalizeTaskInput(input = {}) {
   const steps = Array.isArray(input.steps) && input.steps.length
     ? input.steps.map(normalizeStep)
     : [normalizeStep({ title: '完成用户目标', assignment: goal }, 0)];
-  const requiresWorktree = input.requiresWorktree === true || /代码|编程|开发|脚本|构建|编译|测试|修复|bug|coding|software|repository/iu.test(goal);
+  const requiresWorktree = taskType === 'coding' || input.requiresWorktree === true || /代码|编程|开发|脚本|构建|编译|测试|修复|bug|coding|software|repository/iu.test(goal);
   const rawTaskDecision = input.taskDecision && typeof input.taskDecision === 'object' && !Array.isArray(input.taskDecision)
     ? clone(input.taskDecision)
     : undefined;
@@ -95,6 +99,7 @@ function normalizeTaskInput(input = {}) {
     acceptanceCriteria: list(input.acceptanceCriteria, ['完成用户目标', '留下真实可观察结果', '完成必要验收']),
     constraints: list(input.constraints),
     taskDecision,
+    projectBrief: input.projectBrief && typeof input.projectBrief === 'object' ? clone(input.projectBrief) : undefined,
     deliverableType: taskDeliverableType,
     memberSnapshot: Array.isArray(input.memberSnapshot) ? clone(input.memberSnapshot) : undefined,
     steps,
@@ -102,7 +107,7 @@ function normalizeTaskInput(input = {}) {
     references: [],
     toolAttempts: [],
     approvals: [],
-    workspace: { mode: requiresWorktree ? 'git-worktree' : 'task-workspace', status: requiresWorktree ? 'pending' : 'not-required', sourceRepo: text(input.sourceRepo, 1200) || undefined },
+    workspace: { mode: requiresWorktree && text(input.sourceRepo, 1200) ? 'git-worktree' : 'task-workspace', status: requiresWorktree ? 'pending' : 'not-required', sourceRepo: text(input.sourceRepo, 1200) || undefined },
     checkpoints: [],
     verifications: [],
     usage: { modelRounds: 0, promptTokens: 0, completionTokens: 0, estimatedTokens: 0, toolCalls: 0 },
@@ -239,15 +244,15 @@ async function attachFormalPlan(task) {
     contract,
     steps: task.steps.map((step) => ({
       stepId: step.id,
-      type: step.employeeId ? 'tool' : 'composite',
+      type: step.kind === 'review' ? 'review' : step.employeeId ? 'tool' : 'composite',
       connector: `task-step:${step.employeeId || 'assistant'}`,
       input: { assignment: step.assignment, employeeId: step.employeeId },
       expectedOutputSchema: { type: 'object' },
       dependsOn: step.dependsOnStepIds,
-      retryPolicy: { maxRetries: 3, backoffMs: 1000, maxBackoffMs: 30000 },
+      retryPolicy: { maxRetries: Number.isInteger(step.maxRetries) ? step.maxRetries : 3, backoffMs: 1000, maxBackoffMs: 30000 },
       idempotencyKey: `task-${task.id}-${step.id}`,
-      sideEffect: true,
-      metadata: { taskServiceVersion: TASK_SERVICE_VERSION, deliverableType: step.deliverableType || contract.deliverableType },
+      sideEffect: step.kind !== 'review',
+      metadata: { taskServiceVersion: TASK_SERVICE_VERSION, deliverableType: step.deliverableType || contract.deliverableType, codingRole: step.codingRole, reviewPoint: step.reviewPoint === true, acceptanceCriteria: step.acceptanceCriteria || [] },
     })),
   });
   const validation = planEngine.validatePlan(plan, { allowInlineApproval: true });
@@ -258,7 +263,26 @@ async function attachFormalPlan(task) {
   return task;
 }
 
-function createTaskService(store) {
+async function attachCodingProject(task, input = {}) {
+  const isCoding = task.taskType === 'coding' || input.codingProject === true;
+  if (!isCoding) return task;
+  const projectRoot = path.resolve(__dirname, '..');
+  const compiler = await import(pathToFileURL(path.join(projectRoot, 'src/engine/codingProject.mjs')).href);
+  const compiled = compiler.compileCodingProject({
+    goal: task.goal,
+    projectBrief: task.projectBrief,
+    members: task.memberSnapshot?.length ? task.memberSnapshot : input.members || [],
+    memberIds: input.memberIds,
+    requiredCapabilities: input.requiredCapabilities,
+  });
+  task.codingProject = compiled;
+  task.steps = compiler.codingProjectToTaskSteps(compiled).map(normalizeStep);
+  task.acceptanceCriteria = [...new Set([...(task.acceptanceCriteria || []), 'Preserve a diff and rollback checkpoint', 'Record build or test evidence', 'A review rejection only reopens the responsible step'])];
+  task.serviceEvents.push({ ts: Date.now(), type: 'coding_project_compiled', detail: `Coding project DAG compiled with ${task.steps.length} stages`, payload: { status: compiled.status, staffingGaps: compiled.staffingGaps } });
+  return task;
+}
+
+function createTaskService(store, options = {}) {
   if (!store || typeof store.read !== 'function' || typeof store.write !== 'function' || typeof store.updateTask !== 'function') {
     throw new Error('TaskService requires a task runtime store');
   }
@@ -269,6 +293,7 @@ function createTaskService(store) {
 
   async function create(input = {}) {
     const normalized = normalizeTaskInput(input);
+    await attachCodingProject(normalized, input);
     await attachFormalPlan(normalized);
     const snapshot = await store.read();
     if (!snapshot.ok) throw new Error(snapshot.error || '无法读取任务账本');
@@ -279,7 +304,24 @@ function createTaskService(store) {
       detail: `统一任务服务创建 ${normalized.taskType} 任务`,
     });
     if (!result.ok) throw new Error(result.error || '无法写入任务账本');
-    return { ok: true, created: true, idempotent: false, task: (await store.read({ taskId: normalized.id })).runs?.[0] || normalized };
+    let task = (await store.read({ taskId: normalized.id })).runs?.[0] || normalized;
+    if (task.workspace?.status === 'pending' && options.codingRuntime) {
+      const prepared = await options.codingRuntime.prepareTask({ taskId: task.id, sourceRepo: task.workspace.sourceRepo, baseRef: input.baseRef });
+      if (prepared.ok) {
+        await update(task.id, (current) => {
+          current.workspace = { ...current.workspace, ...prepared.workspace, index: prepared.index };
+          appendServiceEvent(current, 'coding_workspace_ready', 'Coding workspace and repository index are ready', { workspaceId: prepared.workspace.workspaceId, fileCount: prepared.index?.fileCount });
+        }, 'Prepare independent coding workspace');
+      } else {
+        await update(task.id, (current) => {
+          current.workspace = { ...current.workspace, status: 'failed', error: text(prepared.error, 1200) };
+          current.status = 'failed'; current.phase = 'blocked'; current.lastError = text(prepared.error, 1200);
+          appendServiceEvent(current, 'coding_workspace_failed', current.lastError, {});
+        }, 'Coding workspace preparation failed');
+      }
+      task = (await store.read({ taskId: normalized.id })).runs?.[0] || task;
+    }
+    return { ok: true, created: true, idempotent: false, task };
   }
 
   async function update(taskId, mutate, detail = '统一任务服务更新任务') {
@@ -549,6 +591,35 @@ function createTaskService(store) {
       appendServiceEvent(task, 'step_completed', `步骤完成：${step.title}`, { stepId });
       if (task.steps.every((item) => item.status === 'completed')) task.status = 'awaiting_user';
     }, `记录步骤完成：${stepId}`);
+  }
+
+  async function recordReviewDecision(taskId, input = {}) {
+    const reviewStepId = text(input.reviewStepId || input.stepId, 160);
+    const responsibleStepId = text(input.responsibleStepId, 160);
+    const approved = input.approved === true;
+    const reason = text(input.reason, 1200) || (approved ? 'Review passed' : 'Review rejected');
+    if (!reviewStepId) throw new Error('TaskService: reviewStepId is required');
+    return update(taskId, (task) => {
+      const review = updateStep(task, reviewStepId, (step) => {
+        if (step.kind !== 'review') throw new Error(`TaskService: ${reviewStepId} is not a review step`);
+        step.status = approved ? 'completed' : 'queued';
+        step.output = { review: { decision: approved ? 'pass' : 'reject', reason, responsibleStepId: responsibleStepId || undefined } };
+        step.lastError = approved ? undefined : reason;
+        step.events = [...(step.events || []), { ts: Date.now(), type: approved ? 'review_passed' : 'review_rejected', detail: reason, responsibleStepId: responsibleStepId || undefined }].slice(-100);
+      });
+      if (!approved) {
+        if (!responsibleStepId) throw new Error('TaskService: responsibleStepId is required for a rejected review');
+        const responsible = updateStep(task, responsibleStepId, (step) => {
+          if (step.kind === 'review') throw new Error('TaskService: a review cannot reject another review as the responsible work step');
+          step.status = 'queued'; step.lastError = reason; step.retryAt = undefined;
+          step.events = [...(step.events || []), { ts: Date.now(), type: 'review_rework_requested', detail: reason, reviewStepId }].slice(-100);
+        });
+        task.status = 'queued'; task.phase = 'execution'; task.lastError = reason;
+        appendServiceEvent(task, 'review_rejected', `Review returned only responsible step: ${responsible.title}`, { reviewStepId, responsibleStepId, reason });
+      } else {
+        appendServiceEvent(task, 'review_passed', `Review passed: ${review.title}`, { reviewStepId });
+      }
+    }, approved ? 'Record coding review pass' : 'Return only the responsible coding step');
   }
 
   async function failStep(taskId, input = {}) {
@@ -829,7 +900,7 @@ function createTaskService(store) {
     }, '更新任务状态');
   }
 
-  return { version: TASK_SERVICE_VERSION, read, create, update, recordToolAttempt, addArtifact, addReference, createChild, repairDelegationCollisions, context, recordLifecycle, readySteps, completeStep, failStep, requestApproval, decideApproval, recordUsage, metrics, tree, recoveryPlan, heartbeat, recordCheckpoint, recordVerification, validateCompletion, setStatus };
+  return { version: TASK_SERVICE_VERSION, read, create, update, recordToolAttempt, addArtifact, addReference, createChild, repairDelegationCollisions, context, recordLifecycle, readySteps, completeStep, recordReviewDecision, failStep, requestApproval, decideApproval, recordUsage, metrics, tree, recoveryPlan, heartbeat, recordCheckpoint, recordVerification, validateCompletion, setStatus };
 }
 
 module.exports = { TASK_SERVICE_VERSION, createTaskService };

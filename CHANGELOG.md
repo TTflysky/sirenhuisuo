@@ -1,5 +1,14 @@
 # 更新日志
 
+## v2.5.1 (Phase 2: Coding Runtime foundation)
+
+- Added an independent Coding Runtime for software tasks. It prepares a task workspace or isolated Git worktree, indexes files and symbols, resolves import relationships, captures diffs/checkpoints, and keeps bounded incremental command-session logs with classified failures.
+- Added a ProjectBrief-to-DAG compiler. Approved software projects now receive named product, architecture, UX/UI, frontend, backend, verification, review, and delivery stages with explicit dependencies, responsible capability, retry policy, and acceptance conditions.
+- A staffing gap now stops a coding project before execution instead of assigning an unrelated employee. Later team additions can be recorded with the reason, affected stages, and new acceptance criteria.
+- Added Coding Runtime tools to the native team executor: repository index, code search, dependency lookup, and checkpoint. They operate only after a managed Git worktree exists.
+- Added a TaskService coding task type. It persists the compiled DAG, workspace/index evidence, and a review decision that requeues only the responsible work step while leaving unrelated completed work intact.
+- Added `verify:coding-runtime` and included it in the complete v2 release gate.
+
 ## v2.5.0 (Phase 2: expert personas and office navigation)
 
 - Split bundled Agency expert data into a concise role prompt and a full `soul` operating manual. New experts now receive their detailed instructions in `soul`, where employee direct messages and team execution consume them as working context.

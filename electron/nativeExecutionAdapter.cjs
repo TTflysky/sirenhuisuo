@@ -1021,7 +1021,7 @@ function createNativeExecutionAdapter(options) {
                 : name === 'prepare_git_worktree' || name === 'checkpoint_git_worktree'
                   ? executeWorktreeTool(job, run, name, args)
                   : options.toolRuntime.execute(name, args, {
-                    taskId: job.taskId, scope: `team:${run.teamId}`, workspaceId: run.workspaceId,
+                    taskId: job.taskId, scope: `team:${run.teamId}`, workspaceId: run.workspaceId, worktreePath: run.worktree?.path,
                     goal: run.goal || run.request,
                     executionPolicy: job.executionPolicy, connectors: job.connectors, connectorActions: job.connectorActions,
                   });

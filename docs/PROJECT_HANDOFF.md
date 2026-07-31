@@ -1,9 +1,17 @@
 # 项目交接手册
 
 > 最后整理：2026-07-31
-> 当前源码版本：`v2.5.0`（阶段二开发中，未发布）
+> 当前源码版本：`v2.5.1`（阶段二开发中，未发布）
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+
+## v2.5.1 阶段二：Coding Runtime 与项目 DAG
+
+- `src/engine/codingProject.mjs` 将软件 `ProjectBrief` 编译为可序列化 DAG：产品、架构、UI/UX、前端、后端、验证、审查、交付。每个节点有负责能力、依赖、重试、验收条件；缺少合适成员时记录职责缺口并阻止错误派工。
+- `electron/codingRuntime.cjs` 是主进程独立编码运行时，管理任务工作区或 Git Worktree，建立文件/符号/导入索引，提供代码搜索、依赖反查、Diff/检查点和有超时分类的增量命令会话。
+- `TaskService` 增加 `coding` 任务类型并持久化 `codingProject`、工作区索引和审查退回记录。审查拒绝会仅将指定责任步骤重新排队，其他已完成步骤不被重置。
+- 团队原生工具提供 `coding_repository_index`、`coding_search`、`coding_dependencies` 和 `coding_checkpoint`；仅允许操作已建立的受控工作树。
+- 回归入口：`npm.cmd run verify:coding-runtime`，已加入 `verify:v2-core-gate`。Windows 安装包已通过 `npm.cmd run dist:win` 制作并完成完整性检查；GitHub Release 尚未创建。
 
 ## v2.5.0 阶段二：专家人格数据与团队入口
 

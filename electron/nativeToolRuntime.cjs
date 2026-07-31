@@ -43,6 +43,16 @@ const NATIVE_TOOL_DEFINITIONS = [
   tool('checkpoint_git_worktree', '保存当前代码工作树的 HEAD、差异补丁和未跟踪文件清单，形成可校验恢复点。', {
     label: stringField('可选恢复点名称'),
   }, []),
+  tool('coding_repository_index', 'Index the active coding worktree. Returns files, symbols, and dependency metadata without reading unrelated user folders.', {}, []),
+  tool('coding_search', 'Search indexed code by path or symbol before editing. Use this to locate an implementation instead of guessing a file.', {
+    query: stringField('File-name or symbol query'),
+  }, ['query']),
+  tool('coding_dependencies', 'Inspect imports and reverse dependencies for an indexed file or symbol before changing it.', {
+    path: stringField('Indexed relative file path'), symbol: stringField('Indexed symbol name'),
+  }, []),
+  tool('coding_checkpoint', 'Create a coding checkpoint with the current patch and untracked-file evidence before a risky edit or review handoff.', {
+    label: stringField('Checkpoint label'),
+  }, []),
   tool('run_command', '在当前任务工作区执行 Windows PowerShell 命令，必须遵守沙盒与审批策略。', {
     cmd: stringField('完整 PowerShell 命令'), verification: { type: 'boolean' }, connector: stringField('可选连接器 ID'),
   }, ['cmd']),
@@ -269,6 +279,23 @@ function createNativeToolRuntime(options) {
       if (name === 'list_files') {
         const rows = await listWorkspace(context, args.filter);
         return succeeded(name, rows.length ? rows.map((item) => `- ${item.path} (${item.size} 字节)`).join('\n') : '工作区目前没有可交付文件。');
+      }
+      if (name === 'coding_repository_index' || name === 'coding_search' || name === 'coding_dependencies' || name === 'coding_checkpoint') {
+        if (!options.codingRuntime || !context.worktreePath) return failed(name, 'A Git worktree must be prepared before using Coding Runtime repository tools.');
+        if (name === 'coding_repository_index') {
+          const index = await options.codingRuntime.indexWorkspace({ workspacePath: context.worktreePath });
+          return succeeded(name, `Indexed ${index.fileCount} files and ${Object.keys(index.symbols || {}).length} symbols.`, { codingIndex: { fileCount: index.fileCount, indexedAt: index.indexedAt, truncated: index.truncated } });
+        }
+        if (name === 'coding_search') {
+          const result = await options.codingRuntime.search({ workspacePath: context.worktreePath, query: args.query });
+          return succeeded(name, result.matches.length ? result.matches.map((item) => `${item.path}${item.symbols?.length ? ` :: ${item.symbols.join(', ')}` : ''}`).join('\n') : 'No indexed path or symbol matched the query.');
+        }
+        if (name === 'coding_dependencies') {
+          const result = await options.codingRuntime.dependencies({ workspacePath: context.worktreePath, path: args.path, symbol: args.symbol });
+          return result.ok ? succeeded(name, JSON.stringify(result, null, 2)) : failed(name, result.error || 'Dependency lookup failed');
+        }
+        const result = await options.codingRuntime.checkpoint({ taskId: context.taskId, workspacePath: context.worktreePath, label: args.label });
+        return result.ok ? succeeded(name, `Coding checkpoint saved: ${result.checkpoint?.checkpointId || result.checkpoint?.id || 'checkpoint'}`, { worktreeCheckpoint: result.checkpoint }) : failed(name, result.error || 'Coding checkpoint failed');
       }
       if (name === 'web_search') {
         const result = await options.searchWeb(String(args.query || ''), { fetchImpl: options.fetchImpl });

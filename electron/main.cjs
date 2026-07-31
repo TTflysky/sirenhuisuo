@@ -19,6 +19,7 @@ const { createTaskWorker } = require('./taskWorker.cjs');
 const { createNativeToolRuntime } = require('./nativeToolRuntime.cjs');
 const { createNativeExecutionAdapter } = require('./nativeExecutionAdapter.cjs');
 const { createWorktreeManager } = require('./worktreeManager.cjs');
+const { createCodingRuntime } = require('./codingRuntime.cjs');
 const { createEcosystemHealth } = require('./ecosystemHealth.cjs');
 const { createMemoryManager } = require('./memoryManager.cjs');
 const { createLearningReviewQueue } = require('./learningReviewQueue.cjs');
@@ -57,7 +58,8 @@ const worktreeManager = createWorktreeManager({
 });
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const taskRuntimeStore = createTaskRuntimeStore(path.join(app.getPath('userData'), 'task-runtime'));
-const taskService = createTaskService(taskRuntimeStore);
+const codingRuntime = createCodingRuntime({ workspaceRoot: WORKSPACE, worktreeManager });
+const taskService = createTaskService(taskRuntimeStore, { codingRuntime });
 const memoryManager = createMemoryManager(path.join(app.getPath('userData'), 'taiji-memory'));
 const learningReviewQueue = createLearningReviewQueue(path.join(app.getPath('userData'), 'task-runtime'), {
   memoryManager,
@@ -90,6 +92,7 @@ const nativeToolRuntime = createNativeToolRuntime({
   createWordDocument: createVerifiedWordDocument,
   readWorkspaceFile,
   runCommand: executeWorkspaceCommand,
+  codingRuntime,
 });
 const ecosystemHealth = createEcosystemHealth({
   appVersion: APP_VERSION,
@@ -1069,6 +1072,9 @@ function createWindow() {
   ipcMain.handle('task-service:complete-step', async (_event, input) => {
     try { return await taskService.completeStep(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
   });
+  ipcMain.handle('task-service:review-decision', async (_event, input) => {
+    try { return await taskService.recordReviewDecision(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
   ipcMain.handle('task-service:fail-step', async (_event, input) => {
     try { return await taskService.failStep(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
   });
@@ -1165,6 +1171,28 @@ function createWindow() {
   ipcMain.handle('worktree:recover', async (_event, taskId) => worktreeManager.recover(taskId));
   ipcMain.handle('worktree:release', async (_event, taskId) => worktreeManager.release(taskId));
   ipcMain.handle('worktree:health', async () => worktreeManager.health());
+  ipcMain.handle('coding:prepare', async (_event, input) => {
+    try { return await codingRuntime.prepareTask(input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('coding:index', async (_event, input) => {
+    try { return { ok: true, index: await codingRuntime.indexWorkspace(input) }; } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('coding:search', async (_event, input) => {
+    try { return await codingRuntime.search(input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('coding:dependencies', async (_event, input) => {
+    try { return await codingRuntime.dependencies(input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('coding:diff', async (_event, input) => {
+    try { return await codingRuntime.diff(input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('coding:checkpoint', async (_event, input) => {
+    try { return await codingRuntime.checkpoint(input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('coding:start-command', async (_event, input) => {
+    try { return codingRuntime.startCommand(input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('coding:command-status', async (_event, input) => codingRuntime.commandStatus(input?.sessionId, input?.after));
   ipcMain.handle('system:ecosystemHealth', async (_event, input) => ecosystemHealth.run(input));
 
   ipcMain.handle('connector:verifyPreset', async (_event, input) => {
