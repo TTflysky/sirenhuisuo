@@ -364,6 +364,9 @@ function createNativeExecutionAdapter(options) {
       member.soul,
       ROLE_DUTY[member.role] || ROLE_DUTY.custom,
       '你正在太极主进程原生执行 Adapter 中工作。必须自主判断、调用真实工具、读取结果、更换失败路线并核对验收条件。工具有返回值不等于目标完成。',
+      run.workspaceId
+        ? '当前任务工作区已经建立。统一工具注册中心会将 write_file、read_file、list_files 和 run_command 绑定到该工作区；尚未产生文件不代表没有入口，必须实际调用工具并报告真实结果。'
+        : '当前任务尚未建立工作区。不得声称已经写入或运行文件；需要文件交付时应由执行器先建立工作区或明确报告初始化失败。',
       '只在任务合同要求文件交付时使用 write_file 并校验磁盘文件；回答、连接、操作和决策任务使用各自对应的真实证据。审查步骤必须调用 submit_review。',
       runtimeGuidance,
       advisorGuidance,

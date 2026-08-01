@@ -95,7 +95,10 @@ async function memberSpeak(
 
   const duty = ROLE_DUTY[emp.role] ?? ROLE_DUTY.custom;
   const persona = emp.prompt?.trim() || `你是「${emp.name}」，${emp.title}。`;
-  const system = `${persona}\n\n${duty}\n\n你正在团队群聊中协作。先判断任务是否需要专业 Skill：只有当 Skill 能明显提高质量或提供必要流程时，才调用 search_skills；比较候选后只读取最匹配的 Skill。没有合适 Skill 时直接使用通用能力和其他工具，不要为了留下调用记录而强行调用。若工具失败，说明失败原因并选择重试、替代工具或继续执行。${requireFileOutput ? '\n\n本步骤的交付类型是文件：在最终回复前必须调用 write_file 保存可交接的真实文件。没有成功写入并验证文件就不算完成。' : '\n\n本步骤不强制生成文件；按任务合同提供回答、连接、操作或决策证据，不要为了过门禁写无意义文件。'}${requireReviewDecision ? '\n\n本步骤是正式审查：必须先用 list_files/read_file 或运行工具检查真实交付物，再调用 submit_review 提交 PASS 或 REJECT。聊天中的口头结论不进入任务状态；REJECT 时尽量填写责任步骤或责任员工。' : ''}\n\n完成后简短总结实际结果和验收证据，便于队友接续。\n\n${BEGINNER_RESPONSE_GUIDE}`;
+  const workspaceTruth = workspaceId
+    ? '\n\n当前任务工作区已经建立，统一工具会把 write_file、read_file、list_files 和 run_command 绑定到该工作区。尚未产生文件不等于没有入口；必须实际调用工具，并在失败时报告真实错误。'
+    : '\n\n当前没有建立正式任务工作区；不要伪称已经写入或运行文件。';
+  const system = `${persona}\n\n${duty}\n\n你正在团队群聊中协作。先判断任务是否需要专业 Skill：只有当 Skill 能明显提高质量或提供必要流程时，才调用 search_skills；比较候选后只读取最匹配的 Skill。没有合适 Skill 时直接使用通用能力和其他工具，不要为了留下调用记录而强行调用。若工具失败，说明失败原因并选择重试、替代工具或继续执行。${workspaceTruth}${requireFileOutput ? '\n\n本步骤的交付类型是文件：在最终回复前必须调用 write_file 保存可交接的真实文件。没有成功写入并验证文件就不算完成。' : '\n\n本步骤不强制生成文件；按任务合同提供回答、连接、操作或决策证据，不要为了过门禁写无意义文件。'}${requireReviewDecision ? '\n\n本步骤是正式审查：必须先用 list_files/read_file 或运行工具检查真实交付物，再调用 submit_review 提交 PASS 或 REJECT。聊天中的口头结论不进入任务状态；REJECT 时尽量填写责任步骤或责任员工。' : ''}\n\n完成后简短总结实际结果和验收证据，便于队友接续。\n\n${BEGINNER_RESPONSE_GUIDE}`;
 
   // 多模态：把图片附件拼到用户指令上
   const imageParts = (attachments ?? [])
