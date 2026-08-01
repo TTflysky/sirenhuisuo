@@ -492,3 +492,11 @@ npm.cmd run verify:package
 3. 验收发现的问题按同层级入口统一修复，不再恢复逐个截图、逐个小版本的发布节奏。
 
 补丁版本完成后升级版本并更新本文件，运行 `npm.cmd run dist:win` 和 `npm.cmd run verify:package`，只做本地安装验收；功能大版本在验收通过后提交到干净的 `main`，再运行 `npm.cmd run publish:release` 完成预检、回归、打包、推送、Release 上传和远端哈希校验。
+# v3.4.0 Stage E 发布交接（2026-08-01）
+
+- 版本：`3.4.0`，完成发布、迁移、安全演练基础能力。
+- 新增 `scripts/verify-stage-e.cjs`：升级迁移失败注入后回滚、凭据轮换/过期/最小权限审计。
+- 新增 `scripts/verify-release-consistency.mjs`：版本、lockfile、README、CHANGELOG、handoff、SBOM、provenance 与核心模块一致性门禁。
+- `electron/updateTransaction.cjs` 新增 `simulateFailure()` 与阶段失败注入；`electron/credentialVault.cjs` 新增 `expiresAt`、`scopes`、`rotate()`、`audit()`。
+- 文档：`docs/TAIJI_STAGE_E_V3.4_GAP_MATRIX.md`、`docs/SELF_EVALUATION_v3.4.0.md`。
+- 尚未冒充完成：真实旧版升级、断网/磁盘不足/强制退出回滚、Windows 代码签名和第三方账号矩阵仍需实机验证。

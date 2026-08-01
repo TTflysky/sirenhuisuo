@@ -29,13 +29,28 @@ function createUpdateTransaction(options = {}) {
   async function transition(phase, input = {}) {
     if (!PHASES.includes(phase)) throw new Error(`未知升级阶段：${phase}`);
     const current = (await read()) || await begin(input);
+    if (input.injectFailure === true || process.env.TAIJI_UPDATE_INJECT_FAILURE === phase) {
+      return write({ ...current, phase, status: 'failed', failure: `Injected failure at ${phase}` });
+    }
     const allowed = phase === 'rollback' || PHASES.indexOf(phase) >= PHASES.indexOf(current.phase || 'prepare');
     if (!allowed) throw new Error(`升级阶段不能从 ${current.phase} 回退到 ${phase}`);
     return write({ ...current, phase, status: input.status || (phase === 'commit' ? 'committed' : phase === 'rollback' ? 'rolling_back' : 'running'), evidence: [...(current.evidence || []), { phase, at: new Date().toISOString(), detail: String(input.detail || '').slice(0, 500), digest: input.digest || undefined }].slice(-100), failure: input.failure || current.failure });
   }
   async function fail(error, phase) { return transition(phase || (await read())?.phase || 'prepare', { status: 'failed', failure: String(error?.message || error).slice(0, 800), detail: '故障注入或真实升级失败' }); }
   async function digestFile(file) { const data = await fs.readFile(file); return crypto.createHash('sha256').update(data).digest('hex'); }
-  return { begin, transition, fail, read, digestFile, journalPath, phases: PHASES, schema: TRANSACTION_SCHEMA };
+  async function simulateFailure(input = {}) {
+    const phases = Array.isArray(input.phases) ? input.phases : PHASES.slice(1, 8);
+    await begin(input);
+    for (const phase of phases) {
+      const result = await transition(phase, { detail: `simulation:${phase}`, injectFailure: phase === input.failAt });
+      if (result.status === 'failed') {
+        const rolledBack = await transition('rollback', { detail: `simulation rollback:${phase}`, status: 'rolled_back' });
+        return { passed: rolledBack.status === 'rolled_back', failedAt: phase, journal: rolledBack };
+      }
+    }
+    return { passed: false, reason: 'failure point was not reached', journal: await read() };
+  }
+  return { begin, transition, fail, simulateFailure, read, digestFile, journalPath, phases: PHASES, schema: TRANSACTION_SCHEMA };
 }
 
 module.exports = { TRANSACTION_SCHEMA, PHASES, createUpdateTransaction };
