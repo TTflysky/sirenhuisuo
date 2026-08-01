@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { BUS_CHANNELS, onBus } from '../../ipcBus';
 import { loadOutputsByScope, type OutputRecord, type OutputScope } from '../../data/outputs';
 import { linkify } from '../../utils/linkify';
@@ -45,7 +45,23 @@ export default function ChatMessageText({ content, scope, outputs: providedOutpu
     .filter((output) => output.filename && (displayContent.includes(output.filename) || displayContent.includes(basename(output.filename))))
     .sort((a, b) => b.filename.length - a.filename.length), [displayContent, loadedOutputs]);
 
-  if (!referenced.length) return <>{linkify(displayContent)}</>;
+  const markdown = (value: string): React.ReactNode[] => value.split(/\r?\n/gu).map((line, index) => {
+    const trimmed = line.trim();
+    if (!trimmed) return <br key={`br-${index}`} />;
+    const heading = trimmed.match(/^(#{1,3})\s+(.+)$/u);
+    const body = heading ? heading[2] : trimmed;
+    const parts = body.split(/(\*\*[^*]+\*\*|`[^`]+`)/gu).filter(Boolean).map((part, partIndex) => {
+      if (part.startsWith('**') && part.endsWith('**')) return <strong key={partIndex}>{part.slice(2, -2)}</strong>;
+      if (part.startsWith('`') && part.endsWith('`')) return <code key={partIndex}>{part.slice(1, -1)}</code>;
+      return <span key={partIndex}>{linkify(part)}</span>;
+    });
+    if (heading) {
+      const Heading = `h${heading[1].length}` as 'h1' | 'h2' | 'h3';
+      return React.createElement(Heading, { key: `h-${index}` }, parts);
+    }
+    return <p key={`p-${index}`}>{parts}</p>;
+  });
+  if (!referenced.length) return <div className="chat-markdown-content">{markdown(displayContent)}</div>;
   const nodes: React.ReactNode[] = [];
   let cursor = 0;
   let nodeIndex = 0;

@@ -87,6 +87,12 @@
 }
 .chat-only-body { overflow: hidden; border: 0; border-radius: 0; background: var(--surface); box-shadow: none; }
 .chat-panel, .chat-layout, .chat-main { border-radius: 0; }
+.assistant-background-activity { display:flex; align-items:center; gap:8px; padding:8px 12px; margin:8px 10px 0; border:1px solid var(--apple-accent); border-radius:8px; color:var(--text); background:color-mix(in srgb, var(--apple-accent) 12%, transparent); font-size:12px; }
+.assistant-background-activity span { flex:1; }
+.assistant-background-activity button { border:0; background:transparent; color:var(--apple-accent); cursor:pointer; }
+.chat-markdown-content p { margin: 0 0 8px; white-space: pre-wrap; }
+.chat-markdown-content h1, .chat-markdown-content h2, .chat-markdown-content h3 { margin: 4px 0 8px; color: var(--text); }
+.chat-markdown-content code { padding: 1px 4px; border-radius: 3px; background: var(--bg-deep); font-family: ui-monospace, monospace; }
 .chat-main { padding: 8px; gap: 8px; background: var(--bg-deep); }
 .assistant-chat-toolbar, .team-chat-header, .dm-peer, .chat-progress {
   margin: 0;

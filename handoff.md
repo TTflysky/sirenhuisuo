@@ -506,3 +506,8 @@ npm.cmd run verify:package
 - 新增 `scripts/verify-project-delivery.mjs`，覆盖阶段批准、变更记录和未决风险导出。
 - 文档：`docs/TAIJI_STAGE_F_V3.5_GAP_MATRIX.md`、`docs/SELF_EVALUATION_v3.5.0.md`。
 - 仍需真实项目验收：连续三个软件项目、多人协作依赖调度、Windows 签名与跨版本回滚。
+# v3.5.1 修复交接
+
+- 助手窗口订阅跨窗口后台活动，显示任务仍在后台运行的提示。
+- 待处理请求绑定会话并缩短过期窗口，避免新聊天继承旧任务。
+- 聊天消息支持基础 Markdown 标题、粗体、行内代码和段落渲染。

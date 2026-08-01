@@ -98,6 +98,7 @@ interface PendingAssistantRequest {
   display?: string;
   createdAt: number;
   alreadyDisplayed?: boolean;
+  conversationId?: string;
 }
 
 interface LegacyAssistantChatArchive {
@@ -166,6 +167,7 @@ export default function AssistantChat() {
   const [pendingNewChat, setPendingNewChat] = useState(false);
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
+  const [backgroundActivity, setBackgroundActivity] = useState<{ state?: string; status?: string; updatedAt?: number } | null>(null);
   const [status, setStatus] = useState('');
   const [completedActionCount, setCompletedActionCount] = useState(0);
   const [pendingRequest, setPendingRequest] = useState<PendingAssistantRequest | null>(null);
@@ -214,6 +216,17 @@ export default function AssistantChat() {
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [msgs.length, status]);
+
+  useEffect(() => {
+    const apply = (payload: unknown) => {
+      if (!payload || typeof payload !== 'object') return;
+      const value = payload as { state?: string; status?: string; updatedAt?: number };
+      if (value.state && value.state !== 'idle' && !busy) setBackgroundActivity(value);
+      else if (value.state === 'idle') setBackgroundActivity(null);
+    };
+    try { apply(JSON.parse(localStorage.getItem('hermes_office_assistant_activity') || 'null')); } catch {}
+    return onBus(BUS_CHANNELS.ASSISTANT_ACTIVITY_CHANGED, apply);
+  }, [busy]);
 
   const push = useCallback((m: ChatMessage, targetConversationId?: string) => {
     const sessionId = targetConversationId ?? conversationIdRef.current;
@@ -923,7 +936,7 @@ ${employeeDirectory}
     const acceptRequest = (payload: unknown) => {
       const request = payload as Partial<PendingAssistantRequest>;
       if (!request || typeof request.id !== 'string' || typeof request.prompt !== 'string' || !request.prompt.trim()) return;
-      setPendingRequest({ id: request.id, prompt: request.prompt, display: request.display, createdAt: Number(request.createdAt) || Date.now() });
+      setPendingRequest({ id: request.id, prompt: request.prompt, display: request.display, createdAt: Number(request.createdAt) || Date.now(), conversationId: conversationIdRef.current });
     };
     const unsubscribe = onBus(BUS_CHANNELS.ASSISTANT_RUN_REQUEST, acceptRequest);
     try {
@@ -935,7 +948,7 @@ ${employeeDirectory}
 
   useEffect(() => {
     if (busy || !pendingRequest) return;
-    if (Date.now() - pendingRequest.createdAt > 10 * 60 * 1000) {
+    if (Date.now() - pendingRequest.createdAt > 2 * 60 * 1000 || (pendingRequest.conversationId && pendingRequest.conversationId !== conversationIdRef.current)) {
       setPendingRequest(null);
       localStorage.removeItem(LS_PENDING_REQUEST);
       return;
@@ -1098,6 +1111,12 @@ ${employeeDirectory}
     <div className="chat-panel">
       <div className="chat-layout">
         <div className="chat-main">
+          {!busy && backgroundActivity && Date.now() - Number(backgroundActivity.updatedAt || 0) < 120000 && (
+            <div className="assistant-background-activity" role="status" aria-live="polite">
+              <RobotOutlined /> <span>助手正在后台处理：{backgroundActivity.status || '任务进行中'}</span>
+              <button type="button" onClick={() => setBackgroundActivity(null)}>知道了</button>
+            </div>
+          )}
           {busy && (
             <div className="assistant-activity" role="status" aria-live="polite">
               <div className="assistant-activity-glow" />
