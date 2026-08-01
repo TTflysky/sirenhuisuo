@@ -188,6 +188,24 @@ export default function TeamChatApp({ teamId }: Props) {
       plan: planResult.ok && planResult.plan ? planResult.plan as unknown as TaskAudit['plan'] : undefined,
     } }));
   };
+  const exportTaskReplay = async (run: TaskRun) => {
+    const ledger = getTaskLedgerEvents(run.id);
+    const replay = buildTaskReplay(run, ledger);
+    if (!replay) return;
+    const lines = [
+      `# 任务回放：${replay.title}`,
+      '', `- 任务 ID：${replay.taskId}`, `- 团队：${team?.name ?? replay.teamId}`, `- 状态：${taskStatusLabel(replay.status)}`,
+      `- 创建时间：${new Date(replay.createdAt).toLocaleString('zh-CN')}`, `- 更新时间：${new Date(replay.updatedAt).toLocaleString('zh-CN')}`,
+      '', '## 任务目标', replay.goal || '未记录', '', '## 阶段与负责人',
+      ...(run.steps ?? []).map((step) => `- ${step.order}. ${state.employees.find((employee) => employee.id === step.employeeId)?.name ?? step.title}：${step.assignment}｜${stepStatusLabel(step.status)}｜尝试 ${step.attempts} 次`),
+      '', '## Worker 状态', run.worker ? `- ${run.worker.state}：${run.worker.activity ?? '无活动说明'}` : '- 未记录 Worker 状态',
+      '', '## 验收证据', ...(run.verification ?? []).map((item) => `- ${item.status}: ${item.label} - ${item.detail ?? ''}`),
+      '', '## 交接与阻塞', run.handoff ? `- 阻塞：${run.handoff.blocked}\n- 下一步：${run.handoff.nextAction}\n- 已完成：${(run.handoff.completed ?? []).join('、')}` : '- 无交接记录',
+      '', '## 执行事件', ...replay.events.map((event) => `- ${new Date(event.ts).toLocaleString('zh-CN')}：${event.summary}`),
+      '', '## 原始证据（JSON）', '```json', JSON.stringify(replay, null, 2), '```',
+    ];
+    downloadTextFile(`taiji-task-replay-${run.id}.md`, lines.join('\n'));
+  };
   const taskReplay = useMemo(() => buildTaskReplay(replayRun, replayLedgerEvents), [replayRun, replayLedgerEvents]);
   const replayTimeline = useMemo(() => {
     if (!taskReplay) return [];
@@ -637,6 +655,7 @@ export default function TeamChatApp({ teamId }: Props) {
         })}
         {run.handoff && <div className="task-run-handoff"><strong>当前交接</strong><p>{run.handoff.blocked}</p>{(run.handoff.completed ?? []).length > 0 && <p>已完成：{(run.handoff.completed ?? []).join('、')}</p>}<p>下一步：{run.handoff.nextAction}</p></div>}
         <div className="task-run-actions">
+          <button className="btn btn-sm" onClick={() => void exportTaskReplay(run)} title="一键导出完整任务回放 Markdown">导出回放 MD</button>
           <button className="btn btn-sm" onClick={() => setReplayTaskId(run.id)} title="只读回放任务"><HistoryOutlined />回放</button>
           {active && <button className="btn btn-sm" onClick={() => pauseTaskRun(run.id)}><PauseCircleOutlined />暂停</button>}
           {(run.status === 'paused' || run.status === 'failed' || run.status === 'awaiting_user') && <button className="btn btn-sm btn-primary" disabled={resumingRunIds.has(run.id)} onClick={() => handleResumeTaskRun(run.id)}><PlayCircleOutlined />{resumingRunIds.has(run.id) ? '正在继续…' : '继续执行'}</button>}
