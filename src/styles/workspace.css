@@ -1585,6 +1585,13 @@
 .stage-summary-grid p,
 .stage-summary-next p,
 .execution-approval-card p { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.stage-summary-card { font-size: 14px; }
+.stage-summary-head small { font-size: 12px; }
+.stage-summary-grid strong, .stage-summary-evidence strong, .stage-summary-next strong, .execution-approval-card strong { font-size: 13px; }
+.stage-summary-grid p, .stage-summary-next p, .execution-approval-card p { font-size: 14px; line-height: 1.7; }
+.stage-summary-evidence span { font-size: 12px; }
+.task-run-state, .task-step-status { font-size: 13px; font-weight: 700; }
+.task-step-assignment, .task-step-event, .task-run-handoff { font-size: 13px; line-height: 1.6; }
 .stage-summary-evidence { display: flex; flex-wrap: wrap; gap: 6px; padding: 11px 16px; border-bottom: 1px solid var(--border-light); }
 .stage-summary-evidence strong { width: 100%; }
 .stage-summary-evidence span { padding: 3px 7px; border-radius: 4px; background: color-mix(in srgb, #16a34a 9%, var(--surface)); color: var(--text-secondary); font-size: 10px; overflow-wrap: anywhere; }

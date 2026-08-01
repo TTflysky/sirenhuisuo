@@ -48,6 +48,13 @@ interface Props {
 }
 
 type TaskAuditNode = { id: string; depth: number; title: string; status: string; blocked?: string; steps: { completed: number; total: number }; compensation: { completed: number; blocked: number; failed: number } };
+function taskStatusLabel(status: string): string {
+  return ({ running: '执行中', queued: '排队中', awaiting_user: '等待你确认', paused: '已暂停（不占用执行位）', stopped: '已停止', failed: '失败待恢复', completed: '已完成', blocked: '等待前置条件' } as Record<string, string>)[status] ?? status;
+}
+function stepStatusLabel(status: string): string {
+  return ({ running: '执行中', queued: '等待前置步骤', waiting: '等待前置步骤', paused: '已暂停', completed: '已完成', failed: '失败', blocked: '被前置步骤阻塞', review: '审查中' } as Record<string, string>)[status] ?? status;
+}
+void stepStatusLabel;
 type TaskAudit = { nodes: TaskAuditNode[]; plan?: { ready: boolean; nextAction: string; blockers: Array<{ taskId: string; title: string; reason: string }> } };
 function formatDuration(milliseconds: number): string {
   if (!Number.isFinite(milliseconds) || milliseconds <= 0) return '未计时';
@@ -568,7 +575,7 @@ export default function TeamChatApp({ teamId }: Props) {
     const connectorEvidence = (run.evidence ?? []).filter((item) => item.connectorProtocol).slice(-6);
     const artifactEvidence = (run.evidence ?? []).filter((item) => item.artifact).slice(-10);
     const planEvents = (run.runner?.events ?? []).filter((event) => ['plan_extended', 'review_passed', 'review_rejected'].includes(event.type)).slice(-8);
-    return <section key={run.id} className={`task-run-tray task-run-${run.status}`}>
+    return <section key={run.id} aria-label={taskStatusLabel(run.status)} className={`task-run-tray task-run-${run.status}`}>
       <div className="task-run-summary-row">
         <button type="button" className="task-run-summary" onClick={() => setExpandedRunIds((previous) => {
           const next = new Set(previous); if (next.has(run.id)) next.delete(run.id); else { next.add(run.id); void loadTaskAudit(run.id); } return next;
