@@ -55,6 +55,7 @@ function stepStatusLabel(status: string): string {
   return ({ running: '执行中', queued: '等待前置步骤', waiting: '等待前置步骤', paused: '已暂停', completed: '已完成', failed: '失败', blocked: '被前置步骤阻塞', review: '审查中' } as Record<string, string>)[status] ?? status;
 }
 void stepStatusLabel;
+const TASK_CONFIRMATION_RE = /(?:是否|请确认|需要你决定|需要决定的是).{0,24}(?:继续|开始|执行|进入|批准|同意)|(?:如果继续|点击确认|确认后).{0,24}(?:执行|开始|进入|恢复)/u;
 type TaskAudit = { nodes: TaskAuditNode[]; plan?: { ready: boolean; nextAction: string; blockers: Array<{ taskId: string; title: string; reason: string }> } };
 function formatDuration(milliseconds: number): string {
   if (!Number.isFinite(milliseconds) || milliseconds <= 0) return '未计时';
@@ -175,6 +176,7 @@ export default function TeamChatApp({ teamId }: Props) {
   const currentLiveEvents = currentLiveStep?.events.slice(-4) ?? [];
   const executionIsLive = Boolean(myProgress) || Boolean(currentRunningRun);
   const waitingRun = !currentRunningRun && !queuedRun ? taskRuns.find((run) => run.status === 'awaiting_user' || run.status === 'paused' || run.status === 'failed') : undefined;
+  const confirmationRun = waitingRun ?? queuedRun;
   const historyMatches = useMemo(() => taskHistoryQuery.trim()
     ? searchTaskRunHistory(state.taskRuns, taskHistoryQuery, { teams: state.teams, limit: 12 })
     : [], [taskHistoryQuery, state.taskRuns, state.teams]);
@@ -883,6 +885,9 @@ export default function TeamChatApp({ teamId }: Props) {
                 ?? (msg.authorId === supervisorMention.id ? supervisorMention : undefined);
               const isHuman = msg.roleId === 'human';
               const isExecution = msg.kind === 'execution';
+              const isTaskConfirmation = !isHuman && !isExecution && Boolean(confirmationRun)
+                && TASK_CONFIRMATION_RE.test(msg.content)
+                && !allMessages.slice(messageIndex + 1).some((candidate) => candidate.roleId !== 'human' && TASK_CONFIRMATION_RE.test(candidate.content));
               const summarizedLater = isExecution && msg.stepId
                 ? allMessages.slice(messageIndex + 1).some((candidate) => candidate.kind === 'stage_summary' && candidate.stageSummary?.stepId === msg.stepId)
                 : false;
@@ -971,6 +976,12 @@ export default function TeamChatApp({ teamId }: Props) {
                         );
                       })()}
                     </div>
+                  ) : isTaskConfirmation && confirmationRun ? (
+                    <button type="button" className="task-confirmation-message" onClick={() => void handleResumeTaskRun(confirmationRun.id)} disabled={resumingRunIds.has(confirmationRun.id)} title="点击即代表同意，并从当前任务步骤继续">
+                      <span>需要你确认</span>
+                      <div>{renderContent(msg.content)}</div>
+                      <strong>{resumingRunIds.has(confirmationRun.id) ? '正在写入确认…' : '点击整段同意并继续任务'}</strong>
+                    </button>
                   ) : (
                     <div className="msg-row">
                       <div className="msg-bubble">{renderContent(msg.content)}</div>

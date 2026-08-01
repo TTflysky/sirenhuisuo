@@ -1602,6 +1602,12 @@
 .team-live-progress.is-collapsed .chat-progress-left { padding-right:58px; }
 .team-task-export-all { display:flex; justify-content:flex-end; padding:7px 9px; border-bottom:1px solid var(--border-light); background:var(--bg-deep); }
 .team-task-export-all .btn { width:100%; justify-content:center; }
+.task-confirmation-message { display:block; width:min(780px, 100%); padding:14px 16px; border:1px solid color-mix(in srgb, #d98200 65%, var(--border-light)); border-left:4px solid #d98200; border-radius:7px; background:color-mix(in srgb, #d98200 9%, var(--surface)); color:var(--text); text-align:left; cursor:pointer; font:inherit; }
+.task-confirmation-message:hover { border-color:#d98200; background:color-mix(in srgb, #d98200 14%, var(--surface)); }
+.task-confirmation-message > span { display:block; margin-bottom:7px; color:#d98200; font-size:12px; font-weight:750; }
+.task-confirmation-message > div { font-size:14px; line-height:1.75; }
+.task-confirmation-message > strong { display:block; margin-top:10px; color:var(--apple-accent); font-size:12px; }
+.task-confirmation-message:disabled { opacity:.7; cursor:wait; }
 .stage-summary-evidence { display: flex; flex-wrap: wrap; gap: 6px; padding: 11px 16px; border-bottom: 1px solid var(--border-light); }
 .stage-summary-evidence strong { width: 100%; }
 .stage-summary-evidence span { padding: 3px 7px; border-radius: 4px; background: color-mix(in srgb, #16a34a 9%, var(--surface)); color: var(--text-secondary); font-size: 10px; overflow-wrap: anywhere; }
