@@ -7,6 +7,7 @@ import {
   compactMessageWindow,
   createContextBudget,
   createRecoveryCapsule,
+  isTaskContinuationApproval,
   recordContextUsage,
   routeTaskInput,
   verifyRecoveryCapsule,
@@ -33,6 +34,10 @@ assert.deepEqual(classifyTaskInput('暂停任务', run()).action, 'pause');
 assert.deepEqual(classifyTaskInput('你理解错了，不是安装技能', run()).action, 'preempt_and_replan');
 assert.deepEqual(classifyTaskInput('现在做到哪一步了？', run()).action, 'reply_then_continue');
 assert.deepEqual(classifyTaskInput('另外帮我写一份总结', run()).action, 'queue_separately');
+assert.equal(isTaskContinuationApproval('立即进入原型实现阶段', run({ status: 'awaiting_user', steps: [{ id: 'frontend', status: 'queued' }] })), true);
+assert.equal(isTaskContinuationApproval('@章北海助理 继续', run({ status: 'awaiting_user', steps: [{ id: 'frontend', status: 'queued' }] })), true);
+assert.equal(isTaskContinuationApproval('先不进入原型实现阶段', run({ status: 'awaiting_user', steps: [{ id: 'frontend', status: 'queued' }] })), false);
+assert.equal(isTaskContinuationApproval('立即进入原型实现阶段', run({ status: 'running', steps: [{ id: 'frontend', status: 'queued' }] })), false);
 
 const routed = routeTaskInput(run(), '不要重复读技能，直接按说明配置并测试。', { createdAt: 200 });
 assert.equal(routed.route.shouldPreempt, true);

@@ -1831,7 +1831,10 @@ function createNativeExecutionAdapter(options) {
       : descendants.filter((item) => !['completed', 'failed', 'stopped'].includes(item.status));
     for (const child of controllableDescendants) {
       const childJob = jobs.get(child.id);
-      const queuedBeforeControl = applyJobControl(childJob, forwardedType);
+      // Resume the durable state before enqueueing the in-memory job. Doing
+      // this in the opposite order lets drainQueue race ahead and attempt to
+      // claim a task that is still paused/awaiting_user in the ledger.
+      const queuedBeforeControl = forwardedType === 'resume' ? false : applyJobControl(childJob, forwardedType);
       const result = await options.worker.dispatch({
         commandId: `native-cascade-${forwardedType}-${parentTaskId}-${child.id}-${crypto.randomUUID()}`,
         taskId: child.id,
@@ -1841,6 +1844,7 @@ function createNativeExecutionAdapter(options) {
         payload: {},
       });
       if (result?.ok) {
+        if (forwardedType === 'resume') applyJobControl(childJob, forwardedType);
         // A queued child has no active execute() catch block to initiate rollback.
         // Complete its declared compensation before the active parent may compensate shared state.
         if (queuedBeforeControl && forwardedType === 'stop' && childJob) {

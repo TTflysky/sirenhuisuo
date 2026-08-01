@@ -50,7 +50,7 @@ import { classifyLocalOfficeQuery, formatLocalOfficeAnswer } from './engine/offi
 import { getRegisteredTools } from './engine/toolCatalog';
 import { ensureActiveChatSession, legacyConversationId, messageBelongsToConversation } from './data/chatSessions';
 import { projectNativeWorkingEmployees } from './store/nativeEmployeeProjection';
-import { classifyTaskInput } from './engine/taskContextRouter.mjs';
+import { classifyTaskInput, isTaskContinuationApproval } from './engine/taskContextRouter.mjs';
 import { createTeamSupervisorResponder } from './engine/teamSupervisor';
 import { buildReviewStageSummary, buildWorkStageSummary } from './engine/teamStageHandoff';
 import { employeeModelSummary, isTeamControlRequest, prepareProjectExecution } from './engine/teamControl';
@@ -1668,7 +1668,37 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const skillRefs = explicitSkillRefs.length ? explicitSkillRefs : await matchSkills(request);
     const skillBundle = await buildSkillContextWithEvidence(skillRefs);
     const skillContext = skillBundle.context;
-    const run = createTaskRun(team, current.employees, request, plan, sourceMessageId, skillRefs, undefined, taskDecision, conversationId);
+    const effectiveTaskDecision = codingProject ? {
+      ...(taskDecision ?? {}),
+      mode: 'execute' as const,
+      turnRelation: taskDecision?.turnRelation ?? 'new_task' as const,
+      goal: request,
+      primaryRoute: 'team_dispatch' as const,
+      deliverableType: 'mixed' as const,
+      acceptanceCriteria: [
+        '完成软件项目计划中的实现、验证、审查和交付步骤',
+        '至少形成一个经过磁盘回读校验的最终文件',
+        '代码或程序必须保留成功运行或测试证据',
+        '最终交付列出文件位置、验证结果和未决限制',
+      ],
+      requiredConstraints: [
+        ...(taskDecision?.requiredConstraints ?? []),
+        '实现阶段必须沿用已经确认的产品、架构和 UX 决策',
+        '不得用规划文档或模型文字代替源文件和运行验证',
+      ],
+      deliverables: [
+        { label: '可打开的项目源文件', format: 'project files', type: 'file' as const, category: 'final' as const, required: true },
+        { label: '运行或测试验证结果', format: 'verification', type: 'operation' as const, category: 'final' as const, required: true },
+      ],
+      requiresEvidence: true,
+      needsUser: false,
+      missingUserCondition: '',
+      searchQuery: '',
+      decisionReason: taskDecision?.decisionReason || '软件开发项目使用可恢复 Coding DAG，并以真实文件、运行验证和审查证据完成交付。',
+      confidence: taskDecision?.confidence ?? 1,
+      source: taskDecision?.source ?? 'rules' as const,
+    } : taskDecision;
+    const run = createTaskRun(team, current.employees, request, plan, sourceMessageId, skillRefs, undefined, effectiveTaskDecision, conversationId);
     run.sourceAttachments = inheritedAttachments;
     if (continuationRun) {
       let root = continuationRun;
@@ -2040,12 +2070,24 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       const relatedRuns = current.taskRuns.filter((run) => run.teamId === teamId && runBelongsToConversation(run));
       const latestRelatedRun = [...relatedRuns].sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt))[0];
       const routedFollowUp = latestRelatedRun ? classifyTaskInput(content, latestRelatedRun) : undefined;
-      const directControl = getDirectExecutionControl(content);
+      const resumableRuns = relatedRuns
+        .filter((run) => ['paused', 'failed', 'awaiting_user'].includes(run.status))
+        .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
+      const continuationApproval = resumableRuns.some((run) => isTaskContinuationApproval(content, run));
+      const directControl = getDirectExecutionControl(content) ?? (continuationApproval ? 'resume' : null);
       if (directControl) {
         const activeRuns = current.taskRuns.filter((run) => run.teamId === teamId && runBelongsToConversation(run) && (run.status === 'queued' || run.status === 'running'));
-        const latestPaused = [...current.taskRuns].reverse().find((run) => run.teamId === teamId && runBelongsToConversation(run) && run.status === 'paused');
+        const latestResumable = resumableRuns[0];
+        let resumeTarget = latestResumable;
+        const visited = new Set<string>();
+        while (resumeTarget?.parentTaskId && !visited.has(resumeTarget.id)) {
+          visited.add(resumeTarget.id);
+          const parent = resumableRuns.find((run) => run.id === resumeTarget?.parentTaskId);
+          if (!parent) break;
+          resumeTarget = parent;
+        }
         if (directControl === 'resume') {
-          if (latestPaused) resumeTaskRun(latestPaused.id);
+          if (resumeTarget) await resumeTaskRun(resumeTarget.id);
         } else {
           activeRuns.forEach((run) => directControl === 'stop' ? stopTaskRun(run.id) : pauseTaskRun(run.id));
         }
@@ -2054,7 +2096,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           msgs: [{
             id: `msg-direct-control-${Date.now()}`, authorId: 'assistant', roleId: 'custom',
             content: directControl === 'resume'
-              ? latestPaused ? '团队任务已继续，会从暂停时保留的步骤接着执行。' : '当前没有暂停中的团队任务。'
+              ? resumeTarget ? '继续命令已写入原项目。系统会先恢复暂停的子任务，再从未完成阶段接着执行；不会重新做已经通过的规划。' : '当前没有等待恢复的团队任务。'
               : directControl === 'stop'
                 ? '团队任务已停止，已完成内容保留；旧任务不会自行恢复。'
                 : '团队任务已暂停。你仍可以继续对话，只有明确说“继续”才会恢复。',

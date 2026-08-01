@@ -1,9 +1,16 @@
 # 项目交接手册
 
-> 最后整理：2026-08-01
-> 当前源码版本：`v3.3.0`（团队主持、阶段交接、清晰授权与插话控制）
+> 最后整理：2026-08-02
+> 当前源码版本：`v3.5.6`（软件项目可靠恢复与真实文件交付）
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+
+## v3.5.6 软件项目可靠恢复与真实交付
+
+- `isTaskContinuationApproval()` 只在同一会话存在 `paused`、`failed` 或 `awaiting_user` 的未完成任务时，将自然语言确认解释为恢复控制；普通聊天和否定表达不受影响。
+- `resumeTaskRun()` 从子任务回溯至可恢复的项目根，保留原始目标、工作区、已完成阶段和证据。原生执行器恢复子任务时必须先更新 TaskService 持久状态，再将内存作业入队。
+- Coding DAG 的项目根合同为 `mixed` 交付，强制检查真实源文件、磁盘回读、运行或测试证据与最终路径清单。不得再从首个规划步骤继承“无需生成文件”的弱合同。
+- 团队主持可读取任务工作区；当工作区存在且实现阶段未完成时，不得声称没有写入或运行入口。专项回归见 `verify:context-router`、`verify:native-execution`、`verify:coding-project-v2` 和 `verify:child-task-dispatch`。
 
 ## v3.3.0 团队主持与阶段交接
 

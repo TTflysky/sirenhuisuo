@@ -487,6 +487,11 @@ async function main() {
   await waitFor(async () => (await store.read()).runs.find((run) => run.id === lifecycleChild.task.id)?.status === 'paused');
   await waitFor(() => lifecycleAdapter.events(lifecycleChild.task.id).events.some((event) => event.type === 'control_received' && event.control === 'pause'));
   assert(lifecycleAdapter.events(lifecycleChild.task.id).events.some((event) => event.type === 'control_received' && event.control === 'pause'), 'parent pause must cascade to child tasks');
+  const resumeLiveParent = await worker.dispatch({ commandId: 'resume-live-child-lifecycle-parent', taskId: lifecycleParent.id, type: 'resume' });
+  assert.equal(resumeLiveParent.ok, true, resumeLiveParent.error);
+  await lifecycleAdapter.handleControl({ taskId: lifecycleParent.id, type: 'resume' }, resumeLiveParent);
+  await waitFor(async () => (await store.read()).runs.find((run) => run.id === lifecycleChild.task.id)?.status === 'running');
+  assert.equal(lifecycleAdapter.events(lifecycleChild.task.id).events.some((event) => event.type === 'job_failed' && /不能领取执行租约/u.test(event.error || '')), false, 'resumed child must enter queued durable state before its adapter job is enqueued');
 
   const resumeCascadeParent = singleStepRun('native-child-resume-cascade', 'parent resumes a paused child before continuing');
   resumeCascadeParent.steps[0].status = 'completed';

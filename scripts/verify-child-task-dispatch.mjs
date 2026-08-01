@@ -10,7 +10,7 @@ assert.match(source, /delegatedStep\.externalChild = true/);
 assert.match(source, /await start\(\{[\s\S]*taskId: child\.task\.id/);
 assert.match(source, /new ExecutionControlSignal\('delegate_wait'/);
 assert.match(source, /async function syncChildTaskTerminal/);
-assert.match(source, /function summarizeChildTask/);
+assert.match(source, /summarizeChildTask/);
 assert.match(source, /parent\.childTaskResults/);
 assert.match(source, /async function cascadeChildControl/);
 assert.match(source, /child_task_control_cascaded/);

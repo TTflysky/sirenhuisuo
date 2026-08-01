@@ -7,6 +7,7 @@ export interface ContextBudgetSnapshot { budgetVersion: number; contextWindowTok
 export interface TaskRecoveryCapsule { recoveryVersion: number; taskId: string; teamId: string; immutableGoal: string; acceptanceCriteria: string[]; status: string; phase: string; workspaceId: string; contractVersion?: number; planId?: string; planFingerprint?: string; completedSteps: unknown[]; pendingSteps: unknown[]; verifiedFacts: string[]; artifacts: string[]; unresolvedIssues: string[]; steeringMessages: string[]; handoff?: unknown; nextStepId?: string; budget: ContextBudgetSnapshot; lastCheckpoint?: unknown; reason: string; createdAt: number; checksum: string }
 export function estimateTokens(value: unknown): number;
 export function classifyTaskInput(message: string, task?: Partial<TaskRun>): TaskInputRoute;
+export function isTaskContinuationApproval(message: string, task?: Partial<TaskRun>): boolean;
 export function createContextBudget(input?: Partial<ContextBudgetSnapshot>): ContextBudgetSnapshot;
 export function recordContextUsage(snapshot: unknown, usage?: { promptTokens?: number; completionTokens?: number; estimatedTokens?: number; toolAttempts?: number; modelRounds?: number; progress?: boolean }): ContextBudgetSnapshot;
 export function assessContextBudget(snapshot: unknown, options?: { currentPromptTokens?: number }): ContextBudgetSnapshot & { currentTokens: number; usableTokens: number; ratio: number; action: 'continue' | 'compact' | 'checkpoint' | 'replan'; reason: string };

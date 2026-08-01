@@ -194,6 +194,23 @@ function summarizeAtomicUnit(unit) {
   });
 }
 
+/**
+ * Treat an affirmative reply to a project gate as execution control, but only
+ * while that same task is actually waiting. This keeps phrases such as
+ * "立即进入原型实现阶段" attached to the durable project instead of sending
+ * them through an ordinary chat turn that has no workspace tools.
+ */
+export function isTaskContinuationApproval(message, task = {}) {
+  const value = text(message, 1200).replace(/^@\S+\s*/u, '').trim();
+  if (!value || !['awaiting_user', 'paused', 'failed'].includes(String(task.status || ''))) return false;
+  const hasPendingWork = Array.isArray(task.steps)
+    && task.steps.some((step) => !['completed', 'stopped'].includes(String(step?.status || '')));
+  if (!hasPendingWork) return false;
+  if (/^(?:请)?(?:继续|恢复|接着)(?:任务|执行|操作|工作|处理|刚才的任务)?(?:吧|一下|了)?(?:[，,：:]?.{0,30})?[。！!\s]*$/u.test(value)) return true;
+  if (/(?:不要|别|无需|暂不|先不).{0,8}(?:继续|恢复|开始|进入|执行|推进)/u.test(value)) return false;
+  return /^(?:(?:可以|同意|确认|批准|好的?|行)[，,。！!\s]*)?(?:(?:立即|现在|直接|马上)\s*)?(?:进入|开始|继续|恢复|执行|推进).{0,48}(?:阶段|原型|实现|开发|任务|项目|工作|制作)[。！!\s]*$/u.test(value);
+}
+
 export function compactMessageWindow(messages, options = {}) {
   const source = Array.isArray(messages) ? messages : [];
   if (source.length <= 8) return { messages: clone(source), removed: 0, summary: '' };
