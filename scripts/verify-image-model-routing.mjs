@@ -28,6 +28,9 @@ assert.match(client, /imageModel \? '\/images\/generations' : '\/chat\/completio
 
 assert.match(settings, /startAddGptImage2/u, '设置页必须有 GPT Image 2 快捷添加');
 assert.match(settings, /getModelCapabilities\(entry\)\.includes\('image'\)/u, '设置页必须明确标记图像模型');
+assert.match(settings, /const diagnosticModels = library\.filter\(\(model\) => getModelCapabilities\(model\)\.includes\('chat'\)\)/u, '诊断优化只能选择聊天模型');
+assert.match(settings, /\.\.\.diagnosticModels\.map\(\(model\) => \(\{ value: model\.id, label: model\.label \}\)\)/u, '诊断优化菜单必须使用聊天模型候选');
+assert.match(settings, /\.\.\.imageModels\.map\(\(model\) => \(\{ value: model\.id, label: model\.label \}\)\)/u, '头像生图菜单必须使用图像模型候选');
 assert.match(avatarPicker, /filter\(\(model\) => getModelCapabilities\(model\)\.includes\('image'\)\)/u, '头像生成只能选择图像模型');
 
 for (const [name, source] of [['assistant', assistant], ['dm', dm], ['team', team]]) {

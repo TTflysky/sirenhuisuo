@@ -13,6 +13,7 @@ import { parseGeneratedAvatarPayload } from './generatedAvatar';
 import { buildImageEditFormData, selectEditableImage } from '../engine/imageRequest.mjs';
 import { consumeOpenAIChatStream } from '../engine/chatStream.mjs';
 import { createCompatibilityReport } from '../engine/modelCompatibility.mjs';
+import { presentModelFailure } from '../engine/modelFailurePresentation.mjs';
 import {
   resolveImageSpecification,
   type ImageGenerationOptions,
@@ -323,11 +324,11 @@ export function getReviewModel(): ModelConfig | undefined {
   return { provider: model.provider, apiHost: model.apiHost, apiKey: model.apiKey, model: model.model, contextWindowTokens: model.contextWindowTokens };
 }
 
-function configuredModelById(id?: string): ModelConfig | undefined {
+function configuredModelById(id?: string, capability?: ModelCapability): ModelConfig | undefined {
   const settings = loadSettings();
   if (!id || !settings.modelLibrary?.length) return undefined;
   const model = settings.modelLibrary.find((item) => item.id === id);
-  if (!model) return undefined;
+  if (!model || (capability && !getModelCapabilities(model).includes(capability))) return undefined;
   return {
     provider: model.provider,
     apiHost: model.apiHost,
@@ -340,12 +341,12 @@ function configuredModelById(id?: string): ModelConfig | undefined {
 
 /** The diagnostic center requires an explicit model assignment. */
 export function getDiagnosticModel(): ModelConfig | undefined {
-  return configuredModelById(loadSettings().diagnosticModelId);
+  return configuredModelById(loadSettings().diagnosticModelId, 'chat');
 }
 
 /** Image generation never silently falls back to a chat model. */
 export function getImageGenerationModel(): ModelConfig | undefined {
-  return configuredModelById(loadSettings().imageModelId);
+  return configuredModelById(loadSettings().imageModelId, 'image');
 }
 
 export function isImageGenerationModel(modelConfig?: Pick<ModelConfig, 'model'>): boolean {
@@ -1676,7 +1677,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         publishExecutionState(evaluateExecutionConclusion(executionState, { content: finalContent, reviewed: true }));
         break;
       }
-      finalContent = `还没有完成。\n\n模型请求已按“${modelRecovery.decision.errorType}”分类恢复，但仍没有返回有效结果。当前目标、已完成证据和未决问题已经保存；请检查模型连接或切换可用模型后继续。`;
+      finalContent = `还没有完成。\n\n${presentModelFailure(modelRecovery.decision.errorType)}`;
       publishExecutionState(blockExecution(executionState, '模型请求已完成分类恢复，但仍未返回有效结果。', executionState.decision.failureClass));
       break;
     }

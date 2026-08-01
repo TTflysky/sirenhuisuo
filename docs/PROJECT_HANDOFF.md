@@ -1,9 +1,17 @@
 # 项目交接手册
 
 > 最后整理：2026-08-01
-> 当前源码版本：`v2.9.4`（第三阶段代码收口版本）
+> 当前源码版本：`v2.9.5`（第三阶段可用性修复版本）
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+
+## v2.9.5 可用性修复与发布交接
+
+- 本版修复了实机发现的模型服务 503 误分类：`turnRuntime.classifyExecutionError()` 将 HTTP 5xx / `Service temporarily unavailable` 归入 `server`，按可恢复故障处理；任务与证据保留，用户无需重新填写模型。
+- `SettingsModal` 和运行时模型解析均按能力守卫：诊断优化只接受 `chat`，头像生图只接受 `image`。这既修复 UI 选择错误，也防止旧本地配置继续造成错误调用。
+- `modelFailurePresentation.mjs` 负责面向用户的模型故障说明；`hermesClient.ts` 只负责编排，保持在模块边界内。对应回归在 `verify-unified-turn-runtime`。
+- 本版自评为工程能力 **87/100**、真实生产可用性 **76/100**。详细证据与限制见 `docs/SELF_EVALUATION_v2.9.5.md`；下一阶段任务见 `docs/TAIJI_OPTIMIZATION_PLAN_V3.0_TO_V3.4.md`。
+- 本机已经重新打包并完成包内验收；覆盖安装被系统审批服务限流拦截，不计入已完成。正式 GitHub Release 由 `publish-github-release.ps1` 统一校验提交、标签、安装包、Blockmap、`latest.yml` 和远端 SHA-256 后发布。
 
 ## v2.9.4 第三阶段：生态兼容、凭据安全、升级事务与发布治理
 

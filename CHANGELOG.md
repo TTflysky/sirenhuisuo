@@ -1,5 +1,22 @@
 # 更新日志
 
+## v2.9.5 (2026-08-01)
+
+### 修复
+
+- 将 OpenAI 兼容模型返回的 HTTP 5xx 与 `Service temporarily unavailable` 归类为可恢复的上游服务故障，保留任务恢复现场并给出准确的继续执行提示。
+- 修复设置页模型能力筛选反向的问题：诊断优化仅显示聊天模型，头像生图仅显示图片模型；运行时拒绝旧配置把图片模型用作诊断模型。
+- 将模型故障展示逻辑从 `hermesClient` 移至独立模块，避免核心编排模块突破边界。
+
+### 验证
+
+- 通过 Lint、38 项标准测试、统一 Turn Runtime、图片模型路由、第二阶段确定性门禁、第三阶段发布治理门禁和 Windows 安装包验收。
+- Windows `2.9.5` 安装包已生成并通过包内验收；本轮本机覆盖被系统审批服务限流拦截，不计入已完成验收。
+
+### 已知限制
+
+- 正式 8 小时 Electron 驻留、真实第三方账号/连接器矩阵、跨版本故障注入回滚以及在线依赖审计仍未完成；当前网络不可用时不能将远端检查结果视为已验证。
+
 ## v2.9.4 (Phase 3: ecosystem compatibility, secure credentials, update transactions, and release governance)
 
 - Added a versioned model compatibility matrix covering chat, streaming, tool calls, GPT Image 2, legacy image endpoints, custom Base URLs, and actionable failure classes. Image connection tests now validate returned image data instead of expecting chat text.

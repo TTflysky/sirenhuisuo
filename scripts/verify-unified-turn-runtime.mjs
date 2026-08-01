@@ -13,6 +13,7 @@ import {
   requiresFileEvidence,
 } from '../src/engine/turnRuntime.mjs';
 import { aggregateAdvisorGuidance, buildAdvisorMessages, shouldConsultAdvisors } from '../src/engine/moaRuntime.mjs';
+import { presentModelFailure } from '../src/engine/modelFailurePresentation.mjs';
 
 const exactQuery = '上海 2026年7月29日 天气 最高温 最低温 降雨';
 const normalized = normalizeToolCall('web_search', JSON.stringify({ query: exactQuery, limit: 5 }));
@@ -79,6 +80,11 @@ assert.equal(authError.type, 'authentication');
 const authRecovery = decideRecovery(runtime, authError);
 assert.equal(authRecovery.decision.action, 'waiting_user');
 assert.equal(authRecovery.runtime.phase, 'waiting_user');
+
+const serverError = classifyExecutionError('模型响应 503: {"error":{"message":"Service temporarily unavailable"}}');
+assert.equal(serverError.type, 'server', '文本形式的 HTTP 503 也必须归类为上游服务异常');
+assert.equal(serverError.retryable, true);
+assert.match(presentModelFailure(serverError.type), /稍后点击“继续执行”重试/);
 
 let overflowRuntime = createTurnRuntime({ goal: '长任务' });
 let recovery = decideRecovery(overflowRuntime, new Error('context length exceeded'));

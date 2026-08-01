@@ -2,7 +2,7 @@
   "schema": 1,
   "product": "太极 AI 办公会所",
   "package": "taiji-office",
-  "version": "2.9.4",
+  "version": "2.9.5",
   "commit": "4b270edc4ee0fcb059299e026b6b9cd312f58557",
   "branch": "main",
   "sourceFileCount": 1016,
@@ -16,7 +16,7 @@
   "releaseInputs": [
     "package.json",
     "package-lock.json",
-    "docs/sbom-v2.9.4.json",
+    "docs/sbom-v2.9.5.json",
     "scripts/verify-release-governance.mjs"
   ]
 }

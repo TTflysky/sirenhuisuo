@@ -250,7 +250,10 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
   const reviewId = settings.reviewModelId;
   const diagnosticId = settings.diagnosticModelId;
   const imageId = settings.imageModelId;
+  const diagnosticModels = library.filter((model) => getModelCapabilities(model).includes('chat'));
   const imageModels = library.filter((model) => getModelCapabilities(model).includes('image'));
+  const selectedDiagnosticId = diagnosticModels.some((model) => model.id === diagnosticId) ? diagnosticId : undefined;
+  const selectedImageId = imageModels.some((model) => model.id === imageId) ? imageId : undefined;
 
   const startAdd = () => {
     setEditingId('__new__');
@@ -412,6 +415,12 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
 
   const handleSetSpecialModel = (key: 'diagnosticModelId' | 'imageModelId', id?: string) => {
     const s = loadSettings();
+    const requiredCapability = key === 'diagnosticModelId' ? 'chat' : 'image';
+    const entry = id ? s.modelLibrary?.find((model) => model.id === id) : undefined;
+    if (id && (!entry || !getModelCapabilities(entry).includes(requiredCapability))) {
+      message.error(key === 'diagnosticModelId' ? '诊断优化需要选择聊天模型' : '头像生图需要选择图片模型');
+      return;
+    }
     s[key] = id;
     saveSettings(s);
     setSettings({ ...s });
@@ -560,18 +569,18 @@ function ModelSettingsTab({ onClose, onSaved }: { onClose: () => void; onSaved?:
           <span style={{ fontSize: 12, fontWeight: 500, marginLeft: 8 }}>诊断优化：</span>
           <Select
             size="small"
-            value={diagnosticId ?? '__none__'}
+            value={selectedDiagnosticId ?? '__none__'}
             onChange={(value) => handleSetSpecialModel('diagnosticModelId', value === '__none__' ? undefined : value)}
             style={{ width: 180 }}
-            options={[{ value: '__none__', label: '未指定' }, ...imageModels.map((model) => ({ value: model.id, label: model.label }))]}
+            options={[{ value: '__none__', label: '未指定' }, ...diagnosticModels.map((model) => ({ value: model.id, label: model.label }))]}
           />
           <span style={{ fontSize: 12, fontWeight: 500, marginLeft: 8 }}>头像生图：</span>
           <Select
             size="small"
-            value={imageId ?? '__none__'}
+            value={selectedImageId ?? '__none__'}
             onChange={(value) => handleSetSpecialModel('imageModelId', value === '__none__' ? undefined : value)}
             style={{ width: 180 }}
-            options={[{ value: '__none__', label: '未指定' }, ...library.map((model) => ({ value: model.id, label: model.label }))]}
+            options={[{ value: '__none__', label: '未指定' }, ...imageModels.map((model) => ({ value: model.id, label: model.label }))]}
           />
         </Space>
       )}

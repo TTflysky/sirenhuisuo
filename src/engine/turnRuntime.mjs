@@ -67,7 +67,7 @@ export function classifyExecutionError(input) {
   if (/context.*(?:length|window|overflow)|too many tokens|上下文.*(?:过长|溢出)|token.*上限/iu.test(raw)) return { type: 'context_overflow', retryable: true, needsUser: false, message: raw };
   if (/timed?\s*out|timeout|超时/iu.test(raw)) return { type: 'timeout', retryable: true, needsUser: false, message: raw };
   if (/dns|enotfound|econnreset|econnrefused|network|fetch failed|网络|连接失败|无法访问/iu.test(raw)) return { type: 'network', retryable: true, needsUser: false, message: raw };
-  if (status >= 500 || /internal server|bad gateway|service unavailable|服务器错误|服务不可用/iu.test(raw)) return { type: 'server', retryable: true, needsUser: false, message: raw };
+  if (status >= 500 || /(?:\b5\d\d\b|internal server|bad gateway|service unavailable|服务器错误|服务不可用)/iu.test(raw)) return { type: 'server', retryable: true, needsUser: false, message: raw };
   if (/invalid.*(?:argument|parameter|json)|missing required|参数.*(?:错误|缺少)|schema/iu.test(raw)) return { type: 'invalid_arguments', retryable: true, needsUser: false, message: raw };
   if (/enoent|not found|not recognized|找不到|不存在|缺少依赖|未安装/iu.test(raw)) return { type: 'missing_dependency', retryable: true, needsUser: false, message: raw };
   if (/偏题|不相关|与.*目标.*不一致|result.*mismatch|没有回答|未找到直接结果/iu.test(raw)) return { type: 'result_mismatch', retryable: true, needsUser: false, message: raw };

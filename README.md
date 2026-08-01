@@ -1,4 +1,4 @@
-# 太极 AI 办公会所 v2.9.4
+# 太极 AI 办公会所 v2.9.5
 
 > 面向 Windows 的多模型 AI 虚拟办公室。创建员工、组建团队，让不同模型按照职责协作完成真实任务。
 
@@ -6,13 +6,21 @@
 
 ## 项目状态
 
-- 当前版本：`2.9.4`
+- 当前版本：`2.9.5`
 - 发布分支：`main`
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 43、React 19、TypeScript 6、Ant Design 6、Vite 8
 - 模型接口：OpenAI 兼容的 `/chat/completions` API
 
 ## 核心能力
+
+### v2.9.5 可用性修复与工程复核
+
+- 模型请求中的 HTTP 5xx / `Service temporarily unavailable` 现在归类为可恢复的上游服务故障；保留任务现场并提示稍后继续，不再误报为未知错误或要求重新填写模型。
+- 设置页按模型能力过滤：诊断优化只能选择聊天模型，头像生图只能选择图片模型；旧配置在运行时也会被拒绝误用。
+- 模型故障的用户提示从编排客户端拆到独立展示模块，继续受模块边界门禁和运行时回归保护。
+- 本版通过 38 项标准测试、第一/二/三阶段确定性门禁与 Windows 安装包验收。正式 8 小时驻留、真实第三方账号矩阵和跨版本故障回滚仍未完成，不能误认为已验收。
+- 最新自我评价见 [docs/SELF_EVALUATION_v2.9.5.md](./docs/SELF_EVALUATION_v2.9.5.md)，后续优化路线见 [docs/TAIJI_OPTIMIZATION_PLAN_V3.0_TO_V3.4.md](./docs/TAIJI_OPTIMIZATION_PLAN_V3.0_TO_V3.4.md)。
 
 ### v2.9.4 第三阶段：生态兼容、凭据安全、升级事务与发布治理
 
