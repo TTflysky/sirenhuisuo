@@ -211,6 +211,22 @@ export function isTaskContinuationApproval(message, task = {}) {
   return /^(?:(?:可以|同意|确认|批准|好的?|行)[，,。！!\s]*)?(?:(?:立即|现在|直接|马上)\s*)?(?:进入|开始|继续|恢复|执行|推进).{0,48}(?:阶段|原型|实现|开发|任务|项目|工作|制作)[。！!\s]*$/u.test(value);
 }
 
+export function findTaskContinuationTarget(message, runs = []) {
+  const resumable = (Array.isArray(runs) ? runs : [])
+    .filter((run) => ['paused', 'failed', 'awaiting_user'].includes(String(run?.status || '')))
+    .sort((left, right) => (Number(right?.updatedAt || right?.createdAt) || 0) - (Number(left?.updatedAt || left?.createdAt) || 0));
+  if (!resumable.some((run) => isTaskContinuationApproval(message, run))) return undefined;
+  let target = resumable[0];
+  const visited = new Set();
+  while (target?.parentTaskId && !visited.has(target.id)) {
+    visited.add(target.id);
+    const parent = resumable.find((run) => run.id === target.parentTaskId);
+    if (!parent) break;
+    target = parent;
+  }
+  return target;
+}
+
 export function compactMessageWindow(messages, options = {}) {
   const source = Array.isArray(messages) ? messages : [];
   if (source.length <= 8) return { messages: clone(source), removed: 0, summary: '' };

@@ -7,6 +7,7 @@ import {
   compactMessageWindow,
   createContextBudget,
   createRecoveryCapsule,
+  findTaskContinuationTarget,
   isTaskContinuationApproval,
   recordContextUsage,
   routeTaskInput,
@@ -38,6 +39,10 @@ assert.equal(isTaskContinuationApproval('立即进入原型实现阶段', run({ 
 assert.equal(isTaskContinuationApproval('@章北海助理 继续', run({ status: 'awaiting_user', steps: [{ id: 'frontend', status: 'queued' }] })), true);
 assert.equal(isTaskContinuationApproval('先不进入原型实现阶段', run({ status: 'awaiting_user', steps: [{ id: 'frontend', status: 'queued' }] })), false);
 assert.equal(isTaskContinuationApproval('立即进入原型实现阶段', run({ status: 'running', steps: [{ id: 'frontend', status: 'queued' }] })), false);
+const continuationRoot = run({ id: 'project-root', status: 'awaiting_user', updatedAt: 10, steps: [{ id: 'frontend', status: 'queued' }] });
+const continuationChild = run({ id: 'ux-child', parentTaskId: 'project-root', status: 'paused', updatedAt: 20, steps: [{ id: 'ux', status: 'paused' }] });
+assert.equal(findTaskContinuationTarget('立即进入原型实现阶段', [continuationRoot, continuationChild])?.id, 'project-root');
+assert.equal(findTaskContinuationTarget('先不继续', [continuationRoot, continuationChild]), undefined);
 
 const routed = routeTaskInput(run(), '不要重复读技能，直接按说明配置并测试。', { createdAt: 200 });
 assert.equal(routed.route.shouldPreempt, true);

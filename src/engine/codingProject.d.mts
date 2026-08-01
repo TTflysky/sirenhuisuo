@@ -12,6 +12,7 @@ export type CodingProject = {
   teamChanges?: Array<Record<string, unknown>>; artifactRegistry?: Array<CodingArtifact & { stageId: string }>;
   reworkHistory?: Array<Record<string, unknown>>;
 };
+export function createCodingProjectTaskDecision(goal: string, decision?: Partial<import('./taskDecisionKernel.mjs').TaskDecision>): import('./taskDecisionKernel.mjs').TaskDecision;
 export function compileCodingProject(input?: Record<string, unknown>): CodingProject;
 export function codingProjectToTaskSteps(project: CodingProject): Array<Record<string, unknown>>;
 export function addCodingProjectMember(project: CodingProject, input?: Record<string, unknown>): CodingProject;

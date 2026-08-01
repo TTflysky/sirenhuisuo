@@ -2,6 +2,39 @@ import { employeeCapabilityProfile, inferCapabilityIds } from './capabilityGraph
 
 export const CODING_PROJECT_VERSION = 2;
 
+export function createCodingProjectTaskDecision(goal, decision = {}) {
+  return {
+    ...decision,
+    mode: 'execute',
+    turnRelation: decision.turnRelation || 'new_task',
+    goal,
+    primaryRoute: 'team_dispatch',
+    deliverableType: 'mixed',
+    acceptanceCriteria: [
+      '完成软件项目计划中的实现、验证、审查和交付步骤',
+      '至少形成一个经过磁盘回读校验的最终文件',
+      '代码或程序必须保留成功运行或测试证据',
+      '最终交付列出文件位置、验证结果和未决限制',
+    ],
+    requiredConstraints: [
+      ...(decision.requiredConstraints || []),
+      '实现阶段必须沿用已经确认的产品、架构和 UX 决策',
+      '不得用规划文档或模型文字代替源文件和运行验证',
+    ],
+    deliverables: [
+      { label: '可打开的项目源文件', format: 'project files', type: 'file', category: 'final', required: true },
+      { label: '运行或测试验证结果', format: 'verification', type: 'operation', category: 'final', required: true },
+    ],
+    requiresEvidence: true,
+    needsUser: false,
+    missingUserCondition: '',
+    searchQuery: '',
+    decisionReason: decision.decisionReason || '软件开发项目使用可恢复 Coding DAG，并以真实文件、运行验证和审查证据完成交付。',
+    confidence: decision.confidence ?? 1,
+    source: decision.source || 'rules',
+  };
+}
+
 const ROLE_SPECS = Object.freeze({
   product: { capability: 'coordination', title: 'Product brief', output: 'scope, user flows, and acceptance criteria' },
   architecture: { capability: 'architecture', title: 'Architecture plan', output: 'technical design and dependency decisions' },

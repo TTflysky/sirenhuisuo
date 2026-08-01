@@ -8,6 +8,7 @@ export interface TaskRecoveryCapsule { recoveryVersion: number; taskId: string; 
 export function estimateTokens(value: unknown): number;
 export function classifyTaskInput(message: string, task?: Partial<TaskRun>): TaskInputRoute;
 export function isTaskContinuationApproval(message: string, task?: Partial<TaskRun>): boolean;
+export function findTaskContinuationTarget<T extends { id: string; parentTaskId?: string; status?: string; steps?: unknown[]; updatedAt?: number; createdAt?: number }>(message: string, runs: T[]): T | undefined;
 export function createContextBudget(input?: Partial<ContextBudgetSnapshot>): ContextBudgetSnapshot;
 export function recordContextUsage(snapshot: unknown, usage?: { promptTokens?: number; completionTokens?: number; estimatedTokens?: number; toolAttempts?: number; modelRounds?: number; progress?: boolean }): ContextBudgetSnapshot;
 export function assessContextBudget(snapshot: unknown, options?: { currentPromptTokens?: number }): ContextBudgetSnapshot & { currentTokens: number; usableTokens: number; ratio: number; action: 'continue' | 'compact' | 'checkpoint' | 'replan'; reason: string };

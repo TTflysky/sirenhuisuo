@@ -2,11 +2,22 @@ import assert from 'node:assert/strict';
 import {
   addCodingProjectMember,
   compileCodingProject,
+  createCodingProjectTaskDecision,
   registerCodingArtifact,
   reopenCodingProjectResponsibility,
   replaceCodingProjectOwner,
   validateCodingStageArtifacts,
 } from '../src/engine/codingProject.mjs';
+
+const deliveryDecision = createCodingProjectTaskDecision('开发一个生图客户端', {
+  requiredConstraints: ['支持图生图'],
+  decisionReason: '用户要求开发软件',
+});
+assert.equal(deliveryDecision.deliverableType, 'mixed');
+assert.equal(deliveryDecision.primaryRoute, 'team_dispatch');
+assert(deliveryDecision.acceptanceCriteria.some((criterion) => criterion.includes('磁盘回读')));
+assert(deliveryDecision.acceptanceCriteria.some((criterion) => criterion.includes('运行或测试证据')));
+assert(deliveryDecision.deliverables.some((item) => item.type === 'file' && item.required));
 
 const members = [
   { id: 'pm', name: 'PM', capabilities: ['coordination'], currentLoad: 0 },
