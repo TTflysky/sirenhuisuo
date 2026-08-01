@@ -5,8 +5,8 @@
   "version": "3.3.0",
   "commit": "dee0e145d31dbc7c644fbcd3ec81674bd5be9a43",
   "branch": "main",
-  "sourceFileCount": 1077,
-  "sourceFileListDigest": "3acafe246a8c0fbb27d65e4012fc5621a76f5dbb34ddba717efe75ac1ff1beb7",
+  "sourceFileCount": 1078,
+  "sourceFileListDigest": "27546441c26459e9c7ff2309e03516601a511b3228cbf013b7023487ba1beccd",
   "generatedAt": "2026-08-01T17:06:06+08:00",
   "build": {
     "platform": "win32",
