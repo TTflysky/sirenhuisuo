@@ -1595,6 +1595,8 @@
 .team-live-event-stream { max-height: 146px; overflow: hidden; }
 .team-live-event-stream::before { content: '思路与工具进展（最近 4 行）'; display: block; margin: 5px 0 6px; color: var(--text); font-size: 12px; font-weight: 700; }
 .team-live-event-stream > div { min-height: 24px; font-size: 13px; line-height: 1.5; }
+.team-task-export-all { display:flex; justify-content:flex-end; padding:7px 9px; border-bottom:1px solid var(--border-light); background:var(--bg-deep); }
+.team-task-export-all .btn { width:100%; justify-content:center; }
 .stage-summary-evidence { display: flex; flex-wrap: wrap; gap: 6px; padding: 11px 16px; border-bottom: 1px solid var(--border-light); }
 .stage-summary-evidence strong { width: 100%; }
 .stage-summary-evidence span { padding: 3px 7px; border-radius: 4px; background: color-mix(in srgb, #16a34a 9%, var(--surface)); color: var(--text-secondary); font-size: 10px; overflow-wrap: anywhere; }

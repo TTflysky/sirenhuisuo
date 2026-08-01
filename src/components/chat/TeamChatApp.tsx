@@ -206,6 +206,27 @@ export default function TeamChatApp({ teamId }: Props) {
     ];
     downloadTextFile(`taiji-task-replay-${run.id}.md`, lines.join('\n'));
   };
+  const exportAllTaskReplays = () => {
+    const exportedAt = new Date();
+    const sections = taskRuns.map((run, index) => {
+      const replay = buildTaskReplay(run, getTaskLedgerEvents(run.id));
+      if (!replay) return '';
+      return [
+        `## ${index + 1}. ${replay.title}`,
+        `- 任务 ID：${replay.taskId}`, `- 状态：${taskStatusLabel(replay.status)}`,
+        `- 时间：${new Date(replay.createdAt).toLocaleString('zh-CN')} - ${new Date(replay.updatedAt).toLocaleString('zh-CN')}`,
+        '', '### 目标', replay.goal || '未记录', '', '### 阶段与负责人',
+        ...(run.steps ?? []).map((step) => `- ${step.order}. ${state.employees.find((employee) => employee.id === step.employeeId)?.name ?? step.title}｜${stepStatusLabel(step.status)}｜${step.assignment}｜尝试 ${step.attempts} 次`),
+        '', '### Worker', run.worker ? `- ${run.worker.state}：${run.worker.activity ?? '无活动说明'}` : '- 未记录',
+        '', '### 验收证据', ...(run.verification ?? []).map((item) => `- ${item.status}｜${item.label}｜${item.detail ?? ''}`),
+        '', '### 交接', run.handoff ? `- 阻塞：${run.handoff.blocked}\n- 下一步：${run.handoff.nextAction}\n- 已完成：${(run.handoff.completed ?? []).join('、')}` : '- 无交接记录',
+        '', '### 时间线', ...replay.events.map((event) => `- ${new Date(event.ts).toLocaleString('zh-CN')}｜${event.summary}`),
+        '', '<details><summary>原始结构化回放</summary>', '', '```json', JSON.stringify(replay, null, 2), '```', '', '</details>',
+      ].join('\n');
+    }).filter(Boolean);
+    const content = ['# 太极团队全部任务回放', '', `- 团队：${team?.name ?? teamId}`, `- 会话：${conversationId}`, `- 导出时间：${exportedAt.toLocaleString('zh-CN')}`, `- 任务数量：${sections.length}`, '', ...sections].join('\n\n');
+    downloadTextFile(`taiji-all-task-replays-${teamId}-${exportedAt.toISOString().slice(0, 10)}.md`, content);
+  };
   const taskReplay = useMemo(() => buildTaskReplay(replayRun, replayLedgerEvents), [replayRun, replayLedgerEvents]);
   const replayTimeline = useMemo(() => {
     if (!taskReplay) return [];
@@ -1118,6 +1139,7 @@ export default function TeamChatApp({ teamId }: Props) {
             {showTaskList && <><div className="workspace-resize-handle" onPointerDown={startPanelResize} title="拖动调整任务面板宽度" /><aside className="team-task-sidebar" style={{ width: workspacePanelWidth, minWidth: workspacePanelWidth }} aria-label="项目面板">
               <div className="team-task-sidebar-head"><strong>{taskReplay ? '任务回放' : '项目面板'}</strong><span>{taskReplay ? '只读' : `${projectBoard.length} 个项目`}</span>{!taskReplay && <button type="button" className="team-task-clear" title="清理聊天中的旧执行过程" onClick={() => clearTeamExecution(teamId)}>清理过程</button>}<button type="button" className="task-run-close" title="收起项目面板" onClick={() => setShowTaskList(false)}>×</button></div>
               {!taskReplay && <label className="task-history-search"><SearchOutlined /><input value={taskHistoryQuery} onChange={(event) => setTaskHistoryQuery(event.target.value)} placeholder="历史任务检索" aria-label="历史任务检索" />{taskHistoryQuery && <button type="button" onClick={() => setTaskHistoryQuery('')} title="清空搜索">×</button>}</label>}
+              {!taskReplay && <div className="team-task-export-all"><button type="button" className="btn btn-sm" disabled={taskRuns.length === 0} onClick={exportAllTaskReplays} title="将当前团队会话的全部任务合并导出为 Markdown">导出全部回放 MD</button></div>}
               <div className="team-task-sidebar-body">
                 {taskReplay ? <div className="task-replay">
                   <button type="button" className="task-replay-back" onClick={() => setReplayTaskId(null)}><ArrowLeftOutlined />返回任务列表</button>
