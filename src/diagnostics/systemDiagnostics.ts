@@ -1,11 +1,15 @@
 import { checkConnector, connectorMissingFields, loadConnectors } from '../data/connectors';
-import { getActiveModel, getExecutionPolicy, getProvider } from '../data/hermesClient';
+import type { ModelConfig } from '../types';
+import { getActiveModel, getExecutionPolicy, getModelCapabilities, getProvider, loadSettings } from '../data/hermesClient';
+import { externalCapabilityProfileForConnector, recordExternalCapabilityProbe, syncExternalCapabilityProfiles } from '../data/externalCapabilityMatrix';
+import { getModelHealthSnapshot, getModelRecoveryAdviceForConfig } from '../data/modelReliability';
 import { listSkills } from '../data/skills';
 import { diagnoseModel } from './modelDiagnostics';
 import { getToolRegistrySnapshot } from '../engine/toolCatalog';
+import { completeExternalCapabilityProfiles, summarizeExternalCapabilityMatrix, type ExternalCapabilityEntry, type ExternalCapabilityKind, type ExternalCapabilityMatrix, type ExternalCapabilityProfile } from '../engine/externalCapabilityMatrix.mjs';
 
 export type DiagnosticStatus = 'ready' | 'warning' | 'blocked';
-export type DiagnosticArea = 'model' | 'connector' | 'skill' | 'tool' | 'runtime' | 'memory' | 'workspace' | 'permission';
+export type DiagnosticArea = 'model' | 'connector' | 'skill' | 'external' | 'tool' | 'runtime' | 'memory' | 'workspace' | 'permission';
 
 export interface SystemDiagnosticItem {
   id: string;
@@ -24,11 +28,76 @@ export interface SystemDiagnosticReport {
   ready: number;
   warning: number;
   blocked: number;
+  externalCapabilities: { summary: ReturnType<typeof summarizeExternalCapabilityMatrix>; entries: ExternalCapabilityEntry[] };
+}
+
+function configuredCapabilityProfiles(): ExternalCapabilityProfile[] {
+  const settings = loadSettings();
+  const models: Array<ModelConfig & { id?: string; label?: string; lastCompatibilityReport?: any }> = settings.modelLibrary?.length ? settings.modelLibrary : [getActiveModel()];
+  const modelProfiles = models.flatMap((model, index) => {
+    const capabilities = getModelCapabilities(model);
+    const identity = model.apiHost || model.provider;
+    const id = model.id || model.refModelId || `${model.model || 'model'}-${index}`;
+    const configured = Boolean(model.apiHost?.trim() && model.model?.trim() && (!getProvider(model.provider).needsKey || model.apiKey?.trim()));
+    return [
+      ...(capabilities.includes('chat') ? [{ id: `model:chat:${id}`, kind: 'chat_model' as const, label: model.label || model.model || '聊天模型', source: model.provider, configured, resourceIdentity: identity }] : []),
+      ...(capabilities.includes('image') ? [{ id: `model:image:${id}`, kind: 'image_generation' as const, label: model.label || model.model || '图片模型', source: model.provider, configured, resourceIdentity: identity }] : []),
+    ];
+  });
+  const discoveredProfiles: ExternalCapabilityProfile[] = [
+    ...modelProfiles,
+    { id: 'builtin:web-page', kind: 'web_page', label: '指定网页读取', source: 'desktop-runtime', configured: Boolean(window.electronAPI?.knowledgeFetchUrl) },
+    { id: 'builtin:skillhub', kind: 'skillhub', label: 'SkillHub', source: 'skill-runtime', configured: Boolean(window.electronAPI?.skillsSearchMarket && window.electronAPI?.skillsInstall) },
+    ...loadConnectors().map((connector) => externalCapabilityProfileForConnector(connector, connectorMissingFields(connector).length === 0)),
+  ];
+  const fallbackLabels: Record<ExternalCapabilityKind, string> = {
+    chat_model: '聊天模型', image_generation: '图片生成', web_page: '指定网页读取', skillhub: 'SkillHub',
+    knowledge_base: '知识库', email: '邮件', github: 'GitHub', generic_http: 'HTTP', mcp: 'MCP',
+  };
+  return completeExternalCapabilityProfiles(discoveredProfiles, fallbackLabels);
+}
+
+function modelProbeState(report: any, kind: ExternalCapabilityKind): Record<string, unknown> | undefined {
+  const capability = kind === 'image_generation' ? report?.capabilities?.image_generation : report?.capabilities?.chat;
+  if (!capability || capability.state === 'not_tested') return undefined;
+  const state = String(capability.state ?? '');
+  return {
+    actualCall: true,
+    ok: state === 'supported',
+    validated: state === 'supported',
+    httpStatus: report?.probes?.find((probe: any) => probe.capability === (kind === 'image_generation' ? 'image_generation' : 'chat'))?.httpStatus,
+    protocolError: state === 'protocol_error',
+    invalidContent: state === 'invalid_content',
+    detail: capability.error || capability.nextAction || state,
+  };
+}
+
+function refreshStoredModelProbes(): void {
+  const settings = loadSettings();
+  for (const profile of configuredCapabilityProfiles().filter((item) => item.kind === 'chat_model' || item.kind === 'image_generation')) {
+    const modelId = profile.id.split(':').slice(2).join(':');
+    const model = settings.modelLibrary?.find((item) => item.id === modelId);
+    const event = modelProbeState(model?.lastCompatibilityReport, profile.kind);
+    if (event) recordExternalCapabilityProbe(profile, event);
+  }
+}
+
+function externalCapabilityItem(matrix: ExternalCapabilityMatrix): SystemDiagnosticItem {
+  const summary = summarizeExternalCapabilityMatrix(matrix);
+  const status: DiagnosticStatus = summary.blocked ? 'blocked' : summary.notTested || summary.missingConfig ? 'warning' : 'ready';
+  return {
+    id: 'external', area: 'external', title: '外部能力真实矩阵', status,
+    summary: `${summary.available}/${summary.total} 项真实可用${summary.notTested ? `，${summary.notTested} 项未测试` : ''}${summary.blocked ? `，${summary.blocked} 项失败` : ''}`,
+    detail: summary.total ? `缺配置 ${summary.missingConfig} 项；恢复复验 ${summary.recovered} 次。安装、发现或保存配置不会被计作真实可用。` : '尚未发现可验证的模型或外部服务配置。',
+    action: status === 'ready' ? '所有已登记外部能力均有真实验证证据。' : '在对应模型、知识库或 Skill 页面完成真实测试；需要副作用的能力不会在后台自动发送测试数据。',
+  };
 }
 
 async function diagnoseActiveModel(): Promise<SystemDiagnosticItem> {
   const model = getActiveModel();
+  const profile = configuredCapabilityProfiles().find((item) => item.kind === 'chat_model' && (item.id.endsWith(`:${model.refModelId}`) || item.id.includes(model.model ?? '') || item.label === model.model));
   if (!model.apiHost?.trim() || !model.model?.trim()) {
+    if (profile) recordExternalCapabilityProbe(profile, { configured: false, missingConfig: true, actualCall: false });
     return {
       id: 'model', area: 'model', title: 'AI 模型', status: 'blocked',
       summary: '还没有可用的主模型',
@@ -38,6 +107,7 @@ async function diagnoseActiveModel(): Promise<SystemDiagnosticItem> {
   }
   const provider = getProvider(model.provider);
   if (provider.needsKey && !model.apiKey?.trim()) {
+    if (profile) recordExternalCapabilityProbe(profile, { configured: false, missingConfig: true, actualCall: false });
     return {
       id: 'model', area: 'model', title: 'AI 模型', status: 'blocked',
       summary: `${model.model} 还缺 API Key`,
@@ -45,13 +115,40 @@ async function diagnoseActiveModel(): Promise<SystemDiagnosticItem> {
       action: '补充 API Key，保存后重新检查。', settingsTab: 'model',
     };
   }
+  const runtimeHealth = getModelHealthSnapshot(model)[0] as {
+    circuitState?: string;
+    requestCount?: number;
+    successRate?: number;
+    averageLatencyMs?: number;
+    averageFirstTokenMs?: number;
+    failureClasses?: Record<string, number>;
+    recovery?: { recovered?: number; failed?: number };
+  } | undefined;
+  const settings = loadSettings();
+  const alternatives = (settings.modelLibrary ?? [])
+    .filter((entry) => entry.id !== model.refModelId && entry.model && !/^gpt-image/iu.test(entry.model))
+    .map((entry) => ({ provider: entry.provider, apiHost: entry.apiHost, model: entry.model, refModelId: entry.id }));
+  const advice = getModelRecoveryAdviceForConfig(model, alternatives);
   const raw = await diagnoseModel(model, { timeoutMs: 7000 });
   const connected = /模型诊断：接口可连通/u.test(raw);
+  if (profile) recordExternalCapabilityProbe(profile, { actualCall: true, ok: connected, validated: connected, responseReceived: connected, detail: raw.slice(0, 500) });
+  const circuitOpen = runtimeHealth?.circuitState === 'open';
+  const status: DiagnosticStatus = connected ? (circuitOpen ? 'warning' : 'ready') : 'blocked';
+  const totalRequests = Number(runtimeHealth?.requestCount ?? 0);
+  const successRate = totalRequests ? `${Math.round(Number(runtimeHealth?.successRate ?? 0) * 100)}%` : '暂无运行期样本';
+  const failures = runtimeHealth?.failureClasses ?? {};
+  const runtimeDetail = totalRequests
+    ? `运行期 ${totalRequests} 次，成功率 ${successRate}，平均耗时 ${runtimeHealth?.averageLatencyMs ?? 0}ms，首 token ${runtimeHealth?.averageFirstTokenMs ?? 0}ms；503 ${failures.server ?? 0}，429 ${failures.rate_limit ?? 0}，超时 ${failures.timeout ?? 0}，网络 ${failures.network ?? 0}；恢复 ${runtimeHealth?.recovery?.recovered ?? 0} 次`
+    : '还没有运行期模型调用样本';
   return {
-    id: 'model', area: 'model', title: 'AI 模型', status: connected ? 'ready' : 'blocked',
-    summary: connected ? `${model.model} 可以连接` : `${model.model} 当前连不上`,
-    detail: raw.split('\n').filter((line) => /耗时|HTTP|建议|连接失败|连接超时|返回错误/u.test(line)).join('；') || raw.slice(0, 260),
-    action: connected ? '模型预检通过，可以执行任务。' : '检查网络、API 地址和密钥后重新检查。',
+    id: 'model', area: 'model', title: 'AI 模型', status,
+    summary: connected ? `${model.model} 可以连接${circuitOpen ? '，运行期保护窗口尚未结束' : ''}` : `${model.model} 当前连不上`,
+    detail: `${raw.split('\n').filter((line) => /耗时|HTTP|建议|连接失败|连接超时|返回错误/u.test(line)).join('；') || raw.slice(0, 260)}；${runtimeDetail}`,
+    action: connected
+      ? circuitOpen
+        ? `等待 ${Math.max(1, Math.ceil(Number(advice.retryAfterMs ?? 0) / 1000))} 秒后继续探测${Array.isArray(advice.alternatives) && advice.alternatives.length ? '，也可以到模型页面手动切换备用聊天模型' : ''}。系统不会自动换模型。`
+        : '模型预检通过，可以执行任务。'
+      : '检查网络、API 地址和密钥后重新检查。',
     settingsTab: 'model',
   };
 }
@@ -68,6 +165,20 @@ async function diagnoseConnectors(): Promise<SystemDiagnosticItem> {
   }
   const missing = enabled.flatMap((connector) => connectorMissingFields(connector).map((field) => `${connector.label}缺少${field}`));
   const results = await Promise.all(enabled.map(async (connector) => ({ connector, result: await checkConnector(connector) })));
+  for (const { connector, result } of results) {
+    const configured = connectorMissingFields(connector).length === 0;
+    const profile = externalCapabilityProfileForConnector(connector, configured);
+    recordExternalCapabilityProbe(profile, {
+      configured,
+      missingConfig: !configured,
+      actualCall: configured && connector.kind !== 'skill-bridge',
+      ok: result.status === 'connected',
+      validated: result.status === 'connected',
+      responseReceived: result.status !== 'unknown',
+      detail: result.error || result.status,
+      protocolError: /协议|json-rpc|响应字段/iu.test(result.error ?? ''),
+    });
+  }
   const connected = results.filter(({ result }) => result.status === 'connected').length;
   const uncertain = results.filter(({ result }) => result.status === 'unknown').length;
   const failed = results.filter(({ result }) => result.status === 'disconnected');
@@ -244,6 +355,8 @@ async function diagnosePermission(): Promise<SystemDiagnosticItem> {
 }
 
 export async function runSystemDiagnostics(): Promise<SystemDiagnosticReport> {
+  const profiles = configuredCapabilityProfiles();
+  syncExternalCapabilityProfiles(profiles);
   const settled = await Promise.allSettled([
     diagnoseActiveModel(), diagnoseConnectors(), diagnoseSkills(), diagnoseToolRegistry(), diagnoseTaskRuntime(), diagnoseMemoryLearning(), diagnoseWorkspace(), diagnosePermission(),
   ]);
@@ -253,10 +366,14 @@ export async function runSystemDiagnostics(): Promise<SystemDiagnosticReport> {
     id: areas[index], area: areas[index], title: names[index], status: 'blocked', summary: '检查过程出错',
     detail: result.reason instanceof Error ? result.reason.message : String(result.reason), action: '处理提示后重新检查。',
   });
+  refreshStoredModelProbes();
+  const externalMatrix = syncExternalCapabilityProfiles(profiles);
+  items.splice(3, 0, externalCapabilityItem(externalMatrix));
   return {
     checkedAt: Date.now(), items,
     ready: items.filter((item) => item.status === 'ready').length,
     warning: items.filter((item) => item.status === 'warning').length,
     blocked: items.filter((item) => item.status === 'blocked').length,
+    externalCapabilities: { summary: summarizeExternalCapabilityMatrix(externalMatrix), entries: Object.values(externalMatrix.entries) },
   };
 }

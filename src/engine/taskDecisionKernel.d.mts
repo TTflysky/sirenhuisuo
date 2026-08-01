@@ -1,6 +1,28 @@
 export type TaskDecisionMode = 'conversation' | 'answer' | 'execute';
 export type TaskTurnRelation = 'new_task' | 'continuation' | 'correction' | 'control' | 'question';
 export type TaskPrimaryRoute = 'direct_answer' | 'web_search' | 'inspect_connectors' | 'read_file' | 'list_files' | 'search_skills' | 'install_skill' | 'write_file' | 'run_command' | 'team_dispatch' | 'general_tools';
+export interface TaskDecisionAuditReason {
+  stage: 'understanding' | 'context' | 'governance' | 'plan';
+  code: string;
+  field?: string;
+  detail: string;
+}
+export interface TaskDecisionAuditLayer {
+  input: Record<string, unknown>;
+  result: Record<string, unknown>;
+  rejectedReasons: TaskDecisionAuditReason[];
+}
+export interface TaskDecisionAudit {
+  version: number;
+  generatedAt: number;
+  layers: {
+    understanding: TaskDecisionAuditLayer;
+    context: TaskDecisionAuditLayer;
+    governance: TaskDecisionAuditLayer;
+    plan: TaskDecisionAuditLayer;
+  };
+  model?: { attempted: boolean; failureClass?: string };
+}
 export interface TaskDecision {
   mode: TaskDecisionMode;
   turnRelation: TaskTurnRelation;
@@ -20,6 +42,7 @@ export interface TaskDecision {
   decisionReason: string;
   confidence: number;
   source: 'rules' | 'model';
+  decisionAudit?: TaskDecisionAudit;
 }
 export interface TaskDecisionInput {
   latestMessage?: string;
@@ -29,6 +52,7 @@ export interface TaskDecisionInput {
   availableTools?: string[];
   relevantUserContext?: string;
   relevantTaskExperience?: string;
+  attachments?: Array<{ name?: string; kind?: string; size?: number }>;
 }
 export const TASK_DECISION_TOOL_NAME: 'compile_task_decision';
 export const TASK_DECISION_TOOL: Record<string, unknown>;

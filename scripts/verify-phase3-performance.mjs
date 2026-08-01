@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { performance } from 'node:perf_hooks';
 import { createEventFanout } from '../src/engine/eventFanout.mjs';
+import { buildProjectBoard } from '../src/engine/projectBoard.mjs';
 
 const require = createRequire(import.meta.url);
 const { createExecutionObservability } = require('../electron/executionObservability.cjs');
@@ -49,6 +50,35 @@ assert.equal(observability.list().length, 40);
 assert.ok(taskDurationMs < 1500, `long task projection took ${taskDurationMs.toFixed(1)}ms`);
 assert.ok(heapDeltaMb < 64, `long task projection retained ${heapDeltaMb.toFixed(1)}MB`);
 
+const boardRuns = Array.from({ length: 40 }, (_, projectIndex) => ({
+  id: `project-${projectIndex}`,
+  title: `项目 ${projectIndex}`,
+  goal: '验证长任务项目看板增量投影',
+  status: projectIndex % 4 === 0 ? 'running' : 'completed',
+  createdAt: 1,
+  updatedAt: 500,
+  steps: Array.from({ length: 80 }, (_, stepIndex) => ({
+    id: `step-${projectIndex}-${stepIndex}`,
+    title: stepIndex % 5 === 4 ? '最终验收' : '开发实现',
+    assignment: '执行并保留证据',
+    employeeId: `employee-${stepIndex % employees.length}`,
+    kind: stepIndex % 5 === 4 ? 'review' : 'work',
+    status: projectIndex % 4 === 0 && stepIndex === 40 ? 'running' : stepIndex <= 40 ? 'completed' : 'queued',
+    startedAt: stepIndex + 1,
+    completedAt: stepIndex <= 40 ? stepIndex + 2 : undefined,
+    dependsOnStepIds: stepIndex > 0 ? [`step-${projectIndex}-${stepIndex - 1}`] : [],
+    evidence: stepIndex <= 40 ? [{ verified: true }] : [],
+    events: [],
+  })),
+}));
+const boardStartedAt = performance.now();
+let board = [];
+for (let iteration = 0; iteration < 100; iteration += 1) board = buildProjectBoard(boardRuns);
+const boardDurationMs = performance.now() - boardStartedAt;
+assert.equal(board.length, 40);
+assert.ok(boardDurationMs < 2500, `project board projection took ${boardDurationMs.toFixed(1)}ms`);
+assert.equal(board[0].currentStage.nextAction, '继续执行并记录证据');
+
 const fanout = createEventFanout();
 const received = Array(12).fill(0);
 const unsubscribe = received.map((_, index) => fanout.subscribe('store:action', () => { received[index] += 1; }));
@@ -68,6 +98,10 @@ console.log(JSON.stringify({
   taskEvents: 12000,
   taskDurationMs: Math.round(taskDurationMs),
   heapDeltaMb: Number(heapDeltaMb.toFixed(2)),
+  boardProjects: board.length,
+  boardSteps: 3200,
+  boardProjections: 100,
+  boardDurationMs: Math.round(boardDurationMs),
   windows: 12,
   fanoutEvents: 5000,
   fanoutDurationMs: Math.round(fanoutDurationMs),

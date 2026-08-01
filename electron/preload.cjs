@@ -50,6 +50,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   diagnosticsSummary: (options) => ipcRenderer.invoke('diagnostics:summary', options),
   diagnosticsExport: (options) => ipcRenderer.invoke('diagnostics:export', options),
   taskExecutionSteer: (input) => ipcRenderer.invoke('task-execution:steer', input),
+  taskExecutionDecideApproval: (input) => ipcRenderer.invoke('task-execution:decide-approval', input),
   taskExecutionSyncMembers: (input) => ipcRenderer.invoke('task-execution:sync-members', input),
   taskDelegationCreate: (input) => ipcRenderer.invoke('task-delegation:create', input),
   taskDelegationStatus: (taskId) => ipcRenderer.invoke('task-delegation:status', taskId),

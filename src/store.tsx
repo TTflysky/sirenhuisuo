@@ -1,8 +1,4 @@
-import React, {
-  useReducer,
-  useEffect,
-  type ReactNode,
-} from 'react';
+import React, { useReducer, useEffect, type ReactNode } from 'react';
 import { StoreContext } from './storeContext';
 import { initialAppState, reduceAppState, type AppStateAction } from './store/appStateReducer';
 import { persistAppStateTransition } from './store/appStatePersistence';
@@ -36,13 +32,11 @@ import { buildTaskPlan, matchProjectMembers, matchTeamMembers } from './engine/t
 import { employeePlanningPool, expertToEmployee, findExpertCatalogEntry } from './data/expertCatalog';
 import { briefExecutionContext, buildProfessionalProjectBrief } from './engine/expertOrchestration';
 import { codingProjectToTaskSteps, compileCodingProject } from './engine/codingProject.mjs';
-import { buildSkillContextWithEvidence, listSkills, matchSkills } from './data/skills';
+import { buildSkillContextWithEvidence, matchSkills } from './data/skills';
 import { attachmentWorkspaceContext, copyAttachmentsToWorkspace, initializeTaskWorkspace } from './utils/attachments';
 import { syncNativeArtifacts, syncNativeRunArtifacts } from './data/outputs';
-import { BEGINNER_RESPONSE_GUIDE } from './data/assistantPresentation';
 import { isToolResultSuccessful } from './data/assistantPresentation';
 import { getDirectExecutionControl, isConversationOnlyMessage, shouldHoldTaskForFeedback } from './engine/agentGuardrails.mjs';
-import { APP_PRODUCT_NAME } from './brand';
 import { applyExecutionSteering, executionControllerStatus, type ExecutionControllerSnapshot } from './engine/executionController.mjs';
 import { appendTaskRunnerSteps, beginTaskStep, recordTaskReviewDecision, recordTaskStepResult } from './engine/taskRunner.mjs';
 import { applyModelTaskSummary, shouldModelSummarizeTaskContext } from './engine/taskContext.mjs';
@@ -55,6 +49,11 @@ import { cleanExecutionDisplay } from './engine/executionDisplay.mjs';
 import { classifyLocalOfficeQuery, formatLocalOfficeAnswer } from './engine/officeDirectory';
 import { getRegisteredTools } from './engine/toolCatalog';
 import { ensureActiveChatSession, legacyConversationId, messageBelongsToConversation } from './data/chatSessions';
+import { projectNativeWorkingEmployees } from './store/nativeEmployeeProjection';
+import { classifyTaskInput } from './engine/taskContextRouter.mjs';
+import { createTeamSupervisorResponder } from './engine/teamSupervisor';
+import { buildReviewStageSummary, buildWorkStageSummary } from './engine/teamStageHandoff';
+import { employeeModelSummary, isTeamControlRequest, prepareProjectExecution } from './engine/teamControl';
 
 const reducer = (state: AppState, action: AppStateAction): AppState => {
   const next = reduceAppState(state, action);
@@ -78,7 +77,7 @@ export interface StoreCtx {
   addCatalogExperts: (expertIds: string[]) => Employee[];
   setProjectMembers: (projectId: string, memberIds: string[]) => ProjectMember[];
   createProjectDraft: (input: { title: string; request: string; conversationId?: string; steps?: string[]; expectedOutputs?: string[]; requiredCapabilities?: string[]; decisionReason?: string }) => void;
-  approveProject: (projectId: string) => void;
+  approveProject: (projectId: string, override?: { memberIds?: string[]; requiredCapabilities?: string[]; decisionReason?: string }) => ProjectMember[];
   startProjectExecution: (projectId: string, clarificationResponse: string) => void;
   rejectProject: (projectId: string, reason?: string) => void;
   archiveProject: (projectId: string) => void;
@@ -132,17 +131,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     const appState = client.fetchInitial();
     dispatch({ type: 'INIT', state: appState });
     const projectNativeEmployeeStatus = (runs: TaskRun[]) => {
-      const active = new Map<string, string>();
-      for (const run of runs) {
-        if (!['queued', 'running'].includes(run.status)) continue;
-        for (const step of run.steps) {
-          // Queued is not working. Showing every waiting employee as active
-          // made a single-file queue look like uncontrolled parallel work.
-          if (step.status === 'running') {
-            active.set(step.employeeId, `执行：${step.title}`);
-          }
-        }
-      }
+      const active = projectNativeWorkingEmployees(runs);
       for (const [employeeId, task] of active) {
         const current = stateRef.current.employees.find((employee) => employee.id === employeeId);
         if (!current || current.isWorking !== true || current.currentTask !== task) {
@@ -292,7 +281,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       // A newly approved team must collect the owner's direction before any
       // executor sees a task. This message is preserved in the group chat but
       // is not eligible for automatic discussion or native task dispatch.
-      if (project?.status === 'clarifying') return;
+      if (project?.status === 'clarifying') {
+        const team = stateRef.current.teams.find((item) => item.id === teamId);
+        if (team) void enqueueTeamAssistantReply(team, content, conversationId);
+        return;
+      }
       const executionContent = `${content}${attachmentWorkspaceContext(attachments ?? [])}`;
       enqueueAutoDiscussion(teamId, msg.id, executionContent, mentions, attachments, skillRefs, conversationId);
     }
@@ -593,14 +586,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const setProjectMembers = (projectId: string, memberIds: string[]): ProjectMember[] => {
     const current = stateRef.current;
     const project = current.projects.find((item) => item.id === projectId);
-    if (!project || project.status !== 'awaiting_approval') return [];
+    const rejectedDraft = project?.status === 'archived' && Boolean(project.rejectionReason);
+    if (!project || (project.status !== 'awaiting_approval' && !rejectedDraft)) return [];
     const employees = employeePlanningPool(client.fetchInitial().employees);
     const selectionRequest = [project.request, ...(project.requiredCapabilities ?? [])].filter(Boolean).join('\n所需能力：');
     const recommended = new Map(matchProjectMembers(employees, selectionRequest).map((member) => [member.employeeId, member.reason]));
     const members = [...new Set(memberIds)]
       .filter((employeeId) => employees.some((employee) => employee.id === employeeId))
       .map((employeeId) => ({ employeeId, reason: recommended.get(employeeId) ?? '按老板最新的成员调整加入' }));
-    dispatch({ type: 'UPDATE_PROJECT', id: projectId, partial: { members, rosterRevision: (project.rosterRevision ?? 1) + 1 } });
+    dispatch({ type: 'UPDATE_PROJECT', id: projectId, partial: {
+      members,
+      status: 'awaiting_approval',
+      rejectionReason: undefined,
+      rosterRevision: (project.rosterRevision ?? 1) + 1,
+    } });
     return members;
   };
 
@@ -625,12 +624,23 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'CREATE_PROJECT', project });
   };
 
-  const approveProject = (projectId: string) => {
+  const approveProject = (projectId: string, override?: { memberIds?: string[]; requiredCapabilities?: string[]; decisionReason?: string }): ProjectMember[] => {
     const project = stateRef.current.projects.find((item) => item.id === projectId);
-    if (!project || project.status !== 'awaiting_approval') return;
-    const memberIds = project.members.map((member) => member.employeeId);
-    if (!memberIds.length) return;
+    const rejectedDraft = project?.status === 'archived' && Boolean(project.rejectionReason) && Boolean(override?.memberIds?.length);
+    if (!project || (project.status !== 'awaiting_approval' && !rejectedDraft)) return [];
     const memberDirectory = new Map(stateRef.current.employees.map((employee) => [employee.id, employee]));
+    const planningEmployees = employeePlanningPool(client.fetchInitial().employees);
+    const recommended = new Map(matchProjectMembers(
+      planningEmployees,
+      [project.request, ...(override?.requiredCapabilities ?? project.requiredCapabilities ?? [])].filter(Boolean).join('\n所需能力：'),
+    ).map((member) => [member.employeeId, member.reason]));
+    const effectiveMembers = override?.memberIds?.length
+      ? [...new Set(override.memberIds)]
+        .filter((employeeId) => planningEmployees.some((employee) => employee.id === employeeId))
+        .map((employeeId) => ({ employeeId, reason: recommended.get(employeeId) ?? '按当前对话中确认的方案加入' }))
+      : project.members;
+    const memberIds = effectiveMembers.map((member) => member.employeeId);
+    if (!memberIds.length) return [];
     for (const employee of addCatalogExperts(memberIds)) memberDirectory.set(employee.id, employee);
     const team: Team = {
       id: `team-project-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -644,31 +654,29 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       tasks: [],
     };
     dispatch({ type: 'ADD_TEAM', team });
-    dispatch({ type: 'UPDATE_PROJECT', id: projectId, partial: { status: 'clarifying', teamId: team.id } });
+    dispatch({ type: 'UPDATE_PROJECT', id: projectId, partial: {
+      status: 'clarifying',
+      teamId: team.id,
+      members: effectiveMembers,
+      requiredCapabilities: override?.requiredCapabilities?.filter(Boolean) ?? project.requiredCapabilities,
+      decisionReason: override?.decisionReason?.trim() || project.decisionReason,
+      rejectionReason: undefined,
+    } });
     memberIds.forEach((id) => dispatch({ type: 'UPDATE_EMPLOYEE', id, partial: { currentTeamId: team.id } }));
+    return effectiveMembers;
   };
 
   const startProjectExecution = (projectId: string, clarificationResponse: string) => {
-    const project = stateRef.current.projects.find((item) => item.id === projectId);
-    if (!project || project.status !== 'clarifying' || !project.teamId || !clarificationResponse.trim()) return;
-    const team = stateRef.current.teams.find((item) => item.id === project.teamId);
-    if (!team) return;
-    const memberIds = project.members.map((member) => member.employeeId).filter((id) => team.memberIds.includes(id));
-    if (!memberIds.length) return;
-    const effectiveRequest = `${project.request}\n\n老板确认的方向与风格：\n${clarificationResponse.trim()}`;
-    const brief = buildProfessionalProjectBrief({ request: effectiveRequest, members: project.members });
-    dispatch({ type: 'UPDATE_PROJECT', id: project.id, partial: {
-      status: 'running',
-      clarificationResponse: clarificationResponse.trim(),
-      brief,
-    } });
-    dispatch({ type: 'APPEND_CHAT', teamId: team.id, msgs: [{
+    const prepared = prepareProjectExecution(stateRef.current, projectId, clarificationResponse);
+    if (!prepared) return;
+    dispatch({ type: 'UPDATE_PROJECT', id: prepared.project.id, partial: { status: 'running', clarificationResponse: prepared.clarificationResponse, brief: prepared.brief } });
+    dispatch({ type: 'APPEND_CHAT', teamId: prepared.team.id, msgs: [{
       id: `msg-project-start-${Date.now()}`,
       authorId: 'assistant', roleId: 'custom',
       content: '方向已确认，团队现在开始执行。会按“需求/架构 -> 设计/数据 -> 实现 -> 审查”的依赖顺序推进；没有轮到的成员会显示为等待前置步骤，不会假装同时开工。',
-      mentions: memberIds, timestamp: Date.now(), kind: 'text',
+      mentions: prepared.memberIds, timestamp: Date.now(), kind: 'text',
     }] });
-    setTimeout(() => { void startTaskRun(team.id, effectiveRequest, memberIds, undefined, undefined, [], undefined, undefined, brief); }, 0);
+    setTimeout(() => { void startTaskRun(prepared.team.id, prepared.effectiveRequest, prepared.memberIds, undefined, undefined, [], undefined, undefined, prepared.brief); }, 0);
   };
 
   const archiveProject = (projectId: string) => {
@@ -771,6 +779,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const stateRef = React.useRef(state);
   stateRef.current = state;
   const supervisorBusyRef = React.useRef(new Set<string>());
+  const supervisorQueuedRef = React.useRef(new Map<string, string>());
   const pausedRunIdsRef = React.useRef(new Set<string>());
   const stoppedRunIdsRef = React.useRef(new Set<string>());
   const taskSummaryAttemptsRef = React.useRef(new Set<string>());
@@ -794,21 +803,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
     }
   }, [state.taskRuns, dispatch]);
-
-  const isTeamControlRequest = (text: string): boolean => {
-    const pause = /(?:暂停|停止|先停|停下|别做|不要继续).{0,12}(?:工作|任务|手上|当前|执行)|(?:工作|任务).{0,8}(?:暂停|停止)/u.test(text);
-    const report = /(?:汇报|报告|报一下|说一下|告诉我).{0,12}(?:模型|配置|状态)|(?:模型|配置|状态).{0,12}(?:汇报|报告|报一下|说一下)|(?:你们|大家|各位|自己).{0,8}(?:用的|使用).{0,8}(?:什么|哪个).{0,4}模型/u.test(text);
-    const rollCall = /报数|报个数|数数|在线情况/u.test(text);
-    return pause || report || rollCall;
-  };
-
-  const employeeModelSummary = (employee: Employee): string => {
-    const config = client.getEmployeeModel(employee);
-    const source = client.usesCustomEmployeeModel(employee) ? '员工独立配置' : '继承全局默认';
-    let host = config.apiHost?.trim() || '未配置';
-    try { host = new URL(host).host; } catch {}
-    return `${config.model || '未配置模型'}（${source}），服务商：${config.provider || '自定义'}，接口：${host}`;
-  };
 
   const runDiscussion = (teamId: string, opts?: DiscussionOpts): boolean => {
     if (discussingRef.current.has(teamId)) return false;
@@ -1014,7 +1008,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             : undefined;
           // Keep the chat readable: one expandable summary per completed step.
           // Full tool evidence remains in the task run and replay panels.
-          dispatch({ type: 'APPEND_CHAT', teamId, msgs: executionSummary ? [executionSummary, msg] : [msg], conversationId });
           let reportedStepId: string | undefined;
           let reportedStepStatus: 'completed' | 'failed' | undefined;
           updateRun((run) => {
@@ -1080,6 +1073,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               stepId: reportedStepId,
               summary: content.slice(0, 500),
             });
+          }
+          if (reportedStepId && reportedStepStatus && liveRun) {
+            const completedStep = liveRun.steps.find((item) => item.id === reportedStepId);
+            if (completedStep) {
+              const summary = buildWorkStageSummary({ run: liveRun, step: completedStep, owner: emp, content, status: reportedStepStatus, employees: stateRef.current.employees });
+              updateRun((run) => {
+                run.stageSummaries = [...(run.stageSummaries ?? []).filter((item) => item.stepId !== completedStep.id), summary].slice(-80);
+              });
+              dispatch({
+                type: 'APPEND_CHAT', teamId, conversationId,
+                msgs: [{
+                  id: `msg-${summary.id}`,
+                  authorId: 'assistant', authorName: '章北海助理', roleId: 'custom',
+                  content: `${emp.name}已完成阶段“${completedStep.title}”。${summary.nextAction}`,
+                  mentions: summary.nextOwnerId ? [summary.nextOwnerId] : [], timestamp: summary.createdAt,
+                  kind: 'stage_summary', stepId: completedStep.id, stageSummary: summary,
+                  discussionId: opts?.discussionId, triggeredBy: 'task', conversationId,
+                }],
+              });
+            }
+          } else if (stepSnapshot?.kind !== 'review') {
+            dispatch({ type: 'APPEND_CHAT', teamId, msgs: executionSummary ? [executionSummary, msg] : [msg], conversationId });
           }
         },
         onSteeringReply(emp, content, tokens, contextUsage, stepId) {
@@ -1193,11 +1208,19 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                   let skillId = '';
                   try { skillId = JSON.parse(toolArgs || '{}').id || JSON.parse(toolArgs || '{}').installedSkillId || ''; } catch {}
                   const skillRef = (run.skillRefs ?? []).find((ref) => ref.id === skillId);
-                  const action: SkillUsageEvidence['action'] = toolName === 'search_skills' ? 'searched' : toolName === 'read_skill' ? (verified ? 'read' : 'read-failed') : 'called';
+                  if (!skillId && toolName === 'install_skill') skillId = result.match(/(?:^|\n)ID:\s*([^\n]+)/u)?.[1]?.trim() ?? '';
+                  const action: SkillUsageEvidence['action'] = toolName === 'search_skills' ? 'searched' : toolName === 'read_skill' ? (verified ? 'read' : 'read-failed') : 'installed';
                   run.skillEvidence = [...(run.skillEvidence ?? []), {
                     ts: Date.now(), skillId: skillId || skillRef?.id, skillName: skillRef?.name,
                     action, toolName, reason: `成员 ${emp.name} 实际调用 ${toolName}`, detail: result.slice(0, 240), verified,
+                    stage: toolName === 'install_skill' ? 'installation' : toolName === 'search_skills' ? 'discovery' : 'rules', source: 'team',
                   }].slice(-60);
+                } else if (verified && run.skillRefs?.length) {
+                  for (const ref of run.skillRefs) {
+                    const invocationEvidence: SkillUsageEvidence = { ts: Date.now(), skillId: ref.id, skillName: ref.name, action: 'called', toolName, reason: `成员 ${emp.name} 已按 Skill 规则执行真实工具`, detail: result.slice(0, 240), verified: true, stage: 'invocation', source: 'team' };
+                    const outputEvidence: SkillUsageEvidence = { ts: Date.now(), skillId: ref.id, skillName: ref.name, action: 'produced', toolName, reason: '工具结果已进入任务证据', detail: evidenceSummary.slice(0, 240), verified: true, stage: 'output', source: 'team' };
+                    run.skillEvidence = [...(run.skillEvidence ?? []), invocationEvidence, outputEvidence].slice(-60);
+                  }
                 }
               }
             }
@@ -1266,6 +1289,26 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             }
             appendTaskRunContext(run, { type: approved ? 'resolved' : 'blocked', source: 'review', stepId, summary: evidence.summary, verified: approved });
           });
+          const reviewStep = liveRun?.steps.find((item) => item.id === stepId);
+          if (liveRun && reviewStep) {
+            const summary = buildReviewStageSummary({
+              run: liveRun, step: reviewStep, approved, reason, responsibleEmployeeId, responsibleStepId,
+              checkedArtifacts: review?.checkedArtifacts, employees: stateRef.current.employees,
+            });
+            updateRun((run) => {
+              run.stageSummaries = [...(run.stageSummaries ?? []).filter((item) => item.stepId !== stepId), summary].slice(-80);
+            });
+            dispatch({
+              type: 'APPEND_CHAT', teamId, conversationId,
+              msgs: [{
+                id: `msg-${summary.id}`, authorId: 'assistant', authorName: '章北海助理', roleId: 'custom',
+                content: `${summary.ownerName}已完成“${summary.stageTitle}”。${summary.nextAction}`,
+                mentions: summary.nextOwnerId ? [summary.nextOwnerId] : [], timestamp: summary.createdAt,
+                kind: 'stage_summary', stepId, stageSummary: summary,
+                discussionId: opts?.discussionId, triggeredBy: 'task', conversationId,
+              }],
+            });
+          }
           void reportAdapterCheckpoint({
             kind: 'step_completed',
             stepId,
@@ -1370,6 +1413,18 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               run.preflight = (run.preflight ?? []).map((item) => item.label === '确认最终验收'
                 ? { ...item, status: 'passed', detail: '所有任务步骤已完成并通过最终汇总' }
                 : item);
+            }
+            if (run.status === 'completed' || run.status === 'failed') {
+              const invoked = [...new Map((run.skillEvidence ?? []).filter((item) => item.action === 'called' && item.verified).map((item) => [item.skillId || item.skillName, item])).values()];
+              for (const item of invoked) {
+                const acceptanceEvidence: SkillUsageEvidence = {
+                  ts: Date.now(), skillId: item.skillId, skillName: item.skillName,
+                  action: run.status === 'completed' ? 'accepted' : 'rejected',
+                  reason: run.status === 'completed' ? '团队任务通过最终验收' : `团队任务未通过最终验收：${run.lastError ?? '仍有未决问题'}`,
+                  verified: run.status === 'completed', stage: 'acceptance', source: 'team',
+                };
+                run.skillEvidence = [...(run.skillEvidence ?? []), acceptanceEvidence].slice(-60);
+              }
             }
             if (run.recoveryContext) {
               run.recoveryContext.summary = run.status === 'completed' ? '任务已完成并保留验收证据。'
@@ -1495,81 +1550,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }, delay);
   };
 
-  const enqueueTeamAssistantReply = async (team: Team, content: string, conversationId: string): Promise<{ reply: string; messageId: string } | undefined> => {
-    const busyKey = `${team.id}:${conversationId}`;
-    if (supervisorBusyRef.current.has(busyKey)) return undefined;
-    supervisorBusyRef.current.add(busyKey);
-    const sanitizeAssistantReply = (reply: string) => {
-      return reply.replace(/^(?:收到|好的|明白)[，,。！!：:\s]*/u, '').trim() || reply.trim();
-    };
-    const appendAssistantMessage = (reply: string, tokens?: number): { reply: string; messageId: string } => {
-      const visibleReply = sanitizeAssistantReply(reply);
-      const messageId = `msg-supervisor-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-      const mentions = resolveMentionedEmployees(visibleReply, stateRef.current.employees)
-        .filter((employee) => team.memberIds.includes(employee.id))
-        .map((employee) => employee.id);
-      dispatch({
-        type: 'APPEND_CHAT',
-        teamId: team.id,
-        conversationId,
-        msgs: [{
-          id: messageId,
-          authorId: 'assistant',
-          roleId: 'custom',
-          content: visibleReply,
-          mentions,
-          timestamp: Date.now(),
-          kind: 'text',
-          tokens,
-          conversationId,
-        }],
-      });
-      return { reply: visibleReply, messageId };
-    };
-    const teamRoster = team.memberIds
-      .map((id) => stateRef.current.employees.find((employee) => employee.id === id))
-      .filter((employee): employee is Employee => !!employee)
-      .map((employee) => {
-        return `- 姓名：${employee.name}\n  身份/职责：${employee.title} / ${employee.role}\n  在线：${employee.isOnline ? '是' : '否'}\n  专长与工作偏好：${(employee.prompt ?? '未填写').slice(0, 600)}\n  人设/补充信息：${(employee.soul ?? '未填写').slice(0, 900)}\n  模型：${employeeModelSummary(employee)}`;
-      }).join('\n');
-    try {
-      const assistantModel = client.getAssistantModel();
-      const configuredPrompt = localStorage.getItem('hermes_office_assistant_system_prompt')?.trim();
-      const layeredMemoryContext = await buildLayeredMemoryContext({ query: content, teamId: team.id, limit: 16 });
-      const userContext = [client.buildUserContext(), layeredMemoryContext].filter(Boolean).join('\n\n');
-      const availableSkills = await listSkills().catch(() => []);
-      const skillRoster = availableSkills.slice(0, 80).map((skill) => `${skill.name}${skill.description ? `：${skill.description.slice(0, 80)}` : ''}`).join('\n');
-      const turns: client.ChatTurn[] = [
-        {
-          role: 'system',
-          content: `${configuredPrompt ? `## 助理配置\n${configuredPrompt}\n\n` : ''}${userContext ? `${userContext}\n` : ''}你是${APP_PRODUCT_NAME}的章北海助理，也是这个团队里的常驻主助理。\n\n## 对话职责\n- 老板没有明确 @ 某位员工时，你直接理解、回答、追问必要条件或调整执行方案；不要复述老板原话，不要自称监工或临时调度员。\n- 老板明确 @ 某位员工时，该员工拥有回复权；不要抢答或代替其工作。\n- 多人任务的分工、依赖、交付和验收由任务系统处理。你只在真实状态基础上汇报，不编造成员回复、文件、连接或后台进度。\n- 普通沟通直接回答。不要为了展示流程重复输出“收到需求”“需求复述”“已完成分工”等模板化文案。\n\n## 当前团队（唯一可调度范围）\n团队名称：${team.name}\n${teamRoster || '暂无成员'}\n\n## 可用 Skill\n${skillRoster || '暂无可用 Skill'}\n\n你可以解释、分析、协调和汇报，但不能伪造成员已完成的成果。你自己不是团队成员，不能@自己。`,
-        },
-        { role: 'system', content: BEGINNER_RESPONSE_GUIDE },
-        ...team.chatMessages.filter((message) => messageBelongsToConversation(message, conversationId, `team:${team.id}`)).slice(-12).map((message) => ({
-          role: message.roleId === 'human' ? 'user' as const : 'assistant' as const,
-          content: `${stateRef.current.employees.find((employee) => employee.id === message.authorId)?.name ?? '团队成员'}: ${message.content}`,
-        })),
-        { role: 'user', content: `老板@你说：${content}` },
-      ];
-      if (!client.resolveApiBase(assistantModel)) {
-        const reply = `⚠️ 章北海助理没有可用模型配置，无法进行真实对话或调度。请在设置中激活全局模型，或为助理选择模型后重试。`;
-        return appendAssistantMessage(reply);
-      }
-      const result = await client.chatCompletion(turns, 'assistant-team', `章北海/${team.name}`, undefined, assistantModel);
-      const reply = result.content?.trim().replace(/@Hermes(?:\s+助理)?|@章北海(?:\s+助理)?|@驴狗蛋(?:\s+助手)?/gu, '章北海助理');
-      if (!reply) return undefined;
-      const assistantResult = appendAssistantMessage(reply, result.usage.totalTokens);
-      client.extractUserInsights(`老板：${content}\n章北海回复：${reply}`, `团队主助理-${team.name}`).catch(() => {});
-      return assistantResult;
-    } catch (error) {
-      console.warn('[supervisor] reply failed:', error);
-      const reason = error instanceof Error ? error.message : String(error);
-      const reply = `⚠️ 章北海助理本次模型调用失败：${reason.slice(0, 180)}。任务没有被伪装为已执行；请检查模型连接后重试。`;
-      return appendAssistantMessage(reply);
-    } finally {
-      supervisorBusyRef.current.delete(busyKey);
-    }
-  };
+  const enqueueTeamAssistantReply = createTeamSupervisorResponder({
+    getState: () => stateRef.current,
+    dispatch,
+    busy: supervisorBusyRef.current,
+    queued: supervisorQueuedRef.current,
+    employeeModelSummary,
+  });
 
   const startNativeTaskExecution = async (run: TaskRun, extraSystemContext: string, attachments?: import('./data/hermesClient').Attachment[]) => {
     if (!window.electronAPI?.taskExecutionStart) return null;
@@ -1642,7 +1629,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [state.taskRuns, state.employees, dispatch]);
 
-  const startTaskRun = async (teamId: string, request: string, employeeIds: string[], sourceMessageId?: string, attachments?: import('./data/hermesClient').Attachment[], explicitSkillRefs: import('./types').SkillReference[] = [], taskDecision?: import('./engine/taskDecisionKernel.mjs').TaskDecision, requestedConversationId?: string, projectBrief?: Project['brief']) => {
+  const startTaskRun = async (teamId: string, request: string, employeeIds: string[], sourceMessageId?: string, attachments?: import('./data/hermesClient').Attachment[], explicitSkillRefs: import('./types').SkillReference[] = [], taskDecision?: import('./engine/taskDecisionKernel.mjs').TaskDecision, requestedConversationId?: string, projectBrief?: Project['brief'], continuationRun?: TaskRun) => {
     const current = stateRef.current;
     const team = current.teams.find((item) => item.id === teamId);
     if (!team) return;
@@ -1676,10 +1663,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         codingProject = undefined;
       }
     }
+    const inheritedAttachments = [...(continuationRun?.sourceAttachments ?? []), ...(attachments ?? [])]
+      .filter((attachment, index, items) => items.findIndex((candidate) => candidate.workspacePath === attachment.workspacePath && candidate.name === attachment.name) === index);
     const skillRefs = explicitSkillRefs.length ? explicitSkillRefs : await matchSkills(request);
     const skillBundle = await buildSkillContextWithEvidence(skillRefs);
     const skillContext = skillBundle.context;
     const run = createTaskRun(team, current.employees, request, plan, sourceMessageId, skillRefs, undefined, taskDecision, conversationId);
+    run.sourceAttachments = inheritedAttachments;
+    if (continuationRun) {
+      let root = continuationRun;
+      const seen = new Set<string>();
+      while (root.parentTaskId && !seen.has(root.id)) {
+        seen.add(root.id);
+        const parent = current.taskRuns.find((item) => item.id === root.parentTaskId);
+        if (!parent) break;
+        root = parent;
+      }
+      run.parentTaskId = root.id;
+      run.projectId = continuationRun.projectId ?? root.projectId ?? team.projectId;
+      run.workspaceId = continuationRun.workspaceId ?? root.workspaceId ?? run.workspaceId;
+      run.goal = root.goal ?? root.request;
+      appendTaskRunContext(run, {
+        type: 'steering', source: 'user', verified: true,
+        summary: `这是原项目“${root.title}”的后续调整，不创建新的项目目标。`,
+        data: { parentTaskId: root.id, continuationOf: continuationRun.id },
+      });
+    }
     if (codingProject) run.codingProject = codingProject;
     const historyMatches = searchTaskRunHistory(current.taskRuns, request, { teams: current.teams, limit: 4 });
     const historyContext = buildTaskHistoryPrompt(historyMatches);
@@ -1698,7 +1707,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         data: { taskIds: historyMatches.map((item) => item.taskId) },
       });
     }
-    run.projectId = team.projectId;
+    run.projectId = run.projectId ?? team.projectId;
     if (projectBrief) {
       appendTaskRunContext(run, {
         type: 'decision', source: 'system', verified: true,
@@ -1753,7 +1762,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
     try {
       await initializeTaskWorkspace(run.workspaceId!, { kind: 'team', label: `${team.name} / ${run.title}`, taskId: run.id });
-      await copyAttachmentsToWorkspace(`team:${team.id}`, run.workspaceId!, attachments ?? []);
+      await copyAttachmentsToWorkspace(`team:${team.id}`, run.workspaceId!, inheritedAttachments);
       run.preflight = (run.preflight ?? []).map((item) => item.label === '初始化独立工作区'
         ? { ...item, status: 'passed', detail: `已建立任务目录：${run.workspaceId}` }
         : item);
@@ -1773,7 +1782,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
     dispatch({ type: 'CREATE_TASK_RUN', run });
     const extraSystemContext = [briefExecutionContext(projectBrief), layeredMemoryContext, skillContext, historyContext, taskRunContextPrompt(run)].filter(Boolean).join('\n\n');
-    const nativeResult = await startNativeTaskExecution(run, extraSystemContext, attachments);
+    const nativeResult = await startNativeTaskExecution(run, extraSystemContext, inheritedAttachments);
     if (nativeResult) {
       if (!nativeResult.ok) {
         dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
@@ -1786,7 +1795,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       return;
     }
     enqueueDiscussion(teamId, {
-      userText: request, attachments, triggerMessageId: sourceMessageId, discussionId: run.id,
+      userText: request, attachments: inheritedAttachments, triggerMessageId: sourceMessageId, discussionId: run.id,
       conversationId,
       forcedMemberIds: run.steps.map((step) => step.employeeId), runSteps: run.steps, maxRounds: run.steps.length, runId: run.id, workspaceId: run.workspaceId,
       extraSystemContext,
@@ -2028,6 +2037,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     void (async () => {
       const directMentions = mentions.filter((id) => team.memberIds.includes(id));
       const supervisorMentioned = mentions.includes('assistant');
+      const relatedRuns = current.taskRuns.filter((run) => run.teamId === teamId && runBelongsToConversation(run));
+      const latestRelatedRun = [...relatedRuns].sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt))[0];
+      const routedFollowUp = latestRelatedRun ? classifyTaskInput(content, latestRelatedRun) : undefined;
       const directControl = getDirectExecutionControl(content);
       if (directControl) {
         const activeRuns = current.taskRuns.filter((run) => run.teamId === teamId && runBelongsToConversation(run) && (run.status === 'queued' || run.status === 'running'));
@@ -2129,6 +2141,40 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         if (route === 'task') {
           void startTaskRun(teamId, buildTeamTaskRequest(team, content, conversationId), directMentions, messageId, attachments, skillRefs, undefined, conversationId);
+          return;
+        }
+      }
+      if (directMentions.length === 0 && latestRelatedRun && routedFollowUp && routedFollowUp.action !== 'queue_separately') {
+        const isQuestionOrConversation = routedFollowUp.kind === 'question'
+          || (routedFollowUp.kind === 'constraint' && isConversationOnlyMessage(content));
+        const canSteerLiveRun = latestRelatedRun.status === 'queued' || latestRelatedRun.status === 'running';
+        if (canSteerLiveRun && (client.loadSettings().followUpMode ?? 'steer') === 'steer' && window.electronAPI?.taskExecutionSteer) {
+          const steered = await window.electronAPI.taskExecutionSteer({ taskId: latestRelatedRun.id, message: content });
+          if (steered.ok) {
+            await enqueueTeamAssistantReply(team, content, conversationId);
+            return;
+          }
+        }
+        if (isQuestionOrConversation) {
+          await enqueueTeamAssistantReply(team, content, conversationId);
+          return;
+        }
+        if (routedFollowUp.shouldMergeWithGoal) {
+          if (canSteerLiveRun) pauseTaskRun(latestRelatedRun.id);
+          await enqueueTeamAssistantReply(team, `${content}\n\n请先明确告诉老板：这条要求已合并到原项目，不会创建第二个项目；说明你准备调整哪个阶段，然后交给任务系统继续。`, conversationId);
+          const continuationMemberIds = [...new Set(
+            latestRelatedRun.steps
+              .filter((step) => step.status !== 'completed' || routedFollowUp.kind === 'correction')
+              .map((step) => step.employeeId)
+              .filter((id) => team.memberIds.includes(id)),
+          )];
+          const fallbackMemberIds = continuationMemberIds.length
+            ? continuationMemberIds
+            : latestRelatedRun.memberSnapshot.map((member) => member.id).filter((id) => team.memberIds.includes(id));
+          if (fallbackMemberIds.length) {
+            const taskRequest = buildTeamTaskRequest(team, content, conversationId);
+            void startTaskRun(teamId, taskRequest, fallbackMemberIds, messageId, attachments, skillRefs, undefined, conversationId, undefined, latestRelatedRun);
+          }
           return;
         }
       }

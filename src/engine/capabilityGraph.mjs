@@ -2,13 +2,13 @@ const CAPABILITY_GRAPH_VERSION = 3;
 
 const CAPABILITIES = Object.freeze({
   ui_ux: { label: 'UI/UX 与交互设计', patterns: [/(?:^|[^a-z])ui\s*[/+·-]?\s*ux(?:[^a-z]|$)|(?:^|[^a-z])(?:ui|ux)(?:[^a-z]|$)|交互|界面|视觉设计|用户体验|产品设计|原型设计/iu] },
-  frontend: { label: '前端实现', patterns: [/前端|网页开发|网站开发|web\s*(?:developer|frontend)|react|vue|svelte|html|css|桌面端开发/iu] },
-  backend: { label: '后端与服务', patterns: [/后端|服务端|接口开发|数据库|api\s*(?:developer|engineer)|node\.js|java|python|golang|全栈/iu] },
+  frontend: { label: '前端与移动端实现', patterns: [/前端|网页开发|网站开发|安卓|android|移动端|移动应用|手机应用|flutter|react\s*native|kotlin|swift|web\s*(?:developer|frontend)|react|vue|svelte|html|css|桌面端开发/iu] },
+  backend: { label: '后端、AI 与服务', patterns: [/后端|服务端|接口开发|数据库|人工智能|ai\s*工程|机器学习|模型接入|图像生成模型|图片生成模型|api\s*(?:developer|engineer)|node\.js|java|python|golang|全栈/iu] },
   architecture: { label: '软件与系统架构', patterns: [/软件架构|系统架构|技术架构|架构设计|系统设计|solution\s*architect|software\s*architect|system\s*architect/iu] },
   content: { label: '内容创作', patterns: [/文案|编剧|脚本|策划|写作|内容创作|故事|分镜/iu] },
   research: { label: '调研分析', patterns: [/调研|研究|数据分析|行业分析|资料分析|检索|信息搜集/iu] },
   office_document: { label: '办公文档交付', patterns: [/word|excel|powerpoint|ppt|pdf|办公文档|表格|报告排版/iu] },
-  connector: { label: '连接器与知识库', patterns: [/连接器|知识库|obsidian|ima|mcp|外部服务|api\s*接入/iu] },
+  connector: { label: '连接器、模型与知识库', patterns: [/连接器|知识库|obsidian|ima|mcp|外部服务|模型接口|图片生成|图像生成|ai\s*接口|api\s*接入/iu] },
   skill: { label: 'Skill 选择与安装', patterns: [/skill|技能库|技能安装|插件/iu] },
   coding: { label: '软件工程', patterns: [/代码|开发|编程|程序|脚本|修复|构建|测试|重构|打包/iu] },
   review: { label: '审查与验收', patterns: [/审查|审核|验收|测试|质检|校对|质量/iu] },
@@ -37,15 +37,15 @@ const CAPABILITY_ORDER = Object.freeze([
   'coordination', 'architecture', 'ui_ux', 'frontend', 'backend', 'coding', 'review',
   'research', 'content', 'office_document', 'connector', 'skill',
 ]);
-const NEW_SOFTWARE_PRODUCT_RE = /(?:做|开发|创建|制作|搭建|构建|研发|实现).{0,24}(?:一个|一款|一套|个|款|套)?\s*(?:软件|应用程序|应用|app|客户端|桌面端|平台|系统|网站|网页|小程序|管理后台|控制台)|(?:软件|应用程序|应用|app|客户端|桌面端|平台|系统|网站|网页|小程序|管理后台|控制台).{0,24}(?:开发|创建|制作|搭建|构建|研发)/iu;
-const USER_FACING_PRODUCT_RE = /客户端|桌面端|应用程序|应用|(?:^|[^a-z])app(?:[^a-z]|$)|网站|网页|小程序|管理后台|控制台|前端/iu;
-const SERVICE_PRODUCT_RE = /平台|发布|账号|用户|登录|权限|存储|同步|内容管理|支付|数据|知识库|云端|协作|服务|接口|api/iu;
+const NEW_SOFTWARE_PRODUCT_RE = /(?:做|开发|创建|制作|搭建|构建|研发|实现).{0,32}(?:一个|一款|一套|个|款|套)?\s*(?:软件|应用程序|应用|app|客户端|桌面端|安卓端|android|移动端|手机应用|图片生成器|平台|系统|网站|网页|小程序|管理后台|控制台)|(?:软件|应用程序|应用|app|客户端|桌面端|安卓端|android|移动端|手机应用|图片生成器|平台|系统|网站|网页|小程序|管理后台|控制台).{0,32}(?:开发|创建|制作|搭建|构建|研发)/iu;
+const USER_FACING_PRODUCT_RE = /客户端|桌面端|安卓|android|移动端|移动应用|手机应用|应用程序|应用|(?:^|[^a-z])app(?:[^a-z]|$)|网站|网页|小程序|管理后台|控制台|前端/iu;
+const SERVICE_PRODUCT_RE = /平台|发布|账号|用户|登录|权限|存储|同步|内容管理|支付|数据|知识库|云端|协作|服务|接口|api|模型|图片生成|图像生成|ai/iu;
 const SPECIALTY_PATTERNS = Object.freeze({
   coordination: /产品经理|项目经理|项目管理|交付经理|协调者/iu,
   architecture: /软件架构师|系统架构师|技术架构师|解决方案架构师|架构设计/iu,
   ui_ux: /ui\s*[/+·-]?\s*ux|ui\s*设计|ux\s*设计|交互设计|视觉设计|用户体验|产品设计|原型设计/iu,
-  frontend: /前端开发|前端工程|客户端开发|桌面端开发|网页开发|网站开发|web\s*(?:developer|frontend)/iu,
-  backend: /后端架构|后端开发|后端工程|服务端|api\s*(?:developer|engineer)|数据库架构/iu,
+  frontend: /前端开发|前端工程|客户端开发|桌面端开发|安卓开发|android开发|移动端开发|移动应用开发|手机应用开发|flutter|react\s*native|网页开发|网站开发|web\s*(?:developer|frontend)/iu,
+  backend: /后端架构|后端开发|后端工程|服务端|ai工程|人工智能工程|模型接入|图像生成|api\s*(?:developer|engineer)|数据库架构/iu,
   coding: /软件工程师|开发工程师|实现工程师|程序员|编码者/iu,
   review: /qa|测试工程|质量工程|质量保证|审查者|验收/iu,
 });
@@ -108,7 +108,7 @@ export function employeeCapabilityProfile(member) {
     const specialtySource = ['ui_ux', 'frontend', 'backend', 'architecture', 'review'].includes(id) ? identity : source;
     if (!capability.patterns.some((pattern) => pattern.test(specialtySource))) continue;
     if (id === 'ui_ux' && !/(?:^|[^a-z])ui\s*[/+·-]?\s*ux(?:[^a-z]|$)|(?:^|[^a-z])(?:ui|ux)(?:[^a-z]|$)|交互设计|视觉设计|用户体验|产品设计|原型设计|界面设计/iu.test(identity)) continue;
-    if (id === 'frontend' && !/前端开发|网页开发|网站开发|客户端开发|桌面端开发|react|vue|svelte|web\s*(?:developer|frontend)/iu.test(identity)) continue;
+    if (id === 'frontend' && !/前端开发|网页开发|网站开发|客户端开发|桌面端开发|安卓|android|移动端|移动应用|手机应用|flutter|react\s*native|kotlin|swift|react|vue|svelte|web\s*(?:developer|frontend)/iu.test(identity)) continue;
     if (id === 'architecture' && !/软件架构|系统架构|技术架构|解决方案架构|架构设计|系统设计|software\s*architect|system\s*architect/iu.test(identity)) continue;
     if (id === 'review' && !/qa|测试工程|测试员|质量工程|质量保证|审查者|代码审查|验收/iu.test(identity)) continue;
     inferred.push(id);

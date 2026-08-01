@@ -7,9 +7,9 @@ const root = {
   id: 'project-root', teamId: 'team-a', title: '做一个智能体工作室客户端 demo',
   goal: '做一个智能体工作室客户端 demo', status: 'running', createdAt: 10, updatedAt: 30,
   steps: [
-    { id: 'design', title: 'UI/UX 设计', assignment: '完成交互方案与页面信息架构', employeeId: 'ux', status: 'completed', output: { summary: '已提交交互方案。' } },
-    { id: 'build', title: 'HTML 实现', assignment: '实现客户端 HTML 页面', employeeId: 'web', status: 'running', events: [{ detail: '正在实现主界面。' }] },
-    { id: 'review', title: '最终验收', assignment: '检查真实产出', employeeId: 'check', kind: 'review', status: 'queued' },
+    { id: 'design', title: 'UI/UX 设计', assignment: '完成交互方案与页面信息架构', employeeId: 'ux', status: 'completed', startedAt: 10, completedAt: 20, evidence: [{ verified: true }], output: { summary: '已提交交互方案。' } },
+    { id: 'build', title: 'HTML 实现', assignment: '实现客户端 HTML 页面', employeeId: 'web', status: 'running', startedAt: 25, evidence: [{ verified: true }, { verified: false }], events: [{ ts: 30, detail: '正在实现主界面。' }] },
+    { id: 'review', title: '最终验收', assignment: '检查真实产出', employeeId: 'check', kind: 'review', status: 'queued', dependsOnStepIds: ['build'] },
   ],
 };
 const child = {
@@ -27,6 +27,11 @@ assert.equal(projects[0].currentStage.id, 'build');
 assert.equal(projects[0].actionRun.id, 'project-child');
 assert.equal(projects[0].latestResult, '缺少数据中心访问令牌');
 assert.equal(projects[0].stages.find((stage) => stage.id === 'integration').entries.length, 1);
+assert.equal(projects[0].currentStage.verifiedEvidence, 1);
+assert.equal(projects[0].currentStage.evidenceTotal, 2);
+assert.equal(projects[0].currentStage.nextAction, '正在实现主界面。');
+assert.match(projects[0].stages.find((stage) => stage.id === 'review').waitingCondition, /HTML 实现/u);
+assert.ok(projects[0].elapsedMs > 0);
 assert.equal(projectBoardSections(projects).current.length, 1);
 
 const projectRecord = {

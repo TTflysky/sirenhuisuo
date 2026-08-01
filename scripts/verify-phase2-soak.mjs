@@ -49,6 +49,13 @@ const initialTargets = await targets();
 const mainTarget = initialTargets.find((target) => !target.url.includes('#chat') && !target.url.includes('#tool') && !target.url.includes('#settings'));
 assert(mainTarget, 'Electron main window was not found');
 const main = await connect(mainTarget);
+const bridgeStartedAt = Date.now();
+while (Date.now() - bridgeStartedAt < 30_000) {
+  const ready = await main.evaluate("Boolean(window.electronAPI?.openChat && window.electronAPI?.openTool && window.electronAPI?.openSettings)");
+  if (ready) break;
+  await sleep(200);
+}
+assert.equal(await main.evaluate("Boolean(window.electronAPI?.openChat && window.electronAPI?.openTool && window.electronAPI?.openSettings)"), true, 'Electron preload bridge did not become ready');
 const windows = [
   { kind: 'chat', type: 'assistant-chat' },
   ...['emp-pm', 'emp-planner', 'emp-coder', 'emp-checker'].map((refId) => ({ kind: 'chat', type: 'dm-chat', refId })),
@@ -61,11 +68,13 @@ const windows = [
 ];
 const opened = [];
 for (const item of windows) {
+  console.log('[phase2-soak] opening', `${item.kind}:${item.type || 'settings'}:${item.refId || ''}`);
   let result;
   if (item.kind === 'chat') result = await main.evaluate(`window.electronAPI.openChat(${JSON.stringify({ type: item.type, refId: item.refId || '' })})`);
   else if (item.kind === 'settings') result = await main.evaluate('window.electronAPI.openSettings()');
   else result = await main.evaluate(`window.electronAPI.openTool(${JSON.stringify({ type: item.type, refId: item.refId || '' })})`);
   assert.equal(result?.ok, true, `${item.kind}:${item.type || 'settings'}:${item.refId || ''} failed: ${result?.error || 'unknown error'}`);
+  console.log('[phase2-soak] opened', `${item.kind}:${item.type || 'settings'}:${item.refId || ''}`, result);
   opened.push({ ...item, reused: result.reused === true });
 }
 const openedTargets = await waitForTargets(10);

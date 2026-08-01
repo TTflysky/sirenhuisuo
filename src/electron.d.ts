@@ -466,6 +466,7 @@ declare global {
     taskExecutionStatus: (taskId?: string) => Promise<NativeExecutionResult>;
     taskExecutionEvents: (input: { taskId: string; afterSequence?: number }) => Promise<{ ok: boolean; events: NativeExecutionEvent[] }>;
     taskExecutionObservability: (taskId?: string) => Promise<{ ok: boolean; task?: Record<string, unknown>; tasks?: Array<Record<string, unknown>>; queue?: NativeExecutionResult['queue'] }>;
+    taskExecutionDecideApproval: (input: { taskId: string; approvalId: string; decision: 'approved' | 'rejected'; note?: string }) => Promise<NativeExecutionResult & { approval?: import('./types').TaskApprovalContract }>;
     diagnosticsRecord: (input: Partial<OperationDiagnosticEntry> & { message: string }) => Promise<{ ok: boolean; error?: string }>;
     diagnosticsQuery: (options?: { taskId?: string; teamId?: string; failureClass?: string; level?: OperationDiagnosticEntry['level']; limit?: number }) => Promise<{ ok: boolean; entries: OperationDiagnosticEntry[]; total: number; filePath?: string }>;
     diagnosticsSummary: (options?: { taskId?: string; teamId?: string }) => Promise<{ ok: boolean; total: number; errors: number; recoverable: number; byFailureClass: Record<string, number>; latest: OperationDiagnosticEntry[] }>;

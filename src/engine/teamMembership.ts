@@ -153,6 +153,13 @@ export function resolveTargetProject(text: string, projects: Project[], conversa
     ?? candidates[0];
 }
 
+export function resolveLatestRejectedProject(projects: Project[], conversationId?: string): Project | undefined {
+  return projects
+    .filter((project) => project.status === 'archived' && Boolean(project.rejectionReason))
+    .filter((project) => !conversationId || !project.conversationId || project.conversationId === conversationId)
+    .sort((left, right) => right.updatedAt - left.updatedAt)[0];
+}
+
 export function resolveTargetTeam(text: string, teams: Team[], recentMessages: string[] = [], preferredTeamIds: string[] = []): Team | undefined {
   const activeTeams = teams.filter((team) => !team.archived);
   const normalized = text.replace(/\s+/g, '');

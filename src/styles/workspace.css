@@ -1522,6 +1522,104 @@
 .project-approval-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 15px; }
 @media (max-width: 680px) { .project-approval-card { margin-left: 0; } }
 
+.stage-summary-card,
+.execution-approval-card {
+  width: min(760px, 100%);
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  overflow: hidden;
+}
+.stage-summary-head,
+.execution-approval-card > header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border-light);
+  background: color-mix(in srgb, #16a34a 8%, var(--surface));
+}
+.execution-approval-card > header { background: color-mix(in srgb, #d97706 10%, var(--surface)); }
+.stage-summary-card.status-blocked .stage-summary-head { background: color-mix(in srgb, #d97706 10%, var(--surface)); }
+.stage-summary-card.status-failed .stage-summary-head { background: color-mix(in srgb, #dc2626 9%, var(--surface)); }
+.stage-summary-icon,
+.execution-approval-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  place-items: center;
+  border-radius: 50%;
+  background: #16a34a;
+  color: #fff;
+}
+.execution-approval-icon { background: #d97706; }
+.stage-summary-card.status-blocked .stage-summary-icon { background: #d97706; }
+.stage-summary-card.status-failed .stage-summary-icon { background: #dc2626; }
+.stage-summary-head small,
+.execution-approval-card header small { display: block; color: var(--text-muted); font-size: 10px; }
+.stage-summary-head h3,
+.execution-approval-card header h3 { margin: 2px 0 0; font-size: 14px; line-height: 1.35; letter-spacing: 0; }
+.stage-summary-owner,
+.execution-approval-owner { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; color: var(--text-secondary); font-size: 11px; }
+.stage-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0;
+  border-bottom: 1px solid var(--border-light);
+}
+.stage-summary-grid > div { min-width: 0; padding: 12px 16px; border-right: 1px solid var(--border-light); border-bottom: 1px solid var(--border-light); }
+.stage-summary-grid > div:nth-child(2n) { border-right: 0; }
+.stage-summary-grid > div:nth-last-child(-n+2) { border-bottom: 0; }
+.stage-summary-grid strong,
+.stage-summary-evidence strong,
+.stage-summary-next strong,
+.execution-approval-card strong { display: block; margin-bottom: 5px; color: var(--text); font-size: 11px; }
+.stage-summary-grid p,
+.stage-summary-next p,
+.execution-approval-card p { margin: 0; color: var(--text-secondary); font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; }
+.stage-summary-evidence { display: flex; flex-wrap: wrap; gap: 6px; padding: 11px 16px; border-bottom: 1px solid var(--border-light); }
+.stage-summary-evidence strong { width: 100%; }
+.stage-summary-evidence span { padding: 3px 7px; border-radius: 4px; background: color-mix(in srgb, #16a34a 9%, var(--surface)); color: var(--text-secondary); font-size: 10px; overflow-wrap: anywhere; }
+.stage-summary-next { display: flex; align-items: flex-start; gap: 9px; padding: 12px 16px; background: color-mix(in srgb, #2563eb 7%, var(--surface)); }
+.stage-summary-next > span { margin-top: 3px; color: #2563eb; }
+.stage-summary-toggle { display: flex; width: 100%; align-items: center; justify-content: center; gap: 7px; padding: 9px 12px; border: 0; border-top: 1px solid var(--border-light); background: var(--bg-deep); color: var(--text-secondary); cursor: pointer; font-size: 11px; }
+.stage-summary-operations { padding: 8px 14px 12px; border-top: 1px solid var(--border-light); background: var(--bg-deep); }
+.stage-summary-operations > div { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 9px; padding: 7px 0; border-bottom: 1px solid color-mix(in srgb, var(--border-light) 70%, transparent); font-size: 10px; }
+.stage-summary-operations > div:last-child { border-bottom: 0; }
+.stage-summary-operations time { color: var(--text-muted); }
+.stage-summary-operations span { color: var(--text-secondary); white-space: pre-wrap; overflow-wrap: anywhere; }
+.stage-summary-operations .is-failed span { color: #dc2626; }
+
+.execution-approval-purpose,
+.execution-approval-action,
+.execution-approval-risks,
+.execution-approval-effects { padding: 11px 16px; border-bottom: 1px solid var(--border-light); }
+.execution-approval-scope { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-bottom: 1px solid var(--border-light); }
+.execution-approval-resources { min-width: 0; padding: 11px 16px; border-right: 1px solid var(--border-light); }
+.execution-approval-resources:last-child { border-right: 0; }
+.execution-approval-resources span,
+.execution-approval-risks span { display: block; margin-top: 4px; color: var(--text-secondary); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.execution-approval-risks { background: color-mix(in srgb, #dc2626 5%, var(--surface)); }
+.execution-approval-effects { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.execution-approval-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; }
+.execution-approval-decided { padding: 10px 16px; color: var(--text-secondary); text-align: right; font-size: 11px; }
+
+@media (max-width: 720px) {
+  .stage-summary-grid,
+  .execution-approval-scope,
+  .execution-approval-effects { grid-template-columns: 1fr; }
+  .stage-summary-grid > div,
+  .stage-summary-grid > div:nth-child(2n),
+  .stage-summary-grid > div:nth-last-child(-n+2),
+  .execution-approval-resources { border-right: 0; border-bottom: 1px solid var(--border-light); }
+  .stage-summary-grid > div:last-child,
+  .execution-approval-resources:last-child { border-bottom: 0; }
+  .stage-summary-owner,
+  .execution-approval-owner { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+
 /* v2.0.1: explicit chat-session boundaries and truthful team activity. */
 .chat-new-session-btn { display: inline-flex; min-width: 94px; align-items: center; justify-content: center; gap: 5px; white-space: nowrap; }
 .chat-new-session-btn > span:last-child { overflow: hidden; text-overflow: ellipsis; }

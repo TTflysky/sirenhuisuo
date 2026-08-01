@@ -1,9 +1,67 @@
 # 项目交接手册
 
 > 最后整理：2026-08-01
-> 当前源码版本：`v2.9.5`（第三阶段可用性修复版本）
+> 当前源码版本：`v3.3.0`（团队主持、阶段交接、清晰授权与插话控制）
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+
+## v3.3.0 团队主持与阶段交接
+
+- `electron/nativeCollaborationProtocol.cjs` 生成原生执行路径的 `TaskStageSummary` 与 `TaskApprovalContract`；`src/engine/teamStageHandoff.ts` 提供渲染备用路径的同构协议。两条路径必须保留相同字段，禁止 UI 解析模型长文本重建阶段事实。
+- `src/engine/teamSupervisor.ts` 生成章北海主持上下文，包含当前项目、任务状态、活动阶段、负责人、等待条件和完成证据。未点名员工时由章北海优先响应；明确点名时尊重被点名员工。
+- `src/engine/teamControl.ts` 负责授权决定和被拒绝动作保护。批准、拒绝或消费授权后必须按 ID 更新原聊天消息，避免旧按钮继续可点。
+- `StageSummaryCard.tsx` 先展示问题、理由、完成项、证据、剩余项、下一负责人、下一动作和耗时；`operations` 只在下方折叠区域展示。`ExecutionApprovalCard.tsx` 展示申请人、目的、动作、读写范围、风险与决定效果。
+- 同项目继续任务继承 `projectRootTaskId`、工作区、`sourceAttachments` 和完成证据。澄清阶段允许章北海回答，但不得启动员工执行器；审查失败只重开责任步骤和复审链。
+- `src/utils/clipboard.ts` 导出阶段总结、授权决定、附件和执行过程。导出身份统一为“章北海助理 / 常驻主助理”，不得恢复为 `custom` 或临时调度员。
+- 内置人格为 v22；总设置和独立助理设置均使用 `PERSONA_MIGRATION_APPENDIX_V22`，旧自定义人格只追加缺失的 v3.3 协议。自评为工程能力 89/100、真实生产可用性 81/100，详见 `SELF_EVALUATION_v3.3.0.md` 与 `TAIJI_STAGE_D_V3.3_GAP_MATRIX.md`。
+- Lint、TypeScript、标准测试 `68/68`、400 条语义基准 `400/400`、完整 v2 核心门禁、阶段三治理、生产构建和 Windows 包内验收已经通过。安装包 `taiji-office-setup-3.3.0.exe` 为 `195851435` 字节，SHA-256 `8C963B1051A5151A433DE81BEF41973E89A51B9E8D62CBF82EFB83037A7CB601`；Blockmap 为 `207381` 字节，SHA-256 `B5C0D5A38E1821D05812E81E4A2841B8A6919E2D185E58BD84BA9C6EB0A1FCD5`；`latest.yml` 为 `353` 字节，SHA-256 `A7C0873ED006F6F1BBA8ACD7535733362853742052B1BD59C918873A9DDBCA30`。
+- 发布脚本还必须核对 GitHub `main`、标签与三个远端资产哈希。真实多人项目体验不得由自动测试冒充。
+
+## v3.2.1 上下文连续性补丁交接
+
+- `src/engine/conversationReferences.mjs` 只绑定 Skill、文件和网页，并且只在读取、安装、继续资源动作或索要链接时介入；不得重新把普通助理回答注册成资源。
+- `src/engine/conversationDispatchContext.mjs` 负责恢复调度连续性。它从最近 24 条对话中区分原始产品目标、用户纠正和助理最近方案，并把能力需求交给能力图，禁止在 UI 中重新用关键词拼名单。
+- 助理调度上下文与正式模型上下文已扩展，员工私聊保持最近 40 条对话；任务决策内核保留最近 20 条结构化历史，每条最多 1200 字。
+- 被驳回草案通过 `resolveLatestRejectedProject()` 找回；只有用户明确引用修订方案并提供重新匹配成员时，`approveProject()` 才允许从归档状态原子恢复、建群并清除驳回原因。
+- `src/utils/clipboard.ts` 是聊天导出的统一附件边界。助理、员工私聊和团队必须传递消息附件；图片引用落盘路径，文本只输出有限预览，禁止写入完整 Base64。
+- 回归结果：标准测试 `65/65`、任务语义基准 `400/400`、V2 核心门禁、生产构建和 Lint 通过。当前只生成本地安装包，不上传 GitHub。
+- 本地安装包 `release/taiji-office-setup-3.2.1.exe` 为 `195847308` 字节，SHA-256 `2C871138D5D92017D5193683029035890C7A63D40D0A71CE4DEC2C0C6E4CE507`；Blockmap 为 `205534` 字节，SHA-256 `BE173BF0EFB7F654F3CBDCF4610D6E8311350C37CA6CB723ABA7A7635BF01E74`；`latest.yml` 为 `353` 字节，版本 `3.2.1`，SHA-256 `90D033D14B89A310DC42DE388F04A3BD6FAF0FCD47A43F310C490577398901D6`。
+
+## v3.2.0 阶段 C 交接
+
+- `src/engine/projectBoard.mjs` 是项目看板唯一投影边界。它把根任务、子任务、恢复和重试聚合为一个项目，并生成阶段/步骤负责人、耗时、证据、等待条件、下一步和责任返工；UI 不应重新扫描依赖图猜状态。
+- `src/data/appStateStorage.ts` 承担员工、团队、项目、聊天和私聊的 localStorage 持久化；旧键名保持不变。`hermesClient.ts` 只负责初始编排并重新导出兼容 API。
+- `electron/nativeExecutionProjection.cjs` 负责原生任务的脱敏公开状态；`src/store/nativeEmployeeProjection.ts` 负责从持久 Worker 步骤投影员工工作状态。两者均受 `verify:module-boundaries` 保护。
+- `vite.config.ts` 固定专家目录、React 和 Ant Design 分包。`verify:renderer-bundles` 要求主渲染包小于 1.5 MB、专家目录块小于 4.1 MB；当前主包约 0.81 MB，比 v3.1 单包下降 84.1%。
+- `scripts/verify-phase-c.mjs` 是阶段 C 短门禁，包含项目看板、人格、模块边界、规模性能、Electron 12 窗口短驻留、构建与分包检查。Electron 测试必须在真实桌面权限运行；受限沙盒曾触发 GPU/DLL 假失败。
+- 真实桌面软件渲染短驻留已打开 12 窗口，6 次采样堆增长 0.15 MB。12 窗口总渲染堆约 645 MB，稳定但仍偏重；正式 8 小时命令为 `npm.cmd run verify:phase2-soak:8h`，尚未执行。
+- 内置章北海人格为 v21，所有入口必须传 `PERSONA_MIGRATION_APPENDIX_V21`。旧自定义人格只追加缺失章节；不能先用旧基础附录把版本标记为最新。
+- `verify:v2-core-gate`、`verify:phase3`、`verify:phase-c`、Lint 和包内验收均通过。Windows 安装包 `release/taiji-office-setup-3.2.0.exe` 为 `195846389` 字节，SHA-256 `32266E279020CB74F6284D7A8F37853C56D3B3CFA95EDB88A06E17F0BE0A4BE0`；Blockmap 为 `206117` 字节，SHA-256 `8129C43B6631521D913917BDDEE2A9A7946048F1E2216A4E363E94D03DEE5E5B`；`latest.yml` 为 `353` 字节，SHA-256 `EF155F850513B6259E10AC6BF0DD482AE8FB1EDB43822E7BC1C83B0ED368F9CF`。
+- 当前不上传 Git，也不覆盖本机安装。等后续大版本统一提交和发布。下一阶段 D 做真实旧版升级、迁移、故障注入、回滚、签名与发布资产一致性。
+
+## v3.1.0 阶段 B 交接
+
+- `src/engine/externalCapabilityMatrix.mjs` 是外部能力状态合同，固定九类能力和八种状态。`completeExternalCapabilityProfiles()` 保证未配置类别也可见；`applyExternalCapabilityProbe()` 只接受真实调用证据更新可用性，非真实事件不能覆盖已有失败。
+- `src/data/externalCapabilityMatrix.ts` 负责浏览器本地持久化与连接器分类，只保存脱敏身份、有限错误摘要和状态历史，不保存密钥或完整响应。模型库、连接器和 `safeStorage` 仍是配置与凭据唯一事实源。
+- `runSystemDiagnostics()` 汇总模型、图片、网页、SkillHub、知识库、邮件、GitHub、HTTP 与 MCP。正常桌面和 780px 窄窗口均已实测；窄窗口会把模型选择和执行按钮分行，矩阵改为单列。
+- 模型和图片使用既有兼容性报告回写；连接器最小测试、`read_web_page`、SkillHub 搜索/安装以及真实连接器调用在各自副作用边界回写。邮件发送和 GitHub 写入不会为了诊断自动产生副作用。
+- `src/engine/skillEvidence.mjs` 协议为 v3，五段证据为发现、规则读取、调用、产出、验收。`install_skill` 只记录安装；助手、员工私聊和团队任务均使用 `MessageSkillEvidence` 展示真实阶段。
+- 内置章北海人格为 v20。两个设置入口使用同一默认人格；旧自定义人格通过 `PERSONA_MIGRATION_APPENDIX_V20` 追加阶段 A/B 缺失章节，不覆盖原文。
+- 统一入口为 `npm.cmd run verify:phase-b`。当前标准测试 `57/57`、400 条语义基准 `400/400`，阶段 A、阶段 B、v2 核心、模块边界和阶段三发布治理门禁均通过。
+- 阶段 A 安装包 `release/taiji-office-setup-3.0.0.exe` 已通过包内验收，大小 `195838133` 字节，SHA-256 `B3C28F108555438D1F2CD2BA56DEEC4B0D6156294B5A4BF8B2B359E1C6A9DCF4`。当前 `v3.1.0` 尚未打包、覆盖安装或发布。
+- 尚未完成并不得冒充：用户真实第三方账号九类矩阵、会产生副作用的邮件/GitHub 写入验收、正式 8 小时驻留、代码签名、真实跨版本故障回滚和 GitHub 远端资产校验。下一步先用用户配置完成阶段 B 实测，再进入阶段 C。
+
+## v3.0.0 阶段 A 交接
+
+- `src/engine/taskDecisionPipeline.mjs` 是四层决策审计边界。它消费任务决策内核结果，记录候选理解、上下文约束、风险/证据和可执行计划的有限输入、接受结果与拒绝原因；禁止在这里保存或展示隐藏思维过程。
+- `compileTaskDecision()` 把审计附在 `TaskDecision.decisionAudit` 上。团队任务通过 `createTaskContract()` 将其保存为 `contract.decision.audit`，因此恢复、交接和回放不需要重新猜测当时为什么改写路线。
+- `test/fixtures/taskSemanticCases.mjs` 固定为 400 条轨迹，`verify:task-semantics-benchmark` 要求至少 400 条且准确率不低于 98%。当前 `400/400`；增加案例应优先新增反例类别，不得只复制易过句式。
+- `src/engine/modelReliability.mjs` 是无副作用的熔断、半开探测、退避、故障分类和指标汇总模块；`src/data/modelReliability.ts` 负责 `taiji_model_reliability_v1` 持久化和请求生命周期包装。模型 key 不包含 API Key，错误摘要会脱敏。
+- `src/engine/chatRequestContext.mjs` 负责把当前用户上下文、员工扩展上下文和本轮图片附件整理为模型请求；不要把这段逻辑重新塞回 `hermesClient.ts`。当前核心客户端为 2294 行，仍受 2300 行边界保护。
+- `chatCompletion()` 在请求前检查模型准入，在流式首 token、成功和失败时记账。三个连续瞬时故障会打开保护窗口；冷却后只允许一次探测。备用模型只给建议，不自动切换。
+- 诊断中心的“AI 模型”项会显示请求数、成功率、平均耗时、首 token、503/429/超时/网络分布和恢复次数。一次兼容性探测通过不能代表流式、工具调用或生图都可用。
+- 自动化故障注入已覆盖 503、429、超时和网络中断；统一入口为 `npm.cmd run verify:phase-a`。标准测试 `49/49`，v2 核心门禁和阶段三工程门禁通过；人格版本为 v19。
+- 尚未完成并不得冒充：真实供应商长时间故障恢复、正式 8 小时驻留、第三方真实账号矩阵、真实跨版本回滚和 GitHub Release 下载后哈希核对。阶段 B 从真实外部能力矩阵继续。
 
 ## v2.9.5 可用性修复与发布交接
 

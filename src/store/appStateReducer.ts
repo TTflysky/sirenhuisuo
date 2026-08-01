@@ -65,10 +65,11 @@ function mergeTaskExecutionMessages(state: AppState, runs: TaskRun[]): AppState 
   const teams = state.teams.map((team) => {
     const incoming = byTeam.get(team.id);
     if (!incoming?.length) return team;
-    const seen = new Set(team.chatMessages.map((message) => message.id));
-    const appended = incoming.filter((message) => !seen.has(message.id));
-    if (!appended.length) return team;
-    return { ...team, chatMessages: [...team.chatMessages, ...appended].sort((a, b) => a.timestamp - b.timestamp).slice(-1200) };
+    const incomingById = new Map(incoming.map((message) => [message.id, message]));
+    const existingIds = new Set(team.chatMessages.map((message) => message.id));
+    const refreshed = team.chatMessages.map((message) => incomingById.get(message.id) ?? message);
+    const appended = incoming.filter((message) => !existingIds.has(message.id));
+    return { ...team, chatMessages: [...refreshed, ...appended].sort((a, b) => a.timestamp - b.timestamp).slice(-1200) };
   });
   return { ...state, teams, taskRuns: runs };
 }

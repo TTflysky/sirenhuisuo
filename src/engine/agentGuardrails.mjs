@@ -98,9 +98,11 @@ export function isExplicitResumeSteering(messages) {
 
 export function getDirectExecutionControl(message) {
   const text = String(message ?? '').trim();
-  if (/^(?:请|先)?(?:停止|停下|取消)(?:(?:这个|当前)?(?:任务|执行|操作|工作|处理))?(?:吧|一下|了)?[。！!\s]*$/u.test(text)
+  if (/^(?:请|先)?(?:停止|停下|取消)(?:(?:这个|当前)?(?:任务|执行|操作|工作|处理))?(?:吧|一下|了)?(?:[，,：:].*)?[。！!\s]*$/u.test(text)
+      || /^(?:请|先)?(?:停止|停下|取消)[^。！？!?]{0,80}[。！？!?\s]*$/u.test(text)
       || /^(?:别做了|不用做了|不要继续|无需继续|先到这里)[。！!\s]*$/u.test(text)) return 'stop';
-  if (/^(?:请|先)?(?:暂停|先停一下|先等一下|等我一下)(?:(?:这个|当前)?(?:任务|执行|操作|工作|处理))?(?:吧|了)?[。！!\s]*$/u.test(text)) return 'pause';
+  if (/^(?:请|先)?(?:暂停|先停一下|先等一下|等我一下)(?:(?:这个|当前)?(?:任务|执行|操作|工作|处理))?(?:吧|了)?(?:[，,：:].*)?[。！!\s]*$/u.test(text)
+      || /^(?:请|先)?暂停[^。！？!?]{0,80}[。！？!?\s]*$/u.test(text)) return 'pause';
   if (isExplicitResumeSteering([text])) return 'resume';
   return null;
 }

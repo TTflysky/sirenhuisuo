@@ -5,10 +5,11 @@ import { buildProjectBoard } from '../src/engine/projectBoard.mjs';
 const root = new URL('..', import.meta.url);
 const read = (relativePath) => fs.readFile(new URL(relativePath, root), 'utf8');
 
-const [matcher, adapter, store, clipboard, assistant, dm, team] = await Promise.all([
+const [matcher, adapter, store, employeeProjection, clipboard, assistant, dm, team] = await Promise.all([
   read('src/engine/taskMatcher.ts'),
   read('electron/nativeExecutionAdapter.cjs'),
   read('src/store.tsx'),
+  read('src/store/nativeEmployeeProjection.ts'),
   read('src/utils/clipboard.ts'),
   read('src/components/chat/AssistantChat.tsx'),
   read('src/components/chat/DmChatApp.tsx'),
@@ -22,11 +23,12 @@ assert.match(adapter, /review_waiting_user/u);
 assert.match(adapter, /waitingForUser/u);
 assert.match(adapter, /前置审查退回，等待修订和复审通过/u);
 
-assert.match(store, /Queued is not working/u);
+assert.match(store, /projectNativeWorkingEmployees/u);
 assert.match(store, /scheduleNativeRefresh/u);
 assert.match(store, /hydrateTaskRunFromMainStore/u);
 assert.match(store, /PATCH_TASK_RUN/u);
-assert.match(store, /if \(step\.status === 'running'\)/u);
+assert.match(employeeProjection, /if \(!\['queued', 'running'\]\.includes\(run\.status\)\) continue/u);
+assert.match(employeeProjection, /if \(step\.status === 'running'\) active\.set/u);
 
 assert.match(assistant, /isProjectApprovalIntent\(enriched\)/u);
 assert.match(assistant, /conversationId: conversationIdRef\.current/u);

@@ -1260,6 +1260,7 @@ function createWindow() {
   ipcMain.handle('task-execution:events', async (_event, input) => nativeExecutionAdapter.events(input?.taskId, input?.afterSequence));
   ipcMain.handle('task-execution:observability', async (_event, taskId) => nativeExecutionAdapter.observability(taskId));
   ipcMain.handle('task-execution:steer', async (_event, input) => reportIpcResult('task-execution-steer', input, await nativeExecutionAdapter.steer(input?.taskId, input?.message)));
+  ipcMain.handle('task-execution:decide-approval', async (_event, input) => reportIpcResult('task-execution-decide-approval', input, await nativeExecutionAdapter.decideApproval(input?.taskId, input?.approvalId, input?.decision, input?.note)));
   ipcMain.handle('task-execution:sync-members', async (_event, input) => reportIpcResult('task-execution-sync-members', input, await nativeExecutionAdapter.syncMembers(input?.taskId, input)));
   ipcMain.handle('memory:list', async (_event, input) => memoryManager.list(input));
   ipcMain.handle('memory:context', async (_event, input) => memoryManager.context(input));

@@ -298,6 +298,7 @@ export default function DmChatApp({ empId }: Props) {
       mentions: [],
       timestamp: Date.now(),
       kind: 'text',
+      attachments: atts,
       skillRefs: refs,
       skillEvidence,
       references: referenceResolution.references,
@@ -366,7 +367,7 @@ export default function DmChatApp({ empId }: Props) {
       return;
     }
 
-    const history: ChatTurn[] = msgs.slice(-8).map((m) => ({ role: m.roleId === 'human' ? 'user' : 'assistant', content: m.content }));
+    const history: ChatTurn[] = msgs.slice(-40).map((m) => ({ role: m.roleId === 'human' ? 'user' : 'assistant', content: m.content }));
     void runDmJob({ id: `dm-retry-${Date.now()}`, workspaceId: createTaskWorkspaceId('dm', empId), userText: content, attachments: atts, skillContext, skillRefs: refs, skillEvidence, referenceContext: referenceResolution.context, referenceSourceUrl: referenceResolution.references[0]?.sourceUrl, history, attempt: 0, status: 'waiting', lastError: '', conversationId: requestConversationId });
 
     // 自动提炼用户洞察（每 3 条用户消息触发一次）
@@ -447,7 +448,7 @@ export default function DmChatApp({ empId }: Props) {
       dispatch({ type: 'UPDATE_EMPLOYEE', id: empId, partial: { isWorking: false, currentTask: undefined } });
       const queued = queuedFollowUpsRef.current.shift();
       if (queued) {
-        const history = msgsRef.current.slice(-8).map((m): ChatTurn => ({ role: m.roleId === 'human' ? 'user' : 'assistant', content: m.content }));
+        const history = msgsRef.current.slice(-40).map((m): ChatTurn => ({ role: m.roleId === 'human' ? 'user' : 'assistant', content: m.content }));
         window.setTimeout(() => void runDmJob({
           id: `dm-queued-${Date.now()}`,
           workspaceId: createTaskWorkspaceId('dm', empId),
@@ -520,7 +521,7 @@ export default function DmChatApp({ empId }: Props) {
     }
     const personaPrompt = emp.prompt?.trim() || `你是「${emp.name}」，一名${emp.title}。用简洁、专业的中文回复，语气贴合你的角色。需要产出文件时直接调用工具完成。`;
     const systemPrompt = `${personaPrompt}\n\n${BEGINNER_RESPONSE_GUIDE}`;
-    const history = historyOverride ?? msgs.slice(-8).map((m): ChatTurn => ({ role: m.roleId === 'human' ? 'user' : 'assistant', content: m.content }));
+    const history = historyOverride ?? msgs.slice(-40).map((m): ChatTurn => ({ role: m.roleId === 'human' ? 'user' : 'assistant', content: m.content }));
     const thoughtChain: ThoughtChainStep[] = [];
     const showThoughtChain = loadSettings().showThoughtChain !== false;
     const executionSkillEvidence = [...skillEvidence];
@@ -582,12 +583,19 @@ export default function DmChatApp({ empId }: Props) {
             const parsed = JSON.parse(args || '{}') as { id?: string; installedSkillId?: string };
             skillId = parsed.id ?? parsed.installedSkillId ?? '';
           } catch {}
+          if (!skillId && name === 'install_skill') skillId = result.match(/(?:^|\n)ID:\s*([^\n]+)/u)?.[1]?.trim() ?? '';
           const selected = skillEvidence.find((item) => item.skillId === skillId || item.skillName === skillId);
           executionSkillEvidence.push({
             ts: Date.now(), skillId: skillId || selected?.skillId, skillName: selected?.skillName,
-            action: name === 'search_skills' ? 'searched' : name === 'read_skill' ? (resultSuccess ? 'read' : 'read-failed') : 'called',
+            action: name === 'search_skills' ? 'searched' : name === 'read_skill' ? (resultSuccess ? 'read' : 'read-failed') : 'installed',
             toolName: name, reason: resultSuccess ? `员工实际执行了 ${name}` : `${name} 执行失败`,
-            detail: result.slice(0, 240), verified: resultSuccess, stage: 'execution', source: 'employee',
+            detail: result.slice(0, 240), verified: resultSuccess, stage: name === 'install_skill' ? 'installation' : 'rules', source: 'employee',
+          });
+        } else if (resultSuccess) {
+          const activeSkills = [...new Map(executionSkillEvidence.filter((item) => item.action === 'read' && item.verified).map((item) => [item.skillId || item.skillName, item])).values()];
+          for (const item of activeSkills) executionSkillEvidence.push({
+            ts: Date.now(), skillId: item.skillId, skillName: item.skillName, action: 'called', toolName: name,
+            reason: '已按当前 Skill 规则执行真实工具', detail: result.slice(0, 240), verified: true, stage: 'invocation', source: 'employee',
           });
         }
         setCompletedActionCount((count) => count + 1);
@@ -624,6 +632,12 @@ export default function DmChatApp({ empId }: Props) {
       turnFinalization: r.turnFinalization,
       lifecycle: r.turnLifecycle,
     });
+    const completed = r.turnFinalization?.status === 'completed';
+    const invokedSkills = [...new Map(executionSkillEvidence.filter((item) => item.action === 'called' && item.verified).map((item) => [item.skillId || item.skillName, item])).values()];
+    for (const item of invokedSkills) {
+      executionSkillEvidence.push({ ts: Date.now(), skillId: item.skillId, skillName: item.skillName, action: 'produced', reason: 'Skill 调用后生成了本轮结果', detail: (r.content ?? '').slice(0, 240), verified: Boolean(r.content?.trim()), stage: 'output', source: 'employee' });
+      executionSkillEvidence.push({ ts: Date.now(), skillId: item.skillId, skillName: item.skillName, action: completed ? 'accepted' : 'rejected', reason: completed ? '本轮结果通过任务完成门禁' : '本轮结果未通过任务完成门禁', verified: completed, stage: 'acceptance', source: 'employee' });
+    }
     return { text: r.content ?? '（无回复）', usage: r.usage.totalTokens, contextUsage: r.contextUsage, thoughtChain: thoughtChain.length ? thoughtChain : undefined, skillEvidence: executionSkillEvidence, references: executionReferences, executionState: r.executionState };
   };
 
@@ -643,6 +657,7 @@ export default function DmChatApp({ empId }: Props) {
         author: message.roleId === 'human' ? 'User' : emp.name,
         content: message.content,
         time: new Date(message.timestamp).toLocaleString('zh-CN'),
+        attachments: message.attachments,
       })),
     });
   };
@@ -652,6 +667,7 @@ export default function DmChatApp({ empId }: Props) {
       author: m.roleId === 'human' ? '你' : emp.name,
       content: m.content,
       time: new Date(m.timestamp).toLocaleString('zh-CN'),
+      attachments: m.attachments,
     })), `与 ${emp.name} 私聊记录`);
     downloadTextFile(`私聊-${emp.name}-${new Date().toISOString().slice(0, 10)}.md`, md);
   };

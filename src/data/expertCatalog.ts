@@ -19,13 +19,13 @@ function expertCapabilities(expert: ExpertCatalogEntry): string[] {
   const source = `${expert.name} ${expert.title} ${expert.summary}`.toLowerCase();
   const rules: Array<[string, RegExp]> = [
     ['ui_ux', /ui|ux|界面设计|视觉设计|交互设计|用户体验|产品设计|原型设计/u],
-    ['frontend', /前端|react|vue|网页|网站|客户端/u],
-    ['backend', /后端|服务端|数据库|api|云基础设施/u],
+    ['frontend', /前端|安卓|android|移动端|移动应用|手机应用|flutter|react\s*native|react|vue|网页|网站|客户端/u],
+    ['backend', /后端|服务端|数据库|人工智能|ai工程|模型接入|图像生成|api|云基础设施/u],
     ['architecture', /软件架构|系统架构|技术架构|解决方案架构|架构设计|系统设计/u],
     ['content', /内容|文案|写作|视频|叙事/u],
     ['research', /研究|调研|分析|数据/u],
     ['office_document', /报告|文档|ppt|pdf|表格/u],
-    ['connector', /集成|连接器|知识库|mcp|开放平台/u],
+    ['connector', /集成|连接器|知识库|mcp|模型接口|图片生成|图像生成|开放平台/u],
     ['skill', /skill|技能|插件/u],
     ['coding', /工程|开发|代码|编程|构建|自动化/u],
     ['review', /测试|审查|审核|质量|验收|qa/u],

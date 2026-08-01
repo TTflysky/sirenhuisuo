@@ -68,6 +68,54 @@ function sortByTime(a, b) {
   return Number(a?.updatedAt || a?.createdAt || 0) - Number(b?.updatedAt || b?.createdAt || 0);
 }
 
+function stepTimeRange(run, step) {
+  const eventTimes = (step.events ?? []).map((event) => Number(event.ts)).filter(Number.isFinite);
+  const startedAt = Number(step.startedAt) || (eventTimes.length ? Math.min(...eventTimes) : undefined);
+  const terminal = ['completed', 'failed', 'stopped'].includes(step.status);
+  const completedAt = Number(step.completedAt)
+    || (terminal && eventTimes.length ? Math.max(...eventTimes) : undefined)
+    || (terminal ? Number(run.updatedAt) || undefined : undefined);
+  const elapsedMs = startedAt ? Math.max(0, (completedAt || Date.now()) - startedAt) : 0;
+  return { startedAt, completedAt, elapsedMs };
+}
+
+function stepProjection(run, step) {
+  const unresolvedDependencies = step.status === 'queued'
+    ? (step.dependsOnStepIds ?? [])
+      .map((dependencyId) => run.steps.find((candidate) => candidate.id === dependencyId))
+      .filter((candidate) => candidate?.status !== 'completed')
+      .map((candidate) => candidate?.title || '未知前置步骤')
+    : [];
+  const evidence = step.evidence ?? [];
+  const verifiedEvidence = evidence.filter((item) => item.verified === true).length;
+  const waitingCondition = unresolvedDependencies.length
+    ? `等待前置步骤：${unresolvedDependencies.join('、')}`
+    : step.status === 'awaiting_user' ? text(run?.handoff?.blocked, 300) || '等待你的确认或补充信息'
+      : step.status === 'paused' ? '任务已暂停，等待继续执行'
+        : step.status === 'failed' ? text(step.lastError || step.reviewReason || run.lastError, 300) || '步骤失败，等待恢复'
+          : '';
+  const nextAction = step.status === 'completed' ? '进入下一阶段'
+    : step.status === 'running' ? text(step.events?.at(-1)?.detail, 240) || '继续执行并记录证据'
+      : step.status === 'awaiting_user' ? '收到确认后从当前步骤继续'
+        : step.status === 'paused' ? '继续当前步骤'
+          : step.status === 'failed' ? '修复当前责任步骤后重新验收'
+            : unresolvedDependencies.length ? '前置步骤完成后自动开始'
+              : '等待调度执行';
+  return {
+    run,
+    step,
+    ...stepTimeRange(run, step),
+    evidenceTotal: evidence.length,
+    verifiedEvidence,
+    evidenceComplete: evidence.length > 0 && verifiedEvidence === evidence.length,
+    waitingCondition,
+    nextAction,
+    responsibility: step.revisionOfStepId
+      ? `仅返工：${run.steps.find((candidate) => candidate.id === step.revisionOfStepId)?.title || step.revisionOfStepId}`
+      : '',
+  };
+}
+
 /**
  * Converts execution records into the user-facing project view. Child runs,
  * retry records and individual steps remain evidence inside their root project.
@@ -86,7 +134,7 @@ export function buildProjectBoard(runs = [], projectRecords = []) {
     const projectRecord = root.projectId ? projectsById.get(root.projectId) : undefined;
     const entries = [];
     for (const run of projectRuns) {
-      for (const step of run.steps ?? []) entries.push({ run, step, stageId: stageFor(step) });
+      for (const step of run.steps ?? []) entries.push({ ...stepProjection(run, step), stageId: stageFor(step) });
     }
     const stages = STAGE_ORDER.map((stage) => {
       const stageEntries = entries.filter((entry) => entry.stageId === stage.id);
@@ -100,12 +148,22 @@ export function buildProjectBoard(runs = [], projectRecords = []) {
         : actionEntry ? actionEntry.step.status
           : total > 0 && completed === total ? 'completed'
             : total > 0 ? 'queued' : 'empty';
+      const elapsedMs = stageEntries.reduce((sum, entry) => sum + entry.elapsedMs, 0);
+      const evidenceTotal = stageEntries.reduce((sum, entry) => sum + entry.evidenceTotal, 0);
+      const verifiedEvidence = stageEntries.reduce((sum, entry) => sum + entry.verifiedEvidence, 0);
+      const focusEntry = activeEntry ?? actionEntry ?? queuedEntry ?? stageEntries.at(-1);
       return {
         ...stage,
         total,
         completed,
         status,
         ownerId: owner,
+        elapsedMs,
+        evidenceTotal,
+        verifiedEvidence,
+        evidenceComplete: evidenceTotal > 0 && verifiedEvidence === evidenceTotal,
+        waitingCondition: focusEntry?.waitingCondition || '',
+        nextAction: focusEntry?.nextAction || (status === 'completed' ? '阶段已完成' : '等待调度'),
         entries: stageEntries,
       };
     }).filter((stage) => stage.total > 0);
@@ -137,6 +195,11 @@ export function buildProjectBoard(runs = [], projectRecords = []) {
       currentStage,
       stages,
       actionRun,
+      elapsedMs: entries.reduce((sum, entry) => sum + entry.elapsedMs, 0),
+      evidenceTotal: entries.reduce((sum, entry) => sum + entry.evidenceTotal, 0),
+      verifiedEvidence: entries.reduce((sum, entry) => sum + entry.verifiedEvidence, 0),
+      waitingCondition: currentStage?.waitingCondition || text(actionRun?.handoff?.blocked, 300),
+      nextAction: currentStage?.nextAction || (status === 'completed' ? '项目已完成' : '等待制定下一步'),
       latestResult: resultForRun(actionRun ?? latestRun),
       updatedAt: Math.max(...sortedRuns.map((run) => Number(run.updatedAt || run.createdAt || 0))),
       section: ACTIVE_RUNS.has(status) || NEEDS_ACTION.has(status) ? 'current' : status === 'completed' ? 'completed' : 'stopped',

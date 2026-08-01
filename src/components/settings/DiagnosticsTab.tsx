@@ -4,9 +4,20 @@ import { CheckCircleOutlined, CloseCircleOutlined, DownloadOutlined, ReloadOutli
 import type { OperationDiagnosticEntry } from '../../electron';
 import { runSystemDiagnostics, type SystemDiagnosticItem, type SystemDiagnosticReport } from '../../diagnostics/systemDiagnostics';
 import { optimizeSystemDiagnostics, type DiagnosticOptimizationResult } from '../../diagnostics/diagnosticOptimizer';
-import { loadSettings, saveSettings } from '../../data/hermesClient';
+import { getModelCapabilities, loadSettings, saveSettings } from '../../data/hermesClient';
 
 type TargetTab = NonNullable<SystemDiagnosticItem['settingsTab']>;
+
+const capabilityLabels: Record<string, string> = {
+  chat_model: '聊天模型', image_generation: '图片生成', web_page: '指定网页', skillhub: 'SkillHub',
+  knowledge_base: '知识库', email: '邮件', github: 'GitHub', generic_http: 'HTTP', mcp: 'MCP',
+};
+const capabilityStateLabels: Record<string, { label: string; color: string }> = {
+  available: { label: '真实可用', color: 'green' }, missing_config: { label: '缺配置', color: 'default' },
+  not_tested: { label: '未测试', color: 'gold' }, authentication_failed: { label: '鉴权失败', color: 'red' },
+  rate_limited: { label: '被限流', color: 'orange' }, protocol_error: { label: '协议错误', color: 'red' },
+  invalid_content: { label: '内容无效', color: 'red' }, unavailable: { label: '不可用', color: 'red' },
+};
 
 export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: TargetTab) => void }) {
   const [report, setReport] = useState<SystemDiagnosticReport>();
@@ -78,7 +89,7 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
         value={settings.diagnosticModelId}
         placeholder="选择模型"
         onChange={selectDiagnosticModel}
-        options={(settings.modelLibrary ?? []).map((model) => ({ value: model.id, label: `${model.label} · ${model.model ?? '未填写模型名'}` }))}
+        options={(settings.modelLibrary ?? []).filter((model) => getModelCapabilities(model).includes('chat')).map((model) => ({ value: model.id, label: `${model.label} · ${model.model ?? '未填写模型名'}` }))}
       />
       <Button type="primary" icon={<ThunderboltOutlined />} loading={optimizing} disabled={running || !settings.diagnosticModelId} onClick={() => void optimize()}>一键诊断并优化</Button>
     </section>
@@ -103,6 +114,23 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
           <div><strong>{action.title}</strong><p>{action.detail}</p></div>
         </article>)}</div>
       </section>}
+      <section className="external-capability-matrix">
+        <header>
+          <div><strong>外部能力真实矩阵</strong><span>只认真实调用和有效响应；保存配置、安装或发现不会显示为可用</span></div>
+          <small>{report.externalCapabilities.summary.available}/{report.externalCapabilities.summary.total} 可用 · {report.externalCapabilities.summary.recovered} 次恢复</small>
+        </header>
+        <div>
+          {report.externalCapabilities.entries.map((entry) => {
+            const state = capabilityStateLabels[entry.state] ?? capabilityStateLabels.unavailable;
+            return <article key={entry.id}>
+              <div><strong>{entry.label}</strong><span>{capabilityLabels[entry.kind] ?? entry.kind}</span></div>
+              <Tag color={state.color}>{state.label}</Tag>
+              <small>{entry.checkedAt ? `上次真实检查：${new Date(entry.checkedAt).toLocaleString('zh-CN')}` : '尚无真实调用证据'}{entry.recoveryCount ? ` · 已恢复 ${entry.recoveryCount} 次` : ''}</small>
+              <p>{entry.lastDetail || entry.resourceIdentity || '等待在对应功能中完成最小真实调用'}</p>
+            </article>;
+          })}
+        </div>
+      </section>
       <div className="diagnostics-list">
         {report.items.map((item) => <section className={`diagnostic-item ${item.status}`} key={item.id}>
           <div className="diagnostic-state" title={item.status === 'ready' ? '可用' : item.status === 'warning' ? '需要确认' : '不可用'}>

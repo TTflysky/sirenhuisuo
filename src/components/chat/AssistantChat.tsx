@@ -25,7 +25,7 @@ import {
 } from '../../utils/attachments';
 import { useFileDrop } from '../../hooks/useFileDrop';
 import { formatExecutionDuration, useAgentExecutionControl } from '../../hooks/useAgentExecutionControl';
-import AssistantSettingsModal, { DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX } from '../settings/AssistantSettingsModal';
+import AssistantSettingsModal, { DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX_V21 } from '../settings/AssistantSettingsModal';
 import { getAssistantPrompt } from '../../data/assistantPrompt';
 import { useStore } from '../../storeContext';
 import { BUS_CHANNELS, onBus, sendBus } from '../../ipcBus';
@@ -39,6 +39,7 @@ import {
   isTeamMemberRemovalRequest,
   isTeamMemberReplacementRequest,
   rematchProjectRoster,
+  resolveLatestRejectedProject,
   resolveMentionedEmployees,
   resolveTargetProject,
   resolveTargetTeam,
@@ -57,6 +58,7 @@ import {
 } from '../../data/assistantPresentation';
 import { buildLayeredMemoryContext } from '../../data/layeredMemory';
 import { referenceClarification, referencesFromToolResult, resolveConversationReferences } from '../../engine/conversationReferences.mjs';
+import { resolveDispatchContinuity } from '../../engine/conversationDispatchContext.mjs';
 import { createChatTaskBridge } from '../../engine/taskServiceBridge';
 import type { ConversationReferenceResolution } from '../../engine/conversationReferences.mjs';
 import {
@@ -148,20 +150,8 @@ function saveHistory(msgs: ChatMessage[]): void {
 }
 
 const EXPLICIT_TEAM_DISPATCH_RE = /(?:拉(?:个|起|一个)?团队|拉群|组建团队|组队|召集.{0,12}(?:员工|成员|团队)|叫.{0,12}(?:员工|成员).{0,12}(?:来|去|做|负责)|安排.{0,12}(?:员工|成员|人|人手|专员|同事).{0,12}(?:帮|做|负责|开发|设计))/u;
-const SPECIALIST_DOMAIN_RE = /前端|后端|全栈|网页|网站|UI|界面|视觉|代码|开发|编程|脚本|文案|视频|分镜|报告|方案/u;
-const DELIVERABLE_ACTION_RE = /做|制作|开发|设计|编写|写|生成|实现|创建|完成|修复|优化|重写|起草|改造/u;
-
 function shouldExplicitlyDispatchTeam(content: string): boolean {
   return EXPLICIT_TEAM_DISPATCH_RE.test(content);
-}
-
-function resolveDispatchRequest(current: string, recentUserMessages: string[]): string {
-  const text = current.trim();
-  const refersToPreviousGoal = /(?:这个|那个|刚才|刚刚|上面|前面|之前)(?:的)?(?:任务|需求|事情|项目)?|按(?:刚才|上面|之前)|继续(?:刚才|上面|之前)/u.test(text);
-  const hasConcreteCurrentGoal = DELIVERABLE_ACTION_RE.test(text) && (SPECIALIST_DOMAIN_RE.test(text) || text.length >= 16);
-  if (!refersToPreviousGoal || hasConcreteCurrentGoal) return text;
-  const previous = [...recentUserMessages].reverse().find((message) => DELIVERABLE_ACTION_RE.test(message) && message.trim() !== text);
-  return previous ? `${previous}\n\n老板最新调度要求：${text}` : text;
 }
 
 export default function AssistantChat() {
@@ -370,12 +360,37 @@ export default function AssistantChat() {
 
     const contextualProject = resolveTargetProject(enriched, state.projects, conversationIdRef.current);
     if (isProjectApprovalIntent(enriched)) {
-      if (contextualProject?.status === 'awaiting_approval') {
-        approveProject(contextualProject.id);
+      const rejectedProject = /(?:按|按照|采用|使用).{0,12}(?:第二次|新的|最新|重新|刚才|上面|之前|这个).{0,12}(?:提议|方案|配置|团队)|(?:第二次|新的|最新|重新).{0,12}(?:提议|方案|配置).{0,12}(?:拉群|组队|建立团队)/u.test(enriched)
+        ? resolveLatestRejectedProject(state.projects, conversationIdRef.current)
+        : undefined;
+      const projectToApprove = contextualProject?.status === 'awaiting_approval' ? contextualProject : rejectedProject;
+      if (projectToApprove) {
+        const recentDialogMessages = msgs
+          .filter(isDialogMessage)
+          .slice(-40)
+          .map((message) => ({ role: message.roleId === 'human' ? 'user' as const : 'assistant' as const, content: message.content }));
+        const continuity = resolveDispatchContinuity(enriched, recentDialogMessages);
+        const requiredCapabilities = [...new Set([
+          ...(projectToApprove.requiredCapabilities ?? []),
+          ...continuity.requiredCapabilities,
+        ])];
+        const planningEmployees = employeePlanningPool(liveEmployees);
+        const rematched = matchProjectMembers(
+          planningEmployees,
+          [projectToApprove.request, continuity.request, ...requiredCapabilities].filter(Boolean).join('\n所需能力：'),
+        );
+        const approvedMembers = approveProject(projectToApprove.id, {
+          memberIds: rematched.map((member) => member.employeeId),
+          requiredCapabilities,
+          decisionReason: continuity.contextual
+            ? '已结合当前会话中的原始目标和最近确认方案更新团队名单'
+            : projectToApprove.decisionReason,
+        });
+        const approvedIds = approvedMembers.map((member) => member.employeeId);
         push({
           id: `h-${Date.now()}-project-approved`, authorId: 'assistant', roleId: 'custom',
-          content: `已按刚才确认的名单建立「${contextualProject.title}」团队，成员没有重新匹配。团队会先向你确认方向和风格，确认前不会开始执行。`,
-          mentions: contextualProject.members.map((member) => member.employeeId), timestamp: Date.now(), kind: 'text',
+          content: `已按当前对话中确认的完整方案建立「${projectToApprove.title}」团队，共 ${approvedIds.length} 名成员。团队会先向你确认方向和风格，确认前不会开始执行。`,
+          mentions: approvedIds, timestamp: Date.now(), kind: 'text',
         });
         return;
       }
@@ -397,24 +412,35 @@ export default function AssistantChat() {
 
     if (isProjectRosterRematchRequest(enriched)) {
       const planningEmployees = employeePlanningPool(liveEmployees);
-      if (contextualProject?.status !== 'awaiting_approval') {
+      const revisableProject = contextualProject?.status === 'awaiting_approval'
+        ? contextualProject
+        : resolveLatestRejectedProject(state.projects, conversationIdRef.current);
+      if (!revisableProject) {
         push({
           id: `h-${Date.now()}-project-rematch-missing`, authorId: 'assistant', roleId: 'custom',
-          content: '当前聊天没有正在等待批准的团队草案。我不会根据这句纠正重新猜一个新项目；请先说明完整项目目标。',
+          content: '当前聊天没有可修订的团队草案，也没有找到刚被驳回的方案。请说明项目目标后我再建立新草案。',
           mentions: [], timestamp: Date.now(), kind: 'text',
         });
         return;
       }
-      const rematched = rematchProjectRoster(contextualProject, enriched, planningEmployees);
-      setProjectMembers(contextualProject.id, rematched.map((member) => member.employeeId));
+      const recentDialogMessages = msgs
+        .filter(isDialogMessage)
+        .slice(-40)
+        .map((message) => ({ role: message.roleId === 'human' ? 'user' as const : 'assistant' as const, content: message.content }));
+      const continuity = resolveDispatchContinuity(enriched, recentDialogMessages);
+      const rematched = rematchProjectRoster({
+        request: [revisableProject.request, continuity.request].filter(Boolean).join('\n\n'),
+        requiredCapabilities: [...new Set([...(revisableProject.requiredCapabilities ?? []), ...continuity.requiredCapabilities])],
+      }, enriched, planningEmployees);
+      setProjectMembers(revisableProject.id, rematched.map((member) => member.employeeId));
       const selectedEmployees = rematched
         .map((member) => planningEmployees.find((employee) => employee.id === member.employeeId))
         .filter((employee): employee is Employee => !!employee);
       push({
         id: `h-${Date.now()}-project-rematched`, authorId: 'assistant', roleId: 'custom',
         content: selectedEmployees.length
-          ? `已按「${contextualProject.request}」的原始目标重新检查同一份团队草案，没有新建项目。当前成员是：${selectedEmployees.map((employee) => `${employee.name}（${employee.title}）`).join('、')}。你可以继续调整，确认后再批准。`
-          : `我保留了「${contextualProject.request}」的原始目标，但当前员工目录仍不能覆盖所需职责。草案没有塞入无关员工，请先补充对应专业员工后再批准。`,
+          ? `已恢复并修订同一份团队草案，没有新建项目。当前成员是：${selectedEmployees.map((employee) => `${employee.name}（${employee.title}）`).join('、')}。你可以继续调整，确认后再批准。`
+          : `我保留了「${revisableProject.request}」的原始目标，但当前员工目录仍不能覆盖所需职责。草案没有塞入无关员工，请先补充对应专业员工后再批准。`,
         mentions: rematched.map((member) => member.employeeId), timestamp: Date.now(), kind: 'text',
       });
       return;
@@ -515,7 +541,7 @@ export default function AssistantChat() {
       setBusy(true);
       setStatus('正在理解当前需求…');
       const decisionTurns: ChatTurn[] = [
-        ...msgs.filter(isDialogMessage).slice(-8).map((message) => ({
+        ...msgs.filter(isDialogMessage).slice(-24).map((message) => ({
           role: message.roleId === 'human' ? 'user' as const : 'assistant' as const,
           content: message.content,
         })),
@@ -532,13 +558,17 @@ export default function AssistantChat() {
     // builds a reviewable team proposal without granting the model direct access.
     if (explicitTeamDispatch || semanticTeamDispatch) {
       if (busy) setStatus('已停止当前路线，正在建立团队任务草案…');
-      const recentUserMessages = msgs
-        .filter((message) => message.roleId === 'human')
-        .slice(-8)
-        .map((message) => message.content);
-      const dispatchRequest = resolveDispatchRequest(enriched, recentUserMessages);
+      const recentDialogMessages = msgs
+        .filter(isDialogMessage)
+        .slice(-40)
+        .map((message) => ({ role: message.roleId === 'human' ? 'user' as const : 'assistant' as const, content: message.content }));
+      const continuity = resolveDispatchContinuity(enriched, recentDialogMessages);
+      const dispatchRequest = continuity.request;
       const decision = taskDecisionCompilation!.decision;
-      const requiredCapabilities = decision.requiredCapabilities ?? [];
+      const requiredCapabilities = [...new Set([
+        ...(decision.requiredCapabilities ?? []),
+        ...continuity.requiredCapabilities,
+      ])];
       const selectionRequest = [dispatchRequest, ...requiredCapabilities].filter(Boolean).join('\n所需能力：');
       const existing = state.projects.find((project) => project.status === 'awaiting_approval' && project.conversationId === conversationIdRef.current && project.request === dispatchRequest);
       if (!existing) createProjectDraft({
@@ -582,7 +612,7 @@ export default function AssistantChat() {
         return;
       }
       const followUpCompilation = await compileTaskDecision([
-        ...msgs.filter(isDialogMessage).slice(-8).map((message) => ({
+        ...msgs.filter(isDialogMessage).slice(-24).map((message) => ({
           role: message.roleId === 'human' ? 'user' as const : 'assistant' as const,
           content: message.content,
         })),
@@ -686,11 +716,11 @@ export default function AssistantChat() {
     let showCoT = false;
     const cotSteps: ThoughtChainStep[] = [];
     try {
-      // 构建上下文（最近 20 条实质对话，过滤掉工具调用中间消息）
+      // 构建上下文（最近 40 条实质对话，过滤掉工具调用中间消息）
       const dialogMsgs = msgs.filter(isDialogMessage);
-      const history: ChatTurn[] = dialogMsgs.slice(-20).map((m) => ({
+      const history: ChatTurn[] = dialogMsgs.slice(-40).map((m) => ({
         role: (m.roleId === 'human' ? 'user' : 'assistant') as 'user' | 'assistant',
-        content: m.roleId === 'human' ? m.content : `助手: ${m.content}`,
+        content: m.content,
       }));
 
       // 合并内置工具和连接器工具
@@ -713,7 +743,7 @@ ${employeeDirectory}
 
       const r = await runAgentLoop({
         turns: [
-          { role: 'system', content: `${getAssistantPrompt(DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX)}\n\n${selectedSkillGuide}\n\n${BEGINNER_RESPONSE_GUIDE}` },
+          { role: 'system', content: `${getAssistantPrompt(DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX_V21)}\n\n${selectedSkillGuide}\n\n${BEGINNER_RESPONSE_GUIDE}` },
           ...history,
           { role: 'user', content: enriched },
         ],
@@ -772,6 +802,7 @@ ${employeeDirectory}
               const parsed = JSON.parse(args || '{}') as { id?: string; installedSkillId?: string };
               skillId = parsed.id ?? parsed.installedSkillId ?? '';
             } catch {}
+            if (!skillId && name === 'install_skill') skillId = result.match(/(?:^|\n)ID:\s*([^\n]+)/u)?.[1]?.trim() ?? '';
             const selected = refs.find((ref) => ref.id === skillId);
             const readName = result.match(/(?:^|\n)#\s*([^\n]+)/u)?.[1]?.trim() || selected?.name || skillId;
             if (resultSuccess && skillId && (name === 'read_skill' || name === 'install_skill') && !usedSkillRefs.some((ref) => ref.id === skillId)) {
@@ -779,9 +810,14 @@ ${employeeDirectory}
             }
             skillEvidence.push({
               ts: Date.now(), skillId: skillId || selected?.id, skillName: readName || selected?.name,
-              action: name === 'search_skills' ? 'searched' : name === 'read_skill' ? (resultSuccess ? 'read' : 'read-failed') : 'called',
+              action: name === 'search_skills' ? 'searched' : name === 'read_skill' ? (resultSuccess ? 'read' : 'read-failed') : 'installed',
               toolName: name, reason: resultSuccess ? '助理实际执行了技能工具' : '技能工具执行失败',
-              detail: result.slice(0, 240), verified: resultSuccess, stage: 'execution', source: 'assistant',
+              detail: result.slice(0, 240), verified: resultSuccess, stage: name === 'install_skill' ? 'installation' : 'rules', source: 'assistant',
+            });
+          } else if (resultSuccess && refs.length) {
+            for (const ref of refs) skillEvidence.push({
+              ts: Date.now(), skillId: ref.id, skillName: ref.name, action: 'called', toolName: name,
+              reason: '已按当前 Skill 规则执行真实工具', detail: result.slice(0, 240), verified: true, stage: 'invocation', source: 'assistant',
             });
           }
           usedReferences.push(...referencesFromToolResult(name, args, result, resultSuccess));
@@ -837,6 +873,12 @@ ${employeeDirectory}
         turnFinalization: r.turnFinalization,
         lifecycle: r.turnLifecycle,
       });
+      const completed = r.turnFinalization?.status === 'completed';
+      const invokedSkills = [...new Map(skillEvidence.filter((item) => item.action === 'called' && item.verified).map((item) => [item.skillId || item.skillName, item])).values()];
+      for (const item of invokedSkills) {
+        skillEvidence.push({ ts: Date.now(), skillId: item.skillId, skillName: item.skillName, action: 'produced', reason: 'Skill 调用后生成了本轮结果', detail: r.content.slice(0, 240), verified: Boolean(r.content.trim()), stage: 'output', source: 'assistant' });
+        skillEvidence.push({ ts: Date.now(), skillId: item.skillId, skillName: item.skillName, action: completed ? 'accepted' : 'rejected', reason: completed ? '本轮结果通过任务完成门禁' : '本轮结果未通过任务完成门禁', verified: completed, stage: 'acceptance', source: 'assistant' });
+      }
       setStatus('正在整理清楚的结果…');
       setLiveText('');
       push({
@@ -964,6 +1006,7 @@ ${employeeDirectory}
         role: message.roleId === 'human' ? 'User' : 'Assistant',
         content: message.content,
         time: new Date(message.timestamp).toLocaleString('zh-CN'),
+        attachments: message.attachments,
       })),
     });
   };
@@ -974,6 +1017,7 @@ ${employeeDirectory}
         role: m.roleId === 'human' ? '你' : '章北海助理',
         content: m.content,
         time: new Date(m.timestamp).toLocaleString('zh-CN'),
+        attachments: m.attachments,
       })),
       '章北海助理对话记录'
     );

@@ -125,6 +125,8 @@ async function main() {
   assert(completed.evidence.some((item) => item.kind === 'file' && item.verified), '缺少文件证据');
   assert(completed.evidence.some((item) => item.kind === 'review' && item.verified), '缺少审查证据');
   assert(completed.executionMessages.some((item) => item.kind === 'execution'), '后台工具消息没有写入任务投影');
+  assert(completed.stageSummaries?.some((item) => item.stepId === 'work-1' && item.status === 'completed'), '缺少章北海阶段交接记录');
+  assert(completed.executionMessages.some((item) => item.kind === 'stage_summary' && item.stageSummary?.stepId === 'work-1'), '阶段交接没有投影到团队聊天');
   assert(!JSON.stringify(await store.read()).includes('NATIVE_TEST_SECRET'), '模型凭据泄漏到任务持久化');
   const completedEvent = await waitFor(() => adapter.events(run.id).events.find((event) => event.type === 'job_completed'));
   assert.equal(completedEvent.type, 'job_completed', '没有完成事件');

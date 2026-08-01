@@ -11,5 +11,6 @@ for (const item of taskSemanticCases) {
 }
 const passed = taskSemanticCases.length - failures.length;
 const accuracy = passed / taskSemanticCases.length;
-if (accuracy < 0.95) throw new Error(`Task semantics benchmark failed: ${passed}/${taskSemanticCases.length}\n${JSON.stringify(failures.slice(0, 20), null, 2)}`);
+if (taskSemanticCases.length < 400) throw new Error(`Task semantics benchmark requires at least 400 cases, got ${taskSemanticCases.length}`);
+if (accuracy < 0.98) throw new Error(`Task semantics benchmark failed: ${passed}/${taskSemanticCases.length}\n${JSON.stringify(failures.slice(0, 20), null, 2)}`);
 console.log(JSON.stringify({ passed: true, cases: taskSemanticCases.length, successful: passed, accuracy }, null, 2));

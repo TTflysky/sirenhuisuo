@@ -117,13 +117,13 @@ describe('task decision kernel safeguards', () => {
       latestMessage: '请生成报告文件',
       previousUserMessage: '背景',
       activeTaskGoal: '旧目标',
-      recentHistory: Array.from({ length: 12 }, (_, index) => ({ role: index % 2 ? 'assistant' : 'user', content: `message ${index}` })),
+      recentHistory: Array.from({ length: 24 }, (_, index) => ({ role: index % 2 ? 'assistant' : 'user', content: `message ${index}` })),
       availableTools: tools,
       relevantUserContext: 'User context',
       relevantTaskExperience: 'Task experience',
     });
     expect(messages).toHaveLength(2);
-    expect(JSON.parse(messages[1].content).recentHistory).toHaveLength(8);
+    expect(JSON.parse(messages[1].content).recentHistory).toHaveLength(20);
     const contract = buildTaskContract({ ...decision, deliverables: [{ label: 'report.md' }], riskLevel: 'normal' }, 'Do not repeat route A');
     expect(contract).toContain('太极任务合同');
     expect(contract).toContain('report.md');

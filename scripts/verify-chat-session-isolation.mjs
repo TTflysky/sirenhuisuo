@@ -43,12 +43,13 @@ try {
     assert(history.some((item) => item.id === fresh.id));
   }
 
-  const [assistant, dm, team, store, native] = await Promise.all([
+  const [assistant, dm, team, store, native, collaboration] = await Promise.all([
     fs.readFile('src/components/chat/AssistantChat.tsx', 'utf8'),
     fs.readFile('src/components/chat/DmChatApp.tsx', 'utf8'),
     fs.readFile('src/components/chat/TeamChatApp.tsx', 'utf8'),
     fs.readFile('src/store.tsx', 'utf8'),
     fs.readFile('electron/nativeExecutionAdapter.cjs', 'utf8'),
+    fs.readFile('electron/nativeCollaborationProtocol.cjs', 'utf8'),
   ]);
   for (const [label, source] of [['assistant', assistant], ['dm', dm], ['team', team]]) {
     assert.match(source, /新建聊天/u, `${label} 缺少明确的新建聊天控件`);
@@ -58,7 +59,9 @@ try {
   }
   assert.match(store, /run\.conversationId === conversationId/u, '团队调度没有限制到当前会话');
   assert.match(store, /conversationId: workerRun\.conversationId/u, '任务恢复没有继承原会话');
-  assert.match(native, /run\?\.conversationId/u, '原生执行消息没有写入所属会话');
+  assert.match(collaboration, /run\?\.conversationId/u, '原生执行消息没有读取所属会话');
+  assert.match(collaboration, /conversationId:\s*run\.conversationId/u, '原生执行消息没有写入所属会话');
+  assert.match(collaboration, /executionMessages/u, '原生协作协议没有持久化执行消息');
   assert.match(native, /继承父任务.*聊天会话/u, '动态子任务没有继承父会话');
 
   console.log(JSON.stringify({ passed: true, scopes: 3, historyPreserved: true, lateMessagesIsolated: true }));

@@ -27,6 +27,7 @@ assert.match(client, /getConversationModel/u, '聊天模型切换必须与角色
 assert.match(client, /imageModel \? '\/images\/generations' : '\/chat\/completions'/u, '连接测试必须按模型能力选择端点');
 
 assert.match(settings, /startAddGptImage2/u, '设置页必须有 GPT Image 2 快捷添加');
+assert.match(settings, /getAssistantPrompt\(DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX_V22\)/u, '总设置页必须使用当前人格迁移协议');
 assert.match(settings, /getModelCapabilities\(entry\)\.includes\('image'\)/u, '设置页必须明确标记图像模型');
 assert.match(settings, /const diagnosticModels = library\.filter\(\(model\) => getModelCapabilities\(model\)\.includes\('chat'\)\)/u, '诊断优化只能选择聊天模型');
 assert.match(settings, /\.\.\.diagnosticModels\.map\(\(model\) => \(\{ value: model\.id, label: model\.label \}\)\)/u, '诊断优化菜单必须使用聊天模型候选');
@@ -42,7 +43,11 @@ for (const [name, source] of [['assistant', assistant], ['dm', dm], ['team', tea
 assert.match(selector, /chatModelOverrides/u, '聊天内切换必须保存为场景覆盖，而不是污染默认职责模型');
 assert.match(selector, /getModelCapabilities\(entry\)\.includes\('image'\)/u, '聊天模型菜单必须标记图像模型');
 assert.match(preview, /download=\{image\.name\}/u, '生成图片必须可保存');
-assert.match(persona, /DEFAULT_PROMPT_VERSION = '18'/u, '内置助理人格必须随版本升级');
+assert.match(persona, /DEFAULT_PROMPT_VERSION = '22'/u, '内置助理人格必须随版本升级');
+assert.match(persona, /v3\.0 语义分层与模型韧性协议/u, '内置助理人格必须包含阶段 A 协议');
+assert.match(persona, /v3\.1 外部能力真实验证协议/u, '内置助理人格必须包含阶段 B 协议');
+assert.match(persona, /v3\.3 团队主持、插话与阶段交接协议/u, '内置助理人格必须包含阶段 D 协议');
+assert.match(persona, /PERSONA_MIGRATION_APPENDIX_V22 = `\$\{PERSONA_MIGRATION_APPENDIX\}\$\{STAGE_A_PERSONA_APPENDIX\}\$\{STAGE_B_PERSONA_APPENDIX\}\$\{STAGE_C_PERSONA_APPENDIX\}\$\{STAGE_D_PERSONA_APPENDIX\}`/u, '旧自定义人格必须追加阶段 A、B、C 与 D 协议');
 assert.match(persona, /图片模型收到图片附件时，目标是编辑该图片/u, '人格必须承认当前图片是编辑输入');
 assert.match(personaStore, /appendixSections/u, '旧的自定义人格必须按章节补齐新协议');
 

@@ -10,7 +10,11 @@ const actionLabel: Record<SkillUsageEvidence['action'], string> = {
   read: '已读取规则',
   'read-failed': '读取失败',
   searched: '已检索',
+  installed: '已安装',
   called: '已调用',
+  produced: '已产出',
+  accepted: '已验收',
+  rejected: '未通过验收',
   skipped: '已跳过',
 };
 
@@ -22,13 +26,13 @@ export default function MessageSkillEvidence({ refs = [], evidence = [] }: Props
   ]).entries()];
   return (
     <div className="msg-skill-evidence" aria-label="技能使用证据">
-      <div className="msg-skill-evidence-head"><span>技能上下文</span><small>选择和实际读取分开记录</small></div>
+      <div className="msg-skill-evidence-head"><span>技能证据</span><small>发现、规则、调用、产出和验收分开记录</small></div>
       <div className="msg-skill-evidence-list">
         {names.map(([id, name]) => {
           const latest = [...evidence].reverse().find((item) => (item.skillId ?? item.skillName) === id || item.skillName === name);
           const action = latest?.action ?? 'matched';
           return <span className={`msg-skill-evidence-item is-${action}`} key={id} title={latest?.detail ?? latest?.reason ?? name}>
-            <i>{action === 'read-failed' ? '!' : action === 'read' || action === 'called' ? '✓' : '·'}</i> {name} · {actionLabel[action]}
+            <i>{action === 'read-failed' || action === 'rejected' ? '!' : ['read', 'called', 'produced', 'accepted'].includes(action) ? '✓' : '·'}</i> {name} · {actionLabel[action]}
           </span>;
         })}
       </div>

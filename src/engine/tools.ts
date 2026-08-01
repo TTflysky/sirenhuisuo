@@ -14,6 +14,7 @@
  */
 
 import { addOutput, loadOutputs, contentTypeFromFilename, type OutputRecord, type OutputScope } from '../data/outputs';
+import { externalCapabilityProfileForConnector, recordExternalCapabilityProbe } from '../data/externalCapabilityMatrix';
 import { getExecutionPolicy, type ExecutionPolicy } from '../data/hermesClient';
 import { classifySensitiveAction, containsInlineSecret, redactToolArgsObject } from './securityBoundary';
 import type { ConnectorProtocolResult } from './connectorProtocol.mjs';
@@ -22,6 +23,10 @@ import type { FileArtifactEvidence, ReviewSubmissionEvidence, ToolExecutionEvide
 import { buildToolRegistry, discoverTools, preflightToolCall } from './toolRegistry.mjs';
 import { formatSkillHubResults, searchSkillHub } from './skillHubSearch.mjs';
 import { resolveSkillInstallInput } from './skillInstallRouting.mjs';
+import * as connectorData from '../data/connectors';
+import * as skillData from '../data/skills';
+import * as connectorToolRuntime from './connectorTools';
+import { BUS_CHANNELS, sendBus } from '../ipcBus';
 export type { FileArtifactEvidence, ReviewSubmissionEvidence, ToolExecutionEvidence } from './executionEvidence.mjs';
 
 // ===== Tool Schema（OpenAI function-calling 格式）=====
@@ -443,12 +448,12 @@ async function syncWorkspaceFiles(scope: OutputScope, fsApi: any, before = new M
   return artifacts;
 }
 
-export async function executeTool(call: ToolCall): Promise<ToolResult> {
+async function executeToolInternal(call: ToolCall): Promise<ToolResult> {
   const { name, args, id } = call;
   const physicalWorkspace = workspacePath(call.scope, call.workspaceId);
   try {
     const registryDefinitions = name.startsWith('connector_')
-      ? [...TOOLS, ...(await import('./connectorTools')).getConnectorTools()]
+      ? [...TOOLS, ...connectorToolRuntime.getConnectorTools()]
       : TOOLS;
     const preflight = preflightToolCall(buildToolRegistry(registryDefinitions), name, args, { approvalGranted: true });
     if (!preflight.ok) {
@@ -613,8 +618,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
       case 'search_tools': {
         const query = (args.query ?? '').trim();
         if (!query) return { toolCallId: id, name, success: false, output: '工具搜索目标不能为空。' };
-        const { getConnectorTools } = await import('./connectorTools');
-        const registry = buildToolRegistry([...TOOLS, ...getConnectorTools()]);
+        const registry = buildToolRegistry([...TOOLS, ...connectorToolRuntime.getConnectorTools()]);
         const found = discoverTools(registry, query).slice(0, 12);
         return {
           toolCallId: id,
@@ -628,8 +632,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
 
       case 'describe_tool': {
         const toolName = (args.name ?? '').trim();
-        const { getConnectorTools } = await import('./connectorTools');
-        const registry = buildToolRegistry([...TOOLS, ...getConnectorTools()]);
+        const registry = buildToolRegistry([...TOOLS, ...connectorToolRuntime.getConnectorTools()]);
         const record = registry.records.find((item) => item.name === toolName);
         if (!record) return { toolCallId: id, name, success: false, output: `工具“${toolName}”未注册或当前不可用。` };
         return {
@@ -713,8 +716,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
       case 'search_skills': {
         const query = (args.query ?? '').trim();
         if (!query) return { toolCallId: id, name, success: false, output: '技能检索关键词不能为空' };
-        const { listSkills, matchSkills } = await import('../data/skills');
-        const [all, matched] = await Promise.all([listSkills(), matchSkills(query, 8)]);
+        const [all, matched] = await Promise.all([skillData.listSkills(), skillData.matchSkills(query, 8)]);
         const inventorySummary = `本地技能库存：共 ${all.length} 个（内置 ${all.filter((skill) => skill.scope !== 'mine').length}，用户 ${all.filter((skill) => skill.scope === 'mine').length}）；本次匹配 ${matched.length} 个。`;
         const localRows = matched.map((ref) => {
           const skill = all.find((item) => item.id === ref.id);
@@ -751,10 +753,9 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
       case 'read_skill': {
         const skillId = (args.id ?? '').trim();
         if (!skillId) return { toolCallId: id, name, success: false, output: '技能 ID 不能为空' };
-        const { readSkill, skillInstructionText } = await import('../data/skills');
-        const skill = await readSkill(skillId);
+        const skill = await skillData.readSkill(skillId);
         const documents = skill.documents?.map((document) => document.path).join('、');
-        return { toolCallId: id, name, success: true, output: `已读取 Skill「${skill.name}」${documents ? `及其引用规则（${documents}）` : ''}：\n${skillInstructionText(skill)}` };
+        return { toolCallId: id, name, success: true, output: `已读取 Skill「${skill.name}」${documents ? `及其引用规则（${documents}）` : ''}：\n${skillData.skillInstructionText(skill)}` };
       }
 
       case 'install_skill': {
@@ -767,16 +768,13 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         const api = getFsApi();
         if (!api?.skillsInstall) return { toolCallId: id, name, success: false, output: '当前环境不支持安装 Skill，请使用桌面客户端。' };
         const result = await api.skillsInstall(resolved);
-        const { BUS_CHANNELS, sendBus } = await import('../ipcBus');
         if (result?.ok && result.skill) sendBus(BUS_CHANNELS.SKILLS_CHANGED, { action: 'installed', skillId: result.skill.id });
         if (!result?.ok || !result.skill) return { toolCallId: id, name, success: false, output: `Skill 安装失败：${result?.error ?? '安装器没有返回有效结果'}` };
         if (args.connector?.trim()) {
-          const { loadConnectors, updateConnector } = await import('../data/connectors');
           const query = args.connector.trim().toLocaleLowerCase();
-          const connector = loadConnectors().find((item) => item.id.toLocaleLowerCase() === query || item.label.toLocaleLowerCase() === query || item.mcpServerName?.toLocaleLowerCase() === query);
+          const connector = connectorData.loadConnectors().find((item) => item.id.toLocaleLowerCase() === query || item.label.toLocaleLowerCase() === query || item.mcpServerName?.toLocaleLowerCase() === query);
           if (connector) {
-            updateConnector(connector.id, { installedSkillId: result.skill.id, skillSourceUrl: resolved.sourceUrl, status: 'unknown', error: undefined });
-            const { BUS_CHANNELS, sendBus } = await import('../ipcBus');
+            connectorData.updateConnector(connector.id, { installedSkillId: result.skill.id, skillSourceUrl: resolved.sourceUrl, status: 'unknown', error: undefined });
             sendBus(BUS_CHANNELS.CONNECTORS_CHANGED, { connectorId: connector.id, reason: 'skill-installed' });
           }
         }
@@ -784,7 +782,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
       }
 
       case 'inspect_connectors': {
-        const { CONNECTOR_PRESETS, connectorMissingFields, loadConnectors } = await import('../data/connectors');
+        const { CONNECTOR_PRESETS, connectorMissingFields, loadConnectors } = connectorData;
         const query = (args.query ?? '').trim().toLocaleLowerCase();
         const includesQuery = (...values: Array<string | undefined>) => !query || values.some((value) => value?.toLocaleLowerCase().includes(query));
         const configured = loadConnectors().filter((connector) => includesQuery(connector.id, connector.label, connector.mcpServerName, connector.kind));
@@ -823,7 +821,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
           findConnectorPreset,
           loadConnectors,
           upsertConnector,
-        } = await import('../data/connectors');
+        } = connectorData;
         const preset = findConnectorPreset(presetQuery);
         if (!preset) {
           return {
@@ -840,8 +838,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         );
         const draft = createConnectorDraft(preset, existing);
         if (!draft.installedSkillId && preset.bundledSkillSource) {
-          const { findBundledSkill } = await import('../data/skills');
-          draft.installedSkillId = (await findBundledSkill(preset.bundledSkillSource))?.id;
+          draft.installedSkillId = (await skillData.findBundledSkill(preset.bundledSkillSource))?.id;
         }
         if (args.label?.trim()) draft.label = args.label.trim();
         if (args.baseUrl?.trim()) draft.baseUrl = args.baseUrl.trim();
@@ -855,7 +852,6 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
           draft.lastChecked = undefined;
         }
         upsertConnector(draft);
-        const { BUS_CHANNELS, sendBus } = await import('../ipcBus');
         sendBus(BUS_CHANNELS.CONNECTORS_CHANGED, { connectorId: draft.id, reason: 'prepared' });
         const api = getFsApi();
         if (!api?.openTool) {
@@ -879,7 +875,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
       case 'test_connector': {
         const query = (args.connector ?? '').trim();
         if (!query) return { toolCallId: id, name, success: false, output: '连接器名称或 ID 不能为空。请先调用 inspect_connectors。' };
-        const { checkConnector, connectorMissingFields, ensureConnectorSkillAssociation, hydrateConnectorCredentials, findConnectorPreset, loadConnectors, updateConnector } = await import('../data/connectors');
+        const { checkConnector, connectorMissingFields, ensureConnectorSkillAssociation, hydrateConnectorCredentials, findConnectorPreset, loadConnectors, updateConnector } = connectorData;
         const normalized = query.toLocaleLowerCase();
         const preset = findConnectorPreset(query);
         const connector = loadConnectors().find((item) =>
@@ -909,10 +905,9 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
             return { toolCallId: id, name, success: false, output: `“${connector.label}”的 Skill 和凭据已经准备好，但当前客户端没有对应的内置验收适配器。这是客户端能力缺失，不应要求用户查找或提供命令。` };
           }
 
-          const { readSkill, skillInstructionText } = await import('../data/skills');
           let skillContent = '';
           try {
-            skillContent = skillInstructionText(await readSkill(connector.installedSkillId));
+            skillContent = skillData.skillInstructionText(await skillData.readSkill(connector.installedSkillId));
           } catch (error) {
             const detail = error instanceof Error ? error.message : String(error);
             updateConnector(connector.id, { status: 'disconnected', error: `无法读取 Skill 规则：${detail}`, lastChecked: Date.now() });
@@ -990,7 +985,6 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
             error: businessSuccess ? undefined : safeDetail,
             lastChecked: Date.now(),
           });
-          const { BUS_CHANNELS, sendBus } = await import('../ipcBus');
           sendBus(BUS_CHANNELS.CONNECTORS_CHANGED, { connectorId: connector.id, reason: 'preset-verified', status: businessSuccess ? 'connected' : 'disconnected' });
           return businessSuccess
             ? { toolCallId: id, name, success: true, output: `“${connector.label}”已完成闭环验证：读取了已关联 Skill“${connector.installedSkillId}”的完整规则；${verificationSummary}；接口业务状态通过，现在可以确认连接器可用。` }
@@ -1003,7 +997,6 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
           discoveredActions: result.actions,
           runtimeStatus: result.runtimeStatus,
         });
-        const { BUS_CHANNELS, sendBus } = await import('../ipcBus');
         sendBus(BUS_CHANNELS.CONNECTORS_CHANGED, { connectorId: connector.id, reason: 'tested', status: result.status });
         if (result.status !== 'connected') {
           if (connector.kind === 'skill-bridge' && result.status === 'unknown') {
@@ -1027,7 +1020,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         let connectorForCommand: import('../data/connectors').Connector | undefined;
         const injectedEnv: Record<string, string> = {};
         if (args.connector?.trim()) {
-          const { connectorMissingFields, hydrateConnectorCredentials, loadConnectors } = await import('../data/connectors');
+          const { connectorMissingFields, hydrateConnectorCredentials, loadConnectors } = connectorData;
           const query = args.connector.trim().toLocaleLowerCase();
           connectorForCommand = loadConnectors().find((item) => item.id.toLocaleLowerCase() === query || item.label.toLocaleLowerCase() === query || item.mcpServerName?.toLocaleLowerCase() === query);
           if (!connectorForCommand) return { toolCallId: id, name, success: false, output: `没有找到要关联的连接器“${args.connector}”。请先调用 inspect_connectors。` };
@@ -1068,9 +1061,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
           });
           const { success, exitCode, stdout, stderr, signal: sig, cwd } = result as any;
           if (connectorForCommand && String(args.verification).toLowerCase() === 'true') {
-            const { updateConnector } = await import('../data/connectors');
-            updateConnector(connectorForCommand.id, { status: success ? 'connected' : 'disconnected', error: success ? undefined : (stderr || stdout || '真实调用失败').slice(0, 500), lastChecked: Date.now() });
-            const { BUS_CHANNELS, sendBus } = await import('../ipcBus');
+            connectorData.updateConnector(connectorForCommand.id, { status: success ? 'connected' : 'disconnected', error: success ? undefined : (stderr || stdout || '真实调用失败').slice(0, 500), lastChecked: Date.now() });
             sendBus(BUS_CHANNELS.CONNECTORS_CHANGED, { connectorId: connectorForCommand.id, reason: 'skill-verified', status: success ? 'connected' : 'disconnected' });
           }
           const syncedFiles = await syncWorkspaceFiles(call.scope ?? 'global', api, beforeFiles, physicalWorkspace);
@@ -1099,8 +1090,7 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
       if (name.startsWith('connector_')) {
           const permissionGranted = requestConnectorApproval(name, args);
           try {
-            const { executeConnectorTool } = await import('./connectorTools');
-            const result = await executeConnectorTool(name, args as Record<string, string>, { permissionGranted });
+            const result = await connectorToolRuntime.executeConnectorTool(name, args as Record<string, string>, { permissionGranted });
             return {
               toolCallId: id,
               name,
@@ -1117,4 +1107,62 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
   } catch (e: any) {
     return { toolCallId: id, name, success: false, output: `工具执行错误：${e?.message ?? '未知'}` };
   }
+}
+
+async function recordExternalToolResult(call: ToolCall, result: ToolResult): Promise<void> {
+  try {
+    const httpStatus = Number(result.output.match(/HTTP\s+(\d{3})/iu)?.[1] ?? 0) || undefined;
+    if (call.name === 'read_web_page') {
+      const invalidInput = /地址无效|只支持读取/u.test(result.output);
+      recordExternalCapabilityProbe({
+        id: 'builtin:web-page', kind: 'web_page', label: '指定网页读取', source: 'desktop-runtime',
+        configured: Boolean(getFsApi()?.knowledgeFetchUrl || globalThis.fetch), resourceIdentity: call.args.url,
+      }, {
+        actualCall: !invalidInput,
+        ok: result.success,
+        validated: result.success && result.output.trim().length > 40,
+        responseReceived: !invalidInput,
+        invalidContent: result.success && result.output.trim().length <= 40,
+        httpStatus,
+        detail: result.success ? `已读取指定对象：${call.args.url ?? ''}` : result.output.slice(0, 500),
+      });
+      return;
+    }
+    if (call.name === 'search_skills' || call.name === 'install_skill') {
+      const supported = Boolean(getFsApi()?.skillsSearchMarket && getFsApi()?.skillsInstall);
+      recordExternalCapabilityProbe({ id: 'builtin:skillhub', kind: 'skillhub', label: 'SkillHub', source: 'skill-runtime', configured: supported }, {
+        actualCall: supported,
+        ok: result.success,
+        validated: result.success,
+        responseReceived: supported,
+        httpStatus,
+        detail: result.output.slice(0, 500),
+      });
+      return;
+    }
+    if (call.name === 'test_connector' || call.name.startsWith('connector_') || (call.name === 'run_command' && String(call.args.verification).toLowerCase() === 'true')) {
+      const connectorId = result.protocolEvidence?.connectorId || call.args.connector || call.args.id;
+      const query = String(connectorId ?? '').toLocaleLowerCase();
+      const connector = connectorData.loadConnectors().find((item) => item.id.toLocaleLowerCase() === query || item.label.toLocaleLowerCase() === query || item.mcpServerName?.toLocaleLowerCase() === query);
+      if (!connector) return;
+      const profile = externalCapabilityProfileForConnector(connector, connectorData.connectorMissingFields(connector).length === 0);
+      const actualCall = profile.configured && !/没有获得批准|还缺少|尚未配置|没有找到/u.test(result.output);
+      recordExternalCapabilityProbe(profile, {
+        actualCall,
+        ok: result.success,
+        validated: result.success,
+        responseReceived: actualCall,
+        httpStatus,
+        protocolError: /协议|json-rpc|响应字段/iu.test(result.output),
+        invalidContent: result.success && !result.output.trim(),
+        detail: result.output.slice(0, 500),
+      });
+    }
+  } catch {}
+}
+
+export async function executeTool(call: ToolCall): Promise<ToolResult> {
+  const result = await executeToolInternal(call);
+  await recordExternalToolResult(call, result);
+  return result;
 }

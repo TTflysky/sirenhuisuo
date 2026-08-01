@@ -395,8 +395,21 @@ function createNativeToolRuntime(options) {
         const routing = await import(pathToFileURL(path.join(projectRoot, 'src/engine/skillInstallRouting.mjs')).href);
         const resolved = routing.resolveSkillInstallInput(args, context.goal);
         if (resolved.error) return failed(name, resolved.error);
-        if (context.executionPolicy?.approvalMode !== 'full') {
-          return failed(name, `等待用户批准安装 Skill：${String(resolved.sourceUrl).slice(0, 500)}`, { awaitingApproval: true });
+        if (context.executionPolicy?.approvalMode !== 'full' && context.approvalGranted !== true) {
+          const sourceUrl = String(resolved.sourceUrl).slice(0, 500);
+          return failed(name, `等待用户批准安装 Skill：${sourceUrl}`, {
+            awaitingApproval: true,
+            approvalRequest: {
+              title: `安装 Skill：${resolved.name || resolved.slug || '未命名 Skill'}`,
+              purpose: '把已经确认来源的 Skill 写入太极技能目录，并在写入后回读校验。',
+              action: `从 ${sourceUrl} 下载并安装 Skill`,
+              reads: [sourceUrl],
+              writes: ['太极用户技能目录'],
+              risks: ['会新增或覆盖同名 Skill 文件'],
+              approveEffect: '只执行本次指定来源的安装和完整性校验。',
+              rejectEffect: '保留当前任务和来源信息，不安装任何文件。',
+            },
+          });
         }
         const result = await options.installSkill(projectRoot, resolved);
         return result.ok
@@ -462,8 +475,11 @@ function createNativeToolRuntime(options) {
         if (isSkillHubCliCommand(command)) return failed(name, 'SkillHub CLI 路线已停用：Windows 的 skillhub.bat 可能依赖不可用的 python3。请直接调用客户端原生 install_skill，安装不依赖终端命令。');
         if (containsSensitiveLiteral(command)) return failed(name, '命令中包含疑似明文密钥、Token 或密码，已拒绝执行。请改用连接器凭据或受限环境变量。');
         const policy = context.executionPolicy || {};
-        if (policy.approvalMode === 'ask' || (policy.approvalMode !== 'full' && !isRoutineCommand(command))) {
-          return failed(name, `等待用户批准命令：${command.slice(0, 500)}`, { awaitingApproval: true });
+        if (context.approvalGranted !== true && (policy.approvalMode === 'ask' || (policy.approvalMode !== 'full' && !isRoutineCommand(command)))) {
+          return failed(name, `等待用户批准命令：${command.slice(0, 500)}`, {
+            awaitingApproval: true,
+            approvalRequest: commandApprovalRequest(command, context.goal),
+          });
         }
         const before = await listWorkspace(context);
         const result = await options.runCommand({ cmd: command, scope: context.workspaceId || context.scope, sandboxEnabled: policy.sandboxEnabled !== false });
@@ -487,6 +503,41 @@ function createNativeToolRuntime(options) {
 
 function connectionEvidence(connector, action, ok) {
   return { connection: { connectorId: connector.id, connectorLabel: connector.label, action, ok, verified: ok, checkedAt: Date.now() } };
+}
+
+function commandApprovalRequest(command, goal) {
+  const raw = String(command || '').trim();
+  const quoted = [...raw.matchAll(/["']([A-Za-z]:\\[^"']+|[^"']*[\\/][^"']+)["']/gu)]
+    .map((match) => match[1]).filter(Boolean).slice(0, 8);
+  const reads = [];
+  const writes = [];
+  const risks = [];
+  const lower = raw.toLowerCase();
+  const writesFiles = /\b(?:copy-item|move-item|set-content|add-content|new-item|remove-item|del|erase|mkdir|md)\b/iu.test(raw);
+  const readsFiles = /\b(?:get-childitem|get-content|test-path|resolve-path|dir|ls|type)\b/iu.test(raw);
+  if (readsFiles) reads.push(...quoted);
+  if (writesFiles) writes.push(...quoted);
+  if (/get-childitem\s+env:|\benv:/iu.test(raw)) {
+    reads.push('当前进程的环境变量名称');
+    risks.push('可能发现已配置的账号或 API Key 名称；值必须继续脱敏');
+  }
+  if (/desktop|桌面|GetFolderPath\(['"]Desktop/iu.test(raw)) reads.push('系统桌面目录位置');
+  if (/remove-item|\bdel\b|\berase\b/iu.test(raw)) risks.push('包含删除文件动作');
+  if (/invoke-webrequest|curl|wget|start-process/iu.test(raw)) risks.push('包含联网下载或启动外部程序');
+  if (!risks.length) risks.push('命令将在本机执行，影响范围以本次列出的读取和写入位置为限');
+  const action = writesFiles ? '在本机读取必要位置并写入或复制文件'
+    : readsFiles ? '读取本机目录或文件状态'
+      : lower.includes('env:') ? '检查本机运行环境配置' : '执行一条本机命令';
+  return {
+    title: writesFiles ? '允许本次文件操作' : '允许本次本机检查',
+    purpose: String(goal || '继续当前任务').slice(0, 240),
+    action,
+    reads: [...new Set(reads)].slice(0, 8),
+    writes: [...new Set(writes)].slice(0, 8),
+    risks,
+    approveEffect: '仅放行这条完全相同的命令；后续不同命令仍需重新判断。',
+    rejectEffect: '不执行该命令，任务保留现有成果并由章北海选择替代路线。',
+  };
 }
 function isSkillHubCliCommand(command) { return /(?:^|[;&|]\s*)skillhub(?:\.bat)?\s+(?:install|update)\b/iu.test(String(command || '').trim()); }
 function succeeded(name, output, structuredEvidence) { return { name, success: true, output: String(output || ''), structuredEvidence }; }

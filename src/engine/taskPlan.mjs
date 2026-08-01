@@ -133,6 +133,9 @@ export function createTaskContract(input = {}) {
       source: decision.source === 'model' ? 'model' : 'rules',
       reason: text(decision.decisionReason, 500),
       confidence: Number.isFinite(decision.confidence) ? Math.max(0, Math.min(1, decision.confidence)) : 0,
+      audit: decision.decisionAudit && typeof decision.decisionAudit === 'object'
+        ? structuredClone(decision.decisionAudit)
+        : undefined,
     },
     context: {
       scope: text(input.scope, 120),

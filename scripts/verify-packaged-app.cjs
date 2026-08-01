@@ -21,6 +21,7 @@ const requiredFiles = [
   'electron/executionAdapterProtocol.cjs',
   'electron/nativeToolRuntime.cjs',
   'electron/nativeExecutionAdapter.cjs',
+  'electron/nativeExecutionProjection.cjs',
   'electron/appIdentityMigration.cjs',
   'electron/executionObservability.cjs',
   'electron/operationDiagnostics.cjs',

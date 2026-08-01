@@ -66,7 +66,12 @@ async function waitForPageReady(port, timeoutMs = 30000) {
   vite.stderr.on('data', (chunk) => { viteLog = `${viteLog}${chunk}`.slice(-8000); });
   try {
     await waitForUrl(`http://127.0.0.1:${vitePort}`);
-    electron = spawn(electronPath, ['.', '--disable-gpu', '--disable-gpu-compositing', '--disable-direct-composition', '--disable-features=CalculateNativeWinOcclusion,Vulkan'], {
+    const gpuMode = process.env.TAIJI_E2E_GPU_MODE || 'disabled';
+    const gpuArgs = gpuMode === 'hardware'
+      ? []
+      : ['--disable-gpu', '--disable-gpu-compositing', '--in-process-gpu', '--disable-direct-composition', '--disable-gpu-sandbox', '--use-gl=swiftshader', '--disable-features=CalculateNativeWinOcclusion,Vulkan'];
+    console.log(`[electron-e2e] gpu mode: ${gpuMode}`);
+    electron = spawn(electronPath, ['.', ...gpuArgs], {
       cwd: path.resolve(__dirname, '..'), env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
     });
     electron.stdout.on('data', (chunk) => { electronLog = `${electronLog}${chunk}`.slice(-16000); });

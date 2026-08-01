@@ -21,7 +21,7 @@ export interface TaskContract {
     needsUser: boolean;
     missingUserCondition: string;
   };
-  decision: { source: 'rules' | 'model'; reason: string; confidence: number };
+  decision: { source: 'rules' | 'model'; reason: string; confidence: number; audit?: import('./taskDecisionKernel.mjs').TaskDecisionAudit };
   context: { scope: string; parentTaskId: string; experienceRefs: string[] };
   createdAt: number;
 }

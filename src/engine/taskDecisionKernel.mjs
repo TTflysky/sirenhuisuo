@@ -196,9 +196,9 @@ function routeForGoal(goal, availableTools) {
   if (/读取|查看|检查|分析|打开/u.test(goal) && /文件|文档|代码|附件|工作区/u.test(goal) && tools.has('read_file')) return 'read_file';
   if (/列出|有哪些|目录|清单/u.test(goal) && /文件|产出物|工作区/u.test(goal) && tools.has('list_files')) return 'list_files';
   if (/skill|技能/iu.test(goal) && /搜索|查找|安装|更新|修复|恢复|找/u.test(goal) && tools.has('search_skills')) return 'search_skills';
+  if (/团队|员工|成员|调度|分工|协作/u.test(goal)) return 'team_dispatch';
   if (/创建|生成|编写|写入|保存|制作/u.test(goal) && /文件|文档|代码|脚本|表格|报告|方案|word|excel|ppt|pdf/iu.test(goal) && tools.has('write_file')) return 'write_file';
   if (/运行|执行|构建|打包|安装|部署|测试|验证|修复/u.test(goal) && tools.has('run_command')) return 'run_command';
-  if (/团队|员工|成员|调度|分工|协作/u.test(goal)) return 'team_dispatch';
   return 'general_tools';
 }
 
@@ -415,7 +415,7 @@ export function buildTaskDecisionMessages(input = {}) {
         latestMessage: clean(input.latestMessage, 4000),
         previousUserMessage: clean(input.previousUserMessage, 2400),
         activeTaskGoal: clean(input.activeTaskGoal, 2400),
-        recentHistory: history.slice(-8).map((item) => ({ role: item.role, content: clean(item.content, 900) })),
+        recentHistory: history.slice(-20).map((item) => ({ role: item.role, content: clean(item.content, 1200) })),
         availableTools: input.availableTools ?? [],
         relevantUserContext: clean(input.relevantUserContext, 3000),
         relevantTaskExperience: clean(input.relevantTaskExperience, 3000),

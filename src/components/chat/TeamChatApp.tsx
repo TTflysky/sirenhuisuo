@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { ArrowLeftOutlined, EditOutlined, HistoryOutlined, PauseCircleOutlined, PlayCircleOutlined, PlusOutlined, RobotOutlined, SearchOutlined, StopOutlined, UserAddOutlined } from '@ant-design/icons';
-import type { Team, Employee, TaskRun, ThoughtChainStep } from '../../types';
+import type { Team, Employee, TaskApprovalContract, TaskRun, ThoughtChainStep } from '../../types';
 import { useStore } from '../../storeContext';
 import { generatedImageAttachment, generateImage, getConversationModel, isImageGenerationModel, type Attachment } from '../../data/hermesClient';
 import { getImageGenerationOptions } from '../../data/imageGenerationSettings';
@@ -29,6 +29,8 @@ import { cleanExecutionDisplay } from '../../engine/executionDisplay.mjs';
 import { buildProjectBoard, projectBoardSections } from '../../engine/projectBoard.mjs';
 import type { ProjectBoardProject } from '../../engine/projectBoard.mjs';
 import ThoughtChainView from './ThoughtChainView';
+import StageSummaryCard from './StageSummaryCard';
+import ExecutionApprovalCard from './ExecutionApprovalCard';
 import {
   activateChatSession,
   createChatSession,
@@ -47,6 +49,15 @@ interface Props {
 
 type TaskAuditNode = { id: string; depth: number; title: string; status: string; blocked?: string; steps: { completed: number; total: number }; compensation: { completed: number; blocked: number; failed: number } };
 type TaskAudit = { nodes: TaskAuditNode[]; plan?: { ready: boolean; nextAction: string; blockers: Array<{ taskId: string; title: string; reason: string }> } };
+function formatDuration(milliseconds: number): string {
+  if (!Number.isFinite(milliseconds) || milliseconds <= 0) return '未计时';
+  const seconds = Math.floor(milliseconds / 1000);
+  if (seconds < 60) return `${seconds} 秒`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} 分 ${seconds % 60} 秒`;
+  return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`;
+}
+
 const supervisorMention: Employee = {
   id: 'assistant',
   name: '章北海助理',
@@ -76,6 +87,7 @@ export default function TeamChatApp({ teamId }: Props) {
   const team = state.teams.find((t: Team) => t.id === teamId);
   const sessionScope: ChatSessionScope = `team:${teamId}`;
   const [conversationId, setConversationId] = useState(() => ensureActiveChatSession(sessionScope));
+  const [approvalBusyIds, setApprovalBusyIds] = useState<Set<string>>(() => new Set());
   const conversationIdRef = useRef(conversationId);
   conversationIdRef.current = conversationId;
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -339,6 +351,33 @@ export default function TeamChatApp({ teamId }: Props) {
     setAttachments([]);
   };
 
+  const handleExecutionApproval = async (approval: TaskApprovalContract, decision: 'approved' | 'rejected') => {
+    if (!window.electronAPI?.taskExecutionDecideApproval || approvalBusyIds.has(approval.id)) return;
+    setApprovalBusyIds((previous) => new Set(previous).add(approval.id));
+    try {
+      const result = await window.electronAPI.taskExecutionDecideApproval({
+        taskId: approval.taskId,
+        approvalId: approval.id,
+        decision,
+      });
+      if (!result.ok) {
+        dispatch({
+          type: 'APPEND_CHAT', teamId, conversationId: conversationIdRef.current,
+          msgs: [{
+            id: `approval-error-${Date.now()}`, authorId: 'assistant', roleId: 'custom', mentions: [], timestamp: Date.now(), kind: 'text',
+            content: `授权决定没有写入任务：${result.error || '未知错误'}。原任务保持暂停，没有执行未获批准的动作。`,
+          }],
+        });
+      }
+    } finally {
+      setApprovalBusyIds((previous) => {
+        const next = new Set(previous);
+        next.delete(approval.id);
+        return next;
+      });
+    }
+  };
+
   const handleStartNewChat = () => {
     const running = taskRuns.filter((run) => run.status === 'queued' || run.status === 'running');
     if (running.length && !confirm(`当前有 ${running.length} 个任务正在执行。新建聊天会安全停止这些任务并保留已完成内容，是否继续？`)) return;
@@ -435,22 +474,32 @@ export default function TeamChatApp({ teamId }: Props) {
     setTaskTitle(''); setTaskDesc(''); setShowTaskForm(false);
   };
 
+  const transcriptIdentity = (message: { authorId: string; roleId: string; authorName?: string }) => {
+    if (message.authorId === 'assistant') return { author: '章北海助理', role: '常驻主助理' };
+    const employee = state.employees.find((item) => item.id === message.authorId);
+    return { author: employee?.name ?? message.authorName ?? message.authorId, role: employee?.title ?? message.roleId };
+  };
+
   const handleCopyMsg = async (content: string) => { await copyToClipboard(content); };
   const handleCopyAll = async () => {
     await copyToClipboard(visibleMessages.map((m: any) => {
-      const a = state.employees.find((e) => e.id === m.authorId);
-      return `[${a?.name ?? m.roleId}] ${m.content}`;
+      const identity = transcriptIdentity(m);
+      return `[${identity.author}] ${m.content}`;
     }).join('\n\n'));
     await copyAndArchiveChatTranscript({
       scope: `team-${team.id}`,
       title: `${team.name} Team Transcript`,
       messages: visibleMessages.map((message: any) => {
-        const author = state.employees.find((employee) => employee.id === message.authorId);
+        const identity = transcriptIdentity(message);
         return {
-          role: author?.title ?? message.roleId,
-          author: author?.name ?? message.authorId,
+          role: identity.role,
+          author: identity.author,
           content: message.content,
           time: new Date(message.timestamp).toLocaleString('zh-CN'),
+          attachments: message.attachments,
+          kind: message.kind,
+          stageSummary: message.stageSummary,
+          approval: message.approval,
         };
       }),
     });
@@ -458,8 +507,8 @@ export default function TeamChatApp({ teamId }: Props) {
   const handleExport = () => {
     const msgs = visibleMessages;
     const md = messagesToMarkdown(msgs.map((m: any) => {
-      const a = state.employees.find((e) => e.id === m.authorId);
-      return { role: a?.title ?? m.roleId, author: a?.name ?? m.roleId, content: m.content, time: new Date(m.timestamp).toLocaleString('zh-CN') };
+      const identity = transcriptIdentity(m);
+      return { role: identity.role, author: identity.author, content: m.content, time: new Date(m.timestamp).toLocaleString('zh-CN'), attachments: m.attachments, kind: m.kind, stageSummary: m.stageSummary, approval: m.approval };
     }), `${team.name} 讨论记录`);
     downloadTextFile(`${team.name}-对话-${new Date().toISOString().slice(0, 10)}.md`, md);
   };
@@ -607,28 +656,29 @@ export default function TeamChatApp({ teamId }: Props) {
       <div className="project-board-current">
         <span>{project.currentStage ? `当前：${project.currentStage.label}` : '等待制定阶段'}</span>
         {owner && <span>{owner.name}</span>}
+        <span>{formatDuration(project.elapsedMs)}</span>
+        <span>证据 {project.verifiedEvidence}/{project.evidenceTotal}</span>
       </div>
       <p className="project-board-result" title={project.latestResult}>{project.latestResult}</p>
+      {(project.waitingCondition || project.nextAction) && <div className="project-board-guidance">
+        {project.waitingCondition && <span><strong>等待</strong>{project.waitingCondition}</span>}
+        <span><strong>下一步</strong>{project.nextAction}</span>
+      </div>}
       {expanded && <div className="project-board-details">
         <div className="project-board-goal"><strong>项目目标</strong><span>{project.goal}</span></div>
         <div className="project-board-stages">
           {project.stages.map((stage) => {
             const stageOwner = stage.ownerId ? state.employees.find((employee) => employee.id === stage.ownerId) : undefined;
             return <details key={stage.id} className={`project-board-stage stage-${stage.status}`} open={stage.status === 'running' || stage.status === 'awaiting_user' || stage.status === 'failed'}>
-              <summary><span>{stage.label}</span><small>{stageOwner?.name ?? '待分配'} · {stage.completed}/{stage.total}</small><b>{stage.status === 'running' ? '执行中' : stage.status === 'awaiting_user' ? '等待你处理' : stage.status === 'failed' ? '需要恢复' : stage.status === 'completed' ? '已完成' : '等待'}</b></summary>
-              {stage.entries.map(({ run, step }) => {
+              <summary><span>{stage.label}</span><small>{stageOwner?.name ?? '待分配'} · {stage.completed}/{stage.total} · {formatDuration(stage.elapsedMs)} · 证据 {stage.verifiedEvidence}/{stage.evidenceTotal}</small><b>{stage.status === 'running' ? '执行中' : stage.status === 'awaiting_user' ? '等待你处理' : stage.status === 'failed' ? '需要恢复' : stage.status === 'completed' ? '已完成' : '等待'}</b></summary>
+              {stage.entries.map((entry) => {
+                const { run, step } = entry;
                 const employee = state.employees.find((item) => item.id === step.employeeId);
-                const waitingFor = step.status === 'queued'
-                  ? step.dependsOnStepIds
-                    .map((dependencyId) => run.steps.find((candidate) => candidate.id === dependencyId))
-                    .filter((candidate) => candidate?.status !== 'completed')
-                    .map((candidate) => candidate?.title ?? '未知前置步骤')
-                  : [];
-                const detail = waitingFor.length
-                  ? `等待前置步骤：${waitingFor.join('、')}`
-                  : step.lastError || step.reviewReason || step.events.at(-1)?.detail || '尚未产生阶段结果。';
+                const detail = entry.waitingCondition || step.lastError || step.reviewReason || step.events.at(-1)?.detail || '尚未产生阶段结果。';
                 return <div key={`${run.id}-${step.id}`} className="project-board-stage-entry">
-                  <strong>{employee?.name ?? step.title}</strong><span>{step.title}</span><small>{detail}</small>
+                  <strong>{employee?.name ?? step.title}</strong><span>{step.title}</span>
+                  <small>{detail}</small>
+                  <div className="project-board-entry-metrics"><span>{formatDuration(entry.elapsedMs)}</span><span>证据 {entry.verifiedEvidence}/{entry.evidenceTotal}</span><span>下一步：{entry.nextAction}</span>{entry.responsibility && <span className="is-responsibility">{entry.responsibility}</span>}</div>
                   <button type="button" onClick={() => setReplayTaskId(run.id)} title="查看该任务的可审计回放"><HistoryOutlined /></button>
                 </div>;
               })}
@@ -784,6 +834,10 @@ export default function TeamChatApp({ teamId }: Props) {
                 ?? (msg.authorId === supervisorMention.id ? supervisorMention : undefined);
               const isHuman = msg.roleId === 'human';
               const isExecution = msg.kind === 'execution';
+              const summarizedLater = isExecution && msg.stepId
+                ? allMessages.slice(messageIndex + 1).some((candidate) => candidate.kind === 'stage_summary' && candidate.stageSummary?.stepId === msg.stepId)
+                : false;
+              if (summarizedLater) return null;
               if (isExecution && allMessages[messageIndex + 1]?.kind === 'execution') return null;
               let executionStart = messageIndex;
               while (executionStart > 0 && allMessages[executionStart - 1]?.kind === 'execution') executionStart -= 1;
@@ -807,7 +861,15 @@ export default function TeamChatApp({ teamId }: Props) {
                       <span className="msg-time">{new Date(msg.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span>
                     </div>
                   ) : <div className="msg-meta msg-human-time"><span className="msg-time">{new Date(msg.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</span></div>}
-                  {isExecution ? (
+                  {msg.kind === 'stage_summary' && msg.stageSummary ? (
+                    <StageSummaryCard summary={msg.stageSummary} />
+                  ) : msg.kind === 'approval' && msg.approval ? (
+                    <ExecutionApprovalCard
+                      approval={msg.approval}
+                      busy={approvalBusyIds.has(msg.approval.id)}
+                      onDecision={(decision) => void handleExecutionApproval(msg.approval!, decision)}
+                    />
+                  ) : isExecution ? (
                     <ThoughtChainView steps={teamExecutionSteps} summary={`${author?.name ?? '成员'}的执行过程`} live={executionIsLive} />
                   ) : msg.kind === 'task' ? (
                     <div className="task-card-msg" style={isHuman ? { marginLeft: 'auto', maxWidth: '85%' } : {}}>

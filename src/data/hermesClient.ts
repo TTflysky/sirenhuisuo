@@ -1,4 +1,4 @@
-import type { Employee, Team, ChatMessage, AppState, AgentStatus, ModelConfig, SkillReference } from '../types';
+import type { Employee, Team, AppState, AgentStatus, ModelConfig, SkillReference } from '../types';
 import { repairEmployeeStations } from './officeStations';
 import { seedEmployees } from './defaultEmployees';
 import { seedTeams } from './defaultTeams';
@@ -9,11 +9,28 @@ import { loadTaskRuns } from './taskRuns';
 import { redactToolArguments } from '../engine/securityBoundary';
 import { ensureDistinctEmployeeColors } from './employeeColors';
 import { materializeCatalogEmployees, normalizeCatalogEmployeePersonas } from './expertCatalog';
+import {
+  APP_STATE_STORAGE_KEYS,
+  appendChat,
+  appendDm,
+  loadChat,
+  loadDm,
+  loadProjects,
+  removeEmployee,
+  replaceChat,
+  replaceDm,
+  saveEmployees,
+  saveProjects,
+  saveTeams,
+  upsertEmployee,
+} from './appStateStorage';
 import { parseGeneratedAvatarPayload } from './generatedAvatar';
 import { buildImageEditFormData, selectEditableImage } from '../engine/imageRequest.mjs';
 import { consumeOpenAIChatStream } from '../engine/chatStream.mjs';
+import { prepareChatRequestTurns } from '../engine/chatRequestContext.mjs';
 import { createCompatibilityReport } from '../engine/modelCompatibility.mjs';
 import { presentModelFailure } from '../engine/modelFailurePresentation.mjs';
+import { runReliableModelRequest } from './modelReliability';
 import {
   resolveImageSpecification,
   type ImageGenerationOptions,
@@ -68,6 +85,7 @@ import {
   parseTaskDecisionToolCall,
   type TaskDecision,
 } from '../engine/taskDecisionKernel.mjs';
+import { buildTaskDecisionAudit } from '../engine/taskDecisionPipeline.mjs';
 import { assessTaskCompletion } from '../engine/taskFidelity.mjs';
 import {
   assessExplicitResourceCompletion,
@@ -129,12 +147,9 @@ export {
 } from './userMemory';
 export type { UserMemoryCategory, UserMemoryItem } from './userMemory';
 
-const LS_EMPLOYEES = 'hermes_office_employees';
-const LS_TEAMS = 'hermes_office_teams';
-const LS_PROJECTS = 'hermes_office_projects_v1';
-const LS_CHAT_PREFIX = 'hermes_office_chat_';
 const LS_SETTINGS = 'hermes_office_settings';
-const MAX_CHAT = 200;
+const LS_EMPLOYEES = APP_STATE_STORAGE_KEYS.employees;
+const LS_TEAMS = APP_STATE_STORAGE_KEYS.teams;
 
 let _backendOnline: boolean | null = null;
 
@@ -295,7 +310,7 @@ export function getActiveModel(): ModelConfig {
   const s = loadSettings();
   if (s.modelLibrary && s.modelLibrary.length > 0) {
     const active = s.modelLibrary.find(m => m.id === s.activeModelId) ?? s.modelLibrary[0];
-    return { provider: active.provider, apiHost: active.apiHost, apiKey: active.apiKey, model: active.model, contextWindowTokens: active.contextWindowTokens };
+    return { provider: active.provider, apiHost: active.apiHost, apiKey: active.apiKey, model: active.model, contextWindowTokens: active.contextWindowTokens, refModelId: active.id };
   }
   // 向后兼容：旧版直接用 provider/apiHost/apiKey/model 字段
   return { provider: s.provider, apiHost: s.apiHost, apiKey: s.apiKey, model: s.model, contextWindowTokens: s.contextWindowTokens };
@@ -306,7 +321,7 @@ export function getAssistantModel(): ModelConfig {
   const s = loadSettings();
   if (s.modelLibrary && s.modelLibrary.length > 0 && s.assistantModelId) {
     const am = s.modelLibrary.find(m => m.id === s.assistantModelId);
-    if (am) return { provider: am.provider, apiHost: am.apiHost, apiKey: am.apiKey, model: am.model, contextWindowTokens: am.contextWindowTokens };
+    if (am) return { provider: am.provider, apiHost: am.apiHost, apiKey: am.apiKey, model: am.model, contextWindowTokens: am.contextWindowTokens, refModelId: am.id };
   }
   // 助理手动配置优先于全局激活模型
   if (s.assistantModelConfig) return s.assistantModelConfig;
@@ -321,7 +336,7 @@ export function getReviewModel(): ModelConfig | undefined {
   if (!settings.reviewModelId || !settings.modelLibrary?.length) return undefined;
   const model = settings.modelLibrary.find((item) => item.id === settings.reviewModelId);
   if (!model) return undefined;
-  return { provider: model.provider, apiHost: model.apiHost, apiKey: model.apiKey, model: model.model, contextWindowTokens: model.contextWindowTokens };
+  return { provider: model.provider, apiHost: model.apiHost, apiKey: model.apiKey, model: model.model, contextWindowTokens: model.contextWindowTokens, refModelId: model.id };
 }
 
 function configuredModelById(id?: string, capability?: ModelCapability): ModelConfig | undefined {
@@ -887,6 +902,7 @@ export interface ChatResult {
   contextUsage: ContextUsage;
   model: string;
   toolCalls?: ToolCallResult[];  // function-calling 返回的工具调用
+  reliability?: { key: string; latencyMs: number; firstTokenMs?: number; outcome: 'success' | 'failure' };
 }
 
 export interface ChatCompletionRequestOptions {
@@ -952,6 +968,8 @@ export async function chatCompletion(
   const base = resolveApiBase(merged);
   if (!base) throw new Error('未配置 API');
   const model = merged.model?.trim() || getProvider(merged.provider).defaultModel || 'gpt-4o-mini';
+  const reliabilityConfig: ModelConfig = { provider: merged.provider, apiHost: merged.apiHost, apiKey: merged.apiKey, model,
+    contextWindowTokens: merged.contextWindowTokens, refModelId: modelConfig?.refModelId };
 
   // 注入与当前问题相关的长期记忆和画像；内核调用可显式关闭，避免重复污染分类输入。
   const latestUserQuery = [...turns].reverse().find((turn) => turn.role === 'user');
@@ -959,93 +977,67 @@ export async function chatCompletion(
     ? latestUserQuery.content
     : (latestUserQuery?.content ?? []).filter((part): part is ContentPart => part.type === 'text').map((part) => part.text ?? '').join('\n');
   const userCtx = requestOptions.injectUserContext === false ? '' : buildUserContext(latestUserQueryText);
-  let finalTurns = turns.map(t => ({ ...t }));
-  if (userCtx || extraSystemContext) {
-    // 找到第一条 system 消息，追加用户上下文和 extraSystemContext
-    const sysIdx = finalTurns.findIndex(t => t.role === 'system');
-    if (sysIdx >= 0) {
-      const sysContent = finalTurns[sysIdx].content;
-      // 系统提示内容仅支持 string 形式注入
-      let sys = typeof sysContent === 'string' ? sysContent : '';
-      if (extraSystemContext) {
-        sys += `\n\n## 扩展上下文\n${extraSystemContext.slice(0, 160000)}`;
+  const finalTurns = prepareChatRequestTurns(turns, { userContext: userCtx, extraSystemContext, attachments });
+  const alternatives = (loadSettings().modelLibrary ?? [])
+    .filter((entry) => entry.id !== reliabilityConfig.refModelId && getModelCapabilities(entry).includes('chat'))
+    .map((entry) => ({ provider: entry.provider, apiHost: entry.apiHost, model: entry.model, refModelId: entry.id }));
+  const reliable = await runReliableModelRequest(reliabilityConfig, alternatives, async ({ markFirstToken }) => {
+    const streaming = typeof requestOptions.onTextDelta === 'function';
+    const onTextDelta = streaming
+      ? (delta: string, accumulated: string) => {
+        if (delta) markFirstToken();
+        requestOptions.onTextDelta?.(delta, accumulated);
       }
-      if (userCtx) {
-        sys += `\n\n## 关于当前用户\n${userCtx}\n（用户画像是用户主动确认的高优先级事实；长期记忆已经过筛选。不要自行声称“已记录”，记忆写入由独立提炼流程负责。）`;
-      }
-      finalTurns = finalTurns.map((t, i) => i === sysIdx ? { ...t, content: sys } : t);
-    } else {
-      // 没有 system 消息则新建一条
-      let content = '';
-      if (extraSystemContext) content += `## 扩展上下文\n${extraSystemContext.slice(0, 160000)}\n\n`;
-      if (userCtx) content += `## 关于当前用户\n${userCtx}\n`;
-      if (content) finalTurns.unshift({ role: 'system', content });
+      : undefined;
+    const res = await apiFetch('/chat/completions', {
+      method: 'POST',
+      body: JSON.stringify({
+        model,
+        messages: finalTurns,
+        stream: streaming,
+        ...(tools && tools.length > 0 ? { tools, tool_choice: requestOptions.toolChoice ?? 'auto' } : {}),
+      }),
+    }, requestOptions.timeoutMs ?? 300000, merged.apiKey, base, requestSignal); // Long-running model/tool requests may take minutes on a busy provider.
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      const error = Object.assign(new Error(`模型响应 ${res.status}: ${txt.slice(0, 120)}`), { status: res.status, modelFailureDetail: txt });
+      throw error;
     }
-  }
-
-  // 多模态附件：把最后一条 user 消息转为 [text, image_url] 数组
-  if (attachments && attachments.length > 0) {
-    const lastUserIdx = finalTurns.map(t => t.role).lastIndexOf('user');
-    if (lastUserIdx >= 0) {
-      const t = finalTurns[lastUserIdx];
-      const textPart: ContentPart = { type: 'text', text: typeof t.content === 'string' ? t.content : '' };
-      const imageParts: ImagePart[] = attachments
-        .filter(a => a.kind === 'image' && a.dataUrl)
-        .map(a => ({ type: 'image_url', image_url: { url: a.dataUrl! } }));
-      if (imageParts.length > 0) {
-        finalTurns = finalTurns.map((turn, i) =>
-          i === lastUserIdx ? { ...turn, content: [textPart, ...imageParts] } : turn
-        );
-      }
+    const streamed = streaming
+      ? await consumeOpenAIChatStream(res, { onTextDelta })
+      : undefined;
+    const data = streamed ? undefined : await res.json();
+    const msg = data?.choices?.[0]?.message ?? {};
+    const content: string | null = streamed?.content
+      ?? (typeof msg.content === 'string' && msg.content.trim() ? msg.content.trim() : null);
+    const u = streamed?.usage ?? data?.usage ?? {};
+    const apiPromptTokens = Number.isFinite(Number(u.prompt_tokens)) ? Number(u.prompt_tokens) : undefined;
+    const usage: TokenUsage = {
+      promptTokens: apiPromptTokens ?? estimateTokens(finalTurns.map((t) => typeof t.content === 'string' ? t.content : t.content.map((part) => part.type === 'text' ? part.text ?? '' : '[图片]').join('\n')).join('')),
+      completionTokens: u.completion_tokens ?? (content ? estimateTokens(content) : 50),
+      totalTokens: u.total_tokens ?? 0,
+    };
+    if (!usage.totalTokens) usage.totalTokens = usage.promptTokens + usage.completionTokens;
+    const contextWindowTokens = Number(merged.contextWindowTokens);
+    const contextUsage: ContextUsage = {
+      promptTokens: usage.promptTokens,
+      contextWindowTokens: Number.isFinite(contextWindowTokens) && contextWindowTokens > 0 ? Math.round(contextWindowTokens) : undefined,
+      source: apiPromptTokens === undefined ? 'estimate' : 'api',
+    };
+    // 记账（简化：单行 append 以避免匹配问题）
+    appendTokenLog({ ts: Date.now(), model, promptTokens: usage.promptTokens, completionTokens: usage.completionTokens, totalTokens: usage.totalTokens, scene, label });
+    let toolCalls: ToolCallResult[] | undefined = streamed?.toolCalls.length ? streamed.toolCalls : undefined;
+    if (!streamed && msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+      toolCalls = msg.tool_calls.map((tc: any) => ({
+        id: tc.id ?? `tc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        name: tc.function?.name ?? '',
+        arguments: tc.function?.arguments ?? '{}',
+      }));
     }
-  }
-  const streaming = typeof requestOptions.onTextDelta === 'function';
-  const res = await apiFetch('/chat/completions', {
-    method: 'POST',
-    body: JSON.stringify({
-      model,
-      messages: finalTurns,
-      stream: streaming,
-      ...(tools && tools.length > 0 ? { tools, tool_choice: requestOptions.toolChoice ?? 'auto' } : {}),
-    }),
-  }, requestOptions.timeoutMs ?? 300000, merged.apiKey, base, requestSignal); // Long-running model/tool requests may take minutes on a busy provider.
-  if (!res.ok) {
-    const txt = await res.text().catch(() => '');
-    throw new Error(`模型响应 ${res.status}: ${txt.slice(0, 120)}`);
-  }
-  const streamed = streaming
-    ? await consumeOpenAIChatStream(res, { onTextDelta: requestOptions.onTextDelta })
-    : undefined;
-  const data = streamed ? undefined : await res.json();
-  const msg = data?.choices?.[0]?.message ?? {};
-  const content: string | null = streamed?.content
-    ?? (typeof msg.content === 'string' && msg.content.trim() ? msg.content.trim() : null);
-  const u = streamed?.usage ?? data?.usage ?? {};
-  const apiPromptTokens = Number.isFinite(Number(u.prompt_tokens)) ? Number(u.prompt_tokens) : undefined;
-  const usage: TokenUsage = {
-    promptTokens: apiPromptTokens ?? estimateTokens(finalTurns.map((t) => typeof t.content === 'string' ? t.content : t.content.map((part) => part.type === 'text' ? part.text ?? '' : '[图片]').join('\n')).join('')),
-    completionTokens: u.completion_tokens ?? (content ? estimateTokens(content) : 50),
-    totalTokens: u.total_tokens ?? 0,
-  };
-  if (!usage.totalTokens) usage.totalTokens = usage.promptTokens + usage.completionTokens;
-  const contextWindowTokens = Number(merged.contextWindowTokens);
-  const contextUsage: ContextUsage = {
-    promptTokens: usage.promptTokens,
-    contextWindowTokens: Number.isFinite(contextWindowTokens) && contextWindowTokens > 0 ? Math.round(contextWindowTokens) : undefined,
-    source: apiPromptTokens === undefined ? 'estimate' : 'api',
-  };
-  // 记账（简化：单行 append 以避免匹配问题）
-  appendTokenLog({ ts: Date.now(), model, promptTokens: usage.promptTokens, completionTokens: usage.completionTokens, totalTokens: usage.totalTokens, scene, label });
-  let toolCalls: ToolCallResult[] | undefined = streamed?.toolCalls.length ? streamed.toolCalls : undefined;
-  if (!streamed && msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
-    toolCalls = msg.tool_calls.map((tc: any) => ({
-      id: tc.id ?? `tc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      name: tc.function?.name ?? '',
-      arguments: tc.function?.arguments ?? '{}',
-    }));
-  }
-  if (!content && !toolCalls) throw new Error('模型返回为空');
-  return { content, usage, contextUsage, model: streamed?.model || model, toolCalls };
+    if (!content && !toolCalls) throw new Error('模型返回为空');
+    return { value: { content, usage, contextUsage, model: streamed?.model || model, toolCalls }, status: res.status };
+  });
+  return { ...reliable.value, reliability: reliable.reliability };
 }
 
 /**
@@ -1122,7 +1114,7 @@ export async function compileTaskDecision(
   modelConfig?: ModelConfig,
   requestSignal?: AbortSignal,
   decisionContext: { activeTaskGoal?: string } = {},
-): Promise<{ decision: TaskDecision; usage: TokenUsage; contextUsage?: ContextUsage; model?: string }> {
+): Promise<{ decision: TaskDecision; decisionAudit?: ReturnType<typeof buildTaskDecisionAudit>; usage: TokenUsage; contextUsage?: ContextUsage; model?: string }> {
   const userTurns = turns.filter((turn) => turn.role === 'user').map((turn) => typeof turn.content === 'string'
     ? turn.content
     : (turn.content ?? []).filter((part): part is ContentPart => part.type === 'text').map((part) => part.text ?? '').join('\n'));
@@ -1131,7 +1123,7 @@ export async function compileTaskDecision(
   const availableTools = tools.map((tool) => String(tool?.function?.name ?? '')).filter(Boolean);
   const fallback = createFallbackTaskDecision({ latestMessage, previousUserMessage, availableTools });
   const relevantTaskExperience = buildTaskLearningContext(fallback.goal);
-  const recentHistory = turns.filter((turn) => turn.role === 'user' || turn.role === 'assistant').slice(-8).map((turn) => ({
+  const recentHistory = turns.filter((turn) => turn.role === 'user' || turn.role === 'assistant').slice(-24).map((turn) => ({
     role: turn.role,
     content: typeof turn.content === 'string'
       ? turn.content
@@ -1167,15 +1159,29 @@ export async function compileTaskDecision(
       const json = response.content.match(/\{[\s\S]*\}/)?.[0];
       if (json) candidate = JSON.parse(json) as Record<string, unknown>;
     }
+    const normalized = normalizeTaskDecision(candidate, input);
+    const decisionAudit = buildTaskDecisionAudit(input, normalized, {
+      fallback,
+      candidate,
+      modelAttempted: true,
+    });
+    const decision = { ...normalized, decisionAudit };
     return {
-      decision: normalizeTaskDecision(candidate, input),
+      decision,
+      decisionAudit,
       usage: response.usage,
       contextUsage: response.contextUsage,
       model: response.model,
     };
-  } catch {
+  } catch (error) {
+    const decisionAudit = buildTaskDecisionAudit(input, fallback, {
+      fallback,
+      modelAttempted: true,
+      modelFailureClass: /保护窗口|暂时不可用|503|5\d\d/iu.test(error instanceof Error ? error.message : String(error)) ? 'server' : 'unavailable',
+    });
     return {
-      decision: fallback,
+      decision: { ...fallback, decisionAudit },
+      decisionAudit,
       usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
     };
   }
@@ -1707,7 +1713,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
 
     if (r.toolCalls && r.toolCalls.length > 0) {
       // 模型返回了工具调用：执行，结果加入对话继续
-      const { executeTool } = await import('../engine/tools');
+      const { executeAgentTool } = await import('../engine/toolExecutorBridge');
       let iterationHadFailure = false;
       let steeringHandled = false;
       for (const tc of r.toolCalls) {
@@ -1804,7 +1810,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
           : await (async () => {
             executed = true;
             onToolCall?.(tc.name, redactToolArguments(effectiveArguments));
-            return executeTool({ id: tc.id, name: tc.name, args: (() => { try { return JSON.parse(effectiveArguments); } catch { return {}; } })(), scope, workspaceId: opts.workspaceId });
+            return executeAgentTool({ id: tc.id, name: tc.name, args: (() => { try { return JSON.parse(effectiveArguments); } catch { return {}; } })(), scope, workspaceId: opts.workspaceId });
           })();
         const resultSuccess = executed && isUsefulToolOutcome(tc.name, result.success, result.output, originalUserText);
         const newEvidence = resultSuccess && cached === undefined;
@@ -2148,152 +2154,20 @@ export function fetchInitial(): AppState {
   return { employees, teams, projects: loadProjects(), taskRuns: loadTaskRuns(), status };
 }
 
-export function loadProjects(): import('../types').Project[] {
-  try {
-    const raw = localStorage.getItem(LS_PROJECTS);
-    const value = raw ? JSON.parse(raw) : [];
-    return Array.isArray(value) ? value : [];
-  } catch { return []; }
-}
-
-export function saveProjects(projects: import('../types').Project[]): void {
-  try { localStorage.setItem(LS_PROJECTS, JSON.stringify(projects.slice(-80))); } catch (e) {
-    console.warn('[hermesClient] Failed to save projects:', e);
-  }
-}
-
-// ===== 持久化：员工 =====
-export function saveEmployees(list: Employee[]): void {
-  try {
-    localStorage.setItem(LS_EMPLOYEES, JSON.stringify(list));
-  } catch (e) {
-    console.warn('[hermesClient] Failed to save employees:', e);
-  }
-}
-
-export function upsertEmployee(emp: Employee, list: Employee[]): Employee[] {
-  const idx = list.findIndex((e) => e.id === emp.id);
-  if (idx >= 0) {
-    const next = [...list];
-    next[idx] = emp;
-    saveEmployees(next);
-    return next;
-  }
-  const next = [...list, emp];
-  saveEmployees(next);
-  return next;
-}
-
-export function removeEmployee(id: string, list: Employee[]): Employee[] {
-  const next = list.filter((e) => e.id !== id);
-  saveEmployees(next);
-  return next;
-}
-
-// ===== 持久化：团队 =====
-export function saveTeams(list: Team[]): void {
-  try {
-    // 不存 chatMessages，分开存
-    const stripped = list.map((t) => ({ ...t, chatMessages: [] }));
-    localStorage.setItem(LS_TEAMS, JSON.stringify(stripped));
-  } catch (e) {
-    console.warn('[hermesClient] Failed to save teams:', e);
-  }
-}
-
-// ===== 持久化：聊天 =====
-function isRawBinaryChatContent(content: unknown): boolean {
-  if (typeof content !== 'string') return true;
-  const value = content.trim();
-  if (!value) return false;
-  if (/^data:[a-z][a-z0-9+.-]*\/[a-z0-9+.-]+;base64,/iu.test(value)) return true;
-
-  // 头像或附件的 data URL 被错误写入聊天记录时，有时只留下 Base64 主体。
-  // 普通文本、代码和模型回复不可能由数千个无空白 Base64 字符组成。
-  const compact = value.replace(/\s/gu, '');
-  return compact.length >= 1024
-    && compact.length >= value.length * 0.95
-    && /^[A-Za-z0-9+/_-]+={0,2}$/u.test(compact);
-}
-
-function cleanChatMessages(value: unknown): ChatMessage[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((message): message is ChatMessage => (
-    !!message
-    && typeof message === 'object'
-    && typeof (message as ChatMessage).id === 'string'
-    && !isRawBinaryChatContent((message as ChatMessage).content)
-  ));
-}
-
-export function loadChat(id: string): ChatMessage[] {
-  try {
-    const raw = localStorage.getItem(`${LS_CHAT_PREFIX}${id}`);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      const messages = cleanChatMessages(parsed);
-      if (Array.isArray(parsed) && messages.length !== parsed.length) {
-        localStorage.setItem(`${LS_CHAT_PREFIX}${id}`, JSON.stringify(messages));
-      }
-      return messages;
-    }
-  } catch {}
-  return [];
-}
-
-export function appendChat(id: string, msgs: ChatMessage[]): void {
-  try {
-    const existing = loadChat(id);
-    // 按消息 id 去重：同一 action 可能在多个窗口各执行一次，避免重复落盘
-    const existingIds = new Set(existing.map((m) => m.id));
-    const toAdd = cleanChatMessages(msgs).filter((m) => !existingIds.has(m.id));
-    if (toAdd.length === 0) return;
-    const merged = [...existing, ...toAdd].slice(-MAX_CHAT);
-    localStorage.setItem(`${LS_CHAT_PREFIX}${id}`, JSON.stringify(merged));
-  } catch (e) {
-    console.warn('[hermesClient] Failed to append chat:', e);
-  }
-}
-
-export function replaceChat(id: string, msgs: ChatMessage[]): void {
-  try { localStorage.setItem(`${LS_CHAT_PREFIX}${id}`, JSON.stringify(cleanChatMessages(msgs).slice(-MAX_CHAT))); }
-  catch (e) { console.warn('[hermesClient] Failed to replace chat:', e); }
-}
-
 // ===== 工具：找空闲工位 =====
 export { findFreeStation } from './officeStations';
 
-// ===== 私聊（DM）消息持久化：按员工 id 存 =====
-const LS_DM_PREFIX = 'hermes_office_dm_';
-export function loadDm(empId: string): ChatMessage[] {
-  try {
-    const raw = localStorage.getItem(`${LS_DM_PREFIX}${empId}`);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      const messages = cleanChatMessages(parsed);
-      if (Array.isArray(parsed) && messages.length !== parsed.length) {
-        localStorage.setItem(`${LS_DM_PREFIX}${empId}`, JSON.stringify(messages));
-      }
-      return messages;
-    }
-  } catch {}
-  return [];
-}
-export function appendDm(empId: string, msgs: ChatMessage[]): void {
-  try {
-    const existing = loadDm(empId);
-    // 去重：避免同一消息在多个窗口重复落盘
-    const existingIds = new Set(existing.map((m) => m.id));
-    const toAdd = cleanChatMessages(msgs).filter((m) => !existingIds.has(m.id));
-    if (toAdd.length === 0) return;
-    const merged = [...existing, ...toAdd].slice(-MAX_CHAT);
-    localStorage.setItem(`${LS_DM_PREFIX}${empId}`, JSON.stringify(merged));
-  } catch (e) {
-    console.warn('[hermesClient] Failed to append dm:', e);
-  }
-}
-
-export function replaceDm(empId: string, msgs: ChatMessage[]): void {
-  try { localStorage.setItem(`${LS_DM_PREFIX}${empId}`, JSON.stringify(cleanChatMessages(msgs).slice(-MAX_CHAT))); }
-  catch (e) { console.warn('[hermesClient] Failed to replace dm:', e); }
-}
+export {
+  appendChat,
+  appendDm,
+  loadChat,
+  loadDm,
+  loadProjects,
+  removeEmployee,
+  replaceChat,
+  replaceDm,
+  saveEmployees,
+  saveProjects,
+  saveTeams,
+  upsertEmployee,
+};

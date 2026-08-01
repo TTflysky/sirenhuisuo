@@ -437,6 +437,7 @@ export function createTaskRun(team: Team, employees: Employee[], request: string
       source: taskDecision?.source ?? 'rules',
       confidence: taskDecision?.confidence ?? 1,
       decisionReason: taskDecision?.decisionReason,
+      decisionAudit: taskDecision?.decisionAudit,
     },
   });
   baseRun.contract = contract;

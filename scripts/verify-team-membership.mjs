@@ -49,6 +49,13 @@ const scopedProjects = [
 ];
 assert.equal(membership.resolveTargetProject('就这个团队', scopedProjects, 'chat-knowledge')?.id, 'knowledge-base');
 
+const rejectedProjects = [
+  { id: 'rejected-old', title: '旧草案', status: 'archived', rejectionReason: '成员不全', conversationId: 'chat-knowledge', updatedAt: 4 },
+  { id: 'rejected-latest', title: '安卓图片生成器', status: 'archived', rejectionReason: '重新选人', conversationId: 'chat-knowledge', updatedAt: 12 },
+  { id: 'other-rejected', title: '其他会话', status: 'archived', rejectionReason: '不采用', conversationId: 'chat-other', updatedAt: 20 },
+];
+assert.equal(membership.resolveLatestRejectedProject(rejectedProjects, 'chat-knowledge')?.id, 'rejected-latest');
+
 const rosterEmployees = [
   { id: 'planner', name: '规划者', title: '软件架构师', role: 'planner' },
   { id: 'old-ui', name: '旧设计师', title: 'UI 设计师', role: 'planner' },
@@ -65,4 +72,9 @@ const replacedRoster = membership.applyProjectRosterMutation(
 assert.deepEqual(replacedRoster, ['planner', 'frontend', 'database', 'new-ui'], 'replacement must preserve the agreed non-UI roster');
 assert.equal(replacedRoster.includes('old-ui'), false, 'the old UI member must be removed structurally');
 
-console.log(JSON.stringify({ passed: true, recognizedEmployees: employees.length, continuity: 'scoped-project-roster-replacement' }, null, 2));
+const storeSource = await fs.readFile('src/store.tsx', 'utf8');
+assert.match(storeSource, /project\?\.status === 'archived' && Boolean\(project\.rejectionReason\)/u, 'rejected drafts must be revisable');
+assert.match(storeSource, /status: 'awaiting_approval',[\s\S]{0,120}rejectionReason: undefined/u, 'revising a rejected draft must restore approval state');
+assert.match(storeSource, /project\?\.status === 'archived' && Boolean\(project\.rejectionReason\) && Boolean\(override\?\.memberIds\?\.length\)/u, 'an explicit revised roster approval must restore a rejected draft atomically');
+
+console.log(JSON.stringify({ passed: true, recognizedEmployees: employees.length, continuity: 'scoped-project-roster-replacement', rejectedDraftRecovery: true }, null, 2));

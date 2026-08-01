@@ -7,7 +7,25 @@ export interface ProjectBoardStage {
   completed: number;
   status: string;
   ownerId?: string;
-  entries: Array<{ run: TaskRun; step: TaskRunStep }>;
+  elapsedMs: number;
+  evidenceTotal: number;
+  verifiedEvidence: number;
+  evidenceComplete: boolean;
+  waitingCondition: string;
+  nextAction: string;
+  entries: Array<{
+    run: TaskRun;
+    step: TaskRunStep;
+    startedAt?: number;
+    completedAt?: number;
+    elapsedMs: number;
+    evidenceTotal: number;
+    verifiedEvidence: number;
+    evidenceComplete: boolean;
+    waitingCondition: string;
+    nextAction: string;
+    responsibility: string;
+  }>;
 }
 
 export interface ProjectBoardProject {
@@ -23,6 +41,11 @@ export interface ProjectBoardProject {
   runs: TaskRun[];
   root: TaskRun;
   actionRun?: TaskRun;
+  elapsedMs: number;
+  evidenceTotal: number;
+  verifiedEvidence: number;
+  waitingCondition: string;
+  nextAction: string;
   currentStage?: ProjectBoardStage;
   stages: ProjectBoardStage[];
   latestResult: string;

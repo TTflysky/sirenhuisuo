@@ -1,6 +1,8 @@
 const crypto = require('crypto');
 const path = require('path');
-const { createExecutionObservability, projectExecutionState } = require('./executionObservability.cjs');
+const { createExecutionObservability } = require('./executionObservability.cjs');
+const { projectNativeJob } = require('./nativeExecutionProjection.cjs');
+const { createNativeCollaborationProtocol } = require('./nativeCollaborationProtocol.cjs');
 const { pathToFileURL } = require('url');
 const { ADAPTER_PROTOCOL_VERSION } = require('./executionAdapterProtocol.cjs');
 const {
@@ -35,28 +37,7 @@ class ExecutionControlSignal extends Error {
 function clone(value) { return value === undefined ? undefined : JSON.parse(JSON.stringify(value)); }
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 function text(value, limit = 12000) { return String(value ?? '').trim().slice(0, limit); }
-function safeJob(job) {
-  return {
-    protocolVersion: NATIVE_ADAPTER_VERSION,
-    jobId: job.jobId,
-    taskId: job.taskId,
-    state: job.state,
-    queuePosition: job.queuePosition,
-    waitingFor: job.waitingFor,
-    startedAt: job.startedAt,
-    updatedAt: job.updatedAt,
-    lastProgressAt: job.lastProgressAt,
-    currentActivity: job.currentActivity,
-    finishedAt: job.finishedAt,
-    currentStepId: job.currentStepId,
-    currentMember: job.currentMember ? publicMember(job.currentMember) : undefined,
-    modelRounds: job.modelRounds,
-    toolCalls: job.toolCalls,
-    lastError: job.lastError,
-    eventSequence: job.eventSequence,
-    semanticState: projectExecutionState(job),
-  };
-}
+function safeJob(job) { return projectNativeJob(job, NATIVE_ADAPTER_VERSION); }
 
 function createNativeExecutionAdapter(options) {
   const jobs = new Map();
@@ -277,6 +258,19 @@ function createNativeExecutionAdapter(options) {
     return result.run;
   }
 
+  const collaboration = createNativeCollaborationProtocol({
+    updateRun,
+    readRun,
+    emit,
+    loadEngineModules,
+    toolRuntime: options.toolRuntime,
+    taskService: options.taskService,
+    jobs,
+    enqueueJob,
+    safeJob,
+  });
+  const { recordTool, requestToolApproval, appendStageSummary, decideApproval } = collaboration;
+
   async function assertCanContinue(job) {
     if (!job.compensating && job.control === 'stop') throw new ExecutionControlSignal('stop', '任务已停止');
     if (!job.compensating && job.control === 'pause') throw new ExecutionControlSignal('pause', '任务已暂停');
@@ -462,96 +456,17 @@ function createNativeExecutionAdapter(options) {
     throw lastError || new Error('模型请求失败');
   }
 
-  async function appendExecutionMessage(job, run, member, content, kind = 'text', tool) {
-    const id = `native-message-${job.taskId}-${++job.messageSequence}`;
-    const message = {
-      id, authorId: member.id, authorName: member.name, roleId: member.role || 'custom', content: text(content, 20000), mentions: [],
-      timestamp: Date.now(), kind, discussionId: job.taskId, triggeredBy: 'task', ...(tool ? { tool } : {}),
-      ...(run?.conversationId ? { conversationId: run.conversationId } : {}),
-    };
-    await updateRun(job.taskId, (next) => {
-      if (!Array.isArray(next.executionMessages)) next.executionMessages = [];
-      if (!next.executionMessages.some((item) => item.id === id)) next.executionMessages.push(message);
-      if (next.executionMessages.length > 300) next.executionMessages = next.executionMessages.slice(-300);
-    }, `${member.name}写入原生执行消息`);
-    emit(job, 'message', { stepId: job.currentStepId, member: publicMember(member), message });
-    return message;
-  }
-
-  function evidenceFromTool(result, member, name) {
-    const now = Date.now();
-    const evidence = [];
-    for (const artifact of result.structuredEvidence?.artifacts || []) {
-      const verified = isVerifiedArtifact(artifact);
-      evidence.push({ ts: now, source: 'tool', kind: 'file', summary: `${artifact.filename || artifact.path} · ${artifact.bytes || 0} 字节 · ${verified ? '已验证' : '未验证'}`, verified, artifact });
+  function completeOutstandingToolMessages(messages, toolCalls, completedIds, reason) {
+    for (const pendingCall of toolCalls) {
+      const callId = String(pendingCall?.id || '');
+      if (!callId || completedIds.has(callId)) continue;
+      messages.push({
+        role: 'tool',
+        tool_call_id: callId,
+        content: `未执行：同一批次中的前置动作已暂停。${text(reason, 500)}`,
+      });
+      completedIds.add(callId);
     }
-    if (result.structuredEvidence?.command) evidence.push({ ts: now, source: 'tool', kind: 'run', summary: `${name}：退出码 ${result.structuredEvidence.command.exitCode}`, verified: result.success === true });
-    if (result.structuredEvidence?.connection) evidence.push({ ts: now, source: 'connector', kind: 'connection', summary: `${result.structuredEvidence.connection.connectorLabel}：${result.output.slice(0, 240)}`, verified: result.structuredEvidence.connection.verified === true });
-    if (result.structuredEvidence?.review) evidence.push({ ts: now, source: 'review', kind: 'review', summary: `${result.structuredEvidence.review.decision === 'pass' ? '审查通过' : '审查退回'}：${result.structuredEvidence.review.reason}`, verified: result.structuredEvidence.review.decision === 'pass', review: result.structuredEvidence.review });
-    if (!evidence.length) evidence.push({ ts: now, source: 'tool', kind: 'progress', summary: `${member.name} 调用 ${name}：${result.output.slice(0, 240)}`, verified: result.success === true });
-    if (result.structuredEvidence?.skill) evidence.push({ ts: now, source: 'tool', kind: 'operation', summary: `${name}: ${result.structuredEvidence.skill.name || result.structuredEvidence.skill.id || 'skill'}`, verified: result.structuredEvidence.skill.verified === true });
-    return evidence;
-  }
-
-  async function recordTool(job, run, step, member, name, args, result) {
-    const { contextRouter } = await loadEngineModules();
-    const safeArgs = options.toolRuntime.redact(args);
-    const safeResult = { ...result, output: String(options.toolRuntime.redact(result.output)) };
-    const evidence = evidenceFromTool(safeResult, member, name);
-    job.toolCalls += 1;
-    if (options.taskService) {
-      await options.taskService.recordToolAttempt(job.taskId, {
-        id: `attempt-${job.taskId}-${step.id}-${job.toolCalls}`,
-        stepId: step.id,
-        toolName: name,
-        status: result.success === true ? 'succeeded' : 'failed',
-        errorClass: result.success === true ? undefined : (result.errorCategory || result.error?.category || 'unknown'),
-        inputSummary: JSON.stringify(safeArgs),
-        outputSummary: safeResult.output,
-        evidenceIds: evidence.map((item) => item.artifact?.path || item.summary).slice(0, 12),
-        startedAt: result.startedAt,
-        finishedAt: result.completedAt,
-      }).catch(() => {});
-      for (const artifact of safeResult.structuredEvidence?.artifacts || []) {
-        if (!artifact.path && !artifact.diskPath) continue;
-        await options.taskService.addArtifact(job.taskId, {
-          id: `${job.taskId}:${artifact.path || artifact.diskPath}`,
-          name: artifact.filename || artifact.path || artifact.diskPath,
-          path: artifact.path || artifact.diskPath,
-          category: artifact.category,
-          verified: artifact.verified === true,
-          source: name,
-        }).catch(() => {});
-      }
-    }
-    await updateRun(job.taskId, (next) => {
-      const current = next.steps.find((item) => item.id === step.id);
-      if (!current) return;
-      current.events ||= [];
-      current.events.push({ ts: Date.now(), type: result.success ? 'tool' : 'error', detail: `${name} ${JSON.stringify(safeArgs).slice(0, 500)} → ${safeResult.output.slice(0, 800)}` });
-      current.evidence = [...(current.evidence || []), ...evidence].slice(-30);
-      next.evidence = [...(next.evidence || []), ...evidence].slice(-120);
-      if (next.recoveryContext) {
-        next.recoveryContext.budget = contextRouter.recordContextUsage(next.recoveryContext.budget, { toolAttempts: 1, progress: result.success === true });
-        if (result.success) next.recoveryContext.completedEvidence = [...next.recoveryContext.completedEvidence, evidence.map((item) => item.summary).join('；')].slice(-30);
-        else next.recoveryContext.unresolvedIssues = [...next.recoveryContext.unresolvedIssues, `${name}：${safeResult.output.slice(0, 320)}`].slice(-20);
-      }
-      next.recoveryCapsule = contextRouter.createRecoveryCapsule(next, { reason: `工具 ${name} 执行后检查点` });
-    }, `${member.name}原生调用 ${name}`);
-    const report = `**${member.name}** 调用 **${name}**\n${JSON.stringify(safeArgs)}\n\n${result.success ? '成功' : '失败'}：${safeResult.output}`;
-    await appendExecutionMessage(job, run, member, report, 'execution', { name, args: safeArgs, success: result.success });
-    emit(job, 'tool_result', {
-      stepId: step.id,
-      teamId: run.teamId,
-      workspaceId: run.workspaceId,
-      member: publicMember(member),
-      toolName: name,
-      arguments: safeArgs,
-      success: result.success,
-      failureClass: result.success === true ? undefined : (result.errorCategory || result.error?.category),
-      output: safeResult.output.slice(0, 1200),
-      artifacts: (safeResult.structuredEvidence?.artifacts || []).map((artifact) => ({ ...artifact })),
-    });
   }
 
   function sanitizedRuntime(runtime) {
@@ -923,7 +838,9 @@ function createNativeExecutionAdapter(options) {
       }
       if (toolCalls.length) {
         messages.push({ role: 'assistant', content: message.content || null, tool_calls: toolCalls });
-        for (const call of toolCalls) {
+        const completedToolCallIds = new Set();
+        try {
+          for (const call of toolCalls) {
           await assertCanContinue(job);
           if (callLog.length >= MAX_TOOL_CALLS_PER_STEP) throw new Error(`当前步骤达到 ${MAX_TOOL_CALLS_PER_STEP} 次工具预算，已停止重复路线`);
           const rawName = String(call?.function?.name || '');
@@ -937,6 +854,7 @@ function createNativeExecutionAdapter(options) {
           if (!normalizedCall.ok) result = { name, success: false, output: normalizedCall.error || '工具参数无效' };
           else if (!explicitResourceGate.allowed) result = { name, success: false, output: explicitResourceGate.reason };
           else if (!preflight.ok) result = { name, success: false, output: `工具预检未通过：${preflight.message}` };
+          else if (job.approvalDenials?.has(key)) result = { name, success: false, output: '用户已经拒绝这项完全相同的操作，不得重复申请；必须改用不需要该权限的路线。' };
           else if (cache.has(key)) result = { name, success: false, output: '完全相同的工具调用已执行，不能重复消耗算力，必须更换路线。' };
           else {
             await reportActivity(job, 'tool_started', `${member.name} 正在调用 ${name}`, {
@@ -952,6 +870,7 @@ function createNativeExecutionAdapter(options) {
                     taskId: job.taskId, scope: `team:${run.teamId}`, workspaceId: run.workspaceId, worktreePath: run.worktree?.path,
                     goal: run.goal || run.request,
                     executionPolicy: job.executionPolicy, connectors: job.connectors, connectorActions: job.connectorActions,
+                    approvalGranted: job.approvalGrants?.has(key) === true,
                   });
               result = await Promise.race([execution, deadline.promise]);
             } catch (error) {
@@ -988,7 +907,9 @@ function createNativeExecutionAdapter(options) {
           runtime = observed.runtime;
           await persistTurnRuntime(job, runtime, undefined, `${member.name}记录 Turn Runtime 工具证据`);
           messages.push({ role: 'tool', tool_call_id: call.id, content: result.output.slice(0, 12000) });
+          completedToolCallIds.add(String(call.id || ''));
           if (result.awaitingUser || result.awaitingApproval) {
+            if (result.awaitingApproval) await requestToolApproval(job, run, step, member, name, args, result);
             const finalized = turnRuntime.finalizeTurn(runtime, { status: 'waiting_user', content: result.output, waitingFor: result.output });
             runtime = finalized.runtime;
             await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 等待用户条件');
@@ -1015,6 +936,10 @@ function createNativeExecutionAdapter(options) {
           if (preparationStreak >= MAX_PREPARATION_STREAK) {
             messages.push({ role: 'system', content: `已连续 ${preparationStreak} 次只读取或检查，没有产生可验收结果。必须立即执行真实写入、运行、连接验证或明确交接唯一外部阻塞。` });
           }
+          }
+        } catch (error) {
+          completeOutstandingToolMessages(messages, toolCalls, completedToolCallIds, error?.message || error);
+          throw error;
         }
         continue;
       }
@@ -1181,7 +1106,7 @@ function createNativeExecutionAdapter(options) {
       await options.taskService.completeStep(delegated.childTaskId, { stepId: 'step-1', summary: result.content.slice(0, 1200), output: { summary: result.content.slice(0, 1200) } }).catch(() => {});
       await options.taskService.setStatus(delegated.childTaskId, 'completed', `${member.name} 已提交子任务结果`).catch(() => {});
     }
-    await appendExecutionMessage(job, run, member, result.content, 'text');
+    await appendStageSummary(job, run, step, member, result);
     emit(job, 'step_completed', { stepId: step.id, member: publicMember(member), summary: result.content.slice(0, 700) });
   }
 
@@ -1842,6 +1767,8 @@ function createNativeExecutionAdapter(options) {
       executionPolicy: clone(input.executionPolicy || { sandboxEnabled: true, approvalMode: 'delegate', connectorApprovalMode: 'delegate' }),
       connectors: clone(input.connectors || []), connectorActions,
       connectorTools: clone(input.connectorTools || []), steering: [], events: [], eventSequence: 0, messageSequence: 0,
+      approvalGrants: new Set((storedRun?.approvals || []).filter((item) => item.status === 'approved' || item.status === 'consumed').map((item) => item.approvalKey).filter(Boolean)),
+      approvalDenials: new Set((storedRun?.approvals || []).filter((item) => item.status === 'rejected').map((item) => item.approvalKey).filter(Boolean)),
       checkpointSequence: 0, modelRounds: 0, toolCalls: 0,
       claimSequence: 0,
     };
@@ -2152,7 +2079,7 @@ function createNativeExecutionAdapter(options) {
     }
   }
 
-  return { start, steer, delegate, syncMembers, delegationStatus, status, events, observability: observabilityStatus, handleControl, stopAll };
+  return { start, steer, decideApproval, delegate, syncMembers, delegationStatus, status, events, observability: observabilityStatus, handleControl, stopAll };
 }
 
 module.exports = {

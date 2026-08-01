@@ -36,14 +36,11 @@ function referencesFromMessage(message) {
   }
   for (const attachment of message?.attachments ?? []) {
     if (!attachment?.name) continue;
-    result.push({ kind: 'file', id: attachment.path || attachment.name, label: attachment.name, state: 'local', messageId: message.id });
+    result.push({ kind: 'file', id: attachment.workspacePath || attachment.path || attachment.name, label: attachment.name, state: 'local', messageId: message.id });
   }
   if (message?.taskRef) result.push({ kind: 'task', id: message.taskRef, label: message.taskRef, state: 'unknown', messageId: message.id });
   for (const url of urls(message?.content)) {
     result.push({ kind: 'web', id: url, label: url, sourceUrl: url, state: 'unknown', messageId: message.id });
-  }
-  if (message?.roleId !== 'human' && text(message?.content)) {
-    result.push({ kind: 'answer', id: message.id, label: text(message.content, 120), state: 'completed', messageId: message.id });
   }
   return result;
 }
@@ -57,8 +54,11 @@ function actionFor(input) {
   return 'refer';
 }
 
-function refersToPrior(input) {
-  return /(?:它|这个|这份|这个东西|刚才那个|上面那个|上述|前面那个|该技能|该文件|该链接|这个技能|这个文件|这个团队)/u.test(text(input, 1600));
+function refersToPrior(input, action, kind) {
+  const value = text(input, 1600);
+  if (!['share-link', 'install', 'read', 'continue'].includes(action)) return false;
+  if (kind && !['skill', 'file', 'web'].includes(kind)) return false;
+  return /(?:它|这份(?:技能|文件|资料|网页)?|这个(?:技能|文件|网页|链接)|该(?:技能|文件|网页|链接)|刚才那个(?:技能|文件|网页|链接)|上面那个(?:技能|文件|网页|链接)|前面那个(?:技能|文件|网页|链接))/u.test(value);
 }
 
 function requestedKind(input, action) {
@@ -83,7 +83,7 @@ export function resolveConversationReferences({ input, history = [], selectedSki
   const available = uniqueReferences([
     ...explicit,
     ...[...history].reverse().flatMap(referencesFromMessage),
-  ]);
+  ]).filter((item) => ['skill', 'file', 'web'].includes(item.kind));
   const named = text(input, 1600).toLocaleLowerCase();
   const direct = available.filter((item) => named.includes(item.id.toLocaleLowerCase()) || named.includes(item.label.toLocaleLowerCase()));
   let candidates = (direct.length ? direct : available)
@@ -94,7 +94,7 @@ export function resolveConversationReferences({ input, history = [], selectedSki
     const sourceCandidates = candidates.filter((item) => item.sourceUrl);
     if (sourceCandidates.length) candidates = sourceCandidates;
   }
-  const needsBinding = refersToPrior(input) || direct.length > 0;
+  const needsBinding = refersToPrior(input, action, kind) || (direct.length > 0 && ['share-link', 'install', 'read', 'continue'].includes(action));
   if (!needsBinding) return { status: 'none', action, references: [], skillRefs: [], context: '' };
   if (!candidates.length) return { status: 'missing', action, references: [], skillRefs: [], context: '' };
   const sameKind = uniqueReferences(candidates);
@@ -147,5 +147,5 @@ export function referencesFromToolResult(name, argsText, output, success = true)
 
 export function referenceClarification(result) {
   const labels = result.references.map((item, index) => `${index + 1}. ${item.label}`).join('\n');
-  return `我还不能确定“它”具体指哪一个真实对象。请直接回复名称或序号：\n${labels}`;
+  return `这里存在多个可能的真实对象，我还不能安全地替你选择。请直接回复名称或序号：\n${labels}`;
 }

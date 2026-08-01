@@ -164,7 +164,7 @@ export interface SkillUsageEvidence {
   ts: number;
   skillId?: string;
   skillName?: string;
-  action: 'matched' | 'read' | 'read-failed' | 'searched' | 'called' | 'skipped';
+  action: 'matched' | 'read' | 'read-failed' | 'searched' | 'installed' | 'called' | 'produced' | 'accepted' | 'rejected' | 'skipped';
   toolName?: string;
   reason?: string;
   detail?: string;
@@ -218,10 +218,12 @@ export interface ChatMessage {
   mentions: string[];
   timestamp: number;
   discussionId?: string;
+  /** 当前消息对应的任务步骤，便于把阶段总结和底层操作归组。 */
+  stepId?: string;
   discussionRound?: number;
   triggeredBy?: DiscussionTriggerSource;
   inReplyToMessageId?: string;
-  kind?: 'text' | 'task' | 'execution';
+  kind?: 'text' | 'task' | 'execution' | 'stage_summary' | 'approval';
   taskRef?: string;
   tokens?: number;     // 本条 AI 回复消耗的 token 数（仅模型回复有）
   /** 最近一次实际模型请求的输入上下文；用于显示模型容量，不会伪造上限。 */
@@ -236,6 +238,10 @@ export interface ChatMessage {
   authorName?: string;
   /** 折叠工具记录的结构化摘要，不包含敏感凭据。 */
   tool?: { name: string; args?: unknown; success: boolean };
+  /** 章北海在一个阶段结束后生成的用户可读交接。 */
+  stageSummary?: TaskStageSummary;
+  /** 需要老板决定的最小权限动作。 */
+  approval?: TaskApprovalContract;
 }
 
 /** 思维链单步——记录 AI 工具调用的完整推理过程 */
@@ -283,6 +289,51 @@ export type TaskEvidence = {
   artifact?: import('./engine/executionEvidence.mjs').FileArtifactEvidence;
   review?: import('./engine/executionEvidence.mjs').ReviewSubmissionEvidence;
 };
+
+export interface TaskApprovalContract {
+  approvalVersion: number;
+  id: string;
+  taskId: string;
+  stepId: string;
+  requestedById: string;
+  requestedByName: string;
+  title: string;
+  purpose: string;
+  action: string;
+  toolName: string;
+  approvalKey: string;
+  reads: string[];
+  writes: string[];
+  risks: string[];
+  approveEffect: string;
+  rejectEffect: string;
+  status: 'pending' | 'approved' | 'rejected' | 'consumed';
+  requestedAt: number;
+  decidedAt?: number;
+  note?: string;
+}
+
+export interface TaskStageSummary {
+  summaryVersion: number;
+  id: string;
+  taskId: string;
+  stepId: string;
+  stageTitle: string;
+  ownerId: string;
+  ownerName: string;
+  status: 'completed' | 'blocked' | 'failed';
+  problem: string;
+  rationale: string;
+  completed: string[];
+  evidence: string[];
+  remaining: string[];
+  nextOwnerId?: string;
+  nextOwnerName?: string;
+  nextAction: string;
+  durationMs?: number;
+  operations: Array<{ ts: number; type: string; detail: string; success: boolean }>;
+  createdAt: number;
+}
 
 export interface TaskRecoveryContext {
   summary: string;
@@ -346,6 +397,7 @@ export interface TaskRunStep {
   deliverableType?: 'answer' | 'file' | 'connection' | 'operation' | 'decision' | 'mixed';
   dependsOnStepIds: string[];
   revisionOfStepId?: string;
+  compensationOnly?: boolean;
   /** 由运行中动态委派创建的子任务记录。 */
   delegationId?: string;
   reviewDecision?: 'pass' | 'reject';
@@ -433,6 +485,8 @@ export interface TaskRun {
   memberRosterVersion?: number;
   steps: TaskRunStep[];
   skillRefs?: SkillReference[];
+  /** 创建任务时使用的附件会跟随项目恢复和后续约束，而不是只存在于原消息。 */
+  sourceAttachments?: import('./data/hermesClient').Attachment[];
   skillEvidence?: SkillUsageEvidence[];
   context?: import('./engine/taskContext.mjs').TaskContextSnapshot;
   sourceMessageId?: string;
@@ -464,6 +518,9 @@ export interface TaskRun {
   executionProtocol?: import('./engine/teamExecutionProtocol.mjs').TeamExecutionProtocol;
   /** 主进程原生 Adapter 写入的团队聊天投影；凭据和原始模型请求不会持久化。 */
   executionMessages?: ChatMessage[];
+  pendingApproval?: TaskApprovalContract;
+  approvals?: TaskApprovalContract[];
+  stageSummaries?: TaskStageSummary[];
   verification?: Array<{ kind: TaskEvidenceKind; label: string; status: 'passed' | 'blocked' | 'pending'; detail: string }>;
 }
 

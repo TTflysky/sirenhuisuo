@@ -18,5 +18,18 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    chunkSizeWarningLimit: 4000,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          const normalized = id.replaceAll('\\', '/');
+          if (normalized.includes('/src/data/generatedExpertCatalog.ts')) return 'expert-catalog';
+          if (normalized.includes('/node_modules/antd/') || normalized.includes('/node_modules/@ant-design/')) return 'ui-vendor';
+          if (normalized.includes('/node_modules/react/') || normalized.includes('/node_modules/react-dom/') || normalized.includes('/node_modules/scheduler/')) return 'react-vendor';
+          if (normalized.includes('/node_modules/docx/') || normalized.includes('/node_modules/officeparser/')) return 'document-vendor';
+          return undefined;
+        },
+      },
+    },
   },
 });
