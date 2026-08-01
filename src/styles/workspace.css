@@ -1595,6 +1595,11 @@
 .team-live-event-stream { max-height: 146px; overflow: hidden; }
 .team-live-event-stream::before { content: '思路与工具进展（最近 4 行）'; display: block; margin: 5px 0 6px; color: var(--text); font-size: 12px; font-weight: 700; }
 .team-live-event-stream > div { min-height: 24px; font-size: 13px; line-height: 1.5; }
+.team-live-progress { position: relative; transition: max-height .18s ease, padding .18s ease; }
+.team-live-collapse { position:absolute; top:10px; right:12px; z-index:3; border:1px solid var(--border-light); border-radius:5px; padding:3px 8px; background:var(--surface); color:var(--text-secondary); cursor:pointer; font:inherit; font-size:11px; }
+.team-live-progress.is-collapsed { min-height:42px; max-height:42px; overflow:hidden; padding-top:9px; padding-bottom:9px; }
+.team-live-progress.is-collapsed .chat-progress-sub, .team-live-progress.is-collapsed .chat-progress-right, .team-live-progress.is-collapsed .team-live-actions, .team-live-progress.is-collapsed .team-live-event-stream { display:none; }
+.team-live-progress.is-collapsed .chat-progress-left { padding-right:58px; }
 .team-task-export-all { display:flex; justify-content:flex-end; padding:7px 9px; border-bottom:1px solid var(--border-light); background:var(--bg-deep); }
 .team-task-export-all .btn { width:100%; justify-content:center; }
 .stage-summary-evidence { display: flex; flex-wrap: wrap; gap: 6px; padding: 11px 16px; border-bottom: 1px solid var(--border-light); }

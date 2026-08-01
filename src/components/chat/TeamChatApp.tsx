@@ -165,6 +165,7 @@ export default function TeamChatApp({ teamId }: Props) {
   const [resumingRunIds, setResumingRunIds] = useState<Set<string>>(() => new Set());
   const [taskAudits, setTaskAudits] = useState<Record<string, TaskAudit>>({});
   const [progressNow, setProgressNow] = useState(Date.now());
+  const [liveProgressCollapsed, setLiveProgressCollapsed] = useState(false);
   const currentRunningRun = taskRuns.find((run) => run.status === 'running');
   const queuedRun = !currentRunningRun ? taskRuns.find((run) => run.status === 'queued') : undefined;
   const currentLiveRun = currentRunningRun ?? queuedRun;
@@ -803,7 +804,8 @@ export default function TeamChatApp({ teamId }: Props) {
           </section>}
           {/* 团队讨论和后台原生任务共用同一条实时进度。 */}
           {executionIsLive && (
-            <div className="chat-progress team-live-progress" role="status" aria-live="polite">
+            <div className={`chat-progress team-live-progress ${liveProgressCollapsed ? 'is-collapsed' : ''}`} role="status" aria-live="polite">
+              <button type="button" className="team-live-collapse" onClick={() => setLiveProgressCollapsed((value) => !value)} title={liveProgressCollapsed ? '展开实时过程' : '折叠实时过程'} aria-expanded={!liveProgressCollapsed}>{liveProgressCollapsed ? '展开' : '收起'}</button>
               <div className="chat-progress-left">
                 <div className="progress-spinner" />
                 <div>
