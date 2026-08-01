@@ -1,7 +1,7 @@
 {
   "name": "taiji-office",
   "private": true,
-  "version": "3.4.0",
+  "version": "3.5.0",
   "description": "太极 AI 办公会所 - 面向 Windows 的多模型协作与可恢复任务执行平台",
   "author": "TTflysky",
   "type": "module",
@@ -135,6 +135,7 @@
     "verify:renderer-bundles": "node scripts/verify-renderer-bundles.mjs",
     "verify:phase-c": "node scripts/verify-phase-c.mjs",
     "verify:stage-e": "node scripts/verify-stage-e.cjs && node scripts/verify-release-consistency.mjs",
+    "verify:stage-f": "node scripts/verify-project-delivery.mjs",
     "verify:phase-c-persona": "node scripts/verify-phase-c-persona.mjs",
     "dist:win": "powershell -ExecutionPolicy Bypass -File scripts/build-windows.ps1",
     "publish:release": "powershell -ExecutionPolicy Bypass -File scripts/publish-github-release.ps1",

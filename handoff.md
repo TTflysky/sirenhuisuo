@@ -500,3 +500,9 @@ npm.cmd run verify:package
 - `electron/updateTransaction.cjs` 新增 `simulateFailure()` 与阶段失败注入；`electron/credentialVault.cjs` 新增 `expiresAt`、`scopes`、`rotate()`、`audit()`。
 - 文档：`docs/TAIJI_STAGE_E_V3.4_GAP_MATRIX.md`、`docs/SELF_EVALUATION_v3.4.0.md`。
 - 尚未冒充完成：真实旧版升级、断网/磁盘不足/强制退出回滚、Windows 代码签名和第三方账号矩阵仍需实机验证。
+# v3.5.0 Stage F 发布交接（2026-08-01）
+
+- 新增 `src/engine/projectDelivery.mjs`：项目成员职责、阶段依赖、审查退回、风险、变更和验收包。
+- 新增 `scripts/verify-project-delivery.mjs`，覆盖阶段批准、变更记录和未决风险导出。
+- 文档：`docs/TAIJI_STAGE_F_V3.5_GAP_MATRIX.md`、`docs/SELF_EVALUATION_v3.5.0.md`。
+- 仍需真实项目验收：连续三个软件项目、多人协作依赖调度、Windows 签名与跨版本回滚。
