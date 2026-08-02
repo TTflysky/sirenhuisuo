@@ -8,6 +8,7 @@ const employees = [
   { id: 'mobile', name: '移动开发', title: 'Android 移动应用开发工程师', role: 'coder', stationIndex: 4, isOnline: true },
   { id: 'ai', name: '模型接入', title: 'AI 模型接入与连接器工程师', role: 'coder', capabilities: ['backend', 'connector'], stationIndex: 5, isOnline: true },
   { id: 'qa', name: '质量审查', title: 'QA 测试工程师', role: 'checker', stationIndex: 6, isOnline: true },
+  { id: 'embedded-qa', name: '硬件测试', title: '嵌入式测试工程师', role: 'checker', stationIndex: 0, isOnline: true },
 ];
 
 describe('capability graph for a mobile AI product', () => {
@@ -28,5 +29,20 @@ describe('capability graph for a mobile AI product', () => {
     expect(result.selected.map((member) => member.employeeId)).toEqual(expect.arrayContaining([
       'pm', 'architect', 'designer', 'mobile', 'ai', 'qa',
     ]));
+    expect(result.selected.map((member) => member.employeeId)).not.toContain('embedded-qa');
+  });
+
+  it('does not let broad migrated labels replace an available UI specialist', () => {
+    const polluted = employees.map((employee) => employee.id === 'designer'
+      ? employee
+      : { ...employee, capabilities: [...new Set([...(employee.capabilities ?? []), 'ui_ux'])] });
+    const result = selectCapabilityTeam(polluted, {
+      request: '做一个手机 APP，使用 HTML、CSS 和 JavaScript，实现完整视觉界面、模型 API 和最终验收。',
+      requiresTeam: true,
+      requiresReview: true,
+    });
+    expect(result.complete).toBe(true);
+    expect(result.selected.map((member) => member.employeeId)).toContain('designer');
+    expect(result.selected.find((member) => member.employeeId === 'pm')?.covers).not.toContain('ui_ux');
   });
 });

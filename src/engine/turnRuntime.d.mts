@@ -8,7 +8,7 @@ export function requiresFileEvidence(contract: any, step?: any): boolean;
 export function createTurnRuntime(input?: Record<string, unknown>): TurnRuntimeState;
 export function observeModelDecision(runtime: TurnRuntimeState, input?: Record<string, unknown>): { runtime: TurnRuntimeState; decision: any };
 export function observeToolResult(runtime: TurnRuntimeState, input?: Record<string, unknown>): { runtime: TurnRuntimeState; evidence: any; error: ReturnType<typeof classifyExecutionError> | null };
-export function decideRecovery(runtime: TurnRuntimeState, error: unknown, options?: { limit?: number }): { runtime: TurnRuntimeState; decision: any };
+export function decideRecovery(runtime: TurnRuntimeState, error: unknown, options?: { limit?: number; routeAttempts?: number }): { runtime: TurnRuntimeState; decision: any };
 export function applySteering(runtime: TurnRuntimeState, messages: string | string[]): TurnRuntimeState;
 export function buildTurnGuidance(runtime: TurnRuntimeState, options?: { additional?: string }): string;
 export function compactRuntimeEvidence(runtime: TurnRuntimeState, options?: { keepRecent?: number }): Record<string, unknown>;

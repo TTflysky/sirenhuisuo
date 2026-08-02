@@ -38,6 +38,7 @@ import {
   isTeamMemberAdditionRequest,
   isTeamMemberRemovalRequest,
   isTeamMemberReplacementRequest,
+  projectBelongsToConversation,
   rematchProjectRoster,
   resolveLatestRejectedProject,
   resolveMentionedEmployees,
@@ -1181,7 +1182,7 @@ ${employeeDirectory}
               );
             })}
             {state.projects
-              .filter((project) => project.status === 'awaiting_approval')
+              .filter((project) => project.status === 'awaiting_approval' && projectBelongsToConversation(project, conversationId))
               .map((project) => (
                 <ProjectApprovalCard
                   key={project.id}

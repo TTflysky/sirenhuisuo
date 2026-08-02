@@ -1,5 +1,23 @@
 # 太极项目当前交接
 
+## v3.5.8 Windows 黑屏恢复（2026-08-02）
+
+- 当前源码版本为 `3.5.8`。本轮承接 `v3.5.7` 的工作区事实校正，并修复本机安装版 Electron 进程存活但窗口纯黑的问题。
+- 实机诊断已经证明 `dist/index.html`、React 根节点、办公室员工数据和助理聊天内容均已完整加载；普通硬件合成画面纯黑，使用 `app.disableHardwareAcceleration()` 后 CDP 截图可正常看到界面，因此故障位于 Windows GPU 合成层，不是业务数据或前端页面损坏。
+- `electron/renderingPolicy.cjs` 统一管理渲染策略、窗口加载诊断和显示时机。Windows 默认软件渲染；设置 `TAIJI_FORCE_HARDWARE_ACCELERATION=1` 才会显式恢复硬件加速用于排障。
+- 主窗口、助理、员工私聊、团队聊天、设置和独立工具窗口都在内容加载后再显示，并统一记录 `did-fail-load`、`render-process-gone`、`unresponsive` 和严重控制台错误。十秒未收到正常显示事件时会触发兜底，不再只有后台进程而没有可见窗口。
+- 新增 `test/unit/renderingPolicy.test.mjs`，覆盖 Windows 默认策略、显式硬件覆盖、只显示一次和错误日志。全量门禁、Windows 打包、覆盖安装和真实安装版 CDP 页面检查已经完成。
+- `v3.5.8` 实机新建手机生图 APP 项目时发现员工迁移数据中的宽泛 `ui_ux` 标签会提前覆盖 UI 岗位。能力图现要求协调、架构、UI、前端、后端和 QA 在存在专业员工时由稳定姓名/职位身份覆盖；项目经理和相邻工程师可保留辅助标签，但不能阻止真正的 UI 设计师入队。
+- 实机团队名单修正为六人后又发现 Coding DAG 自己按宽泛标签重选负责人，导致系统架构师抢占 Product brief、UX/UI design 和 Delivery。`codingProject.mjs` 现复用能力图统一负责人选择器；实际六人污染标签回归固定八步归属为实验追踪员、系统架构师、UI 设计师、前端开发者、后端架构师、审查者、审查者、实验追踪员。
+- 第二次实机重建确认负责人正确，但 Product brief 在成功 `submit_review(PASS)` 后仍持续请求模型，并通过四次动态委派把八步扩成十二步。现对固定 Coding DAG 隐藏并拒绝动态委派，结构化结论在正式审查步骤成为明确终止信号；普通非 Coding DAG 任务仍保留动态委派能力。
+- 第三次实机重建中八步和负责人稳定，Product、Architecture、UX/UI 正常完成，且已真实产出 `DESIGN.md`、`index.html`、`styles.css`、`app.js` 和成功 `node --check` 证据；随后发现前端普通步骤仍能误用 `submit_review`。现审查工具只对 `kind=review` 的正式审查步骤注册，普通步骤必须按自身交付类型收口。
+- 同一实机流程发现新聊天会同时显示旧会话和当前会话的待批准卡。`ProjectApprovalCard`、当前项目解析和驳回草案恢复现统一按 `conversationId` 隔离；无会话字段的历史项目只属于 `conversation-legacy-assistant`，不能污染新聊天。
+- 文件步骤只要已经有真实落盘文件和成功运行命令，就按证据完成；到达 24 次工具预算时也会停止重复调用并收口。长文件步骤只有在已有真实进展时才获得有限收尾轮次，模型请求与恢复逻辑已抽到 `electron/nativeModelGateway.cjs`，Adapter 仍低于 2150 行门禁。
+- 动态复审统一为 `decision` 类型，正式 `review` 步骤提交 `PASS/REJECT` 后立即结束。主进程第一次账本同步前不会自动恢复项目，避免用未完成同步的旧状态启动任务。
+- 真实项目 `run-1785617297693-za7fs` 位于 `%APPDATA%/taiji-office/workspace/tasks/team/team-project-1785617222061-3sb5q/run-run-1785617297693-za7fs`。已完成产品、架构、UX/UI、前后端、验证、首次审查和第一次修订，真实产出 18 项；系统自主改用本机 Chrome 完成 390px 视口、Mock 生图、刷新持久化和横向溢出验证，并正确退回图生图、设置持久化和证据不完整问题。
+- 该项目最终复审因上游模型连续返回 `HTTP 502: Upstream service temporarily unavailable` 暂停，不能写成已验收。服务恢复后在仓库运行 `node scripts/resume-native-run-authoritative.mjs run-1785617297693-za7fs`；现场和产出物仍在，Delivery 尚未执行。
+- `v3.5.8` 安装包已覆盖本机旧版，覆盖前用户数据备份位于 `L:\AI办公室\taiji-backups\preinstall-3.5.8-20260802-0632`。发布资产、GitHub 提交和 Release 需以本交接后续记录为准。
+
 ## v3.5.7 工作区能力事实校正（2026-08-02）
 
 - 当前源码版本为 `3.5.7`。项目正在 Stage F 真实项目验收阶段；Stage E 工程链已完成，但真实旧版升级、故障回滚和代码签名仍保留为实机未验收项。

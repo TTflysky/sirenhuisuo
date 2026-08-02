@@ -169,7 +169,16 @@ export function observeToolResult(runtime, input = {}) {
   const next = clone(runtime);
   const normalized = normalizeToolCall(input.name, input.args);
   const success = input.success === true;
-  const error = success ? null : classifyExecutionError(input.output ?? input.error);
+  const classifiedError = success ? null : classifyExecutionError(input.output ?? input.error);
+  const declaredErrorType = text(input.errorType, 80);
+  const error = classifiedError && declaredErrorType
+    ? {
+      ...classifiedError,
+      type: declaredErrorType,
+      retryable: !USER_ERRORS.has(declaredErrorType),
+      needsUser: USER_ERRORS.has(declaredErrorType),
+    }
+    : classifiedError;
   const evidence = {
     evidenceId: text(input.evidenceId, 180) || `evidence-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     toolCallId: text(input.toolCallId, 180),
@@ -209,18 +218,22 @@ export function decideRecovery(runtime, errorInput, options = {}) {
   const error = errorInput?.type ? errorInput : classifyExecutionError(errorInput);
   const attempted = Number(next.recoveryAttempts[error.type]) || 0;
   const limit = Number.isInteger(options.limit) ? options.limit : RECOVERY_LIMITS[error.type] ?? 1;
+  const routeAttempts = Math.max(0, Number(options.routeAttempts) || 0);
+  const routeSensitive = ['invalid_arguments', 'result_mismatch', 'verification_failed', 'unknown'].includes(error.type);
+  const attemptedAgainstLimit = routeSensitive && routeAttempts > 0 ? routeAttempts - 1 : attempted;
   next.recoveryAttempts[error.type] = attempted + 1;
   let action = 'switch_route';
   if (USER_ERRORS.has(error.type) || error.needsUser) action = 'waiting_user';
   else if (error.type === 'context_overflow') action = attempted < limit ? 'compact' : 'checkpoint';
-  else if (error.type === 'invalid_arguments') action = attempted < limit ? 'repair_arguments' : 'switch_route';
+  else if (error.type === 'invalid_arguments') action = attemptedAgainstLimit < limit ? 'repair_arguments' : 'switch_route';
   else if (error.type === 'missing_dependency') action = attempted < limit ? 'discover_capability' : 'waiting_user';
   else if (TRANSIENT_ERRORS.has(error.type)) action = attempted < limit ? 'retry' : 'switch_route';
-  else if (attempted >= limit) action = 'checkpoint';
+  else if (attemptedAgainstLimit >= limit) action = 'checkpoint';
   const decision = {
     errorType: error.type,
     action,
     attempt: attempted + 1,
+    routeAttempt: routeAttempts || undefined,
     limit,
     message: text(error.message, 1200),
     userMessage: action === 'waiting_user'

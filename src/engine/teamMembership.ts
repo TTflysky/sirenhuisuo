@@ -17,6 +17,8 @@ const TEAM_MEMBER_CORRECTION_RE = /(?:拉|加|选|成员|队员).{0,12}(?:不对
 const TEAM_MEMBER_REPLACEMENT_RE = /(?:换|替换|改用|改成|不要(?:再)?用).{0,20}(?:成员|队员|员工|设计师|开发|工程师|UI|UX|前端|后端)|(?:成员|队员|员工).{0,12}(?:换成|替换成|改用)/iu;
 const TEAM_MEMBER_REMOVAL_RE = /(?:移除|删除|删掉|去掉|不(?:要|用)).{0,20}(?:成员|队员|员工|设计师|开发|工程师|UI|UX|前端|后端)|(?:团队|小组|群).{0,24}(?:移除|删除|删掉|去掉)/iu;
 const PROJECT_ROSTER_REMATCH_RE = /(?:人员|成员|队员|团队|人选).{0,14}(?:不对|错了|不合理|不匹配)|重新.{0,12}(?:看|分析|理解).{0,12}(?:需求|目标)|重新(?:选人|挑人|挑选|匹配|安排)|(?:框架|架构|代码|UI|UX|前端|后端|审核|测试).{0,40}(?:全没有|都没有|没拉|没选|缺少|漏了)/iu;
+const EXPLICIT_NEW_PROJECT_RE = /(?:建立|创建|开发|制作|搭建|构建|实现|做)(?:一个|一款|一套|个|款|套|全新(?:的)?)?.{0,80}(?:软件|应用|app|客户端|桌面端|移动端|手机应用|平台|系统|网站|网页|小程序|项目)/iu;
+const ROSTER_CORRECTION_CUE_RE = /(?:人员|成员|队员|团队|人选).{0,14}(?:不对|错了|不合理|不匹配)|重新(?:选人|挑人|挑选|匹配|安排)|重新.{0,12}(?:看|分析|理解).{0,12}(?:需求|目标)|(?:全没有|都没有|没拉|没选|漏了|少了)/u;
 const PROJECT_APPROVAL_RE = /^(?:(?:可以|好(?:的)?|同意|批准|确认|按(?:这个|刚才|上面|之前)(?:的)?(?:团队|方案)?)(?:[，。！!\s]*)|(?:(?:就|按)(?:这个|刚才|上面|之前)(?:的)?(?:团队|方案)?[，,，\s]*(?:你)?(?:拉群|组队|组建团队|建群)(?:吧)?[。！!\s]*)|(?:(?:拉群|组队|组建团队|建群)(?:吧)?[。！!\s]*))$/u;
 
 function compact(value: string): string {
@@ -35,7 +37,9 @@ export function isTeamMemberCorrectionRequest(text: string): boolean {
 }
 
 export function isProjectRosterRematchRequest(text: string): boolean {
-  return PROJECT_ROSTER_REMATCH_RE.test(text.trim())
+  const normalized = text.trim();
+  if (EXPLICIT_NEW_PROJECT_RE.test(normalized) && !ROSTER_CORRECTION_CUE_RE.test(normalized)) return false;
+  return PROJECT_ROSTER_REMATCH_RE.test(normalized)
     && !isTeamMemberReplacementRequest(text)
     && !isTeamMemberRemovalRequest(text);
 }
@@ -140,10 +144,16 @@ export function resolveMentionedEmployees(text: string, employees: Employee[]): 
   return ranked.filter((item) => item.score === topScore).map((item) => item.employee);
 }
 
+export function projectBelongsToConversation(project: Pick<Project, 'conversationId'>, conversationId?: string): boolean {
+  if (!conversationId) return true;
+  if (project.conversationId) return project.conversationId === conversationId;
+  return conversationId === 'conversation-legacy-assistant';
+}
+
 export function resolveTargetProject(text: string, projects: Project[], conversationId?: string): Project | undefined {
   const candidates = projects
     .filter((project) => project.status === 'awaiting_approval' || project.status === 'clarifying' || project.status === 'running')
-    .filter((project) => !conversationId || !project.conversationId || project.conversationId === conversationId)
+    .filter((project) => projectBelongsToConversation(project, conversationId))
     .sort((a, b) => b.updatedAt - a.updatedAt);
   const normalized = compact(text);
   const explicit = candidates.find((project) => normalized.includes(compact(project.title)));
@@ -156,7 +166,7 @@ export function resolveTargetProject(text: string, projects: Project[], conversa
 export function resolveLatestRejectedProject(projects: Project[], conversationId?: string): Project | undefined {
   return projects
     .filter((project) => project.status === 'archived' && Boolean(project.rejectionReason))
-    .filter((project) => !conversationId || !project.conversationId || project.conversationId === conversationId)
+    .filter((project) => projectBelongsToConversation(project, conversationId))
     .sort((left, right) => right.updatedAt - left.updatedAt)[0];
 }
 

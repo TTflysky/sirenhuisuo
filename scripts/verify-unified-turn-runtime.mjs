@@ -81,6 +81,41 @@ const authRecovery = decideRecovery(runtime, authError);
 assert.equal(authRecovery.decision.action, 'waiting_user');
 assert.equal(authRecovery.runtime.phase, 'waiting_user');
 
+let verificationRuntime = createTurnRuntime({ goal: 'build and verify a frontend' });
+let verificationResult = observeToolResult(verificationRuntime, {
+  name: 'run_command',
+  args: { cmd: 'npm test', verification: true },
+  success: false,
+  output: 'exit code 1',
+  errorType: 'verification_failed',
+});
+assert.equal(verificationResult.error.type, 'verification_failed');
+let verificationRecovery = decideRecovery(verificationResult.runtime, verificationResult.error, { routeAttempts: 1 });
+assert.equal(verificationRecovery.decision.action, 'switch_route', 'a new failed verification route must return to the model');
+verificationResult = observeToolResult(verificationRecovery.runtime, {
+  name: 'run_command',
+  args: { cmd: 'npm run lint', verification: true },
+  success: false,
+  output: 'exit code 1',
+  errorType: 'verification_failed',
+});
+verificationRecovery = decideRecovery(verificationResult.runtime, verificationResult.error, { routeAttempts: 1 });
+assert.equal(verificationRecovery.decision.action, 'switch_route', 'a different verification route must not inherit the prior route limit');
+
+let repeatedRoute = verificationRecovery.runtime;
+for (let routeAttempt = 2; routeAttempt <= 3; routeAttempt += 1) {
+  const observedFailure = observeToolResult(repeatedRoute, {
+    name: 'run_command',
+    args: { cmd: 'npm run lint', verification: true },
+    success: false,
+    output: 'exit code 1',
+    errorType: 'verification_failed',
+  });
+  const decision = decideRecovery(observedFailure.runtime, observedFailure.error, { routeAttempts: routeAttempt });
+  repeatedRoute = decision.runtime;
+  if (routeAttempt === 3) assert.equal(decision.decision.action, 'checkpoint', 'only the repeatedly identical failed route should checkpoint');
+}
+
 const serverError = classifyExecutionError('模型响应 503: {"error":{"message":"Service temporarily unavailable"}}');
 assert.equal(serverError.type, 'server', '文本形式的 HTTP 503 也必须归类为上游服务异常');
 assert.equal(serverError.retryable, true);

@@ -1,9 +1,21 @@
 # 项目交接手册
 
 > 最后整理：2026-08-02
-> 当前源码版本：`v3.5.7`（工作区能力事实校正）
+> 当前源码版本：`v3.5.8`（真实执行收口与 Windows 渲染恢复）
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+
+## v3.5.8 真实执行收口与 Windows 渲染恢复
+
+- Windows 默认使用软件渲染，`electron/renderingPolicy.cjs` 统一处理所有窗口的延迟显示、加载失败、渲染进程退出、无响应与启动兜底。仅在诊断时通过 `TAIJI_FORCE_HARDWARE_ACCELERATION=1` 恢复硬件加速。
+- 能力图和 Coding DAG 使用同一套专业岗位所有权。协调、架构、UI、前端、后端和 QA 存在对应专家时，迁移遗留的宽泛能力标签不得让相邻岗位冒充负责人。
+- 固定 Coding DAG 禁止动态委派复制既有职责；工具注册按步骤收紧，`submit_review` 仅对正式审查可见。真实文件和成功运行证据可以直接结束文件步骤，24 次工具预算边界也不会把已完成交付误判为失败。
+- 模型 HTTP、超时、重试和控制中断集中在 `electron/nativeModelGateway.cjs`。长文件生成只有在出现真实写入或运行进展时才获得有限收尾预算；原生 Adapter 继续受 2150 行模块门禁保护。
+- 动态复审步骤统一使用 `decision`，正式 `review` 步骤提交结构化结论后立即结束。首次任务账本同步完成前禁止自动恢复，避免旧投影抢跑。
+- 新建聊天的项目卡、驳回草案与当前运行按 `conversationId` 隔离；历史无会话字段数据只进入兼容会话，不参与新会话调度。
+- 真实项目 `run-1785617297693-za7fs` 已完成产品、架构、UX/UI、前端、后端、验证、首次审查和第一次修订，工作区产生 18 项真实文件。系统自主发现 Chrome 并完成 390px 移动视口、Mock 生图、刷新持久化和横向溢出验证，随后正确退回图生图、设置持久化与浏览器证据缺口。
+- 最终复审因模型服务连续返回 `HTTP 502: Upstream service temporarily unavailable` 暂停，Delivery 未执行，不得冒充完整验收。服务恢复后运行 `node scripts/resume-native-run-authoritative.mjs run-1785617297693-za7fs` 继续同一现场。
+- 本机已覆盖安装 `v3.5.8`，覆盖前备份位于 `L:\AI办公室\taiji-backups\preinstall-3.5.8-20260802-0632`。API Key、聊天、员工、团队、任务账本和工作区仍只保存在本机，不得提交 GitHub。
 
 ## v3.5.7 工作区能力事实校正
 

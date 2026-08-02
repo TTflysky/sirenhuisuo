@@ -14,6 +14,19 @@ function stable(value) {
 }
 
 function toolKey(name, args) { return `${name}:${JSON.stringify(stable(args || {}))}`.toLowerCase(); }
+function isWorkspaceMutationTool(name, args) {
+  return name === 'write_file'
+    || name === 'coding_apply_patch'
+    || (name === 'run_command' && args?.verification !== true);
+}
+function isWorkspaceSnapshotTool(name, args) {
+  return ['read_file', 'list_files', 'coding_repository_index', 'coding_search', 'coding_dependencies', 'coding_impact', 'coding_select_tests', 'coding_delivery'].includes(name)
+    || (name === 'run_command' && args?.verification === true);
+}
+function toolCacheKey(name, args, mutationEpoch = 0) {
+  const base = toolKey(name, args);
+  return isWorkspaceSnapshotTool(name, args) ? `${base}@workspace-${Math.max(0, Number(mutationEpoch) || 0)}` : base;
+}
 function isPreparationTool(name) { return ['inspect_connectors', 'list_files', 'read_file', 'read_skill', 'read_web_page', 'search_skills', 'web_search', 'search_tools', 'describe_tool'].includes(name); }
 function isVerifiedArtifact(artifact) {
   return artifact?.verified === true
@@ -24,6 +37,7 @@ function isVerifiedArtifact(artifact) {
 
 const DELIVERABLE_TYPES = new Set(['answer', 'file', 'connection', 'operation', 'decision', 'mixed']);
 function inferStepDeliverableType(step, run) {
+  if (step?.kind === 'review') return 'decision';
   const declared = text(step?.deliverableType || step?.metadata?.deliverableType, 40).toLowerCase();
   if (DELIVERABLE_TYPES.has(declared)) return declared;
   const source = `${text(step?.title, 400)} ${text(step?.assignment, 3000)}`;
@@ -33,6 +47,50 @@ function inferStepDeliverableType(step, run) {
   if (/(?:方案|设计|分析|建议|判断|评审|审查|调研|规划)/iu.test(source)) return 'decision';
   const contractType = text(run?.contract?.deliverableType || run?.taskDecision?.deliverableType, 40).toLowerCase();
   return DELIVERABLE_TYPES.has(contractType) ? contractType : 'answer';
+}
+
+function supportsDynamicDelegation(run) {
+  return !run?.codingProject?.codingProjectVersion;
+}
+
+function toolAvailableForStep(name, run, step) {
+  if (name === 'delegate_subtask' && !supportsDynamicDelegation(run)) return false;
+  if (name === 'submit_review' && step?.kind !== 'review') return false;
+  return true;
+}
+
+function structuredReviewCompletesStep(step, deliverableType, review) {
+  if (!review || !['pass', 'reject'].includes(review.decision)) return false;
+  return step?.kind === 'review' && (deliverableType === 'decision' || inferStepDeliverableType(step, {}) === 'decision');
+}
+
+function substantiveDecisionCompletesStep(step, deliverableType, content) {
+  if (step?.kind === 'review' || deliverableType !== 'decision') return false;
+  const normalized = text(content, 20000).replace(/\s+/gu, ' ');
+  if (normalized.length < 80) return false;
+  if (/^(?:收到|明白|好的|已记录|我会|将会|稍后|正在处理|继续处理中)[，。！!\s]/u.test(normalized) && normalized.length < 240) return false;
+  return true;
+}
+
+function requiresLongModelRequest(step, deliverableType) {
+  return deliverableType === 'file'
+    || ['frontend', 'backend'].includes(text(step?.codingRole, 40).toLowerCase());
+}
+
+function shouldExtendModelRoundBudget(step, deliverableType, callLog) {
+  return requiresLongModelRequest(step, deliverableType)
+    && (Array.isArray(callLog) ? callLog : []).some((entry) => entry?.success === true && !isPreparationTool(entry?.name));
+}
+
+function verifiedFileStepCompletesStep(step, deliverableType, callLog, evidence) {
+  if (step?.kind === 'review' || deliverableType !== 'file') return false;
+  const hasVerifiedFile = (Array.isArray(evidence) ? evidence : []).some((item) => item?.kind === 'file' && item?.verified === true);
+  const hasSuccessfulVerification = (Array.isArray(callLog) ? callLog : []).some((entry) => (
+    entry?.name === 'run_command'
+    && entry?.success === true
+    && /"verification"\s*:\s*true/iu.test(String(entry?.args || ''))
+  ));
+  return hasVerifiedFile && hasSuccessfulVerification;
 }
 
 function compensationNeedsApproval(step, job) {
@@ -114,9 +172,19 @@ function publicMember(member) {
 module.exports = {
   ROLE_DUTY,
   toolKey,
+  toolCacheKey,
+  isWorkspaceMutationTool,
+  isWorkspaceSnapshotTool,
   isPreparationTool,
   isVerifiedArtifact,
   inferStepDeliverableType,
+  supportsDynamicDelegation,
+  toolAvailableForStep,
+  structuredReviewCompletesStep,
+  substantiveDecisionCompletesStep,
+  requiresLongModelRequest,
+  shouldExtendModelRoundBudget,
+  verifiedFileStepCompletesStep,
   compensationNeedsApproval,
   summarizeChildTask,
   buildChildTaskContext,

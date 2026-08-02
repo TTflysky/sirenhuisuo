@@ -1,4 +1,4 @@
-import { employeeCapabilityProfile, inferCapabilityIds } from './capabilityGraph.mjs';
+import { inferCapabilityIds, selectCapabilityOwner } from './capabilityGraph.mjs';
 
 export const CODING_PROJECT_VERSION = 2;
 
@@ -79,22 +79,11 @@ function needsBackend(value, capabilities) {
     || /backend|server|database|api|service|auth|integration|\u540e\u7aef|\u670d\u52a1\u7aef|\u6570\u636e\u5e93|\u63a5\u53e3|\u63a5\u5165/iu.test(value);
 }
 
-function candidateOwners(members, allowedIds, capability) {
-  const candidates = members.filter((member) => !allowedIds.size || allowedIds.has(member.id));
-  return candidates
-    .map((member) => ({
-      member,
-      profile: employeeCapabilityProfile(member),
-      explicitMatch: Array.isArray(member.capabilities) && member.capabilities.includes(capability) ? 1 : 0,
-      load: Math.max(0, Number(member.currentLoad ?? member.activeTaskCount) || 0) + (member.isWorking === true ? 1 : 0),
-    }))
-    .filter(({ profile }) => profile.includes(capability))
-    .sort((left, right) => right.explicitMatch - left.explicitMatch || left.load - right.load
-      || String(left.member.name || '').localeCompare(String(right.member.name || ''), 'zh-CN'));
-}
-
 function chooseOwner(members, allowedIds, capability) {
-  return candidateOwners(members, allowedIds, capability)[0]?.member;
+  return selectCapabilityOwner(
+    members.filter((member) => !allowedIds.size || allowedIds.has(member.id)),
+    capability,
+  );
 }
 
 function node(id, role, dependencies, owner, input) {

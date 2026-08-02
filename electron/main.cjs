@@ -29,12 +29,14 @@ const { createLearningReviewQueue } = require('./learningReviewQueue.cjs');
 const { createWebResourceAcquirer } = require('./resourceAcquisition.cjs');
 const { createBrowserPageReader } = require('./browserPageReader.cjs');
 const { configureAppUserData } = require('./appIdentityMigration.cjs');
+const { applyRenderingPolicy, attachRendererDiagnostics, revealWindowAfterLoad } = require('./renderingPolicy.cjs');
 // Configure the canonical Taiji data root before any module resolves userData.
 // Automated Electron verification remains isolated from a user's real data.
 const identityMigration = configureAppUserData(app, { testUserData: process.env.TAIJI_TEST_USER_DATA });
-if (process.env.TAIJI_TEST_USER_DATA || process.env.TAIJI_DISABLE_HARDWARE_ACCELERATION === '1') app.disableHardwareAcceleration();
+const renderingPolicy = applyRenderingPolicy(app, { platform: process.platform, env: process.env });
 if (process.env.TAIJI_TEST_DEBUG_PORT) app.commandLine.appendSwitch('remote-debugging-port', String(process.env.TAIJI_TEST_DEBUG_PORT));
 const log = require('electron-log');
+log.info('[startup] rendering policy', renderingPolicy);
 const APP_TITLE = `太极 AI 办公会所 v${APP_VERSION}`;
 const APP_SESSION_ID = `session-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 const WINDOW_PREFERENCES_PATH = path.join(app.getPath('userData'), 'window-preferences.json');
@@ -536,7 +538,12 @@ async function createToolWindow(opts, requester = mainWindow) {
   toolWindows.set(normalized.key, win);
   toolWindowPayloads.set(session, { windowId: win.id, payload: normalized.payload });
   trackActiveWindow(win);
-  win.once('ready-to-show', () => bringToFront(win));
+  attachRendererDiagnostics(win, { log, label: `tool:${normalized.type}` });
+  revealWindowAfterLoad(win, {
+    log,
+    label: `tool:${normalized.type}`,
+    onReveal: () => bringToFront(win),
+  });
   win.on('closed', () => {
     if (toolWindows.get(normalized.key) === win) toolWindows.delete(normalized.key);
     toolWindowPayloads.delete(session);
@@ -713,10 +720,17 @@ async function createAssistantCompanion(owner = mainWindow, { focus = false } = 
   assistantCompanionWindow = companion;
   chatWindows.set(ASSISTANT_COMPANION_KEY, companion);
   trackActiveWindow(companion);
-  companion.once('ready-to-show', () => {
-    if (assistantCompanionLocked) syncLockedCompanionWindows();
-    if (focus) focusChatWindow(companion);
-    else companion.showInactive();
+  attachRendererDiagnostics(companion, { log, label: 'assistant' });
+  revealWindowAfterLoad(companion, {
+    log,
+    label: 'assistant',
+    showWindow: () => {
+      if (focus) focusChatWindow(companion);
+      else companion.showInactive();
+    },
+    onReveal: () => {
+      if (assistantCompanionLocked) syncLockedCompanionWindows();
+    },
   });
   companion.on('close', (event) => {
     if (isQuitting) return;
@@ -775,9 +789,11 @@ async function createSettingsWindow(sourceWindow = mainWindow) {
   });
   settingsWindow = win;
   trackActiveWindow(win);
-  win.once('ready-to-show', () => {
-    win.show();
-    win.focus();
+  attachRendererDiagnostics(win, { log, label: 'settings' });
+  revealWindowAfterLoad(win, {
+    log,
+    label: 'settings',
+    onReveal: () => win.focus(),
   });
   win.on('closed', () => {
     if (settingsWindow === win) settingsWindow = null;
@@ -812,6 +828,7 @@ function createWindow() {
     minHeight: 600,
     title: APP_TITLE,
     frame: false,
+    show: false,
     backgroundColor: '#ffffff',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -822,6 +839,7 @@ function createWindow() {
 
   mainWindow = win;
   trackActiveWindow(win);
+  attachRendererDiagnostics(win, { log, label: 'main' });
 
   for (const eventName of ['move', 'resize', 'maximize', 'unmaximize', 'restore']) {
     win.on(eventName, scheduleLockedAssistantSync);
@@ -840,10 +858,15 @@ function createWindow() {
     scheduleLockedAssistantSync();
   });
 
-  win.once('ready-to-show', () => {
-    createAssistantCompanion(win).catch((error) => {
-      console.error('Failed to create assistant companion window:', error);
-    });
+  revealWindowAfterLoad(win, {
+    log,
+    label: 'main',
+    onReveal() {
+      bringToFront(win);
+      createAssistantCompanion(win).catch((error) => {
+        log.error('Failed to create assistant companion window:', error);
+      });
+    },
   });
   win.on('close', (event) => {
     if (isQuitting) return;
@@ -976,7 +999,12 @@ function createWindow() {
     });
     trackActiveWindow(child);
     chatWindows.set(key, child);
-    child.once('ready-to-show', () => bringToFront(child));
+    attachRendererDiagnostics(child, { log, label: `chat:${type}` });
+    revealWindowAfterLoad(child, {
+      log,
+      label: `chat:${type}`,
+      onReveal: () => bringToFront(child),
+    });
     // focus 仅由 trackActiveWindow 记录，避免触发置顶/焦点循环。
     child.on('closed', () => {
       if (chatWindows.get(key) === child) chatWindows.delete(key);

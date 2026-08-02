@@ -253,11 +253,26 @@ function applyEvent(projected, event) {
   throw new Error(`未知任务事件：${event.type}`);
 }
 
-async function atomicWrite(filePath, content) {
+const TRANSIENT_RENAME_ERRORS = new Set(['EACCES', 'EBUSY', 'ENOTEMPTY', 'EPERM']);
+const ATOMIC_RENAME_RETRY_DELAYS_MS = [25, 50, 100, 200, 400, 800, 1200];
+
+async function atomicWrite(filePath, content, options = {}) {
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+  const rename = options.renameImpl || fs.rename;
+  const delay = options.delayImpl || ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+  const retryDelays = options.retryDelays || ATOMIC_RENAME_RETRY_DELAYS_MS;
   await fs.writeFile(tempPath, content, 'utf8');
   try {
-    await fs.rename(tempPath, filePath);
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await rename(tempPath, filePath);
+        break;
+      } catch (error) {
+        const retryDelay = retryDelays[attempt];
+        if (!TRANSIENT_RENAME_ERRORS.has(error?.code) || retryDelay === undefined) throw error;
+        await delay(retryDelay);
+      }
+    }
   } catch (error) {
     try { await fs.rm(tempPath, { force: true }); } catch {}
     throw error;
@@ -779,6 +794,7 @@ module.exports = {
   LEDGER_VERSION,
   RECOVERY_POINT_VERSION,
   DEFAULT_MAX_RUNS,
+  atomicWrite,
   createTaskRuntimeStore,
   collectChanges,
   applyChanges,

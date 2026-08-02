@@ -100,7 +100,7 @@ const SKIP_BROADCAST = new Set<AppStateAction['type']>(['INIT', 'HYDRATE_TASK_RU
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, rawDispatch] = useReducer(reducer, initialAppState);
   const nativeWorkingEmployeesRef = React.useRef<Set<string>>(new Set());
-
+  const nativeTaskHydratedRef = React.useRef(false);
   // 标记当前是否正在应用「来自其他窗口」的广播，避免回环广播
   const applyingRemote = React.useRef(false);
 
@@ -165,6 +165,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       try {
         const runs = await hydrateTaskRunsFromMainStore();
         if (!runs || disposed) return;
+        nativeTaskHydratedRef.current = true;
         if (needsArtifactReconciliation) {
           needsArtifactReconciliation = false;
           await syncNativeRunArtifacts(runs);
@@ -1587,11 +1588,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  // A native task that was only interrupted by an app restart returns to the
-  // queue. Credentials are re-read from this device's current model settings,
-  // never from the persisted task record.
+  // Native tasks interrupted by app restart return to the queue after authoritative ledger hydration.
   useEffect(() => {
     if (!window.electronAPI?.taskExecutionStart) return;
+    if (!nativeTaskHydratedRef.current) return;
     for (const run of state.taskRuns) {
       if (run.status !== 'queued' || !run.recoveryContext?.autoResume) continue;
       const members = run.memberSnapshot

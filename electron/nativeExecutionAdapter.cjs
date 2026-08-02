@@ -5,12 +5,22 @@ const { projectNativeJob } = require('./nativeExecutionProjection.cjs');
 const { createNativeCollaborationProtocol } = require('./nativeCollaborationProtocol.cjs');
 const { pathToFileURL } = require('url');
 const { ADAPTER_PROTOCOL_VERSION } = require('./executionAdapterProtocol.cjs');
+const { callNativeModel } = require('./nativeModelGateway.cjs');
 const {
   ROLE_DUTY,
   toolKey,
+  toolCacheKey,
+  isWorkspaceMutationTool,
   isPreparationTool,
   isVerifiedArtifact,
   inferStepDeliverableType,
+  supportsDynamicDelegation,
+  toolAvailableForStep,
+  structuredReviewCompletesStep,
+  substantiveDecisionCompletesStep,
+  requiresLongModelRequest,
+  shouldExtendModelRoundBudget,
+  verifiedFileStepCompletesStep,
   compensationNeedsApproval,
   summarizeChildTask,
   buildChildTaskContext,
@@ -23,9 +33,11 @@ const {
 const NATIVE_ADAPTER_VERSION = 2;
 const MAX_TOOL_CALLS_PER_STEP = 24;
 const MAX_MODEL_ROUNDS_PER_STEP = 12;
+const MAX_LONG_MODEL_ROUNDS_PER_STEP = 24;
 const MODEL_ROUNDS_PER_STAGE = 6;
 const MAX_PREPARATION_STREAK = 4;
 const DEFAULT_MODEL_REQUEST_TIMEOUT_MS = 120_000;
+const DEFAULT_LONG_MODEL_REQUEST_TIMEOUT_MS = 300_000;
 const DEFAULT_TOOL_CALL_TIMEOUT_MS = 120_000;
 const DEFAULT_PROGRESS_STALL_MS = 150_000;
 const ACTIVE_JOB_STATES = new Set(['queued', 'running', 'waiting_children']);
@@ -49,8 +61,13 @@ function createNativeExecutionAdapter(options) {
   const projectRoot = path.resolve(options.projectRoot);
   const retryDelays = options.retryDelays ?? [0, 1000, 3000, 6000, 10000];
   const modelRequestTimeoutMs = Math.max(100, Number(options.modelRequestTimeoutMs) || DEFAULT_MODEL_REQUEST_TIMEOUT_MS);
+  const longModelRequestTimeoutMs = Math.max(
+    modelRequestTimeoutMs,
+    Number(options.longModelRequestTimeoutMs)
+      || (options.modelRequestTimeoutMs ? modelRequestTimeoutMs : DEFAULT_LONG_MODEL_REQUEST_TIMEOUT_MS),
+  );
   const toolCallTimeoutMs = Math.max(100, Number(options.toolCallTimeoutMs) || DEFAULT_TOOL_CALL_TIMEOUT_MS);
-  const progressStallMs = Math.max(modelRequestTimeoutMs + 5_000, Number(options.progressStallMs) || DEFAULT_PROGRESS_STALL_MS);
+  const progressStallMs = Math.max(longModelRequestTimeoutMs + 5_000, Number(options.progressStallMs) || DEFAULT_PROGRESS_STALL_MS);
   let engineModulesPromise;
 
   function refreshQueuePositions() {
@@ -368,6 +385,9 @@ function createNativeExecutionAdapter(options) {
         ? '当前任务工作区已经建立。统一工具注册中心会将 write_file、read_file、list_files 和 run_command 绑定到该工作区；尚未产生文件不代表没有入口，必须实际调用工具并报告真实结果。'
         : '当前任务尚未建立工作区。不得声称已经写入或运行文件；需要文件交付时应由执行器先建立工作区或明确报告初始化失败。',
       '只在任务合同要求文件交付时使用 write_file 并校验磁盘文件；回答、连接、操作和决策任务使用各自对应的真实证据。审查步骤必须调用 submit_review。',
+      inferStepDeliverableType(step, run) === 'file'
+        ? '代码或多文件交付必须分批落盘：每次模型决策只生成一个主要文件或一组很小的紧密相关文件，工具返回后再继续下一个文件。不要在一次模型回复里塞入整套项目；每个关键文件写入后都要读取或运行验证。'
+        : '',
       runtimeGuidance,
       advisorGuidance,
       job.compensating ? '当前处于补偿阶段：只执行当前补偿责任以撤销或降低已发生副作用，留下真实工具证据；不要继续原任务或虚构补偿完成。' : '',
@@ -388,75 +408,16 @@ function createNativeExecutionAdapter(options) {
     return { role: 'user', content: [{ type: 'text', text: prompt }, ...images.map((item) => ({ type: 'image_url', image_url: { url: item.dataUrl } }))] };
   }
 
-  async function callModel(job, member, messages, tools) {
+  async function callModel(job, member, messages, tools, requestOptions = {}) {
     const { turnRuntime } = await loadEngineModules();
-    const config = member.modelConfig || {};
-    const endpoint = resolveEndpoint(config);
-    const headers = { Accept: 'application/json', 'Content-Type': 'application/json' };
-    if (config.apiKey) headers.Authorization = `Bearer ${config.apiKey}`;
-    let lastError;
-    const recoveryAttempts = new Map();
-    for (let attempt = 0; attempt < retryDelays.length; attempt += 1) {
-      await assertCanContinue(job);
-      if (retryDelays[attempt]) await sleep(retryDelays[attempt]);
-      const controller = new AbortController();
-      job.abortController = controller;
-      await reportActivity(job, 'model_request_started', `${member.name} 正在请求模型 ${modelName(config)}（第 ${attempt + 1} 次）`, {
-        stepId: job.currentStepId, member: publicMember(member), attempt: attempt + 1, timeoutMs: modelRequestTimeoutMs,
-      });
-      const deadline = timeoutPromise(modelRequestTimeoutMs, `模型在 ${Math.ceil(modelRequestTimeoutMs / 1000)} 秒内没有返回`, () => controller.abort());
-      try {
-        const operation = (async () => {
-          const response = await options.fetchImpl(endpoint, {
-            method: 'POST', headers, signal: controller.signal,
-            body: JSON.stringify({
-              model: modelName(config),
-              messages,
-              ...(Array.isArray(tools) && tools.length ? { tools, tool_choice: 'auto' } : {}),
-              stream: false,
-            }),
-          });
-          const raw = await response.text();
-          if (!response.ok) {
-            const error = new Error(`模型 HTTP ${response.status}：${raw.slice(0, 1000)}`);
-            error.retryable = response.status === 408 || response.status === 409 || response.status === 429 || response.status >= 500;
-            throw error;
-          }
-          let data;
-          try { data = JSON.parse(raw); } catch { throw new Error('模型返回了无效 JSON'); }
-          const message = data?.choices?.[0]?.message;
-          if (!message) throw new Error('模型没有返回可用消息');
-          return { message, usage: data.usage || {}, model: data.model || modelName(config) };
-        })();
-        const result = await Promise.race([operation, deadline.promise]);
-        await reportActivity(job, 'model_response_received', `${member.name} 已收到模型回复，正在检查下一步动作`, {
-          stepId: job.currentStepId, member: publicMember(member), attempt: attempt + 1,
-        });
-        return result;
-      } catch (error) {
-        if (job.interruptReason === 'steer') {
-          throw new ExecutionControlSignal('steer', '已收到新的要求，正在根据最新内容调整当前步骤。');
-        }
-        if (job.control) throw new ExecutionControlSignal(job.control, error?.message);
-        lastError = error;
-        const classified = turnRuntime.classifyExecutionError(error);
-        const used = recoveryAttempts.get(classified.type) || 0;
-        const limit = Number(turnRuntime.TAIJI_RECOVERY_LIMITS[classified.type] ?? 1);
-        await reportActivity(job, 'model_retry', `${member.name} 的模型请求未成功，正在按恢复策略重试`, {
-          stepId: job.currentStepId,
-          attempt: used + 1,
-          maxAttempts: limit + 1,
-          errorType: classified.type,
-          error: text(error?.message || error, 500),
-        });
-        if (error?.retryable === false || !classified.retryable || classified.needsUser || used >= limit) break;
-        recoveryAttempts.set(classified.type, used + 1);
-      } finally {
-        deadline.clear();
-        if (job.abortController === controller) job.abortController = undefined;
-      }
-    }
-    throw lastError || new Error('模型请求失败');
+    const requestTimeoutMs = Math.max(100, Number(requestOptions.timeoutMs) || modelRequestTimeoutMs);
+    return callNativeModel({
+      job, member, messages, tools, timeoutMs: requestTimeoutMs,
+      fetchImpl: options.fetchImpl, retryDelays, turnRuntime,
+      resolveEndpoint, modelName, publicMember, reportActivity, assertCanContinue,
+      timeoutPromise, createControlSignal: (kind, message) => new ExecutionControlSignal(kind, message),
+      text, sleep,
+    });
   }
 
   function completeOutstandingToolMessages(messages, toolCalls, completedIds, reason) {
@@ -562,6 +523,9 @@ function createNativeExecutionAdapter(options) {
     const { runner, taskDelegation } = await loadEngineModules();
     const current = await readRun(job.taskId);
     if (!current) return { name: 'delegate_subtask', success: false, output: '找不到当前任务，无法创建子任务。' };
+    if (!supportsDynamicDelegation(current)) {
+      return { name: 'delegate_subtask', success: false, output: '当前软件项目已有固定 Coding DAG 和完整负责人，不允许用动态委派复制既有阶段。请完成当前责任步骤；需要调整成员时使用项目成员变更流程。' };
+    }
     try {
       const appended = taskDelegation.appendDelegation(current, {
         parentStepId: step.id,
@@ -682,7 +646,9 @@ function createNativeExecutionAdapter(options) {
       { role: 'system', content: `${buildSystem(run, step, member, job, turnRuntime.buildTurnGuidance(runtime), advisorGuidance)}${explicitResourceGuidance ? `\n\n${explicitResourceGuidance}` : ''}${layeredMemory.context ? `\n\n## 太极分层热记忆\n${layeredMemory.context}\n\n以上记忆只作为可复用背景；与老板当前明确要求冲突时，以当前要求为准。` : ''}${buildInheritedTaskContext(run)}${buildChildTaskContext(run)}\n\n${stepRecoveryPrompt}` },
       buildUserTurn(run, step, job),
     ];
-    const registry = toolRegistry.buildToolRegistry([...options.toolRuntime.definitions, ...(job.connectorTools || [])]);
+    const availableDefinitions = [...options.toolRuntime.definitions, ...(job.connectorTools || [])]
+      .filter((definition) => toolAvailableForStep(definition?.function?.name, run, step));
+    const registry = toolRegistry.buildToolRegistry(availableDefinitions);
     const tools = registry.definitions;
     emit(job, 'tool_registry_ready', {
       stepId: step.id,
@@ -695,14 +661,28 @@ function createNativeExecutionAdapter(options) {
     if (!tools.length) throw new Error('统一工具注册中心没有可用工具，任务无法开始');
     const cache = new Map();
     const callLog = [];
+    let workspaceMutationEpoch = 0;
     let preparationStreak = 0;
     let finalContent = '';
     let review;
     let forceActionCount = 0;
     let appliedSteering = job.steering.length;
     let liveBudget = contextRouter.createContextBudget(run.recoveryContext?.budget);
-    for (let round = 0; round < MAX_MODEL_ROUNDS_PER_STEP; round += 1) {
+    const longGenerationStep = requiresLongModelRequest(step, stepDeliverableType);
+    const maxModelRounds = longGenerationStep ? MAX_LONG_MODEL_ROUNDS_PER_STEP : MAX_MODEL_ROUNDS_PER_STEP;
+    for (let round = 0; round < maxModelRounds; round += 1) {
       await assertCanContinue(job);
+      if (round === MAX_MODEL_ROUNDS_PER_STEP && longGenerationStep) {
+        const hasMaterialProgress = shouldExtendModelRoundBudget(step, stepDeliverableType, callLog);
+        if (!hasMaterialProgress) break;
+        messages.push({ role: 'system', content: `前 ${MAX_MODEL_ROUNDS_PER_STEP} 轮已经产生真实写入、运行或连接证据，因此自动进入收尾阶段。只补齐尚缺的验证与总结，不得重做已完成文件；总轮次仍受 ${MAX_LONG_MODEL_ROUNDS_PER_STEP} 轮硬上限约束。` });
+        emit(job, 'model_round_budget_extended', {
+          stepId: step.id,
+          completedRounds: round,
+          maxRounds: maxModelRounds,
+          reason: 'material-progress',
+        });
+      }
       const currentPromptTokens = contextRouter.estimateTokens(messages.map((item) => item.content || item.tool_calls || '').join('\n'));
       const budgetAssessment = contextRouter.assessContextBudget(liveBudget, { currentPromptTokens });
       const stageBoundary = round > 0 && round % MODEL_ROUNDS_PER_STAGE === 0;
@@ -772,7 +752,11 @@ function createNativeExecutionAdapter(options) {
         : member;
       let response;
       try {
-        response = await callModel(job, modelMember, messages, tools);
+        response = await callModel(job, modelMember, messages, tools, {
+          timeoutMs: requiresLongModelRequest(step, stepDeliverableType)
+            ? longModelRequestTimeoutMs
+            : modelRequestTimeoutMs,
+        });
       } catch (error) {
         if (error instanceof ExecutionControlSignal) throw error;
         const observed = turnRuntime.observeToolResult(runtime, {
@@ -832,7 +816,7 @@ function createNativeExecutionAdapter(options) {
           modelRounds: 1,
           progress: toolCalls.length > 0,
       });
-      if (toolCalls.length > 0 || (round + 1) % 3 === 0 || round === MAX_MODEL_ROUNDS_PER_STEP - 1) {
+      if (toolCalls.length > 0 || (round + 1) % 3 === 0 || round === maxModelRounds - 1) {
         await updateRun(job.taskId, (next) => {
           if (!next.recoveryContext) return;
           next.recoveryContext.budget = liveBudget;
@@ -845,20 +829,37 @@ function createNativeExecutionAdapter(options) {
         try {
           for (const call of toolCalls) {
           await assertCanContinue(job);
-          if (callLog.length >= MAX_TOOL_CALLS_PER_STEP) throw new Error(`当前步骤达到 ${MAX_TOOL_CALLS_PER_STEP} 次工具预算，已停止重复路线`);
+          if (callLog.length >= MAX_TOOL_CALLS_PER_STEP) {
+            const latestRun = await readRun(job.taskId);
+            const latestStep = latestRun?.steps?.find((item) => item.id === step.id);
+            if (verifiedFileStepCompletesStep(step, stepDeliverableType, callLog, latestStep?.evidence)) {
+              const content = `当前步骤已产生真实文件，并通过成功的运行验证；达到 ${MAX_TOOL_CALLS_PER_STEP} 次工具预算后按现有证据完成收口，没有执行额外的重复命令。`;
+              emit(job, 'tool_budget_completed_from_evidence', {
+                stepId: step.id,
+                toolCalls: callLog.length,
+                reason: 'verified-file-and-command-evidence',
+              });
+              const finalized = turnRuntime.finalizeTurn(runtime, { status: 'completed', content });
+              runtime = finalized.runtime;
+              await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 依据真实证据在工具预算边界完成步骤');
+              return { content, review, callLog, usageModel: response.model, turnRuntime: runtime, turnFinalization: finalized.finalization };
+            }
+            throw new ExecutionControlSignal('checkpoint', `当前步骤达到 ${MAX_TOOL_CALLS_PER_STEP} 次工具预算，现场和证据已保存；请从恢复点继续或更换模型。`);
+          }
           const rawName = String(call?.function?.name || '');
           const normalizedCall = turnRuntime.normalizeToolCall(rawName, call?.function?.arguments || '{}');
           const name = normalizedCall.name || rawName;
           const args = normalizedCall.args || {};
           let result;
           const key = toolKey(name, args);
+          const cacheKey = toolCacheKey(name, args, workspaceMutationEpoch);
           const preflight = toolRegistry.preflightToolCall(registry, name, args, { approvalGranted: true });
           const explicitResourceGate = explicitResource.validateExplicitResourceToolCall(explicitResourceContract, name, args, callLog);
           if (!normalizedCall.ok) result = { name, success: false, output: normalizedCall.error || '工具参数无效' };
           else if (!explicitResourceGate.allowed) result = { name, success: false, output: explicitResourceGate.reason };
           else if (!preflight.ok) result = { name, success: false, output: `工具预检未通过：${preflight.message}` };
           else if (job.approvalDenials?.has(key)) result = { name, success: false, output: '用户已经拒绝这项完全相同的操作，不得重复申请；必须改用不需要该权限的路线。' };
-          else if (cache.has(key)) result = { name, success: false, output: '完全相同的工具调用已执行，不能重复消耗算力，必须更换路线。' };
+          else if (cache.has(cacheKey)) result = { name, success: false, duplicate: true, output: '完全相同的工具调用已执行，不能重复消耗算力，必须更换路线。' };
           else {
             await reportActivity(job, 'tool_started', `${member.name} 正在调用 ${name}`, {
               stepId: step.id, member: publicMember(member), toolName: name,
@@ -886,7 +887,8 @@ function createNativeExecutionAdapter(options) {
               deadline.clear();
             }
           }
-          cache.set(key, { success: result.success, output: result.output });
+          cache.set(cacheKey, { success: result.success, output: result.output });
+          if (result.success && isWorkspaceMutationTool(name, args)) workspaceMutationEpoch += 1;
           callLog.push({ name, args: JSON.stringify(args), result: result.output, success: result.success });
           if (result.structuredEvidence?.review) review = result.structuredEvidence.review;
           preparationStreak = result.success && isPreparationTool(name) ? preparationStreak + 1 : result.success ? 0 : preparationStreak;
@@ -901,6 +903,7 @@ function createNativeExecutionAdapter(options) {
             success: result.success === true,
             useful: result.success === true,
             output: result.output,
+            errorType: !result.success && name === 'run_command' && args.verification === true ? 'verification_failed' : undefined,
             resultRef: resultReference,
             kind: result.structuredEvidence?.artifacts?.length
               ? 'file'
@@ -918,10 +921,11 @@ function createNativeExecutionAdapter(options) {
             await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 等待用户条件');
             throw new ExecutionControlSignal('awaiting_user', result.output);
           }
-          if (observed.error) {
-            const recovery = turnRuntime.decideRecovery(runtime, observed.error);
+          if (observed.error && !result.duplicate) {
+            const routeAttempts = runtime.seenCalls?.[observed.evidence.callFingerprint]?.attempts || 1;
+            const recovery = turnRuntime.decideRecovery(runtime, observed.error, { routeAttempts });
             runtime = recovery.runtime;
-            if (recovery.decision.action === 'retry') cache.delete(key);
+            if (recovery.decision.action === 'retry') cache.delete(cacheKey);
             messages.push({ role: 'system', content: `${turnRuntime.buildTurnGuidance(runtime)}\n\n失败类型：${recovery.decision.errorType}；下一恢复动作：${recovery.decision.action}。不要原样重复无效路线。` });
             if (recovery.decision.action === 'waiting_user') {
               const finalized = turnRuntime.finalizeTurn(runtime, { status: 'waiting_user', content: recovery.decision.userMessage, waitingFor: recovery.decision.message });
@@ -943,6 +947,15 @@ function createNativeExecutionAdapter(options) {
         } catch (error) {
           completeOutstandingToolMessages(messages, toolCalls, completedToolCallIds, error?.message || error);
           throw error;
+        }
+        if (structuredReviewCompletesStep(step, stepDeliverableType, review)) {
+          const reviewContent = review.decision === 'pass'
+            ? `结构化结论已通过：${review.reason}`
+            : `结构化审查已退回：${review.reason}`;
+          const finalized = turnRuntime.finalizeTurn(runtime, { status: 'completed', content: reviewContent });
+          runtime = finalized.runtime;
+          await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 以结构化审查结论完成步骤');
+          return { content: reviewContent, review, callLog, usageModel: response.model, turnRuntime: runtime, turnFinalization: finalized.finalization };
         }
         continue;
       }
@@ -967,6 +980,17 @@ function createNativeExecutionAdapter(options) {
           : '仍然没有经过磁盘校验的文件证据，禁止宣布完成。立即改用可行的真实写入路线；若缺少外部条件，只能明确交接该唯一条件。' });
         continue;
       }
+      if (!executionOptions.compensation && verifiedFileStepCompletesStep(step, stepDeliverableType, callLog, currentStep?.evidence)) {
+        const content = finalContent || '当前文件步骤已产生真实文件，并通过运行验证。';
+        emit(job, 'file_step_completed_from_evidence', {
+          stepId: step.id,
+          reason: 'verified-file-and-command-evidence',
+        });
+        const finalized = turnRuntime.finalizeTurn(runtime, { status: 'completed', content });
+        runtime = finalized.runtime;
+        await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 依据真实文件与运行验证完成步骤');
+        return { content, review, callLog, usageModel: response.model, turnRuntime: runtime, turnFinalization: finalized.finalization };
+      }
       if (step.kind === 'review' && !review) {
         forceActionCount += 1;
         messages.push({ role: 'assistant', content: finalContent || '审查说明' });
@@ -980,6 +1004,12 @@ function createNativeExecutionAdapter(options) {
         runtime = finalized.runtime;
         await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 完成补偿步骤');
         return { content: finalContent || '补偿步骤已完成真实工具执行。', review, callLog, usageModel: response.model, turnRuntime: runtime, turnFinalization: finalized.finalization };
+      }
+      if (substantiveDecisionCompletesStep(step, stepDeliverableType, finalContent)) {
+        const finalized = turnRuntime.finalizeTurn(runtime, { status: 'completed', content: finalContent });
+        runtime = finalized.runtime;
+        await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 完成实质决策步骤');
+        return { content: finalContent, review, callLog, usageModel: response.model, turnRuntime: runtime, turnFinalization: finalized.finalization };
       }
       const acceptance = fidelity.assessTaskCompletion(runtime.goal, finalContent, callLog);
       const explicitAcceptance = explicitResource.assessExplicitResourceCompletion(explicitResourceContract, callLog);
@@ -1001,10 +1031,13 @@ function createNativeExecutionAdapter(options) {
     }
     await options.store.createRecoveryPoint({ taskId: job.taskId, label: '模型轮次预算恢复点' }).catch(() => {});
     if (run.worktree && options.worktreeManager) await options.worktreeManager.checkpoint(job.taskId, { label: '模型轮次预算恢复点' }).catch(() => {});
-    const finalized = turnRuntime.finalizeTurn(runtime, { status: 'checkpointed', content: `当前步骤经过 ${MAX_MODEL_ROUNDS_PER_STEP} 轮仍未形成可验收结果。` });
+    const completedRounds = shouldExtendModelRoundBudget(step, stepDeliverableType, callLog)
+      ? MAX_LONG_MODEL_ROUNDS_PER_STEP
+      : MAX_MODEL_ROUNDS_PER_STEP;
+    const finalized = turnRuntime.finalizeTurn(runtime, { status: 'checkpointed', content: `当前步骤经过 ${completedRounds} 轮仍未形成可验收结果。` });
     runtime = finalized.runtime;
     await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 模型轮次预算检查点');
-    throw new ExecutionControlSignal('checkpoint', `当前步骤经过 ${MAX_MODEL_ROUNDS_PER_STEP} 轮仍未形成可验收结果。系统已保存目标、证据、未决问题和当前步骤，没有判定失败；可从恢复点继续或更换模型后继续。`);
+    throw new ExecutionControlSignal('checkpoint', `当前步骤经过 ${completedRounds} 轮仍未形成可验收结果。系统已保存目标、证据、未决问题和当前步骤，没有判定失败；可从恢复点继续或更换模型后继续。`);
   }
 
   function formalStep(runId, step) {
@@ -1163,13 +1196,14 @@ function createNativeExecutionAdapter(options) {
           id: `revision-${job.taskId}-${count}-${employeeId}`, employeeId, order: run.steps.length + 1, kind: 'revision',
           title: `${member?.name || employeeId} · 第 ${count} 次修订`, assignment: `审查未通过：${review.reason}。只修复责任范围问题，不重做无关步骤。`,
           dependsOnStepIds: [reviewStep.id], revisionOfStepId: target?.id, status: 'queued', attempts: 0,
+          deliverableType: inferStepDeliverableType(target, run),
           evidence: [], events: [{ ts: now, type: 'status', detail: '审查退回后新增修订步骤' }],
         };
       }
       const recheck = {
         id: `review-${job.taskId}-${count}-${reviewStep.employeeId}`, employeeId: reviewStep.employeeId, order: run.steps.length + 2, kind: 'review',
         title: `${reviewer?.name || reviewStep.employeeId} · 修订后复审`, assignment: `读取修订产出，验证“${review.reason}”是否已解决，再提交结构化审查。`,
-        dependsOnStepIds: [revision.id], status: 'queued', attempts: 0, evidence: [], events: [{ ts: now, type: 'status', detail: '等待修订后复审' }],
+        dependsOnStepIds: [revision.id], deliverableType: 'decision', status: 'queued', attempts: 0, evidence: [], events: [{ ts: now, type: 'status', detail: '等待修订后复审' }],
       };
       run.steps.push(revision, recheck);
       // A rejection is a gate, not a note. The next original stage must wait
@@ -2093,6 +2127,7 @@ module.exports = {
   NATIVE_ADAPTER_VERSION,
   MAX_TOOL_CALLS_PER_STEP,
   MAX_MODEL_ROUNDS_PER_STEP,
+  MAX_LONG_MODEL_ROUNDS_PER_STEP,
   ExecutionControlSignal,
   createNativeExecutionAdapter,
   resolveEndpoint,

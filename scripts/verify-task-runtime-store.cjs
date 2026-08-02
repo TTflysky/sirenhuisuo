@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { createTaskRuntimeStore, SCHEMA_VERSION, LEDGER_VERSION, eventHash, verifyEnvelope } = require('../electron/taskRuntimeStore.cjs');
+const { atomicWrite, createTaskRuntimeStore, SCHEMA_VERSION, LEDGER_VERSION, eventHash, verifyEnvelope } = require('../electron/taskRuntimeStore.cjs');
 
 function makeRun(id, overrides = {}) {
   return {
@@ -36,6 +36,22 @@ function assertValidChain(events) {
 (async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'taiji-task-runtime-'));
   try {
+    const transientTarget = path.join(root, 'transient-rename.json');
+    let transientAttempts = 0;
+    const transientDelays = [];
+    await atomicWrite(transientTarget, '{"ok":true}', {
+      retryDelays: [1, 2, 3],
+      delayImpl: async (milliseconds) => { transientDelays.push(milliseconds); },
+      renameImpl: async (source, target) => {
+        transientAttempts += 1;
+        if (transientAttempts < 3) throw Object.assign(new Error('simulated Windows file lock'), { code: 'EPERM' });
+        await fs.rename(source, target);
+      },
+    });
+    assert.equal(await fs.readFile(transientTarget, 'utf8'), '{"ok":true}');
+    assert.equal(transientAttempts, 3);
+    assert.deepEqual(transientDelays, [1, 2]);
+
     const store = createTaskRuntimeStore(root, { maxRuns: 10 });
     const first = await store.read();
     assert.equal(first.ok, true);

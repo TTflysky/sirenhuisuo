@@ -1,9 +1,16 @@
 const assert = require('assert');
 const {
   toolKey,
+  toolCacheKey,
+  isWorkspaceMutationTool,
+  isWorkspaceSnapshotTool,
   isPreparationTool,
   isVerifiedArtifact,
   inferStepDeliverableType,
+  supportsDynamicDelegation,
+  toolAvailableForStep,
+  structuredReviewCompletesStep,
+  verifiedFileStepCompletesStep,
   compensationNeedsApproval,
   summarizeChildTask,
   buildChildTaskContext,
@@ -22,7 +29,25 @@ assert.equal(inferStepDeliverableType({ assignment: '创建并验证 HTML 页面
 assert.equal(inferStepDeliverableType({ assignment: '连接 Obsidian 知识库' }, {}), 'connection');
 assert.equal(inferStepDeliverableType({ assignment: '部署并运行服务' }, {}), 'operation');
 assert.equal(inferStepDeliverableType({ assignment: '评审产品方案' }, {}), 'decision');
+assert.equal(inferStepDeliverableType({ kind: 'review', deliverableType: 'mixed' }, {}), 'decision');
 assert.equal(inferStepDeliverableType({}, { contract: { deliverableType: 'mixed' } }), 'mixed');
+assert.equal(supportsDynamicDelegation({}), true);
+assert.equal(supportsDynamicDelegation({ codingProject: { codingProjectVersion: 2 } }), false);
+assert.equal(toolAvailableForStep('delegate_subtask', { codingProject: { codingProjectVersion: 2 } }, { kind: 'work' }), false);
+assert.equal(toolAvailableForStep('submit_review', {}, { kind: 'work' }), false);
+assert.equal(toolAvailableForStep('submit_review', {}, { kind: 'review' }), true);
+assert.equal(toolAvailableForStep('write_file', {}, { kind: 'work' }), true);
+assert.equal(structuredReviewCompletesStep({ kind: 'work' }, 'decision', { decision: 'pass' }), false);
+assert.equal(structuredReviewCompletesStep({ kind: 'review' }, 'decision', { decision: 'reject' }), true);
+assert.equal(structuredReviewCompletesStep({ kind: 'review', deliverableType: 'mixed' }, 'mixed', { decision: 'reject' }), true);
+assert.equal(verifiedFileStepCompletesStep(
+  { kind: 'work' },
+  'file',
+  [{ name: 'run_command', success: true, args: '{"cmd":"node --check app.js","verification":true}' }],
+  [{ kind: 'file', verified: true }],
+), true);
+assert.equal(verifiedFileStepCompletesStep({ kind: 'work' }, 'file', [], [{ kind: 'file', verified: true }]), false);
+assert.equal(verifiedFileStepCompletesStep({ kind: 'review' }, 'file', [{ name: 'run_command', success: true, args: '{"verification":true}' }], [{ kind: 'file', verified: true }]), false);
 
 assert.equal(compensationNeedsApproval({ assignment: '删除已发布页面' }, {}), true);
 assert.equal(compensationNeedsApproval({ assignment: '清理本地草稿' }, {}), false);
@@ -33,6 +58,11 @@ assert.equal(isVerifiedArtifact({ verified: true, path: 'report.md' }), false);
 assert.equal(isPreparationTool('read_file'), true);
 assert.equal(isPreparationTool('write_file'), false);
 assert.equal(toolKey('run_command', { b: 2, a: 1 }), toolKey('run_command', { a: 1, b: 2 }));
+assert.equal(isWorkspaceMutationTool('write_file', {}), true);
+assert.equal(isWorkspaceMutationTool('run_command', { verification: false }), true);
+assert.equal(isWorkspaceSnapshotTool('run_command', { verification: true }), true);
+assert.notEqual(toolCacheKey('read_file', { path: 'app.js' }, 1), toolCacheKey('read_file', { path: 'app.js' }, 2));
+assert.equal(toolCacheKey('web_search', { query: 'Taiji' }, 1), toolCacheKey('web_search', { query: 'Taiji' }, 2));
 
 const child = {
   id: 'child-1', title: '实现界面', goal: '交付真实页面', status: 'completed',
@@ -49,4 +79,4 @@ assert.deepEqual(publicMember({ id: 'e1', name: '前端工程师', title: '前�
   id: 'e1', name: '前端工程师', title: '前端', role: 'coder', model: 'gpt-5',
 });
 
-console.log(JSON.stringify({ passed: true, policies: 11 }, null, 2));
+console.log(JSON.stringify({ passed: true, policies: 27 }, null, 2));

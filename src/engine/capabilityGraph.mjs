@@ -49,6 +49,9 @@ const SPECIALTY_PATTERNS = Object.freeze({
   coding: /软件工程师|开发工程师|实现工程师|程序员|编码者/iu,
   review: /qa|测试工程|质量工程|质量保证|审查者|验收/iu,
 });
+const IDENTITY_CRITICAL_CAPABILITIES = new Set([
+  'coordination', 'architecture', 'ui_ux', 'frontend', 'backend', 'review',
+]);
 
 function orderedCapabilities(values) {
   const ids = unique(values);
@@ -61,13 +64,20 @@ function orderedCapabilities(values) {
 
 function specializationScore(member, capabilityId) {
   const identity = `${member?.name ?? ''} ${member?.title ?? ''}`;
+  if (capabilityId === 'review' && /(?:^|[^a-z])qa(?:[^a-z]|$)|审查者|质量保证|验收负责人/iu.test(identity)) return 150;
   if (SPECIALTY_PATTERNS[capabilityId]?.test(identity)) return 120;
+  // Stable operating roles are stronger evidence than migrated capability
+  // labels, which may describe adjacent skills rather than ownership.
+  if (capabilityId === 'coordination' && member?.role === 'pm') return 90;
+  if (capabilityId === 'review' && member?.role === 'checker') return 90;
   if (Array.isArray(member?.capabilities) && member.capabilities.map(normalizeCapabilityId).includes(capabilityId)) return 55;
-  if (capabilityId === 'coordination' && member?.role === 'pm') return 50;
   if (capabilityId === 'architecture' && member?.role === 'planner') return 35;
   if (capabilityId === 'coding' && member?.role === 'coder') return 35;
-  if (capabilityId === 'review' && member?.role === 'checker') return 50;
   return 0;
+}
+
+function hasSpecialistIdentity(member, capabilityId) {
+  return specializationScore(member, capabilityId) >= 120;
 }
 
 export function normalizeCapabilityId(value) {
@@ -127,6 +137,25 @@ export function capabilityCoverage(member, requiredCapabilities = []) {
   return { profile: profileIds, covered, missing: required.filter((id) => !covered.includes(id)), ratio: required.length ? covered.length / required.length : 0 };
 }
 
+export function selectCapabilityOwner(members, capability) {
+  const capabilityId = normalizeCapabilityId(capability);
+  if (!capabilityId) return undefined;
+  const candidates = (Array.isArray(members) ? members : [])
+    .filter((member) => member?.id && employeeCapabilityProfile(member).includes(capabilityId));
+  const specialistAvailable = IDENTITY_CRITICAL_CAPABILITIES.has(capabilityId)
+    && candidates.some((member) => hasSpecialistIdentity(member, capabilityId));
+  return candidates
+    .filter((member) => !specialistAvailable || hasSpecialistIdentity(member, capabilityId))
+    .map((member) => ({
+      member,
+      specialization: specializationScore(member, capabilityId),
+      load: Math.max(0, Number(member.currentLoad ?? member.activeTaskCount) || 0) + (member.isWorking === true ? 1 : 0),
+    }))
+    .sort((left, right) => right.specialization - left.specialization
+      || left.load - right.load
+      || String(left.member.name || '').localeCompare(String(right.member.name || ''), 'zh-CN'))[0]?.member;
+}
+
 export function selectCapabilityTeam(members, input = {}) {
   const allCandidates = (Array.isArray(members) ? members : []).filter((member) => member?.id);
   const candidates = allCandidates.filter((member) => member.isOnline !== false);
@@ -135,7 +164,15 @@ export function selectCapabilityTeam(members, input = {}) {
   const explicitIds = unique(Array.isArray(input.explicitMemberIds) ? input.explicitMemberIds : []);
   const selected = allCandidates.filter((member) => explicitIds.includes(member.id));
   const selectedIds = new Set(selected.map((member) => member.id));
-  const uncovered = new Set(required.filter((id) => !selected.some((member) => employeeCapabilityProfile(member).includes(id))));
+  const specialistAvailable = new Map(required.map((capabilityId) => [
+    capabilityId,
+    IDENTITY_CRITICAL_CAPABILITIES.has(capabilityId)
+      && candidates.some((member) => hasSpecialistIdentity(member, capabilityId)),
+  ]));
+  const canOwnCapability = (member, capabilityId) => employeeCapabilityProfile(member).includes(capabilityId)
+    && (!specialistAvailable.get(capabilityId) || hasSpecialistIdentity(member, capabilityId));
+  const effectiveCoverage = (member) => required.filter((capabilityId) => canOwnCapability(member, capabilityId));
+  const uncovered = new Set(required.filter((id) => !selected.some((member) => canOwnCapability(member, id))));
   const ranked = candidates.filter((member) => !selectedIds.has(member.id)).map((member) => {
     const coverage = capabilityCoverage(member, required);
     const exactName = request.includes(member.name) ? 100 : 0;
@@ -145,7 +182,7 @@ export function selectCapabilityTeam(members, input = {}) {
   for (const capabilityId of required) {
     if (!uncovered.has(capabilityId)) continue;
     const next = ranked
-      .filter((item) => !selectedIds.has(item.member.id) && item.coverage.covered.includes(capabilityId))
+      .filter((item) => !selectedIds.has(item.member.id) && canOwnCapability(item.member, capabilityId))
       .sort((left, right) => specializationScore(right.member, capabilityId) - specializationScore(left.member, capabilityId)
         || right.score - left.score
         || left.member.stationIndex - right.member.stationIndex
@@ -153,7 +190,7 @@ export function selectCapabilityTeam(members, input = {}) {
     if (!next) continue;
     selected.push(next.member);
     selectedIds.add(next.member.id);
-    next.coverage.covered.forEach((id) => uncovered.delete(id));
+    effectiveCoverage(next.member).forEach((id) => uncovered.delete(id));
   }
   if (!selected.length && input.requiresTeam === true) {
     const coordinator = ranked.find((item) => item.coverage.profile.includes('coordination')) ?? ranked[0];
@@ -170,8 +207,8 @@ export function selectCapabilityTeam(members, input = {}) {
       employeeId: member.id,
       employeeName: member.name,
       capabilities: employeeCapabilityProfile(member),
-      covers: capabilityCoverage(member, required).covered,
-      reason: request.includes(member.name) ? '用户明确指定' : `能力覆盖：${capabilityCoverage(member, required).covered.map((id) => CAPABILITIES[id]?.label || id).join('、') || '团队协调'}`,
+      covers: effectiveCoverage(member),
+      reason: request.includes(member.name) ? '用户明确指定' : `能力覆盖：${effectiveCoverage(member).map((id) => CAPABILITIES[id]?.label || id).join('、') || '团队协调'}`,
     })),
     uncoveredCapabilities: [...uncovered],
     complete: uncovered.size === 0,
