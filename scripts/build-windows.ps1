@@ -12,6 +12,20 @@ $builderNodeRoot = Join-Path $cache "node-v$builderNodeVersion-win-x64"
 $builderNodeExe = Join-Path $builderNodeRoot 'node.exe'
 $builderTemp = Join-Path $cache 'temp'
 
+function Get-Sha256Hex([string]$Path) {
+  $stream = [System.IO.File]::OpenRead($Path)
+  try {
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+      return ([System.BitConverter]::ToString($sha256.ComputeHash($stream))).Replace('-', '')
+    } finally {
+      $sha256.Dispose()
+    }
+  } finally {
+    $stream.Dispose()
+  }
+}
+
 New-Item -ItemType Directory -Path $cache -Force | Out-Null
 New-Item -ItemType Directory -Path $builderTemp -Force | Out-Null
 $env:ELECTRON_BUILDER_CACHE = $cache
@@ -66,7 +80,7 @@ if (-not (Test-Path -LiteralPath $builderNodeExe)) {
     Write-Host "Stable Node $builderNodeVersion builder runtime is missing; downloading the official portable archive..."
     Invoke-WebRequest -Uri "https://nodejs.org/dist/v$builderNodeVersion/node-v$builderNodeVersion-win-x64.zip" -OutFile $builderNodeArchive -UseBasicParsing
   }
-  $actualBuilderNodeSha256 = (Get-FileHash -LiteralPath $builderNodeArchive -Algorithm SHA256).Hash
+  $actualBuilderNodeSha256 = Get-Sha256Hex $builderNodeArchive
   if ($actualBuilderNodeSha256 -ne $builderNodeSha256) {
     Remove-Item -LiteralPath $builderNodeArchive -Force
     throw "Stable builder runtime checksum mismatch. Expected $builderNodeSha256 but received $actualBuilderNodeSha256"
