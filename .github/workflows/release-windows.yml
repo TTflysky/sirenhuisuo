@@ -9,6 +9,7 @@ on:
       - "v*"
     paths:
       - ".github/workflows/release-windows.yml"
+      - "scripts/build-windows.ps1"
 
 permissions:
   contents: write
