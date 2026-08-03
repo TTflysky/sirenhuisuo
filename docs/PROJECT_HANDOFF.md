@@ -1,7 +1,7 @@
 # 项目交接手册
 
-> 最后整理：2026-08-02
-> 当前源码版本：`v3.5.8`（真实执行收口与 Windows 渲染恢复）
+> 最后整理：2026-08-03
+> 当前源码版本：`v3.6.0`（自主控制内核影子模式）
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 
@@ -10,6 +10,17 @@
 从 `v3.6.0` 开始，开发前必须阅读 [`TAIJI_AUTONOMOUS_AGENT_ARCHITECTURE.md`](./TAIJI_AUTONOMOUS_AGENT_ARCHITECTURE.md)。太极不再以“智能体驱动的固定工作流”为目标；固定流程只保留为执行底座，主持权逐步迁移到由 `GoalState`、`SituationModel`、`DecisionEngine`、`AdaptivePlanGraph` 和反思恢复组成的自主控制层。
 
 不得用更长提示词、一次性关键词补丁、固定员工白名单或更复杂的静态 DAG 冒充自主性。现有工作区、账本、工具、权限、证据、审查、恢复和数据迁移能力必须无损保留。
+
+## v3.6.0 自主控制内核影子模式
+
+- `src/engine/autonomousControl.mjs` 是新增的目标与现场控制合同，包含 `GoalState`、`SituationModel`、公开 `DecisionRecord` 及影子控制快照。类型合同位于同名 `.d.mts`。
+- `electron/taskRuntimeStore.cjs` 是统一校准边界。新旧渲染窗口、TaskService、Worker、原生 Adapter 和恢复点的任务变化都在写入账本前调用同一个 `reconcileAutonomousControl()`；旧任务初始化会追加迁移事件，不改写历史证据。
+- 账本对缺少新字段的旧窗口快照保留当前自主状态，避免“删除再重建”产生假事件。`goalId/projectId/conversationId`、工作区、成员、步骤与证据已通过重启和旧版快照迁移测试。
+- 用户输入仍先由现有语义层判断与当前任务的关系；结构化的纠正、约束、控制和独立新目标结果再进入 `GoalState`。确定性控制层只做去重、事实、权限、重复路线与证据校验，不替模型重做完整语义判断。
+- `SituationModel.confirmedFacts` 仅接纳已验证证据；未验证模型陈述进入 `assumptions`。重复失败路线最多两次的规则已投影为 `switch_route` 建议。
+- 团队项目面板通过 `autonomousControl.publicSummary` 展示公开判断，不读取或保存隐藏思维链。本版仍为 `mode=shadow`，现有执行器保持实际控制权。
+- 专项验证：`npm.cmd run verify:autonomous-control`；发布门禁还必须继续跑全量测试、`verify:v2-core-gate`、模块边界、Lint、构建和包校验。
+- `v3.6.0` 安装包为 `release/taiji-office-setup-3.6.0.exe`，大小 `195873370` 字节，SHA-256 `3EDA068868A5F8FE67B1CAAEE327D9F99F8E3CF8F838B704FE8B93F2AF2DFB53`。包内模块和界面标记已验证；已覆盖安装到 `%LOCALAPPDATA%\Programs\taiji-office`，并从安装后的 `app.asar` 读取确认版本 `3.6.0`。覆盖前数据备份位于 `L:\AI办公室\taiji-backups\preinstall-3.6.0-20260803-2316`。
 
 ## v3.5.8 真实执行收口与 Windows 渲染恢复
 

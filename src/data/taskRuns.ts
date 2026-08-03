@@ -11,6 +11,7 @@ import { createTeamExecutionProtocol, restoreTeamExecutionProtocol } from '../en
 import { inferCapabilityIds } from '../engine/capabilityGraph.mjs';
 import { inferDeliverableType } from '../engine/turnRuntime.mjs';
 import type { TaskDecision } from '../engine/taskDecisionKernel.mjs';
+import { reconcileAutonomousControl } from '../engine/autonomousControl.mjs';
 import type { TaskLedgerEvent, TaskLedgerIntegrity, TaskWorkerCommand, TaskWorkerCommandResult, TaskWorkerStatusResult } from '../electron';
 
 const LS_TASK_RUNS = 'hermes_office_task_runs_v1';
@@ -378,6 +379,7 @@ export function createTaskRun(team: Team, employees: Employee[], request: string
   const baseRun: TaskRun = {
     id,
     teamId: team.id,
+    projectId: team.projectId,
     conversationId,
     workspaceId: workspaceId ?? `tasks/team/${team.id}/run-${id}`,
     executionSessionId: getExecutionSessionId(),
@@ -465,7 +467,7 @@ export function createTaskRun(team: Team, employees: Employee[], request: string
     }),
   };
   run.recoveryCapsule = createRecoveryCapsule(run, { reason: '任务创建' });
-  return run;
+  return reconcileAutonomousControl(run, { now });
 }
 
 export function updateTaskRun(run: TaskRun, mutate: (current: TaskRun) => void): TaskRun {
@@ -474,7 +476,7 @@ export function updateTaskRun(run: TaskRun, mutate: (current: TaskRun) => void):
   if (next.status !== run.status) assertTaskRunTransition(run.status, next.status, { reason: next.lastError || '任务运行状态更新' });
   if (next.handoff) next.handoff = normalizeTaskHandoff(next.handoff, { taskId: next.id });
   next.updatedAt = Date.now();
-  return next;
+  return reconcileAutonomousControl(next, { now: next.updatedAt });
 }
 
 export function setRunStatus(run: TaskRun, status: TaskRunStatus, error?: string): TaskRun {

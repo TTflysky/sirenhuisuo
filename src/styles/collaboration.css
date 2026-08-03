@@ -180,6 +180,12 @@
 .task-run-recovery details { padding-left: 71px; }
 .task-run-recovery summary { color: var(--text); cursor: pointer; }
 .task-run-recovery p { margin: 4px 0 0; line-height: 1.5; overflow-wrap: anywhere; }
+.autonomous-summary { display: grid; gap: 6px; padding: 8px 0; border-bottom: 1px solid var(--border-light); color: var(--text-secondary); font-size: 11px; }
+.autonomous-summary-head, .autonomous-summary-primary, .autonomous-summary-gap { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 7px; }
+.autonomous-summary-head { grid-template-columns: minmax(0, 1fr) auto; }.autonomous-summary-head strong { color: var(--text); font-size: 12px; }.autonomous-summary-head span { color: var(--text-muted); font-size: 10px; }
+.autonomous-summary-primary > span, .autonomous-summary-gap > span { color: var(--text-muted); }.autonomous-summary-primary b, .autonomous-summary-gap b { color: var(--text); font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.autonomous-summary.phase-reflect .autonomous-summary-primary b, .autonomous-summary-gap b { color: #b76900; }.autonomous-summary > p { margin: 0; line-height: 1.55; overflow-wrap: anywhere; }
+.autonomous-summary details { min-width: 0; }.autonomous-summary summary { color: var(--apple-accent); cursor: pointer; }.autonomous-summary details > div { display: grid; grid-template-columns: 68px minmax(0, 1fr); gap: 3px 7px; margin-top: 6px; }.autonomous-summary details strong { color: var(--text); }.autonomous-summary details p { grid-column: 2; margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
 .task-run-delegations { display: grid; gap: 5px; padding: 7px 0; border-bottom: 1px solid var(--border-light); font-size: 10px; }
 .task-run-delegations > strong { color: var(--text); }
 .task-delegation-row { display: grid; grid-template-columns: minmax(52px, .7fr) minmax(0, 2fr) auto; gap: 7px; align-items: center; color: var(--text-secondary); }

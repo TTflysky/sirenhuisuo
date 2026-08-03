@@ -17,6 +17,7 @@ async function main() {
       title: '统一任务服务验收',
       goal: '验证任务可以持久化、产生子任务并记录真实证据',
       idempotencyKey: 'acceptance-001',
+      projectId: 'project-unified-task-service',
       conversationId: 'conversation-task-service',
       memberSnapshot: [{ id: 'researcher', name: '研究员工', role: 'researcher', modelConfig: { model: 'mock-model' } }],
       steps: [{ id: 'research', title: '检索资料', employeeId: 'researcher' }],
@@ -63,6 +64,8 @@ async function main() {
     const child = await service.createChild(taskId, { employeeId: 'researcher', title: '员工子任务', goal: '执行资料检索' });
     assert.equal(child.ok, true);
     assert.equal(child.task.parentTaskId, taskId);
+    assert.equal(child.task.projectId, 'project-unified-task-service');
+    assert.equal(child.task.goalState.projectId, 'project-unified-task-service');
     assert.equal(child.task.conversationId, 'conversation-task-service');
     assert.equal(child.task.steps[0].employeeId, 'researcher');
     assert.deepEqual(child.task.memberSnapshot, created.task.memberSnapshot, 'child task must inherit executable team member snapshots');

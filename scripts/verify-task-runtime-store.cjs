@@ -78,7 +78,7 @@ function assertValidChain(events) {
     assert.equal(changed.events[0].type, 'task_changed');
     assert.equal(changed.events[0].previousStatus, 'queued');
     assert.equal(changed.events[0].nextStatus, 'running');
-    assert.deepEqual(changed.events[0].domains, ['recoveryContext', 'status', 'steps', 'updatedAt']);
+    assert.deepEqual(changed.events[0].domains, ['autonomousControl', 'recoveryContext', 'status', 'steps', 'updatedAt']);
     assert.ok(changed.events[0].payload.changes.every((change) => Array.isArray(change.path)));
 
     const duplicate = await store.write([updatedOne, makeRun('two')]);

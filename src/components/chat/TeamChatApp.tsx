@@ -610,6 +610,25 @@ export default function TeamChatApp({ teamId }: Props) {
     }
   };
 
+  const renderAutonomousSummary = (run: TaskRun) => {
+    const control = run.autonomousControl;
+    if (!control) return null;
+    const summary = control.publicSummary;
+    return <section className={`autonomous-summary phase-${control.loopPhase}`} aria-label="自主控制判断">
+      <div className="autonomous-summary-head"><strong>自主判断</strong><span>影子模式 · 第 {control.currentDecision.cycle} 轮</span></div>
+      <div className="autonomous-summary-primary"><span>下一步</span><b>{summary.nextAction}</b></div>
+      <p>{summary.rationale}</p>
+      {summary.currentGap && <div className="autonomous-summary-gap"><span>当前阻塞</span><b>{summary.currentGap}</b></div>}
+      <details>
+        <summary>查看判断依据</summary>
+        <div><strong>当前目标</strong><p>{summary.currentGoal}</p></div>
+        {summary.confirmedFacts.length > 0 && <div><strong>已确认事实</strong>{summary.confirmedFacts.map((item, index) => <p key={`${index}-${item.slice(0, 30)}`}>{item}</p>)}</div>}
+        {summary.attemptedRoutes.length > 0 && <div><strong>已尝试路线</strong>{summary.attemptedRoutes.map((item, index) => <p key={`${index}-${item.slice(0, 30)}`}>{item}</p>)}</div>}
+        {summary.expectedEvidence.length > 0 && <div><strong>预期证据</strong>{summary.expectedEvidence.map((item, index) => <p key={`${index}-${item.slice(0, 30)}`}>{item}</p>)}</div>}
+      </details>
+    </section>;
+  };
+
   const renderTaskRunCard = (run: TaskRun) => {
     const expanded = expandedRunIds.has(run.id);
     const completed = run.steps.filter((step) => step.status === 'completed').length;
@@ -638,6 +657,7 @@ export default function TeamChatApp({ teamId }: Props) {
         </div>}
         <div className="task-run-goal"><strong>目标</strong><span>{run.goal ?? run.request}</span></div>
         {!!run.preflight?.length && <div className="task-run-preflight"><strong>前置检查</strong>{run.preflight.map((item) => <span key={item.label} className={`is-${item.status}`} title={item.detail}>{item.status === 'passed' ? '✓' : item.status === 'blocked' ? '!' : '·'} {item.label}</span>)}</div>}
+        {renderAutonomousSummary(run)}
         {run.worker && <div className={`task-run-worker worker-${run.worker.state}`}>
           <strong>后台 Worker</strong>
           <span>{run.worker.state === 'running' ? (run.worker.activity || '已领取任务，等待真实动作') : run.worker.state === 'paused' ? (run.worker.activity || '已暂停并保留现场') : run.worker.state === 'expired' ? '进程心跳失效，已安全暂停' : run.worker.state === 'released' ? '执行租约已释放' : run.worker.state === 'stopped' ? '已停止' : '等待执行适配器领取'}</span>
@@ -716,6 +736,7 @@ export default function TeamChatApp({ teamId }: Props) {
       </div>}
       {expanded && <div className="project-board-details">
         <div className="project-board-goal"><strong>项目目标</strong><span>{project.goal}</span></div>
+        {renderAutonomousSummary(controlRun)}
         <div className="project-board-stages">
           {project.stages.map((stage) => {
             const stageOwner = stage.ownerId ? state.employees.find((employee) => employee.id === stage.ownerId) : undefined;

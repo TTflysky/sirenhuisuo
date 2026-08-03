@@ -468,6 +468,12 @@ export interface TaskRun {
   };
   /** Software projects retain the compiled responsibility DAG alongside live step state. */
   codingProject?: import('./engine/codingProject.mjs').CodingProject;
+  /** Stable project goal shared by assistant, employee, team and background recovery paths. */
+  goalState?: import('./engine/autonomousControl.mjs').GoalState;
+  /** Evidence-grounded scene model. Unverified model claims remain assumptions. */
+  situationModel?: import('./engine/autonomousControl.mjs').SituationModel;
+  /** v3.6 shadow controller; records public decisions without replacing the current executor yet. */
+  autonomousControl?: import('./engine/autonomousControl.mjs').AutonomousControlSnapshot;
   /** 标识真正执行此任务的客户端进程，供重启恢复判断。 */
   executionSessionId?: string;
   /** 主进程 Worker 持久租约。执行适配器必须在运行前领取并定期续租。 */

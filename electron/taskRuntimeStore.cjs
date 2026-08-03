@@ -1,12 +1,26 @@
 const crypto = require('crypto');
 const fs = require('fs/promises');
 const path = require('path');
+const { pathToFileURL } = require('url');
 
 const SCHEMA_VERSION = 3;
 const LEDGER_VERSION = 1;
 const RECOVERY_POINT_VERSION = 1;
 const DEFAULT_MAX_RUNS = 120;
 const DEFAULT_MAX_RETURNED_EVENTS = 2000;
+let autonomousControlPromise;
+
+function loadAutonomousControl() {
+  if (!autonomousControlPromise) {
+    autonomousControlPromise = import(pathToFileURL(path.join(__dirname, '../src/engine/autonomousControl.mjs')).href);
+  }
+  return autonomousControlPromise;
+}
+
+async function reconcileTaskControl(run, now = Date.now()) {
+  const { reconcileAutonomousControl } = await loadAutonomousControl();
+  return reconcileAutonomousControl(run, { now });
+}
 function clone(value) {
   if (value === undefined) return undefined;
   return JSON.parse(JSON.stringify(value));
@@ -167,6 +181,12 @@ function statusDetail(previousStatus, nextStatus, domains) {
 
 function mergeWorkerAuthority(current, incoming, source) {
   const next = clone(incoming);
+  if (current) {
+    if (!next.projectId && current.projectId) next.projectId = current.projectId;
+    if (!next.goalState && current.goalState) next.goalState = clone(current.goalState);
+    if (!next.situationModel && current.situationModel) next.situationModel = clone(current.situationModel);
+    if (!next.autonomousControl && current.autonomousControl) next.autonomousControl = clone(current.autonomousControl);
+  }
   if (source !== 'renderer' || !current?.worker) return next;
   if (current.worker.adapter === 'main-native-execution-adapter') {
     // Native jobs own their complete projection. Renderer windows only read it
@@ -416,6 +436,28 @@ function createTaskRuntimeStore(rootDir, options = {}) {
     };
   }
 
+  async function migrateAutonomousProjection() {
+    const appended = [];
+    let head = { sequence: integrity.lastSequence, hash: integrity.lastHash };
+    const now = Date.now();
+    for (const current of [...projected.values()]) {
+      const candidate = await reconcileTaskControl(current, now);
+      const changes = collectChanges(current, candidate);
+      if (changes.length === 0) continue;
+      const event = createEvent({
+        type: 'task_changed', taskId: current.id, teamId: current.teamId,
+        source: 'autonomous-control-migration', previousStatus: current.status, nextStatus: candidate.status,
+        domains: eventDomains(changes), detail: 'Initialized the v3.6 autonomous shadow-control snapshot.',
+        payload: { changes },
+      }, head);
+      appended.push(event);
+      applyEvent(projected, event);
+      head = { sequence: event.sequence, hash: event.hash };
+    }
+    await appendEvents(appended);
+    return appended.length;
+  }
+
   async function initializeOnce() {
     await fs.mkdir(rootDir, { recursive: true });
     const ledger = await readLedger();
@@ -437,6 +479,7 @@ function createTaskRuntimeStore(rootDir, options = {}) {
         lastHash: events.at(-1)?.hash ?? '',
         eventCount: events.length,
       };
+      await migrateAutonomousProjection();
       await validateCachedProjection();
       await writeCheckpoint();
       initialized = true;
@@ -448,7 +491,8 @@ function createTaskRuntimeStore(rootDir, options = {}) {
     events = [];
     integrity = { ok: true, recovered: false, snapshotValid: true, indexValid: true, lastSequence: 0, lastHash: '', eventCount: 0 };
     const migrated = [];
-    for (const run of legacy.runs) {
+    for (const legacyRun of legacy.runs) {
+      const run = await reconcileTaskControl(legacyRun);
       const event = createEvent({
         type: 'task_migrated', taskId: run.id, teamId: run.teamId, source: 'snapshot-migration',
         nextStatus: run.status, domains: ['task'], detail: '从 v0.17 任务快照迁入追加式事件账本', payload: { snapshot: run },
@@ -602,7 +646,8 @@ function createTaskRuntimeStore(rootDir, options = {}) {
       const nextProjection = new Map([...projected].map(([id, run]) => [id, clone(run)]));
       const appended = [];
       let head = { sequence: integrity.lastSequence, hash: integrity.lastHash };
-      for (const snapshot of point.runs) {
+      for (const storedSnapshot of point.runs) {
+        const snapshot = await reconcileTaskControl(storedSnapshot);
         const current = nextProjection.get(snapshot.id);
         const changes = current ? collectChanges(current, snapshot) : [];
         const event = createEvent({
@@ -648,7 +693,7 @@ function createTaskRuntimeStore(rootDir, options = {}) {
       : []);
     const operation = writeQueue.then(async () => {
       await initialize();
-      const mergedRuns = nextRuns.map((run) => mergeWorkerAuthority(projected.get(run.id), run, metadata.source));
+      const mergedRuns = await Promise.all(nextRuns.map(async (run) => reconcileTaskControl(mergeWorkerAuthority(projected.get(run.id), run, metadata.source))));
       const nextMap = new Map(mergedRuns.map((run) => [run.id, run]));
       const nextProjection = new Map([...projected].map(([id, run]) => [id, clone(run)]));
       const appended = [];
@@ -730,9 +775,10 @@ function createTaskRuntimeStore(rootDir, options = {}) {
       if (!current) throw new Error(`找不到任务：${taskId}`);
       const next = clone(current);
       const returned = updater(next);
-      const candidate = returned === undefined ? next : returned;
+      let candidate = returned === undefined ? next : returned;
       if (!isTaskRun(candidate) || candidate.id !== taskId) throw new Error('任务原子更新产生无效投影');
       candidate.updatedAt = Date.now();
+      candidate = await reconcileTaskControl(candidate, candidate.updatedAt);
       const changes = collectChanges(current, candidate);
       if (changes.length === 0) {
         return { ok: true, unchanged: true, run: clone(current), events: [], integrity: { ...integrity } };

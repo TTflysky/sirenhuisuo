@@ -26,6 +26,7 @@ const requiredFiles = [
   'electron/executionObservability.cjs',
   'electron/operationDiagnostics.cjs',
   'src\\engine\\taskFidelity.mjs',
+  'src\\engine\\autonomousControl.mjs',
   'src\\engine\\explicitResourceContract.mjs',
   'src\\engine\\taskRunner.mjs',
   'src\\engine\\toolRegistry.mjs',
@@ -63,6 +64,9 @@ for (const marker of ['正在选择可验证动作', '正在对照最初目标�
 
 for (const marker of ['后台 Worker', 'Worker 命令记录', '真实进展', '进程心跳', '新建聊天', '任务已暂停', '正在继续']) {
   assert.match(rendererSource, new RegExp(marker), `Worker marker missing from packaged renderer: ${marker}`);
+}
+for (const marker of ['自主判断', '影子模式', '查看判断依据']) {
+  assert.match(rendererSource, new RegExp(marker), `Autonomous-control marker missing from packaged renderer: ${marker}`);
 }
 
 const installer = path.join(root, 'release', `taiji-office-setup-${sourcePackage.version}.exe`);

@@ -7,6 +7,19 @@
 - 当前工作区、账本、权限、工具、证据、审查和恢复能力继续保留；固定 Coding DAG、关键词调度和步骤预算必须逐步降级，不能继续承担大脑职责。
 - 所有后续改动都要用报告中的防跑偏清单与十个真实场景验收。提示词加长、单点关键词补丁或增加固定分支不能算自主内核升级。
 
+## v3.6.0 自主控制内核影子模式（2026-08-03）
+
+- 当前源码版本为 `3.6.0`。本版新增 `src/engine/autonomousControl.mjs`，正式定义 `GoalState`、`SituationModel`、`DecisionRecord` 和 `AutonomousControlSnapshot`。
+- 控制协议为 `observe -> interpret -> propose -> validate -> act -> verify -> reflect`。本版 `mode=shadow`：现有执行器继续执行，新内核只记录它建议的下一步，不能把本版描述为已经完成执行权迁移。
+- `createTaskRun()` 与渲染端 `updateTaskRun()` 会立即校准控制快照；`taskRuntimeStore.write()`、`updateTask()`、恢复点还原和旧账本初始化使用同一入口，覆盖助理、员工、团队和后台恢复。
+- `goalId/projectId/conversationId` 跨重启稳定。用户纠正与约束从结构化任务上下文进入同一目标并按事件 ID 去重；`queue_separately` 的独立目标不会合并进当前项目。
+- `SituationModel` 只把 `verified=true` 的证据和已通过验收写为事实，未验证结果进入假设。工作区、成员、步骤、证据和恢复数据迁移前后必须原样保留。
+- 相同失败路线达到两次且没有成功时，公开决策建议 `switch_route`。这只是影子建议；`v3.7.0` 才会建设可修订计划图、失败归因和实际换路控制。
+- 团队任务详情与项目详情已显示公开“自主判断”：下一步、原因、阻塞、事实、已尝试路线和预期证据。禁止在此字段或其他日志保存隐藏思维链。
+- 回归入口：`npm.cmd run verify:autonomous-control`。已通过全量 `96/96` 单测、`verify:task-runtime-store`、完整 `verify:v2-core-gate`、模块边界、Lint 与生产构建。
+- 下一步用真实任务同时观察旧执行路线与影子判断，记录偏差样本；通过后进入 `v3.7.0` 动态计划与自主恢复，不能提前让影子建议直接执行危险动作。
+- `v3.6.0` 安装包已生成并通过包内校验：`release/taiji-office-setup-3.6.0.exe`，大小 `195873370` 字节，SHA-256 `3EDA068868A5F8FE67B1CAAEE327D9F99F8E3CF8F838B704FE8B93F2AF2DFB53`。已覆盖安装到 `%LOCALAPPDATA%\Programs\taiji-office`，并从已安装 `app.asar` 读取确认版本为 `3.6.0`；覆盖前数据备份位于 `L:\AI办公室\taiji-backups\preinstall-3.6.0-20260803-2316`。
+
 ## v3.5.8 Windows 黑屏恢复（2026-08-02）
 
 - 当前源码版本为 `3.5.8`。本轮承接 `v3.5.7` 的工作区事实校正，并修复本机安装版 Electron 进程存活但窗口纯黑的问题。
