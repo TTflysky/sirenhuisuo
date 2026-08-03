@@ -5,6 +5,12 @@
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 
+## 必读：自主智能体产品方向
+
+从 `v3.6.0` 开始，开发前必须阅读 [`TAIJI_AUTONOMOUS_AGENT_ARCHITECTURE.md`](./TAIJI_AUTONOMOUS_AGENT_ARCHITECTURE.md)。太极不再以“智能体驱动的固定工作流”为目标；固定流程只保留为执行底座，主持权逐步迁移到由 `GoalState`、`SituationModel`、`DecisionEngine`、`AdaptivePlanGraph` 和反思恢复组成的自主控制层。
+
+不得用更长提示词、一次性关键词补丁、固定员工白名单或更复杂的静态 DAG 冒充自主性。现有工作区、账本、工具、权限、证据、审查、恢复和数据迁移能力必须无损保留。
+
 ## v3.5.8 真实执行收口与 Windows 渲染恢复
 
 - Windows 默认使用软件渲染，`electron/renderingPolicy.cjs` 统一处理所有窗口的延迟显示、加载失败、渲染进程退出、无响应与启动兜底。仅在诊断时通过 `TAIJI_FORCE_HARDWARE_ACCELERATION=1` 恢复硬件加速。
