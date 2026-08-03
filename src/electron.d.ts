@@ -11,6 +11,17 @@ export interface ExecCommandResult {
   cwd: string;
 }
 export interface ExecCommandPolicy { sandboxEnabled?: boolean; env?: Record<string, string>; skillId?: string; }
+export interface WebArtifactViewportResult {
+  width: number; height: number; label: string; horizontalOverflow: boolean;
+  overflowingElements: Array<Record<string, unknown>>; clippedElements: Array<Record<string, unknown>>;
+  unsafeFramedElements: Array<Record<string, unknown>>; smallControls: Array<Record<string, unknown>>;
+  screenshot: string; screenshotPath: string; screenshotBytes: number;
+  viewport: { innerWidth: number; innerHeight: number; clientWidth: number; visualWidth: number; usableWidth: number };
+}
+export interface WebArtifactVerificationResult {
+  ok: boolean; error?: string; artifactPath?: string; workspaceId?: string; checked?: number; failed?: string[];
+  runtimeErrors?: string[]; viewports: WebArtifactViewportResult[];
+}
 export interface ConnectorPresetVerificationResult {
   ok: boolean;
   status: 'connected' | 'disconnected';
@@ -322,6 +333,9 @@ export interface TaskServiceTask {
   teamId: string;
   ownerId: string;
   parentTaskId?: string;
+  conversationId?: string;
+  workspaceId?: string;
+  workspace?: { mode?: string; status?: string; workspaceId?: string; sourceRepo?: string };
   title: string;
   request: string;
   goal: string;
@@ -499,6 +513,7 @@ declare global {
     setChatLock: (opts: ChatLockOptions) => Promise<{ locked: boolean }>;
     setZoomFactor: (factor: number) => void;
     execCommand: (cmd: string, scope?: string, policy?: ExecCommandPolicy) => Promise<ExecCommandResult>;
+    verifyWebArtifact: (input: { workspaceId?: string; path: string; viewports?: Array<{ width: number; height: number; label?: string }> }) => Promise<WebArtifactVerificationResult>;
     skillsList: () => Promise<SkillListResult>;
     skillsRead: (id: string) => Promise<SkillReadResult>;
     skillsDelete: (id: string) => Promise<SkillDeleteResult>;

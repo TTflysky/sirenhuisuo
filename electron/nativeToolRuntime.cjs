@@ -33,6 +33,10 @@ const NATIVE_TOOL_DEFINITIONS = [
     responsibleStepId: stringField('退回的责任步骤'), responsibleEmployeeId: stringField('退回的责任员工'),
     checkedArtifacts: { type: 'array', items: { type: 'string' } },
   }, ['decision', 'reason']),
+  tool('verify_web_artifact', '使用太极内置 Electron 浏览器真实打开工作区 HTML，在桌面和窄屏视口截图并检查滚动条、越界、裁切、边框与阴影安全区。Web UI 交付前必须调用；返回失败时先修复再复验。', {
+    path: stringField('工作区中的 HTML 相对路径'),
+    viewports: { type: 'array', items: { type: 'object', properties: { width: { type: 'number' }, height: { type: 'number' }, label: { type: 'string' } } } },
+  }, ['path']),
   tool('delegate_subtask', '将明确、可验收的子任务委派给当前团队成员。必须指定实际工作内容；系统会创建可恢复子任务和责任记录。', {
     assignment: stringField('子任务的具体工作内容'), employeeId: stringField('可选：当前团队成员 ID；不填由系统按职责选择'),
     title: stringField('可选：子任务标题'), acceptanceCriteria: { type: 'array', items: { type: 'string' } },
@@ -463,11 +467,25 @@ function createNativeToolRuntime(options) {
         const decision = String(args.decision || '').toUpperCase();
         const reason = String(args.reason || '').trim().slice(0, 1200);
         if (!['PASS', 'REJECT'].includes(decision) || !reason) return failed(name, '审查必须包含 PASS/REJECT 和具体理由');
+        if (decision === 'PASS' && /(?:未|没有|无法|不能|尚未).{0,24}(?:执行|完成|取得|进行).{0,24}(?:验证|验收|测试|运行|打开|截图)|(?:缺少|没有).{0,20}(?:证据|验证结果)/iu.test(reason)) {
+          return failed(name, '审查理由明确承认关键验证尚未完成，因此不能提交 PASS。请先取得真实证据；当前无法验证时应提交 REJECT 或说明阻塞。');
+        }
         const review = { decision: decision === 'PASS' ? 'pass' : 'reject', reason,
           responsibleStepId: String(args.responsibleStepId || '').trim() || undefined,
           responsibleEmployeeId: String(args.responsibleEmployeeId || '').trim() || undefined,
           checkedArtifacts: Array.isArray(args.checkedArtifacts) ? args.checkedArtifacts.map(String).slice(0, 20) : [], submittedAt: Date.now() };
         return succeeded(name, decision === 'PASS' ? `结构化审查已通过：${reason}` : `结构化审查已退回：${reason}`, { review });
+      }
+      if (name === 'verify_web_artifact') {
+        if (!options.verifyWebArtifact) return failed(name, '太极内置网页验收运行时不可用');
+        const result = await options.verifyWebArtifact({ workspaceId: context.workspaceId || context.scope, path: args.path, viewports: args.viewports });
+        const artifacts = (result.viewports || []).map((item) => ({
+          path: item.screenshot, filename: path.basename(item.screenshot), workspaceId: context.workspaceId,
+          diskPath: item.screenshotPath, bytes: item.screenshotBytes, category: 'working', persistence: 'disk',
+          verification: 'write_ack', verified: true, recordedAt: Date.now(),
+        }));
+        const output = JSON.stringify(result, null, 2);
+        return result.ok ? succeeded(name, output, { webArtifactVerification: result, artifacts }) : failed(name, output, { structuredEvidence: { webArtifactVerification: result, artifacts } });
       }
       if (name === 'run_command') {
         const command = String(args.cmd || '').trim();

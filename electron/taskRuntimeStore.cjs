@@ -8,6 +8,8 @@ const LEDGER_VERSION = 1;
 const RECOVERY_POINT_VERSION = 1;
 const DEFAULT_MAX_RUNS = 120;
 const DEFAULT_MAX_RETURNED_EVENTS = 2000;
+const DEFAULT_DEFERRED_CHECKPOINT_THRESHOLD_BYTES = 2 * 1024 * 1024;
+const DEFAULT_CHECKPOINT_DEBOUNCE_MS = 500;
 let autonomousControlPromise;
 
 function loadAutonomousControl() {
@@ -311,6 +313,8 @@ function createTaskRuntimeStore(rootDir, options = {}) {
   let writeQueue = Promise.resolve();
   let initialized = false;
   let initializationPromise;
+  let checkpointTimer;
+  let checkpointBytes = 0;
   let projected = new Map();
   let events = [];
   let integrity = { ok: true, recovered: false, snapshotValid: true, indexValid: true, lastSequence: 0, lastHash: '', eventCount: 0 };
@@ -386,7 +390,9 @@ function createTaskRuntimeStore(rootDir, options = {}) {
       lastHash: integrity.lastHash,
       runs,
     });
-    await atomicWrite(checkpointPath, JSON.stringify(payload, null, 2));
+    const checkpointText = JSON.stringify(payload, null, 2);
+    await atomicWrite(checkpointPath, checkpointText);
+    checkpointBytes = Buffer.byteLength(checkpointText, 'utf8');
     const indexPayload = verifiedEnvelope({
       schemaVersion: SCHEMA_VERSION,
       updatedAt: payload.updatedAt,
@@ -397,6 +403,27 @@ function createTaskRuntimeStore(rootDir, options = {}) {
     await atomicWrite(indexPath, JSON.stringify(indexPayload, null, 2));
     integrity.snapshotValid = true;
     integrity.indexValid = true;
+  }
+
+  function deferCheckpoint() {
+    if (checkpointTimer) clearTimeout(checkpointTimer);
+    integrity.snapshotValid = false;
+    integrity.indexValid = false;
+    checkpointTimer = setTimeout(() => {
+      checkpointTimer = undefined;
+      const operation = writeQueue.then(() => writeCheckpoint());
+      writeQueue = operation.then(() => undefined, () => undefined);
+      operation.catch((error) => reportFailure('deferred-checkpoint', error));
+    }, Number(options.checkpointDebounceMs) || DEFAULT_CHECKPOINT_DEBOUNCE_MS);
+  }
+
+  async function persistCheckpoint() {
+    const threshold = Number(options.deferredCheckpointThresholdBytes) || DEFAULT_DEFERRED_CHECKPOINT_THRESHOLD_BYTES;
+    if (checkpointBytes >= threshold) {
+      deferCheckpoint();
+      return;
+    }
+    await writeCheckpoint();
   }
 
   async function validateCachedProjection() {
@@ -481,7 +508,7 @@ function createTaskRuntimeStore(rootDir, options = {}) {
       };
       await migrateAutonomousProjection();
       await validateCachedProjection();
-      await writeCheckpoint();
+      await persistCheckpoint();
       initialized = true;
       return;
     }
@@ -643,7 +670,7 @@ function createTaskRuntimeStore(rootDir, options = {}) {
       await initialize();
       const point = await readRecoveryPoint(recoveryPointId);
       const restoreIds = new Set(point.runs.map((run) => run.id));
-      const nextProjection = new Map([...projected].map(([id, run]) => [id, clone(run)]));
+      const nextProjection = new Map(projected);
       const appended = [];
       let head = { sequence: integrity.lastSequence, hash: integrity.lastHash };
       for (const storedSnapshot of point.runs) {
@@ -678,7 +705,7 @@ function createTaskRuntimeStore(rootDir, options = {}) {
       }
       await appendEvents(appended);
       projected = nextProjection;
-      await writeCheckpoint();
+      await persistCheckpoint();
       return { ok: true, recoveryPointId, eventsAppended: appended.length, runs: [...projected.values()].map(clone), integrity: { ...integrity } };
     });
     writeQueue = operation.then(() => undefined, () => undefined);
@@ -695,7 +722,7 @@ function createTaskRuntimeStore(rootDir, options = {}) {
       await initialize();
       const mergedRuns = await Promise.all(nextRuns.map(async (run) => reconcileTaskControl(mergeWorkerAuthority(projected.get(run.id), run, metadata.source))));
       const nextMap = new Map(mergedRuns.map((run) => [run.id, run]));
-      const nextProjection = new Map([...projected].map(([id, run]) => [id, clone(run)]));
+      const nextProjection = new Map(projected);
       const appended = [];
       const skippedRemovals = [];
       let head = { sequence: integrity.lastSequence, hash: integrity.lastHash };
@@ -746,7 +773,7 @@ function createTaskRuntimeStore(rootDir, options = {}) {
       }
       await appendEvents(appended);
       projected = nextProjection;
-      await writeCheckpoint();
+      await persistCheckpoint();
       return {
         ok: true,
         schemaVersion: SCHEMA_VERSION,
@@ -791,11 +818,11 @@ function createTaskRuntimeStore(rootDir, options = {}) {
         detail: metadata.detail || statusDetail(current.status, candidate.status, domains),
         payload: { changes, ...(metadata.command ? { command: clone(metadata.command) } : {}) },
       }, { sequence: integrity.lastSequence, hash: integrity.lastHash });
-      const nextProjection = new Map([...projected].map(([id, run]) => [id, clone(run)]));
+      const nextProjection = new Map(projected);
       applyEvent(nextProjection, event);
       await appendEvents([event]);
       projected = nextProjection;
-      await writeCheckpoint();
+      await persistCheckpoint();
       return { ok: true, unchanged: false, run: clone(candidate), events: [clone(event)], integrity: { ...integrity } };
     });
     writeQueue = operation.then(() => undefined, () => undefined);
@@ -818,11 +845,11 @@ function createTaskRuntimeStore(rootDir, options = {}) {
         detail: metadata.detail || `任务已从列表移除：${current.title || current.id}`,
         payload: { ...(metadata.command ? { command: clone(metadata.command) } : {}) },
       }, { sequence: integrity.lastSequence, hash: integrity.lastHash });
-      const nextProjection = new Map([...projected].map(([id, run]) => [id, clone(run)]));
+      const nextProjection = new Map(projected);
       applyEvent(nextProjection, event);
       await appendEvents([event]);
       projected = nextProjection;
-      await writeCheckpoint();
+      await persistCheckpoint();
       return { ok: true, unchanged: false, events: [clone(event)], integrity: { ...integrity } };
     });
     writeQueue = operation.then(() => undefined, () => undefined);

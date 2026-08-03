@@ -20,7 +20,7 @@ function isWorkspaceMutationTool(name, args) {
     || (name === 'run_command' && args?.verification !== true);
 }
 function isWorkspaceSnapshotTool(name, args) {
-  return ['read_file', 'list_files', 'coding_repository_index', 'coding_search', 'coding_dependencies', 'coding_impact', 'coding_select_tests', 'coding_delivery'].includes(name)
+  return ['read_file', 'list_files', 'verify_web_artifact', 'coding_repository_index', 'coding_search', 'coding_dependencies', 'coding_impact', 'coding_select_tests', 'coding_delivery'].includes(name)
     || (name === 'run_command' && args?.verification === true);
 }
 function toolCacheKey(name, args, mutationEpoch = 0) {
@@ -86,9 +86,10 @@ function verifiedFileStepCompletesStep(step, deliverableType, callLog, evidence)
   if (step?.kind === 'review' || deliverableType !== 'file') return false;
   const hasVerifiedFile = (Array.isArray(evidence) ? evidence : []).some((item) => item?.kind === 'file' && item?.verified === true);
   const hasSuccessfulVerification = (Array.isArray(callLog) ? callLog : []).some((entry) => (
-    entry?.name === 'run_command'
-    && entry?.success === true
-    && /"verification"\s*:\s*true/iu.test(String(entry?.args || ''))
+    entry?.success === true && (
+      entry?.name === 'verify_web_artifact'
+      || (entry?.name === 'run_command' && /"verification"\s*:\s*true/iu.test(String(entry?.args || '')))
+    )
   ));
   return hasVerifiedFile && hasSuccessfulVerification;
 }

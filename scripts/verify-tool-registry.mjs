@@ -15,6 +15,12 @@ assert.equal(preflightToolCall(registry, 'write_file', { path: 'result.md', cont
 assert.equal(preflightToolCall(registry, 'missing_tool', {}).category, 'unavailable');
 assert.equal(discoverTools(registry, '联网 搜索')[0].name, 'web_search');
 
+assert.equal(
+  discoverTools(registry, '在本地浏览器中打开 HTML，并在桌面视口和 390px 窄屏视口执行真实页面验收')[0].name,
+  'run_command',
+  'browser and narrow-viewport verification queries must discover the executable command route',
+);
+
 const connector = {
   type: 'function',
   function: {

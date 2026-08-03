@@ -31,6 +31,7 @@ function capabilityFor(name) {
   if (name === 'search_tools' || name === 'describe_tool') return 'tool.discovery';
   if (name === 'write_file') return 'workspace.write';
   if (name === 'read_file' || name === 'list_files') return 'workspace.read';
+  if (name === 'verify_web_artifact') return 'workspace.verify_web_ui';
   if (name === 'web_search' || name === 'read_web_page') return 'web.research';
   if (name === 'search_skills' || name === 'read_skill' || name === 'install_skill') return 'skill.manage';
   if (name === 'inspect_connectors' || name === 'prepare_connector' || name === 'test_connector' || name.startsWith('connector_')) return 'connector.use';
@@ -127,7 +128,12 @@ export function discoverTools(registry, query = '') {
   const tokens = String(query || '').toLowerCase().split(/[\s，。；、/:_-]+/u).filter(Boolean);
   return registry.records
     .map((record) => {
-      const haystack = `${record.name} ${record.definition.function.description} ${record.source} ${record.capability}`.toLowerCase();
+      const aliases = record.name === 'run_command'
+        ? 'HTML CSS JavaScript browser viewport screenshot visual UI 网页 浏览器 本地打开 视口 窄屏 截图 视觉 界面 验收 运行 脚本'
+        : record.name === 'verify_web_artifact'
+          ? 'HTML CSS JavaScript Electron browser viewport screenshot visual UI 网页 浏览器 本地打开 视口 窄屏 截图 视觉 界面 边框 阴影 溢出 裁切 验收'
+          : '';
+      const haystack = `${record.name} ${record.definition.function.description} ${record.source} ${record.capability} ${aliases}`.toLowerCase();
       const score = tokens.length ? tokens.reduce((total, token) => total + (haystack.includes(token) ? 1 : 0), 0) : 1;
       return { ...record, score };
     })

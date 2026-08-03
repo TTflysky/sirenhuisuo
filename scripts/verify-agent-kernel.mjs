@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import {
   canonicalToolCallKey,
+  compactToolArgumentsForHistory,
   buildFreshWebQuery,
   getDirectExecutionControl,
   getToolCallLimit,
@@ -211,6 +212,25 @@ assert.notEqual(
   canonicalToolCallKey('read_file', '{"path":"guide.md","offset":"0"}'),
   canonicalToolCallKey('read_file', '{"path":"guide.md","offset":"12000"}'),
   'Long files must still support real pagination',
+);
+assert.notEqual(
+  canonicalToolCallKey('run_command', '{"cmd":"node verify-a.js"}'),
+  canonicalToolCallKey('run_command', '{"cmd":"node verify-b.js"}'),
+  'different cmd commands must not collapse into the same execution route',
+);
+assert.equal(
+  canonicalToolCallKey('run_command', '{"cmd":"node verify.js"}'),
+  canonicalToolCallKey('run_command', '{"command":"node verify.js"}'),
+  'cmd and command aliases must identify the same route',
+);
+const compactedWrite = JSON.parse(compactToolArgumentsForHistory('write_file', JSON.stringify({ path: 'large.html', content: 'x'.repeat(12000) }), true));
+assert.equal(compactedWrite.path, 'large.html');
+assert.match(compactedWrite.content, /12000 characters/u);
+assert.ok(JSON.stringify(compactedWrite).length < 300, 'successful file writes must not be replayed in full model history');
+assert.equal(
+  JSON.parse(compactToolArgumentsForHistory('write_file', JSON.stringify({ path: 'retry.html', content: 'keep me' }), false)).content,
+  'keep me',
+  'failed writes retain arguments needed for correction',
 );
 assert.equal(
   toolResourceKey('read_file', JSON.stringify({ path: 'Docs\\SKILL.md', offset: '0' })),

@@ -37,6 +37,7 @@ import {
 import { buildLayeredMemoryContext } from '../../data/layeredMemory';
 import { referenceClarification, referencesFromToolResult, resolveConversationReferences } from '../../engine/conversationReferences.mjs';
 import { createChatTaskBridge } from '../../engine/taskServiceBridge';
+import { continuationExecutionPrompt, resolveChatTaskContinuation } from '../../engine/chatTaskContinuation';
 import {
   activateChatSession,
   createChatSession,
@@ -59,6 +60,9 @@ interface DmRetryJob {
   id: string;
   workspaceId: string;
   userText: string;
+  goal?: string;
+  request?: string;
+  parentTaskId?: string;
   attachments: Attachment[];
   skillContext: string;
   skillRefs: SkillReference[];
@@ -368,7 +372,31 @@ export default function DmChatApp({ empId }: Props) {
     }
 
     const history: ChatTurn[] = msgs.slice(-40).map((m) => ({ role: m.roleId === 'human' ? 'user' : 'assistant', content: m.content }));
-    void runDmJob({ id: `dm-retry-${Date.now()}`, workspaceId: createTaskWorkspaceId('dm', empId), userText: content, attachments: atts, skillContext, skillRefs: refs, skillEvidence, referenceContext: referenceResolution.context, referenceSourceUrl: referenceResolution.references[0]?.sourceUrl, history, attempt: 0, status: 'waiting', lastError: '', conversationId: requestConversationId });
+    const continuation = await resolveChatTaskContinuation({
+      conversationId: requestConversationId,
+      taskType: 'dm',
+      ownerId: empId,
+      message: content,
+    }).catch(() => undefined);
+    void runDmJob({
+      id: `dm-retry-${Date.now()}`,
+      workspaceId: continuation?.workspaceId ?? createTaskWorkspaceId('dm', empId),
+      userText: continuationExecutionPrompt(continuation, content),
+      goal: continuation?.goal ?? content,
+      request: content,
+      parentTaskId: continuation?.taskId,
+      attachments: atts,
+      skillContext,
+      skillRefs: refs,
+      skillEvidence,
+      referenceContext: referenceResolution.context,
+      referenceSourceUrl: referenceResolution.references[0]?.sourceUrl,
+      history,
+      attempt: 0,
+      status: 'waiting',
+      lastError: '',
+      conversationId: requestConversationId,
+    });
 
     // 自动提炼用户洞察（每 3 条用户消息触发一次）
     const userMsgCount = msgs.filter(m => m.roleId === 'human').length;
@@ -394,9 +422,11 @@ export default function DmChatApp({ empId }: Props) {
     const taskBridge = createChatTaskBridge({
       taskType: 'dm',
       ownerId: empId,
-      title: `${emp.name}: ${job.userText.slice(0, 100)}`,
-      goal: job.userText,
+      title: `${emp.name}: ${(job.goal || job.userText).slice(0, 100)}`,
+      goal: job.goal || job.userText,
+      request: job.request || job.userText,
       workspaceId: job.workspaceId,
+      parentTaskId: job.parentTaskId,
       idempotencyKey: `dm-chat:${empId}:${job.id}`,
       conversationId: job.conversationId,
       references: job.skillRefs.map((skill) => ({ kind: 'skill', id: skill.id, label: skill.name, state: 'local' })),

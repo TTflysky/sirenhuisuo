@@ -517,6 +517,8 @@ export interface TaskRun {
   /** v2 每轮模型决策、工具证据和恢复状态；持久化前已脱敏。 */
   turnRuntime?: import('./engine/turnRuntime.mjs').TurnRuntimeState;
   turnFinalization?: Record<string, unknown>;
+  /** Latest evidence-based execution controller snapshot used by recovery and task observability. */
+  executionState?: import('./engine/executionController.mjs').ExecutionControllerSnapshot;
   /** v2.1 跨助手、员工和团队共享的公开行动生命周期；不保存隐藏思维链。 */
   turnLifecycle?: import('./engine/turnLifecycle.mjs').TurnLifecycleState;
   lifecycleRecovery?: Record<string, unknown>;

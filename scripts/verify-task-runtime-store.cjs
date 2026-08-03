@@ -163,6 +163,20 @@ function assertValidChain(events) {
     assert.equal(verifyEnvelope(indexEnvelope), true);
     assert.equal(indexEnvelope.entries[0].id, 'four');
 
+    const deferredRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'taiji-task-runtime-deferred-'));
+    try {
+      const deferredStore = createTaskRuntimeStore(deferredRoot, { deferredCheckpointThresholdBytes: 1, checkpointDebounceMs: 200 });
+      await deferredStore.write([makeRun('deferred')]);
+      await deferredStore.updateTask('deferred', (run) => { run.status = 'running'; });
+      const immediateRecovery = await createTaskRuntimeStore(deferredRoot).read({ taskId: 'deferred' });
+      assert.equal(immediateRecovery.runs[0].status, 'running', 'the append-only ledger must recover changes before a deferred checkpoint is flushed');
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      const deferredCheckpoint = JSON.parse(await fs.readFile(deferredStore.filePath, 'utf8'));
+      assert.equal(deferredCheckpoint.runs[0].status, 'running');
+    } finally {
+      await fs.rm(deferredRoot, { recursive: true, force: true });
+    }
+
     await fs.writeFile(store.filePath, JSON.stringify({ schemaVersion: 2, runs: [makeRun('forged')] }), 'utf8');
     const restarted = createTaskRuntimeStore(root, { maxRuns: 10 });
     const rebuilt = await restarted.read();

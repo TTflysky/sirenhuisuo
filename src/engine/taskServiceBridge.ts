@@ -16,13 +16,16 @@ function failureClass(value: string): string {
 }
 
 export function createChatTaskBridge(input: {
-  taskType: 'assistant' | 'dm'; ownerId: string; title: string; goal: string; workspaceId: string;
+  taskType: 'assistant' | 'dm'; ownerId: string; title: string; goal: string; request?: string; workspaceId: string;
+  parentTaskId?: string;
   idempotencyKey: string; conversationId?: string; references?: Reference[];
 }) {
   let taskId: string | undefined;
   let workerLeaseId: string | undefined;
   let heartbeatTimer: number | undefined;
+  let heartbeatFlushTimer: number | undefined;
   let latestLifecycle: TurnLifecycleState | undefined;
+  let latestExecutionState: ExecutionControllerSnapshot | undefined;
   const attempts = new Map<string, string>();
   const pendingWrites: Array<Promise<unknown>> = [];
   const stepId = 'execution';
@@ -44,6 +47,25 @@ export function createChatTaskBridge(input: {
         activity: latestLifecycle?.activity,
       },
     }));
+  };
+  const flushExecutionHeartbeat = () => {
+    const electron = api();
+    const currentTaskId = taskId;
+    const state = latestExecutionState;
+    if (heartbeatFlushTimer !== undefined) window.clearTimeout(heartbeatFlushTimer);
+    heartbeatFlushTimer = undefined;
+    latestExecutionState = undefined;
+    if (!electron || !currentTaskId || !state) return;
+    schedule(electron.taskServiceHeartbeat({
+      taskId: currentTaskId,
+      state: state.status,
+      detail: state.phase,
+      activity: latestLifecycle?.activity,
+      workspaceId: input.workspaceId,
+      observedAt: Date.now(),
+      progressAt: latestLifecycle?.progressAt,
+    }));
+    renewWorkerLease();
   };
   const writeLifecycle = async (lifecycle: TurnLifecycleState) => {
     const electron = api();
@@ -69,7 +91,10 @@ export function createChatTaskBridge(input: {
     const electron = api();
     const currentTaskId = taskId;
     if (heartbeatTimer !== undefined) window.clearInterval(heartbeatTimer);
+    if (heartbeatFlushTimer !== undefined) window.clearTimeout(heartbeatFlushTimer);
     heartbeatTimer = undefined;
+    heartbeatFlushTimer = undefined;
+    latestExecutionState = undefined;
     if (!electron || !currentTaskId || !workerLeaseId) return;
     const leaseId = workerLeaseId;
     workerLeaseId = undefined;
@@ -88,9 +113,11 @@ export function createChatTaskBridge(input: {
       if (decision.mode !== 'execute' || !electron?.taskServiceCreate) return;
       const created = await electron.taskServiceCreate({
         taskType: input.taskType, ownerId: input.ownerId, title: input.title,
-        goal: decision.goal || input.goal, request: input.goal,
+        goal: input.parentTaskId ? input.goal : decision.goal || input.goal, request: input.request || input.goal,
+        parentTaskId: input.parentTaskId,
         acceptanceCriteria: decision.acceptanceCriteria, constraints: decision.requiredConstraints,
         taskDecision: decision,
+        workspaceId: input.workspaceId,
         idempotencyKey: input.idempotencyKey,
         conversationId: input.conversationId,
         steps: [{ id: stepId, title: 'Execute task route', assignment: decision.goal || input.goal, deliverableType: decision.deliverableType }],
@@ -157,19 +184,9 @@ export function createChatTaskBridge(input: {
       schedule(writeLifecycle(snapshot));
     },
     heartbeat(state: ExecutionControllerSnapshot) {
-      const electron = api();
-      const currentTaskId = taskId;
-      if (!currentTaskId || !electron) return;
-      schedule(electron.taskServiceHeartbeat({
-        taskId: currentTaskId,
-        state: state.status,
-        detail: state.phase,
-        activity: latestLifecycle?.activity,
-        workspaceId: input.workspaceId,
-        observedAt: Date.now(),
-        progressAt: latestLifecycle?.progressAt,
-      }));
-      renewWorkerLease();
+      if (!taskId || !api()) return;
+      latestExecutionState = state;
+      if (heartbeatFlushTimer === undefined) heartbeatFlushTimer = window.setTimeout(flushExecutionHeartbeat, 250);
     },
     async finish(result: {
       executionState: ExecutionControllerSnapshot;
@@ -183,7 +200,8 @@ export function createChatTaskBridge(input: {
       const electron = api();
       const currentTaskId = taskId;
       if (!currentTaskId || !electron) return;
-      try {
+      flushExecutionHeartbeat();
+      const persistCompletion = (async () => { try {
         if (result.lifecycle) await writeLifecycle(result.lifecycle);
         await Promise.allSettled(pendingWrites.splice(0));
         await electron.taskServiceUsage({ taskId: currentTaskId, modelRounds: 1, promptTokens: result.usage.promptTokens || 0,
@@ -191,7 +209,7 @@ export function createChatTaskBridge(input: {
       if (result.turnRuntime || result.turnFinalization) {
         await electron.taskServiceUpdate({
           taskId: currentTaskId,
-          patch: { turnRuntime: result.turnRuntime, turnFinalization: result.turnFinalization },
+          patch: { turnRuntime: result.turnRuntime, turnFinalization: result.turnFinalization, executionState: result.executionState },
           detail: '保存聊天执行的 Turn Runtime 与统一收尾结果',
         });
       }
@@ -223,7 +241,16 @@ export function createChatTaskBridge(input: {
       }
       } finally {
         await releaseWorkerLease();
-      }
+      } })();
+      const persisted = persistCompletion.then(
+        () => ({ completed: true as const }),
+        (error: unknown) => ({ completed: true as const, error }),
+      );
+      const foreground = await Promise.race([
+        persisted,
+        new Promise<{ completed: false }>((resolve) => window.setTimeout(() => resolve({ completed: false }), 1500)),
+      ]);
+      if (foreground.completed && 'error' in foreground && foreground.error) throw foreground.error;
     },
     async fail(error: unknown) {
       const electron = api();

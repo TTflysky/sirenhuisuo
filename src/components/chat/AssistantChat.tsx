@@ -61,6 +61,7 @@ import { buildLayeredMemoryContext } from '../../data/layeredMemory';
 import { referenceClarification, referencesFromToolResult, resolveConversationReferences } from '../../engine/conversationReferences.mjs';
 import { resolveDispatchContinuity } from '../../engine/conversationDispatchContext.mjs';
 import { createChatTaskBridge } from '../../engine/taskServiceBridge';
+import { continuationExecutionPrompt, resolveChatTaskContinuation } from '../../engine/chatTaskContinuation';
 import type { ConversationReferenceResolution } from '../../engine/conversationReferences.mjs';
 import {
   activateChatSession,
@@ -681,16 +682,41 @@ export default function AssistantChat() {
     setLiveText('');
     executionControl.reset();
 
-    const workspaceId = createTaskWorkspaceId('assistant');
+    const continuation = await resolveChatTaskContinuation({
+      conversationId: conversationIdRef.current,
+      taskType: 'assistant',
+      ownerId: 'assistant',
+      message: enriched,
+      relation: taskDecisionCompilation?.decision.turnRelation,
+    }).catch(() => undefined);
+    const workspaceId = continuation?.workspaceId ?? createTaskWorkspaceId('assistant');
+    const taskGoal = continuation?.goal ?? taskDecisionCompilation?.decision.goal ?? enriched;
+    const executionPrompt = continuationExecutionPrompt(continuation, enriched);
+    const effectiveTaskDecisionCompilation = continuation && taskDecisionCompilation
+      ? {
+        ...taskDecisionCompilation,
+        decision: {
+          ...taskDecisionCompilation.decision,
+          mode: 'execute' as const,
+          turnRelation: 'continuation' as const,
+          goal: taskGoal,
+          decisionReason: '沿用当前聊天最近一项可恢复任务的原目标与工作区继续执行',
+        },
+      }
+      : taskDecisionCompilation;
     activeWorkspaceIdRef.current = workspaceId;
-    activeTaskGoalRef.current = taskDecisionCompilation?.decision.goal || enriched;
+    activeTaskGoalRef.current = taskGoal;
     const taskBridge = createChatTaskBridge({
       taskType: 'assistant',
       ownerId: 'assistant',
-      title: content.slice(0, 120) || 'Assistant task',
-      goal: enriched,
+      title: continuation?.title || content.slice(0, 120) || 'Assistant task',
+      goal: taskGoal,
+      request: enriched,
       workspaceId,
-      idempotencyKey: `assistant-chat:${workspaceId}`,
+      parentTaskId: continuation?.taskId,
+      idempotencyKey: continuation
+        ? `assistant-chat:${continuation.taskId}:continuation:${Date.now()}`
+        : `assistant-chat:${workspaceId}`,
       conversationId: conversationIdRef.current,
       references: usedReferences,
     });
@@ -720,7 +746,7 @@ export default function AssistantChat() {
       setBusy(false);
       setStatus('');
       if (activeWorkspaceIdRef.current === workspaceId) activeWorkspaceIdRef.current = undefined;
-      if (activeTaskGoalRef.current === (taskDecisionCompilation?.decision.goal || enriched)) activeTaskGoalRef.current = '';
+      if (activeTaskGoalRef.current === taskGoal) activeTaskGoalRef.current = '';
       const queued = queuedFollowUpsRef.current.shift();
       if (queued) setPendingRequest({ id: `queued-${Date.now()}`, prompt: queued.prompt, display: queued.display, createdAt: Date.now(), alreadyDisplayed: true });
       return;
@@ -753,13 +779,13 @@ export default function AssistantChat() {
 ${employeeDirectory}
 
 以上名单来自客户端当前状态，每次对话都会重新读取。用户提到某位员工时，先按姓名核对这里的真实名单；名单中存在就不得回答“没有这名员工”。需要调度多人任务时，先明确将由哪些现有员工承担。`;
-      const layeredMemoryContext = await buildLayeredMemoryContext({ query: enriched, limit: 16 });
+      const layeredMemoryContext = await buildLayeredMemoryContext({ query: executionPrompt, limit: 16 });
 
       const r = await runAgentLoop({
         turns: [
           { role: 'system', content: `${getAssistantPrompt(DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX_V21)}\n\n${selectedSkillGuide}\n\n${BEGINNER_RESPONSE_GUIDE}` },
           ...history,
-          { role: 'user', content: enriched },
+          { role: 'user', content: executionPrompt },
         ],
         tools: allTools,
         scene: 'assistant',
@@ -771,7 +797,7 @@ ${employeeDirectory}
         referenceContext: referenceResolution.context,
         referenceSourceUrl: referenceResolution.references[0]?.sourceUrl,
         extraSystemContext: [organizationContext, layeredMemoryContext, selectedSkillGuide, skillContext, referenceResolution.context].filter(Boolean).join('\n\n'),
-        taskDecisionCompilation,
+        taskDecisionCompilation: effectiveTaskDecisionCompilation,
         shouldStop: executionControl.shouldStop,
         waitIfPaused: executionControl.waitIfPaused,
         consumeSteeringMessages: () => steeringMessagesRef.current.splice(0),
@@ -927,7 +953,7 @@ ${employeeDirectory}
     setBusy(false);
     setLiveText('');
     if (activeWorkspaceIdRef.current === workspaceId) activeWorkspaceIdRef.current = undefined;
-    if (activeTaskGoalRef.current === (taskDecisionCompilation?.decision.goal || enriched)) activeTaskGoalRef.current = '';
+    if (activeTaskGoalRef.current === taskGoal) activeTaskGoalRef.current = '';
     setStatus('');
     const queued = queuedFollowUpsRef.current.shift();
     if (queued) setPendingRequest({ id: `queued-${Date.now()}`, prompt: queued.prompt, display: queued.display, createdAt: Date.now(), alreadyDisplayed: true });

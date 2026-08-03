@@ -176,6 +176,26 @@ export function assessTaskCompletion(goal, finalContent, callLog = []) {
   const requirements = extractTaskRequirements(goal);
   const combinedEvidence = callLog.map((call) => `${call.name}\n${call.args}\n${call.result}`).join('\n\n');
   const issues = [];
+  const webArtifactTouched = callLog.some((call) => /\.html?(?:["'\s,)}]|$)/iu.test(`${call.args}\n${call.result}`)
+    && ['write_file', 'read_file', 'verify_web_artifact'].includes(call.name));
+  if (webArtifactTouched) {
+    const verified = callLog.some((call) => call.name === 'verify_web_artifact'
+      && call.success
+      && /网页真实验收通过|"ok"\s*:\s*true/iu.test(call.result)
+      && (() => {
+        try {
+          const args = JSON.parse(call.args || '{}');
+          const viewports = Array.isArray(args.viewports) ? args.viewports : [];
+          if (viewports.length === 0) return /"checked"\s*:\s*[2-9]\d*/iu.test(call.result);
+          return viewports.some((item) => Number(item?.width) >= 1024)
+            && viewports.some((item) => Number(item?.width) <= 480)
+            && /"checked"\s*:\s*[2-9]\d*/iu.test(call.result);
+        } catch {
+          return false;
+        }
+      })());
+    if (!verified) issues.push('网页产出物还没有通过内置 verify_web_artifact 的桌面与窄屏真实验收');
+  }
   const skillInstall = resolveSkillInstallRequest(goal);
   if (skillInstall?.sourceUrl) {
     const target = String(skillInstall.slug || skillInstall.name || '').toLocaleLowerCase();

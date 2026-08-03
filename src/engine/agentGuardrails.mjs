@@ -51,9 +51,20 @@ export function canonicalToolCallKey(name, argumentsText) {
   if (tool === 'inspect_connectors') return `${tool}:${normalizeText(args.query ?? args.preset ?? args.name)}`;
   if (tool === 'prepare_connector' || tool === 'test_connector') return `${tool}:${normalizeText(args.connector ?? args.connectorId ?? args.id ?? args.preset)}`;
   if (tool === 'run_command') {
-    return `${tool}:${normalizeText(args.command)}:${normalizeText(args.connector ?? args.connectorId)}:${Boolean(args.verification)}`;
+    return `${tool}:${normalizeText(args.command ?? args.cmd)}:${normalizeText(args.connector ?? args.connectorId)}:${Boolean(args.verification)}`;
   }
   return `${tool}:${JSON.stringify(stableValue(args))}`;
+}
+
+export function compactToolArgumentsForHistory(name, argumentsText, success = false) {
+  const tool = normalizeText(name);
+  if (!success || tool !== 'write_file') return String(argumentsText ?? '');
+  const args = parseArgs(argumentsText);
+  if (typeof args.content !== 'string') return String(argumentsText ?? '');
+  return JSON.stringify({
+    ...args,
+    content: `[content omitted after successful write: ${args.content.length} characters; use read_file when the contents are needed]`,
+  });
 }
 
 export function toolResourceKey(name, argumentsText) {
@@ -75,6 +86,7 @@ export function getToolCallLimit(name, connectorTask) {
   if (tool === 'read_skill') return 4;
   if (tool === 'search_skills') return 5;
   if (tool === 'read_file' || tool === 'read_web_page') return 12;
+  if (tool === 'verify_web_artifact') return 6;
   return connectorTask ? 8 : 24;
 }
 

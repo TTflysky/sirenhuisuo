@@ -10,6 +10,7 @@
  * - install_skill: 安装 Markdown、GitHub 目录或 ZIP 技能包
  * - inspect_connectors / prepare_connector / test_connector: 管理外部服务连接
  * - submit_review: 提交结构化审查结论
+ * - verify_web_artifact: 用 Electron 内核真实验收本地网页产物
  * - run_command  : 按当前审批策略执行，默认限沙箱工作区
  */
 
@@ -240,6 +241,21 @@ export const TOOLS: ToolDef[] = [
           checkedArtifacts: { type: 'array', items: { type: 'string' }, description: '实际检查过的文件路径' },
         },
         required: ['decision', 'reason'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'verify_web_artifact',
+      description: '使用太极内置 Electron 浏览器真实打开工作区 HTML，在桌面和窄屏视口截图并检查横向滚动、元素越界、父级裁切、边框与阴影安全区。网页或应用界面交付前必须调用；返回失败时必须修复后重新验收，不能用静态读取或口头说明代替。',
+      parameters: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: '工作区中的 HTML 相对路径' },
+          viewports: { type: 'array', items: { type: 'object', properties: { width: { type: 'number' }, height: { type: 'number' }, label: { type: 'string' } } }, description: '可选视口列表；默认桌面 1440x900 和窄屏 375x844' },
+        },
+        required: ['path'],
       },
     },
   },
@@ -531,6 +547,9 @@ async function executeToolInternal(call: ToolCall): Promise<ToolResult> {
           return { toolCallId: id, name, success: false, output: '审查结论必须是 PASS 或 REJECT。' };
         }
         if (!reason) return { toolCallId: id, name, success: false, output: '审查结论必须包含具体理由。' };
+        if (decision === 'PASS' && /(?:未|没有|无法|不能|尚未).{0,24}(?:执行|完成|取得|进行).{0,24}(?:验证|验收|测试|运行|打开|截图)|(?:缺少|没有).{0,20}(?:证据|验证结果)/iu.test(reason)) {
+          return { toolCallId: id, name, success: false, output: '审查理由明确承认关键验证尚未完成，因此不能提交 PASS。请先取得真实证据；当前无法验证时应提交 REJECT 或说明阻塞。' };
+        }
         const checkedArtifacts = Array.isArray(args.checkedArtifacts)
           ? args.checkedArtifacts.map((item) => String(item).trim()).filter(Boolean).slice(0, 20)
           : [];
@@ -548,6 +567,43 @@ async function executeToolInternal(call: ToolCall): Promise<ToolResult> {
           success: true,
           output: decision === 'PASS' ? `结构化审查已提交：通过。${reason}` : `结构化审查已提交：退回修改。${reason}`,
           structuredEvidence: createToolExecutionEvidence({ review }),
+        };
+      }
+
+      case 'verify_web_artifact': {
+        const artifactPath = safePath(args.path ?? '');
+        if (!artifactPath || !/\.html?$/iu.test(artifactPath)) {
+          return { toolCallId: id, name, success: false, output: '请提供工作区中的 HTML 文件路径。' };
+        }
+        const api = getFsApi();
+        if (!api?.verifyWebArtifact) {
+          return { toolCallId: id, name, success: false, output: '当前环境没有太极内置网页验收运行时，不能把 Web UI 宣布为已通过。' };
+        }
+        const result = await api.verifyWebArtifact({
+          workspaceId: physicalWorkspace,
+          path: artifactPath,
+          viewports: Array.isArray(args.viewports) ? args.viewports : undefined,
+        });
+        const screenshots = (result.viewports ?? []).map((item: any) => createFileArtifactEvidence({
+          path: item.screenshot,
+          filename: String(item.screenshot || '').split('/').pop() || 'web-artifact.png',
+          workspaceId: physicalWorkspace,
+          diskPath: item.screenshotPath,
+          bytes: item.screenshotBytes,
+          contentType: 'image',
+          category: 'working',
+          persistence: 'disk',
+          verification: 'write_ack',
+          verified: true,
+          recordedAt: Date.now(),
+        }));
+        const summary = JSON.stringify(result, null, 2);
+        return {
+          toolCallId: id,
+          name,
+          success: result.ok === true,
+          output: result.ok ? `网页真实验收通过。\n${summary}` : `网页真实验收未通过，必须根据以下证据修复后重新调用本工具。\n${summary}`,
+          structuredEvidence: createToolExecutionEvidence({ artifacts: screenshots }),
         };
       }
 

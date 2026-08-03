@@ -1,5 +1,19 @@
 # 太极项目当前交接
 
+## v3.6.1 真实项目闭环与窄屏验收（2026-08-04）
+
+- 本轮使用真实任务“制作可使用的科学计算器，波普漫画风、黑白点状主体”验收自主智能体链路，不增加计算器关键词或专用执行分支。
+- 第一轮实际产物可运行，但太极因命令参数别名、重复大文件上下文、缺失工作区事实和账本收尾阻塞而误报失败；18 轮约消耗 `554,097` Token。
+- 通用修复覆盖 `cmd/command` 路线键、成功写入历史压缩、TaskService 工作区与执行状态、实时 artifact/工具证据、250ms 心跳合并和大账本延迟检查点。第二轮缩短到 6 个工具动作、约 `154,952` Token，任务正确进入 `completed`，功能交互全部通过。
+- 用户截图继续暴露窄屏视觉验收盲区：Electron `innerWidth=375`，但垂直滚动条占位后 `clientWidth=360`；主卡片和 5px 外阴影进入右侧安全区。旧脚本因此误报通过。现统一按 `min(documentElement.clientWidth, visualViewport.width)` 判断真实边界，并检查边框、阴影、父级裁切和至少 8px 安全间距。
+- 网页完成门禁现在要求同一验收调用同时覆盖桌面与窄屏；只有单视口的成功结果不能完成。桌面与窄屏均通过后，执行控制器立即按原目标交付，不再继续读文件或另找浏览器。
+- 最终安装版第三轮续作以 11 个工具动作、约 `165,524` Token 完成，任务 `task-1785778780340-8d6f6079` 状态为 `completed`。真实验收确认 33 个控件，桌面与 375px 无运行错误、横向滚动、元素裁切或边框/外阴影安全区问题。
+- 当前源码版本为 `3.6.1`。Vitest `112/112`、Lint、TypeScript/Vite 构建和 `verify:agent-kernel` 已通过；完整发布门禁仍须在提交前重跑并记录最终结果。
+- Windows 安装包 `release/taiji-office-setup-3.6.1.exe` 为 `195877927` 字节，SHA-256 `9F831EA55272E94B4ADBBF6AE5F78812CCCB1FCDDE60F6E510F5F306C1A2E28A`；Blockmap SHA-256 为 `2871231CDE356EC6A59AC3350A75867AD5939F5722E1D32C2AA96C3F9A9FBEE7`，`latest.yml` SHA-256 为 `550DBFDD106729096582CB37051EF0B38C9972EDCB72E0391592C2BD8750BA4D`。已覆盖安装到 `%LOCALAPPDATA%\Programs\taiji-office`，并从安装后的 `app.asar` 核对版本 `3.6.1` 及收尾代码标记；覆盖前备份为 `L:\AI办公室\taiji-backups\preinstall-3.6.1-20260804-013718`。
+- 真实复测时曾被 01:22 启动的旧 `v3.6.1` 进程截获。以后同版本覆盖必须先退出旧 Electron 进程，再核对安装后 `app.asar` 的时间与代码标记，不能只看版本角标。
+- GitHub 提交与 `v3.6.1` Release 尚待本轮最终门禁后完成。
+- 详细证据见 `docs/REAL_PROJECT_ACCEPTANCE_v3.6.1.md`。下一阶段仍按 `docs/TAIJI_AUTONOMOUS_AGENT_ARCHITECTURE.md` 推进，不允许退回固定工作流或关键词补丁。
+
 ## 产品方向锁定：自主智能体优先（2026-08-03）
 
 - 后续核心升级必须先阅读 [`docs/TAIJI_AUTONOMOUS_AGENT_ARCHITECTURE.md`](docs/TAIJI_AUTONOMOUS_AGENT_ARCHITECTURE.md)。该文档是 `v3.6.0` 到 `v4.0.0` 的最高产品与架构约束。

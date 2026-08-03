@@ -25,6 +25,7 @@ const requiredFiles = [
   'electron/appIdentityMigration.cjs',
   'electron/executionObservability.cjs',
   'electron/operationDiagnostics.cjs',
+  'electron/webArtifactVerifier.cjs',
   'src\\engine\\taskFidelity.mjs',
   'src\\engine\\autonomousControl.mjs',
   'src\\engine\\explicitResourceContract.mjs',
@@ -65,6 +66,7 @@ for (const marker of ['正在选择可验证动作', '正在对照最初目标�
 for (const marker of ['后台 Worker', 'Worker 命令记录', '真实进展', '进程心跳', '新建聊天', '任务已暂停', '正在继续']) {
   assert.match(rendererSource, new RegExp(marker), `Worker marker missing from packaged renderer: ${marker}`);
 }
+assert.match(rendererSource, /verify_web_artifact/u, 'Built-in Web artifact verification tool is missing from the packaged renderer');
 for (const marker of ['自主判断', '影子模式', '查看判断依据']) {
   assert.match(rendererSource, new RegExp(marker), `Autonomous-control marker missing from packaged renderer: ${marker}`);
 }

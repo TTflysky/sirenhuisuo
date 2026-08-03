@@ -1,0 +1,34 @@
+{
+  "version": "3.6.1",
+  "taskId": "task-1785778780340-8d6f6079",
+  "parentTaskId": "task-1785778471308-b8190ebd",
+  "workspaceId": "tasks/assistant/default/run-1785774668229-twucz",
+  "status": "completed",
+  "toolAttempts": 11,
+  "estimatedTokens": 165524,
+  "artifact": "pop-scientific-calculator.html",
+  "interactiveControls": 33,
+  "viewports": [
+    {
+      "label": "desktop",
+      "width": 1440,
+      "height": 900,
+      "horizontalOverflow": false,
+      "overflowingElements": 0,
+      "clippedElements": 0,
+      "unsafeFramedElements": 0,
+      "screenshot": "scientific-calculator-desktop-1440x900.png"
+    },
+    {
+      "label": "narrow-375",
+      "width": 375,
+      "height": 844,
+      "clientWidth": 360,
+      "horizontalOverflow": false,
+      "overflowingElements": 0,
+      "clippedElements": 0,
+      "unsafeFramedElements": 0,
+      "screenshot": "scientific-calculator-narrow-375x844.png"
+    }
+  ]
+}

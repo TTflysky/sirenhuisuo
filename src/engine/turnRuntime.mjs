@@ -320,6 +320,7 @@ export function finalizeTurn(runtime, input = {}) {
           : input.error ? 'failed'
             : 'checkpointed';
   next.phase = status;
+  if (status === 'completed') next.unresolvedIssues = [];
   next.finishedAt = Date.now();
   next.updatedAt = next.finishedAt;
   const verified = next.evidence.filter((item) => item.useful);

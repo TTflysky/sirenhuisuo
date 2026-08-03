@@ -53,6 +53,18 @@ try {
   assert.equal(updated.run.goalState.goalId, goalId);
   assert.equal(updated.run.autonomousControl.currentDecision.selectedAction.kind, 'continue_step');
 
+  const evidenced = await store.updateTask('legacy-run', (candidate) => {
+    candidate.artifacts = [{ id: 'artifact-live', path: 'app/index.html', verified: true, createdAt: 25 }];
+    candidate.toolAttempts = [{ id: 'attempt-live', toolName: 'run_command', status: 'succeeded', outputSummary: 'runtime checks passed', finishedAt: 26 }];
+    candidate.turnRuntime = {
+      evidence: [{ evidenceId: 'turn-live', toolName: 'run_command', success: true, useful: true, summary: 'visual boundary checks passed', createdAt: 27 }],
+      unresolvedIssues: [],
+    };
+  }, { source: 'autonomous-control-evidence-verifier' });
+  assert.equal(evidenced.ok, true);
+  assert.equal(evidenced.run.situationModel.artifacts.some((item) => item.path === 'app/index.html' && item.verified), true);
+  assert.equal(evidenced.run.situationModel.confirmedFacts.some((item) => /runtime checks passed|visual boundary checks passed/u.test(item.statement)), true);
+
   const restarted = createTaskRuntimeStore(root);
   const recovered = await restarted.read({ taskId: 'legacy-run' });
   assert.equal(recovered.runs[0].goalState.goalId, goalId);

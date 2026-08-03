@@ -103,6 +103,11 @@ function toolArgs(args: string): Record<string, string> {
   try { return JSON.parse(args) as Record<string, string>; } catch { return {}; }
 }
 
+export const WEB_ARTIFACT_ACCEPTANCE_GUIDE = `## Web UI 产出物验收
+仅当任务生成、读取或修改 HTML/CSS/JavaScript 网页、应用界面时适用：客户端已经内置 verify_web_artifact，必须优先直接调用它验收当前 HTML；禁止先用 run_command 查找 Playwright、Chrome、Edge 或另写截图脚本。工具返回失败时，根据它给出的元素、边框、阴影和视口证据修改原文件，再调用同一工具复验，直到桌面与窄屏都通过。
+
+交付前必须在桌面视口和不宽于 390px 的窄屏视口分别真实打开并验证。不能只检查 innerWidth 或 document.scrollWidth；垂直滚动条会占用可见区域，必须以 document.documentElement.clientWidth 或 visualViewport.width 中更小的值作为真实右边界。还要逐个检查所有可见控件、卡片、边框、阴影、说明区和文本的边界矩形，连同外阴影的视觉外沿一起确认不超出真实可见区域、不被滚动条或父容器裁切、不互相遮挡。页面不得出现意外横向滚动条。固定列网格在窄屏应使用 minmax(0, 1fr)，网格子项与按钮应允许 min-width: 0，长文本应换行；带粗边框或外阴影的主要容器必须在真实可见区域内保留至少 8px 安全间距。发现任一越界或贴边遮挡就先修复并重新验证，不能把功能可点击等同于视觉验收通过。`;
+
 export function getToolActionLabel(name: string, args = ''): string {
   const parsed = toolArgs(args);
   if (name === 'run_command') {

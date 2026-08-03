@@ -28,6 +28,7 @@ const { createMemoryManager } = require('./memoryManager.cjs');
 const { createLearningReviewQueue } = require('./learningReviewQueue.cjs');
 const { createWebResourceAcquirer } = require('./resourceAcquisition.cjs');
 const { createBrowserPageReader } = require('./browserPageReader.cjs');
+const { createWebArtifactVerifier } = require('./webArtifactVerifier.cjs');
 const { configureAppUserData } = require('./appIdentityMigration.cjs');
 const { applyRenderingPolicy, attachRendererDiagnostics, revealWindowAfterLoad } = require('./renderingPolicy.cjs');
 // Configure the canonical Taiji data root before any module resolves userData.
@@ -118,6 +119,7 @@ const acquireWebResource = createWebResourceAcquirer({
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36 Taiji/2.7',
   }),
 });
+const verifyWebArtifact = createWebArtifactVerifier(BrowserWindow, { workspaceRoot: WORKSPACE });
 const nativeToolRuntime = createNativeToolRuntime({
   workspaceRoot: WORKSPACE,
   projectRoot: PROJECT_ROOT,
@@ -134,6 +136,7 @@ const nativeToolRuntime = createNativeToolRuntime({
   createWordDocument: createVerifiedWordDocument,
   readWorkspaceFile,
   runCommand: executeWorkspaceCommand,
+  verifyWebArtifact,
   codingRuntime,
 });
 const ecosystemHealth = createEcosystemHealth({
@@ -1367,6 +1370,9 @@ function createWindow() {
   });
 
   ipcMain.handle('exec:command', async (_event, payload) => executeWorkspaceCommand(payload));
+  ipcMain.handle('web-artifact:verify', async (_event, input) => {
+    try { return await verifyWebArtifact(input); } catch (error) { return { ok: false, error: error?.message ?? String(error), viewports: [] }; }
+  });
 
   // ===== 文件系统 IPC（自主代理工作区，沙箱到 WORKSPACE）=====
   ipcMain.handle('fs:getWorkspace', async () => WORKSPACE);

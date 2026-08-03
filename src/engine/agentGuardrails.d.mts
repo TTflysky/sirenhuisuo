@@ -1,4 +1,5 @@
 export function canonicalToolCallKey(name: string, argumentsText: string): string;
+export function compactToolArgumentsForHistory(name: string, argumentsText: string, success?: boolean): string;
 export function toolResourceKey(name: string, argumentsText: string): string;
 export function isPreparationOnlyTool(name: string): boolean;
 export function getToolCallLimit(name: string, connectorTask: boolean): number;

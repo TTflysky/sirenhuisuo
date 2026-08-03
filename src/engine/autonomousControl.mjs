@@ -154,6 +154,16 @@ function uniqueRecords(records, max = MAX_FACTS) {
 
 function artifactRecords(run) {
   const records = [];
+  for (const item of run?.artifacts ?? []) {
+    const artifactPath = text(item?.path || item?.diskPath || item?.name, 1000);
+    if (artifactPath) records.push({
+      id: recordId('artifact', item?.id, artifactPath),
+      path: artifactPath,
+      source: 'task_artifact',
+      at: Number(item?.createdAt) || 0,
+      verified: item?.verified === true,
+    });
+  }
   for (const item of run?.evidence ?? []) {
     const artifactPath = text(item?.artifact?.path || item?.artifact?.diskPath, 1000);
     if (artifactPath) records.push({ id: recordId('artifact', artifactPath), path: artifactPath, source: 'task_evidence', at: Number(item.ts) || 0, verified: item.verified === true });
@@ -166,7 +176,7 @@ function artifactRecords(run) {
 }
 
 function routeRecords(run) {
-  const controllerRoutes = run?.recoveryContext?.controller?.routeHistory ?? [];
+  const controllerRoutes = run?.executionState?.routeHistory ?? run?.recoveryContext?.controller?.routeHistory ?? [];
   return controllerRoutes.slice(-MAX_ROUTE_HISTORY).map((route) => ({
     routeId: text(route.id, 180),
     toolName: text(route.toolName, 160),
@@ -188,6 +198,27 @@ export function deriveSituationModel(run = {}, goalSnapshot) {
     if (item.verified === true) confirmedFacts.push(entry);
     else assumptions.push(entry);
   }
+  for (const item of run.turnRuntime?.evidence ?? []) {
+    const entry = fact(
+      `${item.toolName || 'tool'}: ${item.summary || (item.success ? 'succeeded' : 'failed')}`,
+      'turn_runtime',
+      item.evidenceId || item.toolCallId,
+      item.createdAt,
+      item.success === true && item.useful !== false,
+    );
+    if (item.success === true && item.useful !== false) confirmedFacts.push(entry);
+    else assumptions.push(entry);
+  }
+  for (const item of run.toolAttempts ?? []) {
+    if (item.status !== 'succeeded') continue;
+    confirmedFacts.push(fact(
+      `${item.toolName}: ${item.outputSummary || 'succeeded'}`,
+      'tool_attempt',
+      item.id,
+      item.finishedAt || item.startedAt,
+      true,
+    ));
+  }
   for (const item of run.verification ?? []) {
     if (item.status === 'passed') confirmedFacts.push(fact(`${item.label}: ${item.detail}`, 'verification', item.label, 0, true));
   }
@@ -202,6 +233,7 @@ export function deriveSituationModel(run = {}, goalSnapshot) {
   const blockers = [
     ...(run.context?.openIssues ?? []),
     ...(run.recoveryContext?.unresolvedIssues ?? []),
+    ...(run.turnRuntime?.unresolvedIssues ?? []),
     ...(run.preflight ?? []).filter((item) => item.status === 'blocked').map((item) => `${item.label}: ${item.detail || 'blocked'}`),
     ...(run.verification ?? []).filter((item) => item.status === 'blocked').map((item) => `${item.label}: ${item.detail}`),
     ...(run.lastError ? [run.lastError] : []),

@@ -19,11 +19,15 @@ async function main() {
       idempotencyKey: 'acceptance-001',
       projectId: 'project-unified-task-service',
       conversationId: 'conversation-task-service',
+      workspaceId: 'workspace/task-service',
       memberSnapshot: [{ id: 'researcher', name: '研究员工', role: 'researcher', modelConfig: { model: 'mock-model' } }],
       steps: [{ id: 'research', title: '检索资料', employeeId: 'researcher' }],
     });
     assert.equal(created.ok, true);
     assert.equal(created.created, true);
+    assert.equal(created.task.workspaceId, 'workspace/task-service');
+    assert.equal(created.task.workspace.status, 'ready');
+    assert.equal(created.task.workspace.workspaceId, 'workspace/task-service');
     const duplicate = await service.create({
       taskType: 'assistant', teamId: 'scope:assistant', goal: '不应重复创建', idempotencyKey: 'acceptance-001',
     });

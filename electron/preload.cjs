@@ -88,6 +88,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // 命令执行：renderer 调用，main 进程 exec，返回 { success, stdout, stderr, exitCode, cwd }
   execCommand: (cmd, scope, policy) => ipcRenderer.invoke('exec:command', { cmd, scope, sandboxEnabled: policy?.sandboxEnabled !== false, env: policy?.env, skillId: policy?.skillId }),
+  verifyWebArtifact: (input) => ipcRenderer.invoke('web-artifact:verify', input),
   skillsList: () => ipcRenderer.invoke('skills:list'),
   skillsRead: (id) => ipcRenderer.invoke('skills:read', id),
   skillsDelete: (id) => ipcRenderer.invoke('skills:delete', id),

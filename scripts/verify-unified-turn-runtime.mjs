@@ -141,6 +141,8 @@ assert.match(advice.guidance, /顾问没有调用工具，也没有完成任务/
 const completed = finalizeTurn(runtime, { completed: true, summary: '已根据权威来源回答天气问题' });
 assert.equal(completed.finalization.status, 'completed');
 assert.ok(completed.finalization.verifiedEvidenceIds.length >= 1);
+const resolvedAtCompletion = finalizeTurn(verificationResult.runtime, { completed: true, summary: 'A different verification route passed.' });
+assert.deepEqual(resolvedAtCompletion.finalization.unresolvedIssues, [], 'accepted completion must not retain a resolved route failure as an open issue');
 
 console.log(JSON.stringify({
   passed: true,

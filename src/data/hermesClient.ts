@@ -40,6 +40,7 @@ import {
   canonicalToolCallKey,
   buildFreshWebQuery,
   buildResearchFallback,
+  compactToolArgumentsForHistory,
   ensureResearchSourceLinks,
   getToolCallLimit,
   isActionableCapabilityCorrection,
@@ -50,12 +51,14 @@ import {
   isResearchEvidenceRelevant,
   toolResourceKey,
 } from '../engine/agentGuardrails.mjs';
+import { createWebArtifactAcceptanceCycle, observeWebArtifactAcceptanceCycle, webArtifactAcceptanceGate } from '../engine/webArtifactAcceptance.mjs';
 import {
   AUTONOMOUS_EXECUTION_GUIDE,
   BEGINNER_RESPONSE_GUIDE,
   CAPABILITY_ROUTING_GUIDE,
   EXECUTION_SELF_REVIEW_GUIDE,
   SKILL_RECOVERY_GUIDE,
+  WEB_ARTIFACT_ACCEPTANCE_GUIDE,
   buildContinuationGuide,
   getToolStage,
   guardInstallationSummary,
@@ -1360,7 +1363,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
     ? [{ role: 'system', content: `${taskContract}\n\n当前消息不需要工具执行。直接结合最近上下文回应，不得自动恢复、重放或继续上一项任务。只有用户明确提出新的执行目标或明确要求继续时，才能重新开始执行。` }, ...currentTurns]
     : [{
       role: 'system',
-      content: `${taskContract}\n\n${buildTurnGuidance(turnRuntime)}\n\n${AUTONOMOUS_EXECUTION_GUIDE}\n\n${CAPABILITY_ROUTING_GUIDE}\n\n${SKILL_RECOVERY_GUIDE}${pinnedSkillInstruction}${explicitResourceInstruction ? `\n\n${explicitResourceInstruction}` : ''}${resumedFromCapabilityCorrection
+      content: `${taskContract}\n\n${buildTurnGuidance(turnRuntime)}\n\n${AUTONOMOUS_EXECUTION_GUIDE}\n\n${CAPABILITY_ROUTING_GUIDE}\n\n${WEB_ARTIFACT_ACCEPTANCE_GUIDE}\n\n${SKILL_RECOVERY_GUIDE}${pinnedSkillInstruction}${explicitResourceInstruction ? `\n\n${explicitResourceInstruction}` : ''}${resumedFromCapabilityCorrection
         ? `\n\n用户最新消息是在纠正上一轮没有行动的问题。当前仍未完成的目标是：\n${originalUserText.slice(0, 2000)}\n必须立即按纠正后的能力路线执行，不要再次道歉、解释能力或要求用户重复目标。`
         : ''}`,
     }, ...currentTurns];
@@ -1422,8 +1425,8 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
   let requiredResearchSucceeded = false;
   let requiredResearchOutput = '';
   let researchSummaryFailures = 0;
-  let completedInstallOnlyTask = false;
-  let completedSkillDiscovery = false;
+  let completedInstallOnlyTask = false, completedSkillDiscovery = false, completedWebArtifactTask = false;
+  let webArtifactAcceptanceCycle = createWebArtifactAcceptanceCycle();
   const maxResearchSummaryAttempts = 2;
   let executionState = initialExecutionState
     ? restoreExecutionController(initialExecutionState, { goal: originalUserText, acceptanceCriteria: taskDecision.acceptanceCriteria, requiresEvidence: requiresExecutionEvidence, maxAttempts: maxTotalToolAttempts })
@@ -1778,10 +1781,13 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         const toolLimitReached = toolCallCount > getToolCallLimit(tc.name, connectorSetupTask);
         const resourceLimitReached = Boolean(resourceKey) && resourceReadCount >= resourceLimit;
         const explicitResourceGate = validateExplicitResourceToolCall(explicitResourceContract, tc.name, effectiveArguments, callLog);
+        const webArtifactGate = webArtifactAcceptanceGate(webArtifactAcceptanceCycle, tc.name);
         const blockedReason = !effectiveCallOk
           ? effectiveCallError ?? '工具参数无效，模型需要修正后再调用。'
           : !explicitResourceGate.allowed
           ? explicitResourceGate.reason
+          : webArtifactGate
+          ? webArtifactGate
           : pinnedSkillSource && (tc.name === 'search_skills' || tc.name === 'web_search')
           ? '用户已给出明确的 Skill 来源。本次只允许阅读该来源及同仓库配套文件、完成风险判断并安装；禁止搜索候选或替代来源。'
           : pinnedSkillSource && tc.name === 'read_web_page' && !isAllowedPinnedSkillSource(lifecycleArgs.url, pinnedSkillSource)
@@ -1813,6 +1819,13 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
             return executeAgentTool({ id: tc.id, name: tc.name, args: (() => { try { return JSON.parse(effectiveArguments); } catch { return {}; } })(), scope, workspaceId: opts.workspaceId });
           })();
         const resultSuccess = executed && isUsefulToolOutcome(tc.name, result.success, result.output, originalUserText);
+        webArtifactAcceptanceCycle = observeWebArtifactAcceptanceCycle(webArtifactAcceptanceCycle, {
+          name: tc.name,
+          args: effectiveArguments,
+          output: result.output,
+          success: resultSuccess,
+          executed,
+        });
         const newEvidence = resultSuccess && cached === undefined;
         if (tc.name === 'web_search' && resultSuccess) {
           requiredResearchSucceeded = true;
@@ -1875,6 +1888,15 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
             break;
           }
         }
+        if (resultSuccess && tc.name === 'verify_web_artifact') {
+          const acceptance = assessCurrentTaskCompletion(result.output);
+          publishExecutionState(evaluateExecutionConclusion(executionState, { content: result.output, reviewed: true, acceptancePassed: acceptance.passed, acceptanceIssues: acceptance.issues }));
+          if (executionState.status === 'completed') {
+            const verifiedPath = String(lifecycleArgs.path || '网页产出物');
+            finalContent = `已经完成并通过真实网页验收。\n\n文件：${verifiedPath}\n\n桌面与窄屏视口均已实际打开检查，运行错误、横向溢出、元素裁切以及边框和外阴影安全区均通过。`;
+            completedWebArtifactTask = true; break;
+          }
+        }
         if (!resultSuccess && observedResult.error) {
           const recovery = decideTurnRecovery(turnRuntime, observedResult.error);
           turnRuntime = recovery.runtime;
@@ -1915,7 +1937,8 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
         }
         // 对 tool output 长度做上限，防止下游模型调用因上下文超长失败
         const truncated = result.output.slice(0, 1500);
-        currentTurns.push({ role: 'assistant', content: null, tool_calls: [{ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments } }] } as any);
+        const historyArguments = compactToolArgumentsForHistory(tc.name, effectiveArguments, resultSuccess);
+        currentTurns.push({ role: 'assistant', content: null, tool_calls: [{ id: tc.id, type: 'function', function: { name: tc.name, arguments: historyArguments } }] } as any);
         currentTurns.push({ role: 'tool', content: truncated, tool_call_id: tc.id } as any);
         // v2 observes a failed Skill call like any other capability failure.
         // The model can discover another tool or source; the client no longer
@@ -1932,6 +1955,7 @@ export async function runAgentLoop(opts: AgentLoopOpts): Promise<{ content: stri
       if (stopped) break;
       if (completedInstallOnlyTask) break;
       if (completedSkillDiscovery) break;
+      if (completedWebArtifactTask) break;
       if (steeringHandled) continue;
       if (phaseToolBudgetReached) continue;
       if (iterationHadFailure) {
