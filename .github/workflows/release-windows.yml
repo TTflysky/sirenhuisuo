@@ -41,7 +41,16 @@ jobs:
         run: npm.cmd run test:run -- --reporter=dot
 
       - name: Build and verify Windows package
-        run: npm.cmd run dist:win
+        shell: pwsh
+        run: |
+          npm.cmd run dist:win 2>&1 | Tee-Object -FilePath release-build.log
+          $buildExitCode = $LASTEXITCODE
+          if ($buildExitCode -ne 0) {
+            $tail = (Get-Content -LiteralPath release-build.log -Tail 40) -join "`n"
+            $escaped = $tail.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Output "::error title=Windows package build failed::$escaped"
+            exit $buildExitCode
+          }
 
       - name: Publish GitHub Release
         shell: pwsh
