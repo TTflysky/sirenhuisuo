@@ -13,9 +13,9 @@
 - 用户补充截图再次证明第二轮窄屏产物的右侧边框、按键和外阴影被窗口裁切，底部还出现横向滚动条；该截图已作为真实失败样本记录。验收现以真实 `clientWidth/visualViewport.width` 为边界，并增加边框、阴影和 8px 安全区检查；第二轮产物已被新门禁正确判为视觉未通过。
 - 同一任务继续链使用固定原目标、父任务和工作区；修复后的 HTML 没有立即复验时，内核强制下一动作调用 `verify_web_artifact`。单视口检查不能完成，必须同一轮覆盖桌面和窄屏。
 - 最终安装版第三轮使用 11 个工具动作、约 `165,524` Token，任务 `task-1785778780340-8d6f6079` 正确进入 `completed`。桌面与 375px 均无运行错误、横向滚动、元素裁切、边框或外阴影安全区问题，33 个交互控件可用。
-- Vitest `112/112`、Lint、TypeScript/Vite 构建、智能体内核和完整 `v2` 核心门禁已通过。安装包 `release/taiji-office-setup-3.6.1.exe` 为 `195877927` 字节，SHA-256 `9F831EA55272E94B4ADBBF6AE5F78812CCCB1FCDDE60F6E510F5F306C1A2E28A`。
+- Vitest `112/112`、Lint、TypeScript/Vite 构建、智能体内核和完整 `v2` 核心门禁已通过。本机覆盖验收包 `release/taiji-office-setup-3.6.1.exe` 为 `195877927` 字节，SHA-256 `9F831EA55272E94B4ADBBF6AE5F78812CCCB1FCDDE60F6E510F5F306C1A2E28A`。
 - 已覆盖安装并从安装后 `app.asar` 核验版本与收尾代码标记；数据备份位于 `L:\AI办公室\taiji-backups\preinstall-3.6.1-20260804-013718`。同版本复测必须先退出旧 Electron 进程，避免单实例机制把新窗口转交给旧代码。
-- GitHub 提交和 `v3.6.1` Release 仍待最终门禁后完成。
+- 功能提交 `c7b8cef`、标签和 [GitHub Release v3.6.1](https://github.com/TTflysky/sirenhuisuo/releases/tag/v3.6.1) 已发布。GitHub Actions `30842774363` 通过单测、Windows 打包、包内校验和上传；官方安装包为 `195875991` 字节，SHA-256 `5ADFECC43B44392BCB27854D46B547A3BF699EA8CF5DD5D11BFFA56D7DF1425F`，Blockmap 为 `207260` 字节、SHA-256 `56EF9E46B6783ABE94C23949ADCB5F4C507A32AFE81B1979F8405430E0B28B5F`，`latest.yml` 为 `353` 字节、SHA-256 `29FF5DB40778B310E0BC79379910BD379BC670832A21C9771356B50E8ACF476B`。
 - 完整记录见 `docs/REAL_PROJECT_ACCEPTANCE_v3.6.1.md`。
 
 ## 必读：自主智能体产品方向

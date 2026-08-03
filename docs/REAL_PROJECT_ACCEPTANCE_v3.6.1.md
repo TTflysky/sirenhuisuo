@@ -67,13 +67,20 @@ Electron 测试视口报告 `innerWidth=375`，但垂直滚动条占位后 `docu
 
 ## 安装包与覆盖
 
-- 安装包：`release/taiji-office-setup-3.6.1.exe`。
+- 本机覆盖验收包：`release/taiji-office-setup-3.6.1.exe`。
 - 大小：`195877927` 字节。
 - SHA-256：`9F831EA55272E94B4ADBBF6AE5F78812CCCB1FCDDE60F6E510F5F306C1A2E28A`。
 - Blockmap SHA-256：`2871231CDE356EC6A59AC3350A75867AD5939F5722E1D32C2AA96C3F9A9FBEE7`。
 - `latest.yml` SHA-256：`550DBFDD106729096582CB37051EF0B38C9972EDCB72E0391592C2BD8750BA4D`。
 - 覆盖前备份：`L:\AI办公室\taiji-backups\preinstall-3.6.1-20260804-013718`。
 - 安装后从 `%LOCALAPPDATA%\Programs\taiji-office\resources\app.asar` 读取确认版本 `3.6.1`，并确认包含网页验收通过后立即收尾的代码标记。
+
+GitHub 官方分发包由 Actions `30842774363` 在同一功能源码上重新构建，因此构建元数据导致字节哈希与本机覆盖验收包不同：
+
+- [Release v3.6.1](https://github.com/TTflysky/sirenhuisuo/releases/tag/v3.6.1)，功能标签指向提交 `c7b8cef`。
+- 安装包：`195875991` 字节，SHA-256 `5ADFECC43B44392BCB27854D46B547A3BF699EA8CF5DD5D11BFFA56D7DF1425F`。
+- Blockmap：`207260` 字节，SHA-256 `56EF9E46B6783ABE94C23949ADCB5F4C507A32AFE81B1979F8405430E0B28B5F`。
+- `latest.yml`：`353` 字节，SHA-256 `29FF5DB40778B310E0BC79379910BD379BC670832A21C9771356B50E8ACF476B`。
 
 ## 剩余限制
 

@@ -12,7 +12,8 @@
 - `verify_web_artifact` 已形成桌面和窄屏真实通过证据后，执行控制器立即按原目标收尾并交付，不再继续读取文件、查找外部浏览器或消耗剩余预算。
 - 工具发现可将网页、浏览器、视口、截图和窄屏验收正确路由到本地命令能力。
 - 科学计算器最终安装版复验以 11 个工具动作、约 16.6 万 Token 完成；桌面与 375px 均无运行错误、横向滚动、裁切或边框/阴影安全区问题，任务账本状态为 `completed`。
-- Windows 安装包 `taiji-office-setup-3.6.1.exe` 为 `195877927` 字节，SHA-256 `9F831EA55272E94B4ADBBF6AE5F78812CCCB1FCDDE60F6E510F5F306C1A2E28A`；覆盖安装后已从 `app.asar` 核对版本及网页验收收尾代码标记。
+- 本机覆盖验收包 `taiji-office-setup-3.6.1.exe` 为 `195877927` 字节，SHA-256 `9F831EA55272E94B4ADBBF6AE5F78812CCCB1FCDDE60F6E510F5F306C1A2E28A`；覆盖安装后已从 `app.asar` 核对版本及网页验收收尾代码标记。
+- GitHub Actions 已通过 Node 24 单测、Windows 打包和包内校验并发布正式 `v3.6.1` Release。官方分发安装包为 `195875991` 字节，SHA-256 `5ADFECC43B44392BCB27854D46B547A3BF699EA8CF5DD5D11BFFA56D7DF1425F`。
 
 ## v3.6.0 (2026-08-03)
 
