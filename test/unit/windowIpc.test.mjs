@@ -137,6 +137,7 @@ describe('window IPC', () => {
     harness.chatWindows.register('team-chat:team-2', chat);
 
     await expect(harness.ipcMain.handlers.get('win:setAssistantLock')({}, true)).resolves.toEqual({ locked: true });
+    expect(harness.options.setAssistantCompanionLocked).toHaveBeenCalledWith(true);
     expect(companion.restore).toHaveBeenCalled();
     expect(companion.showInactive).toHaveBeenCalled();
     expect(harness.options.syncLockedAssistantCompanion).toHaveBeenCalled();

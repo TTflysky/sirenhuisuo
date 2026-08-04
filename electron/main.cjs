@@ -376,8 +376,30 @@ function bringToFront(win) {
   focusChatWindow(win);
   win.setAlwaysOnTop(true);
   setTimeout(() => {
-    if (!win.isDestroyed()) win.setAlwaysOnTop(false);
+    if (win.isDestroyed()) return;
+    if (isLockedCompanionWindow(win)) {
+      win.setAlwaysOnTop(true, 'floating');
+      win.moveTop();
+    } else {
+      win.setAlwaysOnTop(false);
+    }
   }, 100);
+}
+
+function isLockedCompanionWindow(win) {
+  if (!win || win.isDestroyed()) return false;
+  if (win === assistantCompanionWindow && assistantCompanionLocked) return true;
+  return [...lockedChatWindowKeys].some((key) => chatWindows.get(key) === win);
+}
+
+function applyAssistantCompanionLayer() {
+  if (!assistantCompanionWindow || assistantCompanionWindow.isDestroyed()) return;
+  if (assistantCompanionLocked) {
+    assistantCompanionWindow.setAlwaysOnTop(true, 'floating');
+    assistantCompanionWindow.moveTop();
+  } else {
+    assistantCompanionWindow.setAlwaysOnTop(false);
+  }
 }
 
 function getRootOwner(win) {
@@ -666,6 +688,7 @@ function syncLockedAssistantCompanion() {
   if (!assistantCompanionWindow || assistantCompanionWindow.isDestroyed()) return;
   if (mainWindow.isMinimized() || !mainWindow.isVisible()) return;
   assistantCompanionWindow.setBounds(getAssistantCompanionBounds(mainWindow, assistantCompanionWindow));
+  applyAssistantCompanionLayer();
 }
 
 function getLockedChatWindows() {
@@ -692,6 +715,10 @@ function syncLockedChatWindows() {
   const lockedChats = getLockedChatWindows();
   lockedChats.forEach(([, chat], index) => {
     chat.setBounds(getLockedChatBounds(mainWindow, chat, index, lockedChats.length));
+    if (isLockedCompanionWindow(chat)) {
+      chat.setAlwaysOnTop(true, 'floating');
+      chat.moveTop();
+    }
   });
 }
 
@@ -749,6 +776,7 @@ async function createAssistantCompanion(owner = mainWindow, { focus = false } = 
   });
   assistantCompanionWindow = companion;
   chatWindows.set(ASSISTANT_COMPANION_KEY, companion);
+  applyAssistantCompanionLayer();
   trackActiveWindow(companion);
   attachRendererDiagnostics(companion, { log, label: 'assistant' });
   revealWindowAfterLoad(companion, {
@@ -935,7 +963,10 @@ function createWindow() {
     getMainWindow: () => mainWindow,
     getAssistantCompanionWindow: () => assistantCompanionWindow,
     isAssistantCompanionLocked: () => assistantCompanionLocked,
-    setAssistantCompanionLocked: (locked) => { assistantCompanionLocked = locked; },
+      setAssistantCompanionLocked: (locked) => {
+        assistantCompanionLocked = locked === true;
+        applyAssistantCompanionLayer();
+      },
     saveWindowLockPreferences: saveAssistantCompanionLockPreference,
     createAssistantCompanion,
     syncLockedAssistantCompanion,
