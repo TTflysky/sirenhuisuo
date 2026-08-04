@@ -17,6 +17,19 @@ export interface WebArtifactViewportResult {
   unsafeFramedElements: Array<Record<string, unknown>>; smallControls: Array<Record<string, unknown>>;
   screenshot: string; screenshotPath: string; screenshotBytes: number;
   viewport: { innerWidth: number; innerHeight: number; clientWidth: number; visualWidth: number; usableWidth: number };
+  semantic?: WebArtifactSemanticSummary;
+}
+export interface WebArtifactSemanticCheck {
+  id?: string; label?: string; type: 'group' | 'order' | 'adjacent' | 'grid' | 'interaction'; viewports?: string[];
+  container?: string; members?: string[]; selectors?: string[]; axis?: 'dom' | 'horizontal' | 'vertical' | 'reading';
+  first?: string; second?: string; direction?: 'left' | 'right' | 'above' | 'below'; maxGap?: number; tolerance?: number;
+  cells?: Array<{ selector: string; row: number; column: number }>; rowTolerance?: number; columnTolerance?: number;
+  steps?: Array<{ action: 'click' | 'input' | 'select' | 'check'; selector: string; value?: string; waitMs?: number }>;
+  assertions?: Array<{ selector: string; property: 'text' | 'value' | 'visible' | 'hidden' | 'checked' | 'attribute'; equals?: string; includes?: string; attribute?: string }>;
+}
+export interface WebArtifactSemanticSummary {
+  checked: number; passed: number; failed: number;
+  results: Array<{ id: string; label: string; type: WebArtifactSemanticCheck['type']; ok: boolean; failures: string[]; evidence: Record<string, unknown> }>;
 }
 export interface WebArtifactVerificationResult {
   ok: boolean; error?: string; artifactPath?: string; workspaceId?: string; checked?: number; failed?: string[];
@@ -520,7 +533,7 @@ declare global {
     setChatLock: (opts: ChatLockOptions) => Promise<{ locked: boolean }>;
     setZoomFactor: (factor: number) => void;
     execCommand: (cmd: string, scope?: string, policy?: ExecCommandPolicy) => Promise<ExecCommandResult>;
-    verifyWebArtifact: (input: { workspaceId?: string; path: string; viewports?: Array<{ width: number; height: number; label?: string }> }) => Promise<WebArtifactVerificationResult>;
+    verifyWebArtifact: (input: { workspaceId?: string; path: string; viewports?: Array<{ width: number; height: number; label?: string }>; semanticChecks?: WebArtifactSemanticCheck[] }) => Promise<WebArtifactVerificationResult>;
     skillsList: () => Promise<SkillListResult>;
     skillsRead: (id: string) => Promise<SkillReadResult>;
     skillsDelete: (id: string) => Promise<SkillDeleteResult>;

@@ -482,6 +482,8 @@ export interface TaskRun {
   executionSessionId?: string;
   /** 主进程 Worker 持久租约。执行适配器必须在运行前领取并定期续租。 */
   worker?: TaskWorkerLease;
+  /** v3.15 长任务驻留检查点；自动恢复前必须核对目标、计划、证据、上下文和下一步骤。 */
+  residencyCheckpoint?: import('./engine/taskResidencyCheckpoint.mjs').TaskResidencyCheckpoint;
   projectId?: string;
   title: string;
   request: string;

@@ -5,6 +5,7 @@ import type { TaskPlanStep as FormalTaskPlanStep } from '../engine/taskPlan.mjs'
 import { createTaskRunner, restoreTaskRunner } from '../engine/taskRunner.mjs';
 import { appendTaskContextEvent, buildTaskContextPrompt, createTaskContext, restoreTaskContext, type TaskContextEventInput } from '../engine/taskContext.mjs';
 import { createContextBudget, createRecoveryCapsule, verifyRecoveryCapsule } from '../engine/taskContextRouter.mjs';
+import { explainResidencyConflict, verifyTaskResidencyCheckpoint } from '../engine/taskResidencyCheckpoint.mjs';
 import { normalizeTaskHandoff } from '../engine/taskHandoff.mjs';
 import { assertTaskRunTransition } from '../engine/taskStateMachine.mjs';
 import { createTeamExecutionProtocol, restoreTeamExecutionProtocol } from '../engine/teamExecutionProtocol.mjs';
@@ -147,7 +148,8 @@ function normalizeTaskRuns(runs: TaskRun[]): TaskRun[] {
       if (!staleExecution) return next;
       recovered = true;
       const now = Date.now();
-      const restartableNativeRun = next.worker?.adapter === 'main-native-execution-adapter' || next.recoveryContext?.autoResume === true;
+      const residency = verifyTaskResidencyCheckpoint(next, next.residencyCheckpoint);
+      const restartableNativeRun = (next.worker?.adapter === 'main-native-execution-adapter' || next.recoveryContext?.autoResume === true) && residency.valid;
       if (restartableNativeRun) {
         next.status = 'queued';
         next.phase = 'preflight';
@@ -181,15 +183,23 @@ function normalizeTaskRuns(runs: TaskRun[]): TaskRun[] {
         : step);
       next.recoveryContext = {
         ...(next.recoveryContext ?? defaultRecoveryContext(next)),
-        summary: '客户端上次退出时任务仍在执行，已保存为待恢复任务。',
+        summary: next.worker?.adapter === 'main-native-execution-adapter' && !residency.valid
+          ? explainResidencyConflict(residency.errors)
+          : '客户端上次退出时任务仍在执行，已保存为待恢复任务。',
         interruptedAt: now,
         interruptionReason: '客户端退出、重启或进程中断',
+        autoResume: false,
+        waitingFor: next.worker?.adapter === 'main-native-execution-adapter' && !residency.valid
+          ? '核对任务目标、计划、完成步骤和证据后再继续'
+          : next.recoveryContext?.waitingFor,
       };
       next.handoff = {
         ts: now,
         completed: next.steps.filter((step) => step.status === 'completed').map((step) => step.title),
-        blocked: '检测到上次执行被客户端退出或重启中断。已完成内容和原工作区均已保留。',
-        nextAction: '展开任务核对摘要和未决问题，然后点击“继续执行”。',
+        blocked: next.worker?.adapter === 'main-native-execution-adapter' && !residency.valid
+          ? explainResidencyConflict(residency.errors)
+          : '检测到上次执行被客户端退出或重启中断。已完成内容和原工作区均已保留。',
+        nextAction: '展开任务核对目标、计划、完成证据和未决问题，然后点击“继续执行”。',
       };
       return next;
     });

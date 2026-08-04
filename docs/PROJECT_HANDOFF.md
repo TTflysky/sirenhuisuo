@@ -1,9 +1,19 @@
 # 项目交接手册
 
 > 最后整理：2026-08-04
-> 当前源码版本：`v3.14.1`；安装与 GitHub Release 状态见最新交接
+> 当前源码版本：`v3.15.0`；安装与 GitHub Release 状态见最新交接
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+
+## v3.15.0 长任务驻留与通用语义验收（2026-08-05）
+
+- `src/engine/taskResidencyCheckpoint.mjs` 将目标、计划、完成步骤、验证证据、下一步骤、上下文摘要和 Worker 检查点序号写入可校验驻留检查点。跨客户端重启时全部一致才自动排回队列；冲突任务安全暂停并明确等待核对原因。
+- Turn Lifecycle 的上下文压缩、摘要、未决问题和用户插话已纳入驻留摘要哈希；用户主动继续可基于当前真实状态重建恢复基线，已完成步骤不会被重复打开。
+- TaskService 新任务默认建立 `recoveryContext`，Worker 领取旧任务时兼容补齐，避免恢复时只有状态没有可读原因。
+- `verify_web_artifact` 支持任务合同驱动的 `semanticChecks`：`group`、`order`、`adjacent`、`grid`、`interaction` 五类通用契约。语义检查与越界/裁切/运行错误同等阻断完成，不包含计算器专用分支。
+- `verify-web-semantic-contract.cjs` 真实 Electron 回归已证明错误网格被拒绝，修正后分组、顺序、相邻、网格和交互全部通过；`verify-v315-soak-kernel.mjs` 覆盖两次上下文压缩、两次用户插话、跨会话恢复和连续 5 个检查点。
+- 门禁：`npm.cmd run verify:v315`、Build、Lint 通过。多窗口图形耐久脚本仍保留；本机若出现 Electron `launch-failed / exitCode 49`，属于图形驱动运行环境，不能冒充内核失败。
+- 下一步严格进入 `v3.16`：事实版本、冲突证据、路线成功率与时间衰减；`v4.0` 仍未完成。
 
 ## v3.14.1 风格化生产界面（2026-08-04）
 

@@ -8,6 +8,12 @@ const COMMAND_RECORD_VERSION = 1;
 const DEFAULT_LEASE_MS = 30_000;
 const DEFAULT_SWEEP_MS = 10_000;
 const COMMAND_TYPES = new Set(['claim', 'heartbeat', 'checkpoint', 'release', 'pause', 'resume', 'stop', 'close']);
+let residencyCheckpointModulePromise;
+
+function loadResidencyCheckpointModule() {
+  residencyCheckpointModulePromise ||= import('../src/engine/taskResidencyCheckpoint.mjs');
+  return residencyCheckpointModulePromise;
+}
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
@@ -200,9 +206,10 @@ function createTaskWorker(options) {
       resume: 'Worker 已将任务恢复到待执行队列',
       stop: 'Worker 已停止任务',
     };
+    const residency = await loadResidencyCheckpointModule();
     const result = await store.updateTask(command.taskId, (run) => {
       const worker = run.worker ?? { protocolVersion: WORKER_PROTOCOL_VERSION, state: 'idle', adapter: 'renderer-team-discussion' };
-      if (command.type === 'claim') {
+        if (command.type === 'claim') {
         if (!['queued', 'running', 'paused'].includes(run.status)) throw new Error(`任务状态 ${run.status} 不能领取执行租约`);
         const adapterProtocolVersion = Number(command.payload.adapterProtocolVersion) || ADAPTER_PROTOCOL_VERSION;
         if (adapterProtocolVersion !== ADAPTER_PROTOCOL_VERSION) throw new Error(`不支持的执行适配器协议版本：${adapterProtocolVersion}`);
@@ -213,7 +220,7 @@ function createTaskWorker(options) {
         run.status = 'running';
         run.phase = 'executing';
         run.executionSessionId = command.sessionId;
-        run.worker = {
+          run.worker = {
           protocolVersion: WORKER_PROTOCOL_VERSION,
           state: 'running',
           adapter: String(command.payload.adapter || 'renderer-team-discussion').slice(0, 80),
@@ -227,13 +234,17 @@ function createTaskWorker(options) {
           progressAt: Math.min(now, Number(command.payload.progressAt) || now),
           activity: String(command.payload.activity || 'Worker 已领取任务').slice(0, 500),
           expiresAt: now + leaseMs,
-          lastCommandId: command.commandId,
-        };
-        if (run.recoveryContext) {
+            lastCommandId: command.commandId,
+          };
+          run.recoveryContext = run.recoveryContext || { completedEvidence: [], unresolvedIssues: [], steeringMessages: [], budget: { toolAttempts: 0, updatedAt: now } };
           run.recoveryContext.summary = '后台 Worker 已领取任务，正在执行。';
           run.recoveryContext.interruptedAt = undefined;
           run.recoveryContext.interruptionReason = undefined;
-        }
+        run.residencyCheckpoint = residency.createTaskResidencyCheckpoint(run, {
+          checkpointSequence: run.worker.checkpointSequence,
+          updatedAt: now,
+          reason: 'Worker 建立执行租约',
+        });
         return;
       }
       if (command.type === 'checkpoint') {
@@ -251,6 +262,11 @@ function createTaskWorker(options) {
           expiresAt: now + leaseMs,
           lastCommandId: command.commandId,
         };
+        run.residencyCheckpoint = residency.createTaskResidencyCheckpoint(run, {
+          checkpointSequence: checkpoint.sequence,
+          updatedAt: checkpoint.occurredAt,
+          reason: checkpoint.summary || checkpoint.kind,
+        });
         return;
       }
       if (command.type === 'heartbeat') {
@@ -283,10 +299,16 @@ function createTaskWorker(options) {
         });
         run.worker = { ...worker, state: 'paused', activity: '任务已暂停', releasedAt: now, expiresAt: undefined, lastCommandId: command.commandId };
         if (run.recoveryContext) run.recoveryContext.summary = '任务已暂停，工作区和上下文均已保留。';
+        run.residencyCheckpoint = residency.createTaskResidencyCheckpoint(run, {
+          checkpointSequence: run.worker.checkpointSequence,
+          updatedAt: now,
+          reason: '用户暂停任务',
+        });
         return;
       }
       if (command.type === 'resume') {
         if (!['paused', 'failed', 'awaiting_user'].includes(run.status)) throw new Error(`任务状态 ${run.status} 不能恢复`);
+        const recoveryValidation = residency.verifyTaskResidencyCheckpoint(run, run.residencyCheckpoint);
         run.status = 'queued';
         run.phase = 'preflight';
         run.lastError = undefined;
@@ -300,6 +322,11 @@ function createTaskWorker(options) {
           run.recoveryContext.waitingFor = undefined;
           run.recoveryContext.autoResume = true;
         }
+        run.residencyCheckpoint = residency.createTaskResidencyCheckpoint(run, {
+          checkpointSequence: run.worker.checkpointSequence,
+          updatedAt: now,
+          reason: recoveryValidation.valid ? '用户确认继续任务' : `用户确认并重建恢复基线：${residency.explainResidencyConflict(recoveryValidation.errors)}`,
+        });
         return;
       }
       if (command.type === 'stop') {
@@ -345,6 +372,7 @@ function createTaskWorker(options) {
   async function recoverExpiredLeases() {
     const snapshot = await store.read();
     if (!snapshot.ok) return [];
+    const residency = await loadResidencyCheckpointModule();
     const recoveredTasks = [];
     const now = Date.now();
     for (const run of snapshot.runs) {
@@ -355,27 +383,33 @@ function createTaskWorker(options) {
       const nativeAdapter = run.worker?.adapter === 'main-native-execution-adapter';
       const result = await store.updateTask(run.id, (next) => {
         if (!isActiveLease(next.worker)) return;
-        next.status = nativeAdapter ? 'queued' : 'paused';
-        next.phase = nativeAdapter ? 'preflight' : 'blocked';
+        const recoveryValidation = residency.verifyTaskResidencyCheckpoint(next, next.residencyCheckpoint);
+        const safeNativeResume = nativeAdapter && recoveryValidation.valid;
+        next.status = safeNativeResume ? 'queued' : 'paused';
+        next.phase = safeNativeResume ? 'preflight' : 'blocked';
         next.steps.forEach((step) => {
           if (step.status === 'running' || step.status === 'queued') {
-            step.status = nativeAdapter ? 'queued' : 'paused';
-            step.events.push({ ts: now, type: 'error', detail: nativeAdapter ? '客户端重启，后台任务已回到待执行队列' : 'Worker 租约失效，步骤已安全暂停' });
+            step.status = safeNativeResume ? 'queued' : 'paused';
+            step.events.push({ ts: now, type: 'error', detail: safeNativeResume ? '客户端重启且恢复检查点一致，后台任务已回到待执行队列' : 'Worker 租约失效或恢复检查未通过，步骤已安全暂停' });
           }
         });
         next.worker = { ...next.worker, state: 'expired', expiredAt: now, expiresAt: undefined };
         if (next.recoveryContext) {
-          next.recoveryContext.summary = nativeAdapter ? '客户端重启后，后台任务已保留进度并自动回到待执行队列。' : '后台 Worker 租约已失效，任务已安全暂停。';
+          next.recoveryContext.summary = safeNativeResume
+            ? '客户端重启后，目标、计划、证据和上下文检查一致，任务已自动回到待执行队列。'
+            : nativeAdapter ? residency.explainResidencyConflict(recoveryValidation.errors) : '后台 Worker 租约已失效，任务已安全暂停。';
           next.recoveryContext.interruptedAt = now;
           next.recoveryContext.interruptionReason = foreignSession ? '客户端进程已更换' : 'Worker 心跳超时';
-          next.recoveryContext.autoResume = nativeAdapter;
-          next.recoveryContext.waitingFor = undefined;
+          next.recoveryContext.autoResume = safeNativeResume;
+          next.recoveryContext.waitingFor = nativeAdapter && !safeNativeResume ? '核对任务目标、计划、完成步骤和证据后再继续' : undefined;
         }
         next.handoff = {
           ts: now,
           completed: next.steps.filter((step) => step.status === 'completed').map((step) => step.title),
-          blocked: nativeAdapter ? '客户端已重启，后台任务正在等待重新注入本机模型配置。' : '后台 Worker 执行租约失效，任务没有继续跳步。',
-          nextAction: nativeAdapter ? '客户端会在模型配置可用后自动从未完成步骤继续。' : '检查模型和工作区后点击“继续执行”。',
+          blocked: safeNativeResume
+            ? '客户端已重启，恢复检查点一致，后台任务正在等待重新注入本机模型配置。'
+            : nativeAdapter ? residency.explainResidencyConflict(recoveryValidation.errors) : '后台 Worker 执行租约失效，任务没有继续跳步。',
+          nextAction: safeNativeResume ? '客户端会在模型配置可用后从检查点记录的下一步骤继续。' : '核对恢复差异和工作区后点击“继续执行”。',
         };
       }, { source: 'task-worker', sessionId, detail: foreignSession ? 'Worker 检测到旧执行会话并安全回收' : 'Worker 心跳超时并安全回收' });
       if (result.ok && !result.unchanged) {

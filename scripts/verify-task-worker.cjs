@@ -39,10 +39,12 @@ function assertJournalChain(records) {
 
 (async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'taiji-task-worker-'));
+  const activeWorkers = [];
   try {
     const store = createTaskRuntimeStore(root);
     await store.write([makeRun()], { source: 'test' });
     const workerA = createTaskWorker({ rootDir: root, store, sessionId: 'session-a', leaseMs: 60_000, sweepMs: 60_000 });
+    activeWorkers.push(workerA);
     assert.equal((await workerA.start()).ok, true);
 
     const unsupportedAdapter = await workerA.dispatch({ commandId: 'claim-unsupported', taskId: 'worker-task', type: 'claim', payload: { adapterProtocolVersion: 99 } });
@@ -62,6 +64,8 @@ function assertJournalChain(records) {
     assert.equal(startedStep.ok, true, startedStep.error);
     assert.equal(startedStep.run.steps[0].status, 'running');
     assert.equal(startedStep.run.worker.checkpointSequence, 1);
+    assert.equal(startedStep.run.residencyCheckpoint.nextExecutableStepId, 'step-1');
+    assert.equal(startedStep.run.residencyCheckpoint.checkpointSequence, 1, JSON.stringify(startedStep.run.residencyCheckpoint));
 
     const skippedSequence = await workerA.dispatch({
       commandId: 'checkpoint-skipped', taskId: 'worker-task', type: 'checkpoint',
@@ -124,11 +128,19 @@ function assertJournalChain(records) {
     await store.write([...beforeNative.runs, nativeRestartRun], { source: 'test' });
     const nativeClaim = await workerA.dispatch({ commandId: 'claim-native-restart', taskId: nativeRestartRun.id, type: 'claim', payload: { adapter: 'main-native-execution-adapter' } });
     assert.equal(nativeClaim.ok, true);
+    const conflictingRun = makeRun();
+    conflictingRun.id = 'native-conflict-task';
+    conflictingRun.title = 'Native conflict recovery';
+    await store.write([...(await store.read()).runs, conflictingRun], { source: 'test' });
+    const conflictingClaim = await workerA.dispatch({ commandId: 'claim-native-conflict', taskId: conflictingRun.id, type: 'claim', payload: { adapter: 'main-native-execution-adapter' } });
+    assert.equal(conflictingClaim.ok, true);
+    await store.updateTask(conflictingRun.id, (run) => { run.goal = '检查点后被意外替换的目标'; }, { source: 'test-conflict' });
     workerA.stop();
 
     const workerB = createTaskWorker({ rootDir: root, store, sessionId: 'session-b', leaseMs: 60_000, sweepMs: 60_000 });
+    activeWorkers.push(workerB);
     const restarted = await workerB.start();
-    assert.deepEqual(new Set(restarted.recoveredTasks), new Set(['worker-task', nativeRestartRun.id]));
+    assert.deepEqual(new Set(restarted.recoveredTasks), new Set(['worker-task', nativeRestartRun.id, conflictingRun.id]));
     const recoveredSnapshot = await store.read();
     const recoveredRun = recoveredSnapshot.runs.find((run) => run.id === 'worker-task');
     assert.equal(recoveredRun.status, 'paused');
@@ -137,6 +149,11 @@ function assertJournalChain(records) {
     const recoveredNativeRun = recoveredSnapshot.runs.find((run) => run.id === nativeRestartRun.id);
     assert.equal(recoveredNativeRun.status, 'queued');
     assert.equal(recoveredNativeRun.recoveryContext.autoResume, true);
+    const recoveredConflictRun = recoveredSnapshot.runs.find((run) => run.id === conflictingRun.id);
+    assert.equal(recoveredConflictRun.status, 'paused');
+    assert.equal(recoveredConflictRun.recoveryContext.autoResume, false);
+    assert.match(recoveredConflictRun.recoveryContext.summary, /恢复前核对未通过/u);
+    assert.match(recoveredConflictRun.recoveryContext.waitingFor, /核对任务目标/u);
 
     await store.updateTask(nativeRestartRun.id, (run) => {
       run.status = 'awaiting_user';
@@ -167,11 +184,14 @@ function assertJournalChain(records) {
     assert.equal(closed.ok, true);
     const closedNative = await workerB.dispatch({ commandId: 'close-native', taskId: nativeRestartRun.id, type: 'close' });
     assert.equal(closedNative.ok, true);
+    const closedConflict = await workerB.dispatch({ commandId: 'close-conflict', taskId: conflictingRun.id, type: 'close' });
+    assert.equal(closedConflict.ok, true);
     assert.equal((await store.read()).runs.length, 0);
     workerB.stop();
 
     await fs.appendFile(workerB.journalPath, '{"tampered":true}\n', 'utf8');
     const workerC = createTaskWorker({ rootDir: root, store, sessionId: 'session-c' });
+    activeWorkers.push(workerC);
     await workerC.start();
     const recoveredJournal = await workerC.readCommands();
     assert.equal(recoveredJournal.integrity.recovered, true);
@@ -188,6 +208,7 @@ function assertJournalChain(records) {
       recoveredLease: recoveredRun.worker.state,
     }));
   } finally {
+    activeWorkers.forEach((worker) => worker.stop());
     await fs.rm(root, { recursive: true, force: true });
   }
 })().catch((error) => {

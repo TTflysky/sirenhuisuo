@@ -101,6 +101,7 @@ function normalizeTaskInput(input = {}) {
   if (taskDeliverableType) {
     for (const step of steps) if (!step.deliverableType) step.deliverableType = taskDeliverableType;
   }
+  const createdAt = Date.now();
   return {
     id: text(input.id, 180) || id('task'),
     taskType,
@@ -138,9 +139,17 @@ function normalizeTaskInput(input = {}) {
     verifications: [],
     usage: { modelRounds: 0, promptTokens: 0, completionTokens: 0, estimatedTokens: 0, toolCalls: 0 },
     waitingFor: undefined,
+    recoveryContext: {
+      summary: '任务已创建，等待执行。',
+      completedEvidence: [],
+      unresolvedIssues: [],
+      steeringMessages: [],
+      autoResume: false,
+      budget: { toolAttempts: 0, updatedAt: createdAt },
+    },
     serviceEvents: [{ ts: Date.now(), type: 'task_created', detail: '任务已进入统一任务服务' }],
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
+    createdAt,
+    updatedAt: createdAt,
     taskServiceVersion: TASK_SERVICE_VERSION,
     idempotencyKey: text(input.idempotencyKey, 240) || undefined,
   };

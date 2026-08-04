@@ -40,6 +40,26 @@ export interface ToolDef {
   };
 }
 
+const SEMANTIC_CHECKS_SCHEMA = {
+  type: 'array',
+  description: '可选的通用产品语义验收契约；用于检查分组、顺序、相邻位置、网格坐标和关键交互。建议使用稳定的 data-testid 选择器。',
+  items: {
+    type: 'object',
+    properties: {
+      id: { type: 'string' }, label: { type: 'string' },
+      type: { type: 'string', enum: ['group', 'order', 'adjacent', 'grid', 'interaction'] },
+      viewports: { type: 'array', items: { type: 'string' } },
+      container: { type: 'string' }, members: { type: 'array', items: { type: 'string' } },
+      selectors: { type: 'array', items: { type: 'string' } }, axis: { type: 'string', enum: ['dom', 'horizontal', 'vertical', 'reading'] },
+      first: { type: 'string' }, second: { type: 'string' }, direction: { type: 'string', enum: ['left', 'right', 'above', 'below'] }, maxGap: { type: 'number' },
+      cells: { type: 'array', items: { type: 'object', properties: { selector: { type: 'string' }, row: { type: 'number' }, column: { type: 'number' } }, required: ['selector', 'row', 'column'] } },
+      steps: { type: 'array', items: { type: 'object', properties: { action: { type: 'string', enum: ['click', 'input', 'select', 'check'] }, selector: { type: 'string' }, value: { type: 'string' }, waitMs: { type: 'number' } }, required: ['action', 'selector'] } },
+      assertions: { type: 'array', items: { type: 'object', properties: { selector: { type: 'string' }, property: { type: 'string', enum: ['text', 'value', 'visible', 'hidden', 'checked', 'attribute'] }, equals: { type: 'string' }, includes: { type: 'string' }, attribute: { type: 'string' } }, required: ['selector', 'property'] } },
+    },
+    required: ['type'],
+  },
+} as const;
+
 export const TOOLS: ToolDef[] = [
   {
     type: 'function',
@@ -248,12 +268,13 @@ export const TOOLS: ToolDef[] = [
     type: 'function',
     function: {
       name: 'verify_web_artifact',
-      description: '使用太极内置 Electron 浏览器真实打开工作区 HTML，在桌面和窄屏视口截图并检查横向滚动、元素越界、父级裁切、边框与阴影安全区。网页或应用界面交付前必须调用；返回失败时必须修复后重新验收，不能用静态读取或口头说明代替。',
+      description: '使用太极内置 Electron 浏览器真实打开工作区 HTML，在桌面和窄屏视口截图，并按任务契约检查布局与产品语义。支持元素分组、顺序、相邻关系、网格坐标和关键交互；任何一项失败都必须修复后重新验收。',
       parameters: {
         type: 'object',
         properties: {
           path: { type: 'string', description: '工作区中的 HTML 相对路径' },
           viewports: { type: 'array', items: { type: 'object', properties: { width: { type: 'number' }, height: { type: 'number' }, label: { type: 'string' } } }, description: '可选视口列表；默认桌面 1440x900 和窄屏 375x844' },
+          semanticChecks: SEMANTIC_CHECKS_SCHEMA,
         },
         required: ['path'],
       },
@@ -583,6 +604,7 @@ async function executeToolInternal(call: ToolCall): Promise<ToolResult> {
           workspaceId: physicalWorkspace,
           path: artifactPath,
           viewports: Array.isArray(args.viewports) ? args.viewports : undefined,
+          semanticChecks: Array.isArray(args.semanticChecks) ? args.semanticChecks : undefined,
         });
         const screenshots = (result.viewports ?? []).map((item: any) => createFileArtifactEvidence({
           path: item.screenshot,

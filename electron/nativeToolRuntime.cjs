@@ -3,6 +3,26 @@ const path = require('path');
 const { pathToFileURL } = require('url');
 const { searchSkillHub, formatSkillHubResults } = require('./skillHubSearch.cjs');
 
+const SEMANTIC_CHECKS_SCHEMA = {
+  type: 'array',
+  description: '可选的通用产品语义验收契约。用于检查分组、顺序、相邻位置、网格坐标和关键交互；应优先使用稳定的 data-testid 选择器。',
+  items: {
+    type: 'object',
+    properties: {
+      id: { type: 'string' }, label: { type: 'string' },
+      type: { type: 'string', enum: ['group', 'order', 'adjacent', 'grid', 'interaction'] },
+      viewports: { type: 'array', items: { type: 'string' }, description: '可选，只在指定 viewport label 执行' },
+      container: { type: 'string' }, members: { type: 'array', items: { type: 'string' } },
+      selectors: { type: 'array', items: { type: 'string' } }, axis: { type: 'string', enum: ['dom', 'horizontal', 'vertical', 'reading'] },
+      first: { type: 'string' }, second: { type: 'string' }, direction: { type: 'string', enum: ['left', 'right', 'above', 'below'] }, maxGap: { type: 'number' },
+      cells: { type: 'array', items: { type: 'object', properties: { selector: { type: 'string' }, row: { type: 'number' }, column: { type: 'number' } }, required: ['selector', 'row', 'column'] } },
+      steps: { type: 'array', items: { type: 'object', properties: { action: { type: 'string', enum: ['click', 'input', 'select', 'check'] }, selector: { type: 'string' }, value: { type: 'string' }, waitMs: { type: 'number' } }, required: ['action', 'selector'] } },
+      assertions: { type: 'array', items: { type: 'object', properties: { selector: { type: 'string' }, property: { type: 'string', enum: ['text', 'value', 'visible', 'hidden', 'checked', 'attribute'] }, equals: { type: 'string' }, includes: { type: 'string' }, attribute: { type: 'string' } }, required: ['selector', 'property'] } },
+    },
+    required: ['type'],
+  },
+};
+
 const NATIVE_TOOL_DEFINITIONS = [
   tool('write_file', '把真实文件写入当前任务工作区。category: final/工作稿 working/参考 reference。', {
     path: stringField('文件名或相对路径'), content: stringField('文件内容'),
@@ -33,9 +53,10 @@ const NATIVE_TOOL_DEFINITIONS = [
     responsibleStepId: stringField('退回的责任步骤'), responsibleEmployeeId: stringField('退回的责任员工'),
     checkedArtifacts: { type: 'array', items: { type: 'string' } },
   }, ['decision', 'reason']),
-  tool('verify_web_artifact', '使用太极内置 Electron 浏览器真实打开工作区 HTML，在桌面和窄屏视口截图并检查滚动条、越界、裁切、边框与阴影安全区。Web UI 交付前必须调用；返回失败时先修复再复验。', {
+  tool('verify_web_artifact', '使用太极内置 Electron 浏览器真实打开工作区 HTML，在桌面和窄屏视口截图，并按任务契约检查布局与产品语义。可检查元素分组、顺序、相邻关系、网格坐标和关键交互；任何一项失败都不能宣布交付完成。', {
     path: stringField('工作区中的 HTML 相对路径'),
     viewports: { type: 'array', items: { type: 'object', properties: { width: { type: 'number' }, height: { type: 'number' }, label: { type: 'string' } } } },
+    semanticChecks: SEMANTIC_CHECKS_SCHEMA,
   }, ['path']),
   tool('delegate_subtask', '将明确、可验收的子任务委派给当前团队成员。必须指定实际工作内容；系统会创建可恢复子任务和责任记录。', {
     assignment: stringField('子任务的具体工作内容'), employeeId: stringField('可选：当前团队成员 ID；不填由系统按职责选择'),
@@ -524,7 +545,7 @@ function createNativeToolRuntime(options) {
       }
       if (name === 'verify_web_artifact') {
         if (!options.verifyWebArtifact) return failed(name, '太极内置网页验收运行时不可用');
-        const result = await options.verifyWebArtifact({ workspaceId: context.workspaceId || context.scope, path: args.path, viewports: args.viewports });
+        const result = await options.verifyWebArtifact({ workspaceId: context.workspaceId || context.scope, path: args.path, viewports: args.viewports, semanticChecks: args.semanticChecks });
         const artifacts = (result.viewports || []).map((item) => ({
           path: item.screenshot, filename: path.basename(item.screenshot), workspaceId: context.workspaceId,
           diskPath: item.screenshotPath, bytes: item.screenshotBytes, category: 'working', persistence: 'disk',
