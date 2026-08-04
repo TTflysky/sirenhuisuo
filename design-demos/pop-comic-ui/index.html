@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>太极 · 波普漫画风 UI Demo</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell" id="appShell">
+    <header class="titlebar">
+      <button class="brand" data-view="office" aria-label="返回办公室">
+        <span class="brand-mark">太极</span>
+        <span class="brand-copy"><strong>太极 AI 办公会所</strong><small id="brandStyleLabel">POP LAB · UI PROTOTYPE</small></span>
+      </button>
+      <nav class="view-tabs" aria-label="主导航">
+        <button class="nav-tab active" data-view="office"><i data-lucide="building-2"></i><span>办公室</span></button>
+        <button class="nav-tab" data-view="analytics"><i data-lucide="chart-no-axes-combined"></i><span>数据分析</span></button>
+        <button class="nav-tab" data-view="team"><i data-lucide="users-round"></i><span>团队大厅</span></button>
+        <button class="nav-tab" data-view="skills"><i data-lucide="blocks"></i><span>技能库</span></button>
+      </nav>
+      <div class="title-actions">
+        <span class="status-pill"><span class="status-dot"></span>系统正常</span>
+        <button class="icon-button" title="搜索"><i data-lucide="search"></i></button>
+        <button class="icon-button sound-trigger" id="soundToggle" title="互动音效" aria-expanded="false" aria-controls="soundPanel"><i data-lucide="volume-2"></i></button>
+        <section class="sound-panel" id="soundPanel" aria-label="互动音效设置" hidden>
+          <header><div><span class="eyebrow">SOUND FX</span><h3>互动音效</h3></div><span id="soundPresetLabel">MAC</span></header>
+          <div class="sound-presets" role="group" aria-label="音效风格">
+            <button type="button" class="sound-preset" data-sound-preset="fc"><i data-lucide="gamepad-2"></i><span>FC</span></button>
+            <button type="button" class="sound-preset active" data-sound-preset="mac"><i data-lucide="command"></i><span>Mac</span></button>
+            <button type="button" class="sound-preset" data-sound-preset="arcade"><i data-lucide="joystick"></i><span>街机</span></button>
+          </div>
+          <div class="sound-enable-row">
+            <span><i data-lucide="audio-lines"></i><span><strong>互动音效</strong><small>点击和任务状态反馈</small></span></span>
+            <button type="button" class="sound-switch is-on" id="soundEnabled" role="switch" aria-checked="true" aria-label="开启或关闭互动音效"><i></i><b>已开启</b></button>
+          </div>
+          <label class="volume-control" for="soundVolume"><span><i data-lucide="volume-2"></i>音量</span><strong id="soundVolumeValue">80%</strong></label>
+          <input id="soundVolume" type="range" min="0" max="100" step="1" value="80">
+          <button type="button" class="sound-test" id="soundTest"><i data-lucide="play"></i>试听确认音</button>
+        </section>
+        <button class="icon-button style-trigger" id="styleToggle" title="界面风格" aria-expanded="false" aria-controls="stylePanel"><i data-lucide="layers-3"></i></button>
+        <section class="style-panel" id="stylePanel" aria-label="界面风格" hidden>
+          <header><div><span class="eyebrow">VISUAL SYSTEM</span><h3>界面风格</h3></div><span id="styleCurrentLabel">波普漫画</span></header>
+          <div class="style-options" role="group" aria-label="选择界面风格">
+            <button type="button" class="style-option" data-style-option="original">
+              <span class="style-preview original-preview"><i></i><i></i><i></i></span>
+              <span><strong>原版商务</strong><small>清晰、克制、轻量</small></span><i data-lucide="chevron-right"></i>
+            </button>
+            <button type="button" class="style-option active" data-style-option="pop">
+              <span class="style-preview pop-preview"><i></i><i></i><i></i></span>
+              <span><strong>波普漫画</strong><small>粗描边、网点、活力色</small></span><i data-lucide="chevron-right"></i>
+            </button>
+            <button type="button" class="style-option" data-style-option="acid">
+              <span class="style-preview acid-preview"><i></i><i></i><i></i></span>
+              <span><strong>酸性暗黑</strong><small>Awwwards、霓虹、杂志感</small></span><i data-lucide="chevron-right"></i>
+            </button>
+          </div>
+        </section>
+        <button class="icon-button theme-trigger" id="themeToggle" title="主题配色" aria-expanded="false" aria-controls="themePanel"><i data-lucide="palette"></i></button>
+        <section class="theme-panel" id="themePanel" aria-label="主题配色" hidden>
+          <header><div><span class="eyebrow">COLOR THEMES</span><h3 id="themePanelTitle">主题配色</h3></div><span id="themeCount">10 款</span></header>
+          <div class="theme-grid" id="themeGrid" role="group" aria-label="选择主题"></div>
+        </section>
+        <button class="window-button" title="最小化"><i data-lucide="minus"></i></button>
+        <button class="window-button" title="最大化"><i data-lucide="square"></i></button>
+        <button class="window-button danger" title="关闭"><i data-lucide="x"></i></button>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <aside class="sidebar">
+        <div class="sidebar-head">
+          <div><span class="eyebrow">CONTROL DESK</span><h2>工作台</h2></div>
+          <button class="icon-button inverse" title="新建"><i data-lucide="plus"></i></button>
+        </div>
+        <button class="assistant-entry active" data-chat="assistant">
+          <span class="assistant-avatar">极</span>
+          <span><strong>章北海助理</strong><small><i></i> 正在处理 1 项任务</small></span>
+          <i data-lucide="chevron-right"></i>
+        </button>
+
+        <section class="side-section">
+          <header><span>我的团队</span><button title="新建团队"><i data-lucide="user-round-plus"></i></button></header>
+          <button class="team-entry" data-chat="team">
+            <span class="team-icon"><i data-lucide="code-2"></i></span>
+            <span><strong>太极产品升级组</strong><small>6 人 · 1 人执行中</small></span>
+            <b>3</b>
+          </button>
+          <button class="team-entry">
+            <span class="team-icon yellow"><i data-lucide="database"></i></span>
+            <span><strong>知识库建设组</strong><small>5 人 · 等待确认</small></span>
+          </button>
+        </section>
+
+        <section class="side-section employee-list-section">
+          <header><span>员工</span><button title="新建员工"><i data-lucide="user-plus"></i></button></header>
+          <label class="side-search"><i data-lucide="search"></i><input placeholder="搜索员工或职位"></label>
+          <div class="mini-employee-list">
+            <button class="mini-employee" data-chat="employee"><img src="./assets/avatar-01-red.png" alt="铁柱"><span><strong>铁柱</strong><small>项目协调 · 空闲</small></span><i class="presence online"></i></button>
+            <button class="mini-employee"><img src="./assets/avatar-02-cyan.png" alt="林默"><span><strong>林默</strong><small>产品架构师 · 工作中</small></span><i class="presence busy"></i></button>
+            <button class="mini-employee"><img src="./assets/avatar-07-pink.png" alt="苏晚"><span><strong>苏晚</strong><small>UI/UX 设计师 · 空闲</small></span><i class="presence online"></i></button>
+            <button class="mini-employee"><img src="./assets/avatar-06-blue.png" alt="陆远"><span><strong>陆远</strong><small>前端工程师 · 等待</small></span><i class="presence waiting"></i></button>
+          </div>
+        </section>
+        <footer class="sidebar-foot"><span>TAIJI OFFICE</span><b>v3.14.0</b></footer>
+      </aside>
+
+      <main class="main-stage">
+        <section class="view-page active" id="officeView">
+          <header class="office-overview">
+            <div><span class="eyebrow red">WORKSPACE / 01</span><h1>办公室</h1><p>团队成员、当前状态与工作席位</p></div>
+            <div class="summary-strip">
+              <div><strong>8</strong><span>成员</span></div><div><strong>7</strong><span>在线</span></div><div class="active-metric"><strong>2</strong><span>工作中</span></div>
+            </div>
+          </header>
+          <div class="category-bar">
+            <button class="category-arrow" data-scroll="back" title="向前"><i data-lucide="chevron-left"></i></button>
+            <div class="category-scroll" id="categoryScroll">
+              <button class="category active" data-category="all"><i data-lucide="layout-grid"></i>全部员工 <b>8</b></button>
+              <button class="category" data-category="manage">策划管理 <b>2</b></button>
+              <button class="category" data-category="design">设计创意 <b>1</b></button>
+              <button class="category" data-category="dev">软件开发 <b>2</b></button>
+              <button class="category" data-category="data">数据智能 <b>2</b></button>
+              <button class="category" data-category="quality">质量安全 <b>1</b></button>
+            </div>
+            <button class="category-arrow" data-scroll="forward" title="向后"><i data-lucide="chevron-right"></i></button>
+            <span class="result-count">当前显示 <b id="employeeCount">8</b> 人</span>
+          </div>
+          <div class="office-canvas">
+            <div class="office-grid" id="officeGrid"></div>
+          </div>
+        </section>
+
+        <section class="view-page chat-page" id="chatView">
+          <div class="chat-topbar">
+            <button class="icon-button" id="backOffice" title="返回办公室"><i data-lucide="arrow-left"></i></button>
+            <div class="chat-identity"><span class="assistant-avatar small" id="chatAvatar">极</span><div><h2 id="chatTitle">章北海助理</h2><p id="chatSubtitle"><span class="status-dot"></span>在线 · 可以随时插话</p></div></div>
+            <div class="chat-mode-badge" id="chatModeBadge">助理</div>
+            <div class="chat-top-actions">
+              <button class="tool-button" title="新对话"><i data-lucide="message-square-plus"></i><span>新对话</span></button>
+              <button class="icon-button" title="历史记录"><i data-lucide="history"></i></button>
+              <button class="icon-button" title="锁定窗口"><i data-lucide="pin"></i></button>
+              <button class="icon-button" title="更多"><i data-lucide="ellipsis"></i></button>
+            </div>
+          </div>
+          <div class="chat-layout">
+            <aside class="conversation-rail">
+              <div class="rail-title"><span id="railLabel">最近对话</span><button title="添加成员"><i data-lucide="user-round-plus"></i></button></div>
+              <button class="conversation active"><span class="comic-index">01</span><span><strong>太极 UI 产品化升级</strong><small>正在执行 · 刚刚</small></span></button>
+              <button class="conversation"><span class="comic-index cyan">02</span><span><strong>知识库连接方案</strong><small>已完成 · 昨天</small></span></button>
+              <button class="conversation"><span class="comic-index yellow">03</span><span><strong>任务内核回放分析</strong><small>已归档 · 8月2日</small></span></button>
+              <div class="rail-note"><i data-lucide="shield-check"></i><span><strong>请求审核</strong><small>外部发送与危险操作前询问</small></span></div>
+            </aside>
+
+            <section class="message-column">
+              <div class="message-stream" id="messageStream">
+                <div class="date-divider"><span>今天 20:36</span></div>
+                <article class="message user-message"><div class="message-author">你</div><div class="bubble">把现在的 UI 做成更完整的产品，保留布局，先出一版波普漫画风 Demo。</div></article>
+                <article class="message assistant-message"><div class="message-author"><span class="assistant-avatar tiny">极</span>章北海助理</div><div class="bubble"><p>收到。我先保留现有的信息结构，不直接改主程序。</p><ul><li>办公室、聊天和团队任务保持原来的位置关系</li><li>统一黑色描边、小点状纸张背景与红黄青功能色</li><li>先用可交互 HTML 验证视觉和操作，再进入正式改造</li></ul></div></article>
+                <section class="approval-card">
+                  <header><span class="approval-icon"><i data-lucide="clipboard-check"></i></span><div><small>需要你的确认</small><h3>波普漫画风 UI 改造方案</h3></div><span class="approval-status">待批准</span></header>
+                  <p>确认后进入正式界面改造；本次仅制作 HTML 原型，不覆盖当前客户端。</p>
+                  <div class="approval-members"><span><img src="./assets/avatar-07-pink.png" alt="苏晚">苏晚 · UI/UX</span><span><img src="./assets/avatar-06-blue.png" alt="陆远">陆远 · 前端</span><span><img src="./assets/avatar-01-red.png" alt="铁柱">铁柱 · 协调</span></div>
+                  <div class="approval-actions"><button class="primary-action" id="approveDemo"><i data-lucide="check"></i>批准并继续</button><button class="secondary-action"><i data-lucide="message-square-text"></i>补充要求</button></div>
+                </section>
+                <article class="message assistant-message is-hidden" id="approvalReply"><div class="message-author"><span class="assistant-avatar tiny">极</span>章北海助理</div><div class="bubble success-bubble"><strong>方案已批准。</strong> 我会保留当前布局进入下一阶段，修改前先建立可回退版本。</div></article>
+              </div>
+
+              <div class="live-strip">
+                <header><span><i class="pulse"></i><strong>实时执行</strong> · 林默正在整理界面信息层级</span><button id="toggleLive" title="折叠"><i data-lucide="chevron-down"></i></button></header>
+                <div class="live-lines" id="liveLines">
+                  <p><time>20:41:16</time><b>读取</b>办公室与聊天窗口现有结构</p>
+                  <p><time>20:41:18</time><b>调用</b>UI/UX 设计规范库</p>
+                  <p><time>20:41:21</time><b>生成</b>波普视觉令牌与组件规则</p>
+                  <p><time>20:41:24</time><b>检查</b>窄窗口文字与控件遮挡</p>
+                </div>
+              </div>
+
+              <div class="composer">
+                <div class="composer-tools"><button title="添加附件"><i data-lucide="paperclip"></i></button><button title="调用技能"><i data-lucide="blocks"></i></button><button title="提及员工"><i data-lucide="at-sign"></i></button><span>可随时插话，当前任务会先处理你的新消息</span></div>
+                <div class="composer-row"><textarea rows="2" placeholder="输入消息，或对正在执行的任务提出修改…"></textarea><button class="send-button" title="发送"><i data-lucide="arrow-up"></i></button></div>
+              </div>
+            </section>
+
+            <aside class="task-observer" id="taskObserver">
+              <header><div><span class="eyebrow">TASK WATCH</span><h2>任务观察</h2></div><button class="icon-button" id="collapseObserver" title="折叠任务观察"><i data-lucide="panel-right-close"></i></button></header>
+              <section class="run-summary">
+                <div class="run-state"><span class="run-icon"><i data-lucide="loader-circle"></i></span><div><small>正在执行 1 / 等待 3</small><strong>UI 产品化方案</strong></div></div>
+                <div class="progress-track"><i style="width:42%"></i></div>
+                <div class="run-meta"><span>阶段 2 / 5</span><span>已用 06:24</span></div>
+                <div class="run-controls"><button title="暂停"><i data-lucide="pause"></i></button><button title="继续"><i data-lucide="play"></i></button><button class="stop" title="停止"><i data-lucide="square"></i></button></div>
+              </section>
+              <section class="observer-section">
+                <header><strong>执行顺序</strong><span>依赖驱动</span></header>
+                <ol class="stage-list">
+                  <li class="done"><i data-lucide="check"></i><div><strong>梳理当前界面</strong><span>铁柱 · 已通过审核</span></div></li>
+                  <li class="running"><i data-lucide="loader-circle"></i><div><strong>建立视觉系统</strong><span>苏晚 · 正在执行</span></div></li>
+                  <li><b>3</b><div><strong>组件交互原型</strong><span>陆远 · 等待前置步骤</span></div></li>
+                  <li><b>4</b><div><strong>可用性检查</strong><span>林默 · 尚未开始</span></div></li>
+                </ol>
+              </section>
+              <section class="observer-section outputs">
+                <header><strong>产出物</strong><button>查看全部</button></header>
+                <a href="./index.html"><span class="file-icon">HTML</span><span><strong>波普 UI 原型</strong><small>可打开 · 刚刚更新</small></span><i data-lucide="external-link"></i></a>
+                <a href="./styles.css"><span class="file-icon cyan">CSS</span><span><strong>视觉样式规范</strong><small>可查看 · 刚刚更新</small></span><i data-lucide="external-link"></i></a>
+              </section>
+              <button class="replay-button"><i data-lucide="file-clock"></i>导出本次任务回放</button>
+            </aside>
+            <button class="observer-restore" id="restoreObserver" title="展开任务观察"><i data-lucide="panel-right-open"></i><span>任务观察</span></button>
+          </div>
+        </section>
+
+        <section class="view-page placeholder-view" id="placeholderView">
+          <span class="burst-label">PREVIEW</span><i data-lucide="construction"></i><h1 id="placeholderTitle">功能预览</h1><p>本 Demo 重点验证办公室、员工工牌和聊天协作界面。</p><button class="primary-action" data-view="office"><i data-lucide="arrow-left"></i>返回办公室</button>
+        </section>
+      </main>
+    </div>
+  </div>
+  <div class="toast" id="toast"><i data-lucide="check-circle-2"></i><span>操作已完成</span></div>
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
