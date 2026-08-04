@@ -1185,7 +1185,16 @@
 .chat-only-title strong { overflow: hidden; color: var(--text); font-size: 12px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
 .chat-only-title small { color: var(--text-muted); font-size: 9px; font-weight: 400; }
 .chat-only-traffic { align-self: stretch; gap: 0; }
-.chat-only-traffic .titlebar-btn { width: 34px; height: 100%; border-radius: 0; color: var(--text-muted); }
+.chat-only-traffic .titlebar-btn {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  flex: 0 0 32px;
+  align-self: center;
+  border-radius: 0;
+  color: var(--text-muted);
+}
 
 .chat-only-body { background: var(--bg); }
 .chat-panel, .chat-layout, .chat-main { background: var(--bg); }

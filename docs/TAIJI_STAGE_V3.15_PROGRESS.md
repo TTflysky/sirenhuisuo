@@ -15,12 +15,14 @@
 - **通用语义验收**：网页验收工具增加 `semanticChecks`，支持 `group`、`order`、`adjacent`、`grid` 和 `interaction`。结果按视口返回元素描述、期望值和失败原因，与截图、边界和运行错误统一阻断交付。
 - **真实回归**：错误排列网格被拒绝，修正后五种语义契约通过；无界面长任务回归跨两个 Worker 会话恢复，检查点连续 `1 -> 5`，上下文压缩 2 次、用户插话 2 条均保留。
 - **窗口层级**：锁定助手或聊天窗口时使用系统级置顶；主窗口获得焦点、窗口重建和显式打开不会再把锁定窗口压到后面，解除锁定恢复普通层级。
+- **窗口控件一致性**：助手、员工私聊和团队聊天窗口的锁定、最小化、最大化、关闭控件统一为与主界面相同的 `32 x 32px` 正方形；固定最小尺寸和 flex 基准，避免标题栏高度或主题边框再次把控件拉成长方形。
 
 ## 验证证据
 
 - `npm.cmd run verify:v315`：驻留专项、语义 Electron 回归、无界面耐久回归全部通过。
 - `npm.cmd run build`：TypeScript 与 Vite 生产构建通过。
 - `npm.cmd run lint`：通过。
+- `npm.cmd run verify:visual-system`：通过，已加入主窗口与聊天窗口正方形控件契约。
 - `verify:task-worker`、`verify:task-recovery-gate`、`verify:recovery-capsule-v2`、TaskService 专项：通过。
 
 ## 环境限制
