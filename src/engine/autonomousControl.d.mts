@@ -18,7 +18,7 @@ export interface SituationModel {
   routeHistory: Array<{ routeId: string; toolName: string; strategy: string; attempts: number; failures: number; successes: number; lastOutcome: string; updatedAt: number }>;
   updatedAt: number;
 }
-export interface AutonomousAction { kind: string; summary: string; stepId?: string; routeId?: string }
+export interface AutonomousAction { kind: string; summary: string; stepId?: string; routeId?: string; toolName?: string; toolCallId?: string; requiredUserInput?: string }
 export interface DecisionRecord {
   decisionVersion: number; decisionId: string; goalId: string; cycle: number;
   phase: 'observe' | 'interpret' | 'propose' | 'validate' | 'act' | 'verify' | 'reflect';
@@ -33,6 +33,7 @@ export interface PublicDecisionSummary {
 export interface AutonomousControlSnapshot {
   controlVersion: number; mode: 'shadow' | 'adaptive'; protocol: 'observe-interpret-propose-validate-act-verify-reflect'; loopPhase: DecisionRecord['phase'];
   planRevision: number; currentDecision: DecisionRecord; decisionHistory: DecisionRecord[]; decisionBasis: Record<string, unknown>;
+  decisionAuthority?: import('./autonomousDecisionAuthority.mjs').AutonomousDecisionAuthority;
   routeHistory: SituationModel['routeHistory']; repeatedRouteDetected: boolean; shouldAwaitUser: boolean; publicSummary: PublicDecisionSummary;
   budgetAssessment?: { action: string; reason: string; dimension?: string }; updatedAt: number;
 }

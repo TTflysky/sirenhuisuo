@@ -592,9 +592,9 @@ export default function DmChatApp({ empId }: Props) {
         setLiveText(accumulated);
         setStatus('正在生成回复…');
       },
-      onToolCall(name, args) {
+      async onToolCall(name, args) {
         setLiveText('');
-        taskBridge?.toolStarted(name, args ?? '');
+        await taskBridge?.toolStarted(name, args ?? '');
         setStatus(getToolActivity(name, args));
         const matchKey = `${name}:${args}`;
         const report = getToolReport(name, args);

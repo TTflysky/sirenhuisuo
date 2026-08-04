@@ -28,6 +28,33 @@ async function main() {
     assert.equal(created.task.workspaceId, 'workspace/task-service');
     assert.equal(created.task.workspace.status, 'ready');
     assert.equal(created.task.workspace.workspaceId, 'workspace/task-service');
+
+    const authorityTeam = await service.create({
+      taskType: 'team', teamId: 'team-authority', title: '团队自主工具校验', goal: '由责任员工生成并验证交付文件',
+      idempotencyKey: 'team-authority-001', conversationId: 'conversation-team-authority',
+      memberSnapshot: [{ id: 'writer', name: '交付员工', role: 'coder', modelConfig: { model: 'mock-model' } }],
+      steps: [{ id: 'delivery', title: '生成交付文件', employeeId: 'writer', deliverableType: 'file' }],
+    });
+    const authorityGoalId = authorityTeam.task.goalState.goalId;
+    const authorityRevision = authorityTeam.task.adaptivePlanGraph.revision;
+    const proposalId = 'proposal-team-authority-live';
+    await service.update(authorityTeam.task.id, (task) => {
+      task.autonomousDecisionProposal = {
+        proposalVersion: 1, proposalId, source: 'model', goalId: authorityGoalId, planRevision: authorityRevision,
+        selectedAction: { kind: 'use_tool', stepId: 'delivery', toolName: 'write_file', summary: '责任员工调用 write_file 生成真实交付证据。' },
+        publicRationale: '当前责任步骤需要形成可回读文件。', expectedEvidence: ['文件存在并回读'], riskLevel: 'low', approvalRequired: false, createdAt: Date.now(),
+      };
+    }, '记录团队自主工具决策');
+    const acceptedAuthority = (await service.read({ taskId: authorityTeam.task.id })).runs[0];
+    assert.equal(acceptedAuthority.autonomousControl.decisionAuthority.accepted, true);
+    assert.equal(acceptedAuthority.autonomousControl.decisionAuthority.proposalId, proposalId);
+    await service.update(authorityTeam.task.id, (task) => {
+      task.adaptivePlanGraph.revision += 1;
+      task.autonomousDecisionProposal = { ...task.autonomousDecisionProposal, proposalId: 'proposal-team-authority-stale', planRevision: authorityRevision, createdAt: Date.now() };
+    }, '模拟计划修订后的过期团队决策');
+    const rejectedAuthority = (await service.read({ taskId: authorityTeam.task.id })).runs[0];
+    assert.equal(rejectedAuthority.autonomousControl.decisionAuthority.accepted, false);
+    assert.match(rejectedAuthority.autonomousControl.decisionAuthority.reason, /过期计划版本/u);
     const duplicate = await service.create({
       taskType: 'assistant', teamId: 'scope:assistant', goal: '不应重复创建', idempotencyKey: 'acceptance-001',
     });
@@ -191,7 +218,7 @@ async function main() {
     assert.equal(restoredContext.turnLifecycle.sequence, 5);
     assert.equal(restoredContext.lifecycleRecovery.goal, created.task.goal);
     const all = await createTaskService(restartedStore).read({});
-    assert.equal(all.runs.length, 9);
+    assert.equal(all.runs.length, 10);
     assert.equal(all.integrity.ok, true);
     console.log('verify-task-service: PASS');
   } finally {

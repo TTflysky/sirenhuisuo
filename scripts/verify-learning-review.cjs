@@ -3,7 +3,7 @@ const fs = require('fs/promises');
 const os = require('os');
 const path = require('path');
 const { createMemoryManager } = require('../electron/memoryManager.cjs');
-const { createLearningReviewQueue } = require('../electron/learningReviewQueue.cjs');
+const { createLearningReviewQueue, collectInput, hasVerifiedAcceptance } = require('../electron/learningReviewQueue.cjs');
 
 async function waitFor(check, timeout = 4000) {
   const started = Date.now();
@@ -55,12 +55,24 @@ async function main() {
     assert.equal(reviewCalls, 3);
     assert.equal(drafts.length, 1);
     const memories = await memoryManager.list({ proposalStatus: 'pending' });
-    assert(memories.entries.some((entry) => entry.scope === 'team' && entry.scopeId === 'team-review'));
-    assert(memories.entries.some((entry) => entry.scope === 'employee' && entry.scopeId === 'writer'));
+    assert(memories.entries.some((entry) => entry.scope === 'team' && entry.scopeId === 'team-review' && entry.memoryKind === 'procedural' && entry.acceptanceVerified));
+    assert(memories.entries.some((entry) => entry.scope === 'employee' && entry.scopeId === 'writer' && entry.memoryKind === 'procedural' && entry.acceptanceVerified));
     assert.equal(memories.proposals.filter((proposal) => proposal.status === 'pending').length, 1);
     const restored = createLearningReviewQueue(path.join(root, 'runtime'), { memoryManager, fetchImpl, createSkillDraft: async () => ({ ok: true, draft: { id: 'unused' } }) });
     const restoredStatus = await restored.status();
     assert.equal(restoredStatus.items[0].status, 'completed');
+
+    const unverified = fixture();
+    unverified.id = 'task-unverified-complete';
+    unverified.recoveryContext = { steeringMessages: [] };
+    unverified.evidence = [];
+    unverified.steps[0].events = [{ type: 'tool', detail: 'write_file {} → 成功' }];
+    unverified.steps[0].evidence = [];
+    assert.equal(hasVerifiedAcceptance(collectInput(unverified)), false);
+    await queue.enqueue(unverified, { memoryWriteApproval: true });
+    await waitFor(async () => (await queue.status({ taskId: unverified.id })).items[0]?.status === 'completed');
+    const afterUnverified = await memoryManager.list({ taskId: unverified.id });
+    assert.equal(afterUnverified.entries.length, 0, '没有真实验收证据的完成声明不得进入程序记忆');
     console.log(`learning review verified: ${completed.result.verifiedMemories} verified memories, ${drafts.length} draft`);
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 }

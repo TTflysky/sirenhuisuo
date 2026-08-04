@@ -23,6 +23,7 @@ export interface DiscussionHandlers {
   onSteeringReply?: (emp: Employee, content: string, tokens?: number, contextUsage?: ContextUsage, stepId?: string) => void;
   onExecutionState?: (state: ExecutionControllerSnapshot, emp?: Employee, stepId?: string) => void;
   onTextDelta?: (emp: Employee, accumulated: string, stepId?: string) => void;
+  onAutonomousDecision?: (emp: Employee, stepId: string, toolName: string, toolArgs: string) => Promise<void> | void;
 }
 
 export interface TeamDiscussionOptions {
@@ -87,6 +88,7 @@ async function memberSpeak(
   onExecutionState?: (state: ExecutionControllerSnapshot) => void,
   executionRouteScope?: string,
   onTextDelta?: (accumulated: string) => void,
+  onAutonomousDecision?: (toolName: string, toolArgs: string) => Promise<void> | void,
 ): Promise<{ text: string; tokens?: number; contextUsage?: ContextUsage; failed?: boolean; producedFile?: boolean; reviewDecision?: ReviewSubmissionEvidence; executionState?: ExecutionControllerSnapshot }> {
   const effectiveModel = getEmployeeModel(emp);
   if (!resolveApiBase(effectiveModel)) {
@@ -144,7 +146,8 @@ async function memberSpeak(
       extraSystemContext: effectiveContext,
       scope: `team:${team.id}` as any,
       workspaceId,
-      onToolCall(name, args) {
+      async onToolCall(name, args) {
+        await onAutonomousDecision?.(name, args);
         onToolCall(name, args, '');
       },
       onToolResult(name, args, result, success, protocolEvidence, structuredEvidence) {
@@ -387,6 +390,7 @@ export async function runTeamDiscussion(
         },
         `${opts.runId ?? opts.discussionId ?? team.id}:${step.id}`,
         (accumulated) => handlers.onTextDelta?.(emp, accumulated, step.id),
+        (toolName, toolArgs) => handlers.onAutonomousDecision?.(emp, step.id, toolName, toolArgs),
       );
       if (r.executionState) sharedExecutionState = r.executionState;
       content = r.text;

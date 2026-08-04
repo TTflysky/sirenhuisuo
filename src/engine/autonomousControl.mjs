@@ -3,6 +3,7 @@ import {
   readyAdaptiveNodes,
   restoreAdaptivePlanGraph,
 } from './adaptivePlanGraph.mjs';
+import { selectAutonomousDecision } from './autonomousDecisionAuthority.mjs';
 
 const CONTROL_VERSION = 2;
 const GOAL_VERSION = 1;
@@ -414,12 +415,20 @@ export function reconcileAutonomousControl(run, options = {}) {
     repeatedRouteDetected: routeRepeated,
     needsApproval: run.pendingApproval?.status === 'pending',
   });
-  const action = recommendAction(run, situation, adaptivePlanGraph, budgetAssessment);
+  const fallbackAction = recommendAction(run, situation, adaptivePlanGraph, budgetAssessment);
   const previousControl = run.autonomousControl;
   const previousDecision = previousControl?.currentDecision;
+  const authoritySelection = selectAutonomousDecision(
+    { ...run, goalState: goal, situationModel: situation, adaptivePlanGraph },
+    fallbackAction,
+    run.autonomousDecisionProposal,
+    { consumedProposalId: previousControl?.decisionAuthority?.proposalId },
+  );
+  const action = authoritySelection.action;
   const decisionBasis = {
     goalId: goal.goalId,
     action,
+    authority: authoritySelection.authority,
     factIds: situation.confirmedFacts.map((item) => item.id),
     blockers: situation.blockedBy,
     failures: situation.failures.map((item) => item.id),
@@ -434,12 +443,12 @@ export function reconcileAutonomousControl(run, options = {}) {
     cycle,
     selectedAction: action,
     observedFacts: situation.confirmedFacts.slice(-8).map((item) => item.statement),
-    publicRationale: routeRepeated
+    publicRationale: authoritySelection.proposal?.publicRationale || (routeRepeated
       ? 'The same failed route has reached the repeat limit, so continuing it would waste resources.'
       : situation.blockedBy.length
         ? 'The recommendation follows the current blocker and preserves completed evidence.'
-        : 'The recommendation follows the current goal, verified facts, and satisfied dependencies.',
-    expectedEvidence: goal.successCriteria,
+        : 'The recommendation follows the current goal, verified facts, and satisfied dependencies.'),
+    expectedEvidence: authoritySelection.proposal?.expectedEvidence?.length ? authoritySelection.proposal.expectedEvidence : goal.successCriteria,
     approvalRequirement: Boolean(run.pendingApproval?.status === 'pending'),
     result: run.status,
     nextDecision: 'Re-evaluate after new evidence, a failure, review feedback, or user steering.',
@@ -458,6 +467,7 @@ export function reconcileAutonomousControl(run, options = {}) {
     currentDecision: decision,
     decisionHistory,
     decisionBasis,
+    decisionAuthority: authoritySelection.authority,
     routeHistory: situation.routeHistory,
     repeatedRouteDetected: routeRepeated,
     shouldAwaitUser: action.kind === 'await_user',

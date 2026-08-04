@@ -25,7 +25,7 @@ export function syncLegacyMemory(): Promise<void> {
   return legacySyncPromise;
 }
 
-export async function buildLayeredMemoryContext(input: { query?: string; teamId?: string; employeeId?: string; limit?: number } = {}): Promise<string> {
+export async function buildLayeredMemoryContext(input: { query?: string; teamId?: string; employeeId?: string; memoryKind?: LayeredMemoryEntry['memoryKind']; memoryKinds?: LayeredMemoryEntry['memoryKind'][]; limit?: number } = {}): Promise<string> {
   await syncLegacyMemory();
   const result = await window.electronAPI?.memoryContext?.(input);
   return result?.ok ? result.context ?? '' : '';

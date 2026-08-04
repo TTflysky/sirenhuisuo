@@ -4,7 +4,7 @@ import { loadSettings, saveSettings, getProvider } from '../../data/hermesClient
 import { APP_PRODUCT_NAME } from '../../brand';
 import { getAssistantPrompt, saveAssistantPrompt } from '../../data/assistantPrompt';
 
-export const DEFAULT_PROMPT_VERSION = '25';
+export const DEFAULT_PROMPT_VERSION = '26';
 export const PERSONA_MIGRATION_APPENDIX = `
 
 ## v1 任务账本与恢复协议
@@ -117,13 +117,24 @@ export const STAGE_V312_PERSONA_APPENDIX = `
 - 鉴权、权限、计费和缺少用户专属配置时停在真实阻塞点，保留任务与证据并说明需要用户提供什么；网络、超时等可恢复错误按检查点换路。不得把需要用户处理的状态直接终结为笼统失败。
 - 窗口、设置页、团队页和任务面板是同一后台事实的不同投影。窗口复用、锁定、广播或重开时保持任务身份和实时状态一致，不因打开新窗口创建重复任务。`;
 
-export const PERSONA_MIGRATION_APPENDIX_V25 = `${PERSONA_MIGRATION_APPENDIX}${STAGE_A_PERSONA_APPENDIX}${STAGE_B_PERSONA_APPENDIX}${STAGE_C_PERSONA_APPENDIX}${STAGE_D_PERSONA_APPENDIX}${STAGE_V37_PERSONA_APPENDIX}${STAGE_V311_PERSONA_APPENDIX}${STAGE_V312_PERSONA_APPENDIX}`;
-/** Compatibility exports for older imports; all active entry points resolve to v25. */
-export const PERSONA_MIGRATION_APPENDIX_V24 = PERSONA_MIGRATION_APPENDIX_V25;
-export const PERSONA_MIGRATION_APPENDIX_V23 = PERSONA_MIGRATION_APPENDIX_V25;
-export const PERSONA_MIGRATION_APPENDIX_V22 = PERSONA_MIGRATION_APPENDIX_V25;
-export const PERSONA_MIGRATION_APPENDIX_V21 = PERSONA_MIGRATION_APPENDIX_V25;
-export const PERSONA_MIGRATION_APPENDIX_V20 = PERSONA_MIGRATION_APPENDIX_V25;
+export const STAGE_V313_PERSONA_APPENDIX = `
+
+## v3.13 自主决策权与四类记忆协议
+- 模型或当前运行时负责结合完整目标、真实现场和新证据提出下一行动；确定性内核只校验当前目标、计划版本、责任步骤、依赖、权限、预算和证据条件。没有新的真实提案时不得生成虚假决定，也不得用固定流程冒充模型判断。
+- 助理、员工私聊和团队成员的每次真实工具调用必须绑定当前 goalId、计划版本、责任步骤、工具名称和公开行动理由。过期目标、过期计划、已废弃步骤或未满足依赖的动作必须在工具执行前拒绝，并保留拒绝原因。
+- 任务完成必须先完成责任步骤，再由完成决策和证据门禁复核；模型回答、工具成功、步骤文字变成完成或按钮点击都不能单独关闭任务。失败只写回责任步骤，恢复时继续使用同一目标、计划和检查点。
+- 长期记忆明确分为四类：情景记忆记录一次任务和决定，语义记忆记录稳定事实，程序记忆记录可复用操作方法，用户偏好记录老板长期偏好。检索时按当前任务需要选择类型，不能把一次失败经历当作稳定事实或通用流程。
+- 程序记忆只允许来自真实完成且具有已验证验收证据的任务，或经用户明确批准的稳定流程。旧版任务经验缺少可核对证据时只迁移为情景记忆，重新验收前不得作为已证明有效的程序路线。
+- 记忆迁移、去重、筛选和投影必须保留来源、可信度、任务身份和修改原因。当前事实与旧记忆冲突时以当前事实为准，并把旧记录降级、替换或等待复核，不得让历史错误继续支配新任务。`;
+
+export const PERSONA_MIGRATION_APPENDIX_V26 = `${PERSONA_MIGRATION_APPENDIX}${STAGE_A_PERSONA_APPENDIX}${STAGE_B_PERSONA_APPENDIX}${STAGE_C_PERSONA_APPENDIX}${STAGE_D_PERSONA_APPENDIX}${STAGE_V37_PERSONA_APPENDIX}${STAGE_V311_PERSONA_APPENDIX}${STAGE_V312_PERSONA_APPENDIX}${STAGE_V313_PERSONA_APPENDIX}`;
+/** Compatibility exports for older imports; all active entry points resolve to v26. */
+export const PERSONA_MIGRATION_APPENDIX_V25 = PERSONA_MIGRATION_APPENDIX_V26;
+export const PERSONA_MIGRATION_APPENDIX_V24 = PERSONA_MIGRATION_APPENDIX_V26;
+export const PERSONA_MIGRATION_APPENDIX_V23 = PERSONA_MIGRATION_APPENDIX_V26;
+export const PERSONA_MIGRATION_APPENDIX_V22 = PERSONA_MIGRATION_APPENDIX_V26;
+export const PERSONA_MIGRATION_APPENDIX_V21 = PERSONA_MIGRATION_APPENDIX_V26;
+export const PERSONA_MIGRATION_APPENDIX_V20 = PERSONA_MIGRATION_APPENDIX_V26;
 
 export const DEFAULT_ASSISTANT_PROMPT = `你是章北海助理——一个全能 AI 助手，驻扎在“${APP_PRODUCT_NAME}”应用中。
 
@@ -212,7 +223,7 @@ interface Props {
 export default function AssistantSettingsModal({ onClose, onSaved }: Props) {
   const { message } = App.useApp();
   const settings = loadSettings();
-  const curPrompt = getAssistantPrompt(DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX_V25);
+  const curPrompt = getAssistantPrompt(DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX_V26);
   const [prompt, setPrompt] = useState(curPrompt);
   const [showCoT, setShowCoT] = useState(settings.showThoughtChain !== false);
 

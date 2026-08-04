@@ -405,8 +405,9 @@ export interface SkillDraft {
 export interface LayeredMemoryEntry {
   id: string; scope: 'organization' | 'team' | 'employee' | 'user'; scopeId: string;
   category: 'identity' | 'preference' | 'constraint' | 'workflow' | 'decision' | 'project' | 'lesson';
+  memoryKind: 'episodic' | 'semantic' | 'procedural' | 'preference';
   content: string; source: string; sourceType: 'manual' | 'legacy' | 'task-review' | 'review-model'; taskId?: string; employeeId?: string;
-  evidence: string[]; importance: number; confidence: number; createdAt: number; updatedAt: number;
+  evidence: string[]; acceptanceVerified?: boolean; importance: number; confidence: number; createdAt: number; updatedAt: number;
 }
 export interface MemoryProposal {
   id: string; status: 'pending' | 'approved' | 'rejected'; taskId?: string; summary: string;
@@ -535,8 +536,8 @@ declare global {
     skillsRuntimeRepair: (id: string) => Promise<SkillInstallResult & { runtime?: unknown }>;
     skillDrafts: () => Promise<{ ok: boolean; drafts?: SkillDraft[]; error?: string }>;
     reviewSkillDraft: (input: { draftId: string; decision: 'approve' | 'reject'; note?: string }) => Promise<{ ok: boolean; action?: string; draft?: SkillDraft; error?: string }>;
-    memoryList: (input?: { scope?: LayeredMemoryEntry['scope']; scopeId?: string; proposalStatus?: MemoryProposal['status']; includeAudit?: boolean }) => Promise<LayeredMemoryResult>;
-    memoryContext: (input?: { query?: string; teamId?: string; employeeId?: string; limit?: number }) => Promise<LayeredMemoryResult>;
+    memoryList: (input?: { scope?: LayeredMemoryEntry['scope']; scopeId?: string; memoryKind?: LayeredMemoryEntry['memoryKind']; memoryKinds?: LayeredMemoryEntry['memoryKind'][]; category?: LayeredMemoryEntry['category']; proposalStatus?: MemoryProposal['status']; includeAudit?: boolean }) => Promise<LayeredMemoryResult>;
+    memoryContext: (input?: { query?: string; teamId?: string; employeeId?: string; memoryKind?: LayeredMemoryEntry['memoryKind']; memoryKinds?: LayeredMemoryEntry['memoryKind'][]; limit?: number }) => Promise<LayeredMemoryResult>;
     memoryUpsert: (input: Partial<LayeredMemoryEntry> & { content: string; replaceExact?: string }) => Promise<LayeredMemoryResult>;
     memoryRemove: (input: { entryId: string; reason?: string }) => Promise<LayeredMemoryResult>;
     memoryReviewProposal: (input: { proposalId: string; decision: 'approve' | 'reject'; note?: string }) => Promise<LayeredMemoryResult>;

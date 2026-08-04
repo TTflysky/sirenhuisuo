@@ -1,4 +1,4 @@
-# 太极 AI 办公会所 v3.12.0
+# 太极 AI 办公会所 v3.13.0
 
 [![Release](https://img.shields.io/github/v/release/TTflysky/sirenhuisuo?label=release)](https://github.com/TTflysky/sirenhuisuo/releases/latest)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D4)](https://github.com/TTflysky/sirenhuisuo/releases/latest)
@@ -34,15 +34,25 @@
 
 ## 项目状态
 
-- 当前源码版本：`3.12.0`
-- 当前可安装验收版本：`3.12.0`
+- 当前源码版本：`3.13.0`
+- 当前可安装验收版本：`3.13.0`
 - 发布分支：`main`
-- GitHub Release：[`v3.12.0`](https://github.com/TTflysky/sirenhuisuo/releases/tag/v3.12.0)，发布提交 `8bdc5d0`
+- GitHub Release：`v3.13.0` 发布完成后在这里补充远端标签、提交和安装包校验结果。
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 43、React 19、TypeScript 6、Ant Design 6、Vite 8
 - 模型接口：OpenAI 兼容的 `/chat/completions` API
 
 ## 核心能力
+
+### v3.13.0 自主决策权与四类记忆
+
+- 模型或运行时负责提出下一行动，确定性内核校验当前目标、计划版本、责任步骤、依赖、风险和授权；过期决策在真实工具调用前被拒绝。
+- 助理、员工私聊和团队成员共用工具行动提案协议，聊天任务只有通过完成决策和真实证据门禁才会关闭。
+- 分层记忆升级为情景、语义、程序和用户偏好四类；旧任务经验缺少验收证据时只作为历史情景保留。
+- 任务复盘只把“已完成且存在验证证据”的路线写成程序记忆，防止模型口头完成污染长期经验。
+- 内置章北海人格升级到 v26，TaskService 恢复、Agent Loop 收尾和团队自主决策继续拆分并受模块/函数门禁保护。
+- Windows 安装包为 `release/taiji-office-setup-3.13.0.exe`，大小 `195896339` 字节，SHA-256 `D7690E007BABE8D4A685880BCFCE4B380AEEA68865E8C1303B85DA13287AE515`；本机产品版本与包内版本均已核对为 `3.13.0`。
+- 覆盖前用户数据和备份均为 314 个文件、`222077920` 字节；安装版真实迁移 184 条记忆到 schema v2，迁移后客户端 5 个进程全部正常响应。
 
 ### v3.12.0 模型兼容、任务事实与模块边界
 
@@ -382,13 +392,13 @@
 
 正式版本均通过核心回归、包内版本核验和发布资产一致性检查。源码、交接和远端安装资产以 `main` 与对应 GitHub Release 为准。
 
-- [直接下载 v3.12.0 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v3.12.0/taiji-office-setup-3.12.0.exe)
-- [查看 v3.12.0 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v3.12.0)
+- [直接下载 v3.13.0 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v3.13.0/taiji-office-setup-3.13.0.exe)
+- [查看 v3.13.0 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v3.13.0)
 
 本地构建的安装程序生成在：
 
 ```text
-release/taiji-office-setup-3.12.0.exe
+release/taiji-office-setup-3.13.0.exe
 ```
 
 可以直接覆盖安装旧版本。应用数据保存在用户目录，正常覆盖安装不会删除员工、团队、聊天和模型配置。

@@ -4,22 +4,26 @@ const ts = require('typescript');
 
 const limits = {
   'electron/main.cjs': 650,
-  'electron/taskService.cjs': 420,
+  'electron/taskService.cjs': 220,
   'electron/taskServiceQueries.cjs': 170,
   'electron/taskServiceContextQueries.cjs': 80,
   'electron/taskServiceEvidenceCommands.cjs': 170,
   'electron/taskServiceApprovalCommands.cjs': 80,
   'electron/taskServiceLifecycleCommands.cjs': 120,
+  'electron/taskServiceRecoveryCommands.cjs': 140,
   'electron/taskServiceIpc.cjs': 60,
   'electron/windowIpc.cjs': 160,
   'electron/windowRegistry.cjs': 50,
   'electron/skills.cjs': 100,
   'electron/nativeToolRuntime.cjs': 400,
-  'src/data/agentLoopRuntime.ts': 860,
+  'src/data/agentLoopRuntime.ts': 760,
   'src/data/agentLoopPolicy.ts': 40,
+  'src/data/agentLoopFinalization.ts': 200,
+  'src/engine/autonomousDecisionAuthority.mjs': 70,
   'src/store/teamDiscussionRuntime.ts': 570,
   'src/store/teamWorkerLease.ts': 90,
   'src/store/teamRunFinalization.ts': 110,
+  'src/store/teamAutonomousDecision.ts': 60,
 };
 
 function functionName(node, sourceFile) {

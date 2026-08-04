@@ -12,6 +12,7 @@ import { buildReviewStageSummary, buildWorkStageSummary } from '../engine/teamSt
 import * as client from '../data/hermesClient';
 import { finalizeTeamRun } from './teamRunFinalization';
 import { createTeamWorkerLease } from './teamWorkerLease';
+import { createTeamAutonomousDecisionRecorder } from './teamAutonomousDecision';
 
 export type DiscussionOpts = Parameters<typeof runTeamDiscussion>[2];
 export interface DiscussionScheduler {
@@ -108,6 +109,7 @@ export function createTeamDiscussionRuntime({
       }
       dispatch({ type: 'UPDATE_TASK_RUN', run: liveRun });
     };
+    const recordAutonomousDecision = createTeamAutonomousDecisionRecorder({ getRun: () => liveRun, updateRun });
     const workerLease = createTeamWorkerLease({
       getRun: () => liveRun,
       acceptRun: (run, publish) => {
@@ -152,6 +154,9 @@ export function createTeamDiscussionRuntime({
               step.events.push({ ts: Date.now(), type: controller.status === 'blocked' || controller.status === 'awaiting_user' ? 'error' : 'status', detail: statusText });
             }
           });
+        },
+        onAutonomousDecision(emp, stepId, toolName) {
+          return recordAutonomousDecision(emp.id, stepId, toolName);
         },
         onMessage(emp, content, mentions, tokens, discussionRound, inReplyToMessageId, stepId, contextUsage) {
           stepCounter += 1;

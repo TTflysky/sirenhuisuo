@@ -13,7 +13,7 @@ const checks = [
 checks.push(
   ['employee dm records actual skill calls', read('src/components/chat/DmChatApp.tsx').includes('resolveSkillContextWithEvidence') && read('src/components/chat/DmChatApp.tsx').includes("stage: 'invocation'")],
   ['persona matches runtime protocol', read('src/components/settings/AssistantSettingsModal.tsx').includes('## 运行时执行协议')
-    && read('src/components/settings/AssistantSettingsModal.tsx').includes("DEFAULT_PROMPT_VERSION = '25'")
+    && read('src/components/settings/AssistantSettingsModal.tsx').includes("DEFAULT_PROMPT_VERSION = '26'")
     && read('src/components/settings/AssistantSettingsModal.tsx').includes('## v3.3 团队主持、插话与阶段交接协议')],
 );
 const failed = checks.filter(([, ok]) => !ok);

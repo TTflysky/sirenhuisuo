@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const fs = require('fs/promises');
 const path = require('path');
 
-const LEARNING_REVIEW_VERSION = 1;
+const LEARNING_REVIEW_VERSION = 2;
 const TERMINAL_OUTCOMES = new Set(['completed', 'failed', 'stopped']);
 
 function clone(value) { return value === undefined ? undefined : JSON.parse(JSON.stringify(value)); }
@@ -57,6 +57,9 @@ function collectInput(run) {
 }
 function toolCount(input) { return input.steps.reduce((sum, step) => sum + step.tools.length, 0); }
 function shouldUseReviewModel(input) { return input.outcome !== 'completed' || input.corrections.length > 0 || toolCount(input) >= 3; }
+function hasVerifiedAcceptance(input) {
+  return input.outcome === 'completed' && input.evidence.some((item) => item.verified === true && text(item.summary, 20));
+}
 
 function parseReviewOutput(raw) {
   const match = String(raw || '').match(/\{[\s\S]*\}/u);
@@ -69,7 +72,7 @@ function parseReviewOutput(raw) {
     const content = text(item?.content, 800);
     if (!content) continue;
     if (item.target === 'employee' && !text(item.employee_id, 180)) continue;
-    memoryUpdates.push({ target: item.target, action: item.action || 'add', employeeId: text(item.employee_id, 180) || undefined, oldText: text(item.old_text, 800) || undefined, content, category: ['identity', 'preference', 'constraint', 'workflow', 'decision', 'project', 'lesson'].includes(item.category) ? item.category : 'lesson', importance: Math.max(1, Math.min(5, Number(item.importance) || 3)), confidence: Math.max(0.65, Math.min(1, Number(item.confidence) || 0.8)) });
+    memoryUpdates.push({ target: item.target, action: item.action || 'add', employeeId: text(item.employee_id, 180) || undefined, oldText: text(item.old_text, 800) || undefined, content, category: ['identity', 'preference', 'constraint', 'workflow', 'decision', 'project', 'lesson'].includes(item.category) ? item.category : 'lesson', memoryKind: ['episodic', 'semantic', 'procedural', 'preference'].includes(item.memory_kind) ? item.memory_kind : undefined, importance: Math.max(1, Math.min(5, Number(item.importance) || 3)), confidence: Math.max(0.65, Math.min(1, Number(item.confidence) || 0.8)) });
   }
   const skillSuggestions = [];
   for (const item of Array.isArray(parsed.skill_suggestions) ? parsed.skill_suggestions.slice(0, 5) : []) {
@@ -126,24 +129,24 @@ function createLearningReviewQueue(rootDir, options) {
   }
 
   async function applyVerifiedLessons(input) {
-    if (input.outcome !== 'completed') return [];
+    if (!hasVerifiedAcceptance(input)) return [];
     const results = [];
     const verified = input.evidence.filter((item) => item.verified).map((item) => item.summary).slice(-5);
     const tools = [...new Set(input.steps.flatMap((step) => step.tools.filter((tool) => tool.success).map((tool) => tool.name)).filter((name) => name !== 'unknown'))].slice(0, 10);
     const teamContent = [`任务“${input.goal.slice(0, 220)}”已通过真实验收`, tools.length ? `有效工具路线：${tools.join(' → ')}` : '', verified.length ? `验收证据：${verified.join('；')}` : ''].filter(Boolean).join('；').slice(0, 900);
-    results.push(await options.memoryManager.upsert({ scope: 'team', scopeId: input.teamId, category: 'lesson', content: teamContent, source: `任务复盘 ${input.taskId}`, sourceType: 'task-review', taskId: input.taskId, importance: 4, confidence: 0.95, evidence: verified }));
+    results.push(await options.memoryManager.upsert({ scope: 'team', scopeId: input.teamId, category: 'lesson', memoryKind: 'procedural', content: teamContent, source: `任务复盘 ${input.taskId}`, sourceType: 'task-review', taskId: input.taskId, importance: 4, confidence: 0.95, evidence: verified, acceptanceVerified: true }));
     for (const step of input.steps.filter((item) => item.status === 'completed')) {
       const successful = [...new Set(step.tools.filter((tool) => tool.success).map((tool) => tool.name).filter((name) => name !== 'unknown'))];
       const evidence = step.evidence.filter((item) => item.verified).map((item) => item.summary).slice(-4);
-      if (!successful.length && !evidence.length) continue;
+      if (!evidence.length) continue;
       const content = `完成“${step.title}”时验证有效：${successful.length ? successful.join(' → ') : evidence.join('；')}`.slice(0, 800);
-      results.push(await options.memoryManager.upsert({ scope: 'employee', scopeId: step.employeeId, employeeId: step.employeeId, category: 'lesson', content, source: `任务复盘 ${input.taskId}`, sourceType: 'task-review', taskId: input.taskId, importance: 4, confidence: 0.95, evidence }));
+      results.push(await options.memoryManager.upsert({ scope: 'employee', scopeId: step.employeeId, employeeId: step.employeeId, category: 'lesson', memoryKind: 'procedural', content, source: `任务复盘 ${input.taskId}`, sourceType: 'task-review', taskId: input.taskId, importance: 4, confidence: 0.95, evidence, acceptanceVerified: true }));
     }
     return results;
   }
 
   function buildPrompt(input, existingContext) {
-    return `你是太极的独立任务复盘器。只从真实记录中提取对未来仍有用的原子经验，不得把一次性状态、凭据、错误代码或猜测写入记忆。\n\n当前记忆：\n${existingContext || '暂无'}\n\n任务记录：\n${JSON.stringify(input, null, 2).slice(0, 30000)}\n\n只返回 JSON：\n{"memory_updates":[{"target":"organization|team|employee|user","employee_id":"员工目标时必填","action":"add|replace","old_text":"精确旧文本，仅 replace","content":"一条原子事实","category":"lesson|workflow|constraint|preference|decision|project","importance":1,"confidence":0.8}],"skill_suggestions":[{"action":"create|patch","name":"名称","description":"用途","content":"create 时完整可执行说明","skill_name":"patch 目标","old_string":"精确旧文本","new_string":"替换文本","reason":"为什么可复用"}]}\n规则：只有跨任务可复用的内容才建议；个人偏好写 user，团队约定写 team，员工独有路线写 employee，跨团队通用经验写 organization。Skill 必须是重复出现、步骤稳定的工作流；不确定时返回空数组。`;
+    return `你是太极的独立任务复盘器。只从真实记录中提取对未来仍有用的原子经验，不得把一次性状态、凭据、错误代码或猜测写入记忆。\n\n当前记忆：\n${existingContext || '暂无'}\n\n任务记录：\n${JSON.stringify(input, null, 2).slice(0, 30000)}\n\n只返回 JSON：\n{"memory_updates":[{"target":"organization|team|employee|user","employee_id":"员工目标时必填","action":"add|replace","old_text":"精确旧文本，仅 replace","content":"一条原子事实","category":"lesson|workflow|constraint|preference|decision|project","memory_kind":"episodic|semantic|procedural|preference","importance":1,"confidence":0.8}],"skill_suggestions":[{"action":"create|patch","name":"名称","description":"用途","content":"create 时完整可执行说明","skill_name":"patch 目标","old_string":"精确旧文本","new_string":"替换文本","reason":"为什么可复用"}]}\n规则：情景记忆记录一次任务或决定，语义记忆记录稳定事实，程序记忆只记录已被真实验收证明有效的路线，用户偏好写 preference。只有跨任务可复用的内容才建议；个人偏好写 user，团队约定写 team，员工独有路线写 employee，跨团队通用经验写 organization。Skill 必须是重复出现、步骤稳定的工作流；不确定时返回空数组。`;
   }
 
   async function callReviewModel(input, modelConfig) {
@@ -165,7 +168,9 @@ function createLearningReviewQueue(rootDir, options) {
     for (const update of review.memoryUpdates) {
       const scope = update.target;
       const scopeId = scope === 'team' ? input.teamId : scope === 'employee' ? update.employeeId : 'default';
-      const proposal = await options.memoryManager.propose({ taskId: input.taskId, source: 'review-model', summary: `独立审查建议更新${scope === 'employee' ? '员工个人' : scope === 'team' ? '团队' : scope === 'user' ? '用户' : '组织'}记忆`, update: { scope, scopeId, employeeId: update.employeeId, category: update.category, content: update.content, replaceExact: update.action === 'replace' ? update.oldText : undefined, source: `独立审查 ${input.taskId}`, sourceType: 'review-model', taskId: input.taskId, importance: update.importance, confidence: update.confidence } });
+      const requestedMemoryKind = update.memoryKind || (update.category === 'preference' ? 'preference' : ['workflow', 'lesson'].includes(update.category) ? 'procedural' : update.taskId ? 'episodic' : 'semantic');
+      const memoryKind = requestedMemoryKind === 'procedural' && !hasVerifiedAcceptance(input) ? 'episodic' : requestedMemoryKind;
+      const proposal = await options.memoryManager.propose({ taskId: input.taskId, source: 'review-model', summary: `独立审查建议更新${scope === 'employee' ? '员工个人' : scope === 'team' ? '团队' : scope === 'user' ? '用户' : '组织'}记忆`, update: { scope, scopeId, employeeId: update.employeeId, category: update.category, memoryKind, content: update.content, replaceExact: update.action === 'replace' ? update.oldText : undefined, source: `独立审查 ${input.taskId}`, sourceType: 'review-model', taskId: input.taskId, importance: update.importance, confidence: update.confidence, acceptanceVerified: memoryKind === 'procedural' && hasVerifiedAcceptance(input) } });
       proposalIds.push(proposal.proposal.id);
       if (settings.memoryWriteApproval === false && update.confidence >= 0.9) await options.memoryManager.reviewProposal(proposal.proposal.id, 'approve', { reviewedBy: 'policy:auto-high-confidence' });
     }
@@ -264,4 +269,4 @@ function createLearningReviewQueue(rootDir, options) {
   return { initialize, enqueue, process, status, retry, filePath };
 }
 
-module.exports = { LEARNING_REVIEW_VERSION, createLearningReviewQueue, collectInput, parseReviewOutput, shouldUseReviewModel, resolveEndpoint };
+module.exports = { LEARNING_REVIEW_VERSION, createLearningReviewQueue, collectInput, parseReviewOutput, shouldUseReviewModel, hasVerifiedAcceptance, resolveEndpoint };

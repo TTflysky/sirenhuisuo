@@ -23,7 +23,7 @@ import type { ModelConfig } from '../../types';
 import type { LayeredMemoryEntry, MemoryProposal, LearningReviewItem } from '../../electron';
 import { useStore } from '../../storeContext';
 import { KnowledgeConnectorManager } from '../sidebar/ConnectorPanel';
-import { DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX_V25 } from './AssistantSettingsModal';
+import { DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX_V26 } from './AssistantSettingsModal';
 import { getAssistantPrompt, saveAssistantPrompt } from '../../data/assistantPrompt';
 import { applySyncProfile, createSyncProfile, restoreUpgradeSnapshot } from '../../utils/configSync';
 import {
@@ -166,7 +166,7 @@ function WorkspaceTab() {
 }
 
 function PersonaTab() {
-  const [prompt, setPrompt] = useState(() => getAssistantPrompt(DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX_V25));
+  const [prompt, setPrompt] = useState(() => getAssistantPrompt(DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX_V26));
   const [saved, setSaved] = useState(false);
   const save = () => { saveAssistantPrompt(prompt, DEFAULT_PROMPT_VERSION); setSaved(true); setTimeout(() => setSaved(false), 1500); };
   return <div className="settings-content-page"><header><h2>助理人格</h2><span>与章北海助理窗口共用同一份角色、工具和调度规则</span></header><Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={16} /><div className="settings-page-actions"><Button onClick={() => setPrompt(DEFAULT_ASSISTANT_PROMPT)}>应用新版默认人格</Button><Button type="primary" onClick={save}>{saved ? '已保存' : '保存人格'}</Button></div></div>;
@@ -749,6 +749,8 @@ function MemoryTab() {
   const [learningReviews, setLearningReviews] = useState<LearningReviewItem[]>([]);
   const [layeredScope, setLayeredScope] = useState<LayeredMemoryEntry['scope']>('organization');
   const [layeredScopeId, setLayeredScopeId] = useState('default');
+  const [layeredKindFilter, setLayeredKindFilter] = useState<'all' | LayeredMemoryEntry['memoryKind']>('all');
+  const [layeredMemoryKind, setLayeredMemoryKind] = useState<LayeredMemoryEntry['memoryKind']>('semantic');
   const [layeredText, setLayeredText] = useState('');
   const [refreshingLayered, setRefreshingLayered] = useState(false);
 
@@ -772,10 +774,12 @@ function MemoryTab() {
     if (layeredScope === 'team' && !state.teams.some((team) => team.id === layeredScopeId)) setLayeredScopeId(state.teams[0]?.id ?? 'default');
     if (layeredScope === 'employee' && !state.employees.some((employee) => employee.id === layeredScopeId)) setLayeredScopeId(state.employees[0]?.id ?? 'default');
     if (layeredScope === 'organization' || layeredScope === 'user') setLayeredScopeId('default');
+    if (layeredScope === 'user') setLayeredMemoryKind('preference');
   }, [layeredScope, layeredScopeId, state.employees, state.teams]);
 
   const visibleLayeredEntries = layeredEntries.filter((entry) => entry.scope === layeredScope
-    && ((layeredScope === 'organization' || layeredScope === 'user') || entry.scopeId === layeredScopeId));
+    && ((layeredScope === 'organization' || layeredScope === 'user') || entry.scopeId === layeredScopeId)
+    && (layeredKindFilter === 'all' || entry.memoryKind === layeredKindFilter));
   const pendingProposals = memoryProposals.filter((proposal) => proposal.status === 'pending');
   const selectedUsage = layeredUsage[`${layeredScope}:${layeredScopeId}`] ?? { current: 0, max: 0, percent: 0 };
   const legacyMemoryQuality = memoryQualitySummary(items);
@@ -785,7 +789,8 @@ function MemoryTab() {
     if (!content) return;
     const result = await window.electronAPI?.memoryUpsert?.({
       scope: layeredScope, scopeId: layeredScopeId, employeeId: layeredScope === 'employee' ? layeredScopeId : undefined,
-      category: layeredScope === 'user' ? 'preference' : 'lesson', content, source: '手动添加', sourceType: 'manual', importance: 5, confidence: 1,
+      category: layeredMemoryKind === 'preference' ? 'preference' : layeredMemoryKind === 'procedural' ? 'workflow' : layeredMemoryKind === 'episodic' ? 'decision' : 'lesson',
+      memoryKind: layeredMemoryKind, content, source: '手动添加', sourceType: 'manual', importance: 5, confidence: 1,
     });
     if (!result?.ok) { message.error(result?.error || '分层记忆添加失败'); return; }
     setLayeredText('');
@@ -899,10 +904,14 @@ function MemoryTab() {
         {layeredScope === 'team' && <Select style={{ width: '100%', marginTop: 8 }} value={layeredScopeId} options={state.teams.map((team) => ({ value: team.id, label: team.name }))} onChange={setLayeredScopeId} placeholder="选择团队" />}
         {layeredScope === 'employee' && <Select showSearch optionFilterProp="label" style={{ width: '100%', marginTop: 8 }} value={layeredScopeId} options={state.employees.map((employee) => ({ value: employee.id, label: `${employee.name} · ${employee.title}` }))} onChange={setLayeredScopeId} placeholder="选择员工" />}
         <div className={`memory-capacity${selectedUsage.percent >= 80 ? ' is-warning' : ''}`}><div><span>当前层容量</span><small>{selectedUsage.current} / {selectedUsage.max || '未读取'} 字符</small></div><div><i style={{ width: `${Math.min(100, selectedUsage.percent)}%` }} /></div></div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 8, marginTop: 8 }}>
+          <Select value={layeredKindFilter} onChange={setLayeredKindFilter} options={[{ value: 'all', label: '查看全部记忆类型' }, { value: 'episodic', label: '情景记忆' }, { value: 'semantic', label: '语义记忆' }, { value: 'procedural', label: '程序记忆' }, { value: 'preference', label: '用户偏好' }]} />
+          <Select value={layeredMemoryKind} onChange={setLayeredMemoryKind} disabled={layeredScope === 'user'} options={[{ value: 'episodic', label: '新增：情景记忆' }, { value: 'semantic', label: '新增：语义记忆' }, { value: 'procedural', label: '新增：程序记忆' }, { value: 'preference', label: '新增：用户偏好' }]} />
+        </div>
         <Space.Compact style={{ width: '100%', marginTop: 8 }}><Input value={layeredText} onChange={(event) => setLayeredText(event.target.value)} onPressEnter={() => void addLayeredMemory()} placeholder="手动添加一条可长期复用的原子事实" /><Button type="primary" disabled={!layeredText.trim()} onClick={() => void addLayeredMemory()}>添加</Button></Space.Compact>
         <div style={{ maxHeight: 260, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8, marginTop: 10 }}>
           {visibleLayeredEntries.length === 0 && <div style={{ padding: 18, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>这个记忆层还没有内容。</div>}
-          {visibleLayeredEntries.map((entry, index) => <div key={entry.id} style={{ display: 'flex', gap: 8, padding: '9px 11px', borderBottom: index < visibleLayeredEntries.length - 1 ? '1px solid var(--border-light)' : 'none' }}><div style={{ flex: 1, minWidth: 0 }}><div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 3 }}><Tag>{entry.category}</Tag><Tag>{entry.sourceType === 'task-review' ? '已验收任务' : entry.sourceType === 'review-model' ? '独立审查' : entry.sourceType === 'legacy' ? '旧版迁移' : '手动'}</Tag><Tag color={entry.confidence >= 0.9 ? 'green' : 'default'}>可信度 {Math.round(entry.confidence * 100)}%</Tag></div><div style={{ fontSize: 12, color: 'var(--text)' }}>{entry.content}</div><small style={{ color: 'var(--text-muted)' }}>{entry.source} · {new Date(entry.updatedAt).toLocaleString('zh-CN')}</small></div><Button size="small" type="text" danger icon={<DeleteOutlined />} title="删除这条记忆" aria-label="删除这条记忆" onClick={() => void removeLayeredMemory(entry.id)} /></div>)}
+          {visibleLayeredEntries.map((entry, index) => <div key={entry.id} style={{ display: 'flex', gap: 8, padding: '9px 11px', borderBottom: index < visibleLayeredEntries.length - 1 ? '1px solid var(--border-light)' : 'none' }}><div style={{ flex: 1, minWidth: 0 }}><div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginBottom: 3 }}><Tag color={entry.memoryKind === 'procedural' ? 'green' : entry.memoryKind === 'preference' ? 'blue' : entry.memoryKind === 'episodic' ? 'gold' : 'default'}>{entry.memoryKind === 'episodic' ? '情景记忆' : entry.memoryKind === 'semantic' ? '语义记忆' : entry.memoryKind === 'procedural' ? '程序记忆' : '用户偏好'}</Tag><Tag>{entry.category}</Tag><Tag>{entry.sourceType === 'task-review' ? '已验收任务' : entry.sourceType === 'review-model' ? '独立审查' : entry.sourceType === 'legacy' ? '旧版迁移' : '手动'}</Tag><Tag color={entry.confidence >= 0.9 ? 'green' : 'default'}>可信度 {Math.round(entry.confidence * 100)}%</Tag></div><div style={{ fontSize: 12, color: 'var(--text)' }}>{entry.content}</div><small style={{ color: 'var(--text-muted)' }}>{entry.source} · {new Date(entry.updatedAt).toLocaleString('zh-CN')}</small></div><Button size="small" type="text" danger icon={<DeleteOutlined />} title="删除这条记忆" aria-label="删除这条记忆" onClick={() => void removeLayeredMemory(entry.id)} /></div>)}
         </div>
       </section>
 

@@ -476,6 +476,8 @@ export interface TaskRun {
   adaptivePlanGraph?: import('./engine/adaptivePlanGraph.mjs').AdaptivePlanGraph;
   /** v3.7 adaptive controller; deterministic boundaries validate model-proposed plan changes. */
   autonomousControl?: import('./engine/autonomousControl.mjs').AutonomousControlSnapshot;
+  /** Latest model/runtime action proposal. It is bound to a goal and plan revision before execution. */
+  autonomousDecisionProposal?: import('./engine/autonomousDecisionAuthority.mjs').AutonomousDecisionProposal;
   /** 标识真正执行此任务的客户端进程，供重启恢复判断。 */
   executionSessionId?: string;
   /** 主进程 Worker 持久租约。执行适配器必须在运行前领取并定期续租。 */

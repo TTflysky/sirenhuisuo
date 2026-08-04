@@ -26,6 +26,9 @@ export function createChatTaskBridge(input: {
   let heartbeatFlushTimer: number | undefined;
   let latestLifecycle: TurnLifecycleState | undefined;
   let latestExecutionState: ExecutionControllerSnapshot | undefined;
+  let goalId: string | undefined;
+  let planRevision = 1;
+  let decisionSequence = 0;
   const attempts = new Map<string, string>();
   const pendingWrites: Array<Promise<unknown>> = [];
   const stepId = 'execution';
@@ -105,6 +108,40 @@ export function createChatTaskBridge(input: {
       payload: { leaseId },
     });
   };
+  const recordDecision = async (selectedAction: Record<string, unknown>, publicRationale: string, options: {
+    expectedEvidence?: string[];
+    riskLevel?: 'low' | 'medium' | 'high';
+    approvalRequired?: boolean;
+  } = {}) => {
+    const electron = api();
+    const currentTaskId = taskId;
+    if (!electron || !currentTaskId || !goalId) return;
+    decisionSequence += 1;
+    const proposalId = `proposal-${currentTaskId}-${Date.now()}-${decisionSequence}`;
+    const result = await electron.taskServiceUpdate({
+      taskId: currentTaskId,
+      patch: {
+        autonomousDecisionProposal: {
+          proposalVersion: 1,
+          proposalId,
+          source: 'model',
+          goalId,
+          planRevision,
+          selectedAction,
+          publicRationale,
+          expectedEvidence: options.expectedEvidence || [],
+          riskLevel: options.riskLevel || 'low',
+          approvalRequired: options.approvalRequired === true,
+          createdAt: Date.now(),
+        },
+      },
+      detail: `记录自主行动提案：${String(selectedAction.kind || 'unknown')}`,
+    }) as { ok?: boolean; error?: string; run?: { adaptivePlanGraph?: { revision?: number }; autonomousControl?: { decisionAuthority?: { accepted?: boolean; proposalId?: string; reason?: string } } } };
+    if (!result.ok) throw new Error(result.error || '自主行动提案未能写入任务账本');
+    planRevision = Number(result.run?.adaptivePlanGraph?.revision) || planRevision;
+    const authority = result.run?.autonomousControl?.decisionAuthority;
+    if (!authority?.accepted || authority.proposalId !== proposalId) throw new Error(authority?.reason || '自主行动没有通过当前目标与计划校验');
+  };
 
   return {
     get taskId() { return taskId; },
@@ -122,8 +159,10 @@ export function createChatTaskBridge(input: {
         conversationId: input.conversationId,
         steps: [{ id: stepId, title: 'Execute task route', assignment: decision.goal || input.goal, deliverableType: decision.deliverableType }],
       });
-      const createdTask = created as { ok?: boolean; task?: { id?: string } };
+      const createdTask = created as { ok?: boolean; task?: { id?: string; goalState?: { goalId?: string }; adaptivePlanGraph?: { revision?: number } } };
       taskId = createdTask.ok ? createdTask.task?.id : undefined;
+      goalId = createdTask.ok ? createdTask.task?.goalState?.goalId : undefined;
+      planRevision = Number(createdTask.task?.adaptivePlanGraph?.revision) || 1;
       const currentTaskId = taskId;
       if (!currentTaskId) return;
       await electron.taskServiceStatus({ taskId: currentTaskId, status: 'running', detail: 'Chat execution started' });
@@ -140,14 +179,20 @@ export function createChatTaskBridge(input: {
         sourceUrl: reference.sourceUrl, state: reference.state || 'bound',
       })));
     },
-    toolStarted(name: string, args: string) {
+    async toolStarted(name: string, args: string) {
       const electron = api();
       const currentTaskId = taskId;
       if (!currentTaskId || !electron) return;
       const key = `${name}:${args}`;
       const id = `tool-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      await recordDecision({
+        kind: 'use_tool',
+        toolName: name,
+        toolCallId: id,
+        summary: `调用 ${name} 产生下一项可验证证据。`,
+      }, '该工具由模型根据当前目标、已知事实和执行现场选择；确定性内核只校验目标、计划、权限与证据边界。');
       attempts.set(key, id);
-      schedule(electron.taskServiceToolAttempt({ taskId: currentTaskId, id, stepId, toolName: name, status: 'started', inputSummary: args }));
+      await electron.taskServiceToolAttempt({ taskId: currentTaskId, id, stepId, toolName: name, status: 'started', inputSummary: args });
     },
     toolFinished(name: string, args: string, output: string, success: boolean) {
       const electron = api();
@@ -216,10 +261,12 @@ export function createChatTaskBridge(input: {
       const finalStatus = String(result.turnFinalization?.status || result.lifecycle?.status || result.executionState.status);
       if (finalStatus === 'completed' && result.executionState.status === 'completed') {
         await electron.taskServiceCompleteStep({ taskId: currentTaskId, stepId, summary: result.output.slice(0, 1000), output: { model: result.model, summary: result.output.slice(0, 3000) } });
+        await recordDecision({ kind: 'verify_completion', summary: '对照原目标、成功条件和真实证据执行最终验收。' }, '执行步骤已经完成，必须由证据门禁决定任务能否关闭。');
         const validation = await electron.taskServiceValidateCompletion(currentTaskId);
         if (validation.passed) await electron.taskServiceStatus({ taskId: currentTaskId, status: 'completed', detail: 'Execution evidence and completion gate passed' });
         else await electron.taskServiceStatus({ taskId: currentTaskId, status: 'awaiting_user', detail: 'Execution returned, but the completion gate still needs evidence' });
       } else if (finalStatus === 'waiting_user') {
+        await recordDecision({ kind: 'await_user', summary: '等待唯一无法由客户端自行取得的用户条件。', requiredUserInput: result.turnFinalization?.waitingFor || result.output.slice(0, 600) }, '现有路线已保留，继续前确实缺少用户专属条件。');
         await electron.taskServiceUpdate({
           taskId: currentTaskId,
           patch: { waitingFor: result.turnFinalization?.waitingFor || result.output.slice(0, 1200) },
@@ -227,6 +274,7 @@ export function createChatTaskBridge(input: {
         });
         await electron.taskServiceStatus({ taskId: currentTaskId, status: 'awaiting_user', detail: 'Execution is waiting for a required user condition' });
       } else if (finalStatus === 'paused' || finalStatus === 'checkpointed') {
+        await recordDecision({ kind: 'hold', summary: '保留当前现场，等待用户明确继续。' }, '暂停不会丢失目标、计划版本和已验证证据。');
         await electron.taskServiceCheckpoint({
           taskId: currentTaskId,
           kind: 'turn-lifecycle',
@@ -235,8 +283,10 @@ export function createChatTaskBridge(input: {
         });
         await electron.taskServiceStatus({ taskId: currentTaskId, status: 'paused', detail: 'Execution state was saved and can be resumed' });
       } else if (finalStatus === 'stopped' || result.executionState.status === 'stopped') {
+        await recordDecision({ kind: 'stop_safely', summary: '停止无效路线并保留当前成果与阻塞。' }, '执行控制器已确认继续不会产生新的有效证据。');
         await electron.taskServiceStatus({ taskId: currentTaskId, status: 'stopped', detail: 'Stopped by execution controller' });
       } else {
+        await recordDecision({ kind: 'reflect', summary: '分类当前失败并只重规划受影响部分。' }, '当前执行没有通过完成门禁，先保留有效证据并分析失败。');
         await electron.taskServiceFailStep({ taskId: currentTaskId, stepId, error: result.output.slice(0, 1200), errorClass: failureClass(result.output) });
       }
       } finally {
