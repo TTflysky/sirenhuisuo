@@ -12,7 +12,9 @@
 - 模块与函数增长门禁覆盖新增窗口和 TaskService 模块，禁止职责回流。
 - 内置章北海人格升级到 v25，加入模型协议、任务事实、授权恢复、Coding 隔离工作区和多窗口一致性协议。
 - GitHub 仓库补齐 MIT License、构建产物忽略规则、发布门禁和图文 README；历史安装包造成的仓库膨胀已记录，历史重写延期到项目收尾统一执行。
-- 全量测试更新为 `139/139`，完整 `verify:v2-core-gate` 通过；Windows 安装包、本地覆盖和 GitHub Release 证据以本节最终发布记录为准。
+- 全量测试更新为 `139/139`，语义基准 `400/400`，完整 `verify:v2-core-gate`、人格门禁和发布治理门禁通过。
+- Windows 安装包 `taiji-office-setup-3.12.0.exe` 为 `195887469` 字节，SHA-256 `40AA6B9F7182C4C9EA004B4EC5E2C1674116ACD1228AEF8DA75E9A083F658275`；Blockmap SHA-256 `295CB997701B24B0071B93DF5FC718272B764D2911568AC923DC988681F2B30E`，`latest.yml` SHA-256 `4BC5DF2787A2EA97ABE0F9A17C1B99C9F9C00EDF8CDF70898DFE22AD1BC14BC2`。
+- 已覆盖安装到 `%LOCALAPPDATA%\Programs\taiji-office`，可执行文件产品版本 `3.12.0.0`、`app.asar` 包内版本 `3.12.0`；启动 12 秒后进程正常响应。覆盖前后用户数据均为 320 个文件、`477263942` 字节，备份位于 `local-backups/preinstall-3.12.0-20260804-160237`。
 
 ## v3.11.0 (2026-08-04)
 

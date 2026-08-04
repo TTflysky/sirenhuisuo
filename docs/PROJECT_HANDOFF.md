@@ -1,7 +1,7 @@
 # 项目交接手册
 
 > 最后整理：2026-08-04
-> 当前源码版本：`v3.12.0`；发布候选正在完成安装与远端验收
+> 当前源码与本机安装版本：`v3.12.0`；GitHub Release 正在发布
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 
@@ -15,7 +15,9 @@
 - 当前通过 Vitest `139/139`、语义基准 `400/400`、生产构建、Lint 和完整 v2 核心门禁。
 - 内置章北海人格已升级到 v25；README 与仓库整改报告加入真实办公室和项目验收快照。
 - 仓库补齐 MIT License、忽略规则、包元数据与强化后的 GitHub Actions 发布门禁；历史安装包清理延期到项目收尾执行。
-- Windows 安装包、本机覆盖和 GitHub Release 正在验收，未取得证据前不得写成已完成。
+- Windows 安装包 `release/taiji-office-setup-3.12.0.exe` 为 `195887469` 字节，SHA-256 `40AA6B9F7182C4C9EA004B4EC5E2C1674116ACD1228AEF8DA75E9A083F658275`；Blockmap 与 `latest.yml` 已核验。
+- 已覆盖安装到 `%LOCALAPPDATA%\Programs\taiji-office`，产品版本 `3.12.0.0`、包内版本 `3.12.0`，启动 12 秒后正常响应。覆盖前后用户数据均为 320 个文件、`477263942` 字节；备份为 `local-backups/preinstall-3.12.0-20260804-160237`。
+- GitHub Release 正在发布，只有远端提交、标签、资产大小与 SHA-256 全部核对后才算完成。
 
 ## v3.11.0 核心职责拆分与结构防回流
 

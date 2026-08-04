@@ -4,7 +4,7 @@
 
 ## 当前状态
 
-源码和内置人格已升级到 v3.12.0 / v25，核心回归通过，正在完成 Windows 安装包、本机覆盖和 GitHub Release 验收。未取得安装和远端资产证据前，本报告不会把发布标记为完成。
+源码、内置人格和本机安装版已升级到 v3.12.0 / v25，核心回归、Windows 打包和覆盖安装通过，正在完成 GitHub Release 远端验收。
 
 ## 界面与项目快照
 
@@ -64,17 +64,26 @@
 - 320 员工、12000 任务事件、40 项目与 5000 次窗口广播压力验证：通过。
 - 完整 `npm.cmd run verify:v2-core-gate`：通过。
 
+## 安装与发布资产
+
+- 安装器：`release/taiji-office-setup-3.12.0.exe`，`195887469` 字节，SHA-256 `40AA6B9F7182C4C9EA004B4EC5E2C1674116ACD1228AEF8DA75E9A083F658275`。
+- Blockmap：`206368` 字节，SHA-256 `295CB997701B24B0071B93DF5FC718272B764D2911568AC923DC988681F2B30E`。
+- `latest.yml`：`356` 字节，SHA-256 `4BC5DF2787A2EA97ABE0F9A17C1B99C9F9C00EDF8CDF70898DFE22AD1BC14BC2`。
+- 安装位置：`%LOCALAPPDATA%\Programs\taiji-office`；产品版本 `3.12.0.0`，`app.asar` 包内版本 `3.12.0`。
+- 启动验收：启动 12 秒后进程仍存活并正常响应。
+- 数据验收：覆盖前后均为 320 个文件、`477263942` 字节；备份位于 `local-backups/preinstall-3.12.0-20260804-160237`。
+
 ## 尚未完成
 
 - `createWindow` 仍包含主窗口、伴随窗口、聊天窗口、设置窗口和工具窗口的具体构造逻辑，虽然 IPC 已拆出，构造协调仍需继续分层。
 - TaskService 的任务创建、子任务继承、动态委派修复、步骤失败、自适应改计划和审查返工仍在主服务中。
 - `agentLoopRuntime.ts` 的工具周期与最终收尾仍是下一批高价值拆分对象。
 - Electron 真实窗口截图仍受本机 GPU 子进程退出影响；README 使用同一前端的浏览器渲染快照，并保留真实安装版项目验收图作为证据补充。
-- Windows 客户端打包、覆盖安装和 GitHub 发布尚未执行。
+- GitHub Release 远端提交、标签、资产大小与 SHA-256 尚待发布脚本最终核对。
 
 ## 下一步
 
 1. 拆分 TaskService 的步骤执行、审查返工和自适应恢复命令。
 2. 拆分 Agent Loop 的工具调用周期与最终收尾，保持模型协议、执行控制和证据判断独立。
 3. 继续拆 `createWindow` 的具体窗口构造协调，并补 Electron 实机窗口回归。
-4. 完成 Windows 打包、覆盖安装与 GitHub Release，并把安装路径、资产大小和 SHA-256 回写本报告。
+4. 完成 GitHub Release，并把远端提交、标签与三项资产核验结果写入交接记录。
