@@ -25,6 +25,19 @@ describe('team autonomous decision recorder', () => {
     });
     await record('frontend', 'build', 'write_file');
     expect(run.autonomousControl?.decisionAuthority).toMatchObject({ accepted: true, source: 'model' });
-    expect(run.autonomousControl?.currentDecision.selectedAction).toMatchObject({ kind: 'use_tool', stepId: 'build', toolName: 'write_file' });
+    expect(run.autonomousControl?.currentDecision.selectedAction).toMatchObject({ kind: 'use_tool', stepId: 'build', employeeId: 'frontend', toolName: 'write_file' });
+  });
+
+  it('rejects a tool action from an employee who does not own the step', async () => {
+    let run = makeRun();
+    const record = createTeamAutonomousDecisionRecorder({
+      getRun: () => run,
+      updateRun: (mutate) => {
+        const next = structuredClone(run);
+        mutate(next);
+        run = reconcileAutonomousControl(next, { now: Date.now() });
+      },
+    });
+    await expect(record('unrelated', 'build', 'write_file')).rejects.toThrow(/责任员工|responsibility employee/u);
   });
 });

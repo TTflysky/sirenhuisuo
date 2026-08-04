@@ -37,6 +37,7 @@ function createNativeStepExecutor(deps) {
     toolCallTimeoutMs,
     delegateSubtask,
     executeWorktreeTool,
+    authorizeToolExecution,
     isPreparationTool,
     recordTool,
     requestToolApproval,
@@ -289,6 +290,7 @@ function createNativeStepExecutor(deps) {
           else if (job.approvalDenials?.has(key)) result = { name, success: false, output: '用户已经拒绝这项完全相同的操作，不得重复申请；必须改用不需要该权限的路线。' };
           else if (cache.has(cacheKey)) result = { name, success: false, duplicate: true, output: '完全相同的工具调用已执行，不能重复消耗算力，必须更换路线。' };
           else {
+            await authorizeToolExecution(job, run, step, member, name, call.id);
             await reportActivity(job, 'tool_started', `${member.name} 正在调用 ${name}`, {
               stepId: step.id, member: publicMember(member), toolName: name,
             });

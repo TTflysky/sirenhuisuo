@@ -3,6 +3,7 @@ import type { ExecutionControllerSnapshot } from './executionController.mjs';
 import type { ToolExecutionEvidence } from './executionEvidence.mjs';
 import { createLifecycleRecoveryCapsule, type TurnLifecycleState } from './turnLifecycle.mjs';
 import type { TurnRuntimeState } from './turnRuntime.mjs';
+import { validateAutonomousToolExecution } from './autonomousExecutionGate.mjs';
 
 type Reference = { kind?: string; id?: string; label?: string; sourceUrl?: string; state?: string };
 type Usage = { promptTokens?: number; completionTokens?: number; totalTokens?: number };
@@ -136,11 +137,22 @@ export function createChatTaskBridge(input: {
         },
       },
       detail: `记录自主行动提案：${String(selectedAction.kind || 'unknown')}`,
-    }) as { ok?: boolean; error?: string; run?: { adaptivePlanGraph?: { revision?: number }; autonomousControl?: { decisionAuthority?: { accepted?: boolean; proposalId?: string; reason?: string } } } };
+    }) as { ok?: boolean; error?: string; run?: Record<string, any> & { adaptivePlanGraph?: { revision?: number }; autonomousControl?: { decisionAuthority?: { accepted?: boolean; proposalId?: string; reason?: string } } } };
     if (!result.ok) throw new Error(result.error || '自主行动提案未能写入任务账本');
     planRevision = Number(result.run?.adaptivePlanGraph?.revision) || planRevision;
     const authority = result.run?.autonomousControl?.decisionAuthority;
     if (!authority?.accepted || authority.proposalId !== proposalId) throw new Error(authority?.reason || '自主行动没有通过当前目标与计划校验');
+    if (selectedAction.kind === 'use_tool') {
+      const gate = validateAutonomousToolExecution(result.run, {
+        proposalId,
+        goalId,
+        planRevision,
+        stepId: typeof selectedAction.stepId === 'string' ? selectedAction.stepId : undefined,
+        employeeId: typeof selectedAction.employeeId === 'string' ? selectedAction.employeeId : undefined,
+        toolName: typeof selectedAction.toolName === 'string' ? selectedAction.toolName : undefined,
+      });
+      if (!gate.allowed) throw new Error(gate.reason || '工具动作没有通过统一自主执行门禁');
+    }
   };
 
   return {
@@ -157,7 +169,7 @@ export function createChatTaskBridge(input: {
         workspaceId: input.workspaceId,
         idempotencyKey: input.idempotencyKey,
         conversationId: input.conversationId,
-        steps: [{ id: stepId, title: 'Execute task route', assignment: decision.goal || input.goal, deliverableType: decision.deliverableType }],
+        steps: [{ id: stepId, title: 'Execute task route', assignment: decision.goal || input.goal, employeeId: input.ownerId, deliverableType: decision.deliverableType }],
       });
       const createdTask = created as { ok?: boolean; task?: { id?: string; goalState?: { goalId?: string }; adaptivePlanGraph?: { revision?: number } } };
       taskId = createdTask.ok ? createdTask.task?.id : undefined;
@@ -187,6 +199,8 @@ export function createChatTaskBridge(input: {
       const id = `tool-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       await recordDecision({
         kind: 'use_tool',
+        stepId,
+        employeeId: input.ownerId,
         toolName: name,
         toolCallId: id,
         summary: `调用 ${name} 产生下一项可验证证据。`,

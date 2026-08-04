@@ -236,8 +236,9 @@ function createNativeExecutionAdapter(options) {
         import(pathToFileURL(path.join(projectRoot, 'src/engine/capabilityGraph.mjs')).href),
         import(pathToFileURL(path.join(projectRoot, 'src/engine/explicitResourceContract.mjs')).href),
         import(pathToFileURL(path.join(projectRoot, 'src/engine/adaptivePlanGraph.mjs')).href),
-      ]).then(([fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol, turnRuntime, turnLifecycle, moaRuntime, capabilityGraph, explicitResource, adaptivePlan]) => ({
-        fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol, turnRuntime, turnLifecycle, moaRuntime, capabilityGraph, explicitResource, adaptivePlan,
+        import(pathToFileURL(path.join(projectRoot, 'src/engine/autonomousExecutionGate.mjs')).href),
+      ]).then(([fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol, turnRuntime, turnLifecycle, moaRuntime, capabilityGraph, explicitResource, adaptivePlan, autonomousExecutionGate]) => ({
+        fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol, turnRuntime, turnLifecycle, moaRuntime, capabilityGraph, explicitResource, adaptivePlan, autonomousExecutionGate,
       }));
     }
     return engineModulesPromise;
@@ -622,6 +623,46 @@ function createNativeExecutionAdapter(options) {
       structuredEvidence: { worktreeCheckpoint: checkpoint.checkpoint } };
   }
 
+  let autonomousProposalSequence = 0;
+  async function authorizeToolExecution(job, run, step, member, toolName, toolCallId) {
+    const { autonomousExecutionGate } = await loadEngineModules();
+    const current = await readRun(job.taskId) || run;
+    autonomousProposalSequence += 1;
+    const proposalId = `proposal-native-${job.taskId}-${Date.now()}-${autonomousProposalSequence}`;
+    const updated = await updateRun(job.taskId, (next) => {
+      next.autonomousDecisionProposal = {
+        proposalVersion: 1,
+        proposalId,
+        source: 'model',
+        goalId: next.goalState?.goalId,
+        planRevision: next.adaptivePlanGraph?.revision,
+        selectedAction: autonomousExecutionGate.createAutonomousToolAction({
+          stepId: step.id,
+          employeeId: member.id,
+          toolName,
+          toolCallId,
+          summary: `${member.name} uses ${toolName} in responsibility step ${step.id}.`,
+        }),
+        observedFactIds: (next.situationModel?.confirmedFacts || []).slice(-12).map((fact) => fact.id),
+        publicRationale: 'The responsible model selected this tool from the current goal, plan, handoff and verified situation.',
+        expectedEvidence: step.acceptanceCriteria || next.acceptanceCriteria || [],
+        riskLevel: 'low',
+        approvalRequired: false,
+        createdAt: Date.now(),
+      };
+    }, `Authorize ${member.name} to use ${toolName} in ${step.id}`);
+    const gate = autonomousExecutionGate.validateAutonomousToolExecution(updated || current, {
+      proposalId,
+      goalId: updated?.goalState?.goalId || current.goalState?.goalId,
+      planRevision: updated?.adaptivePlanGraph?.revision || current.adaptivePlanGraph?.revision,
+      stepId: step.id,
+      employeeId: member.id,
+      toolName,
+    });
+    if (!gate.allowed) throw new Error(`Autonomous execution gate rejected ${toolName}: ${gate.reason}`);
+    return updated;
+  }
+
   const executeStep = createNativeStepExecutor({
     options,
     loadEngineModules,
@@ -658,6 +699,7 @@ function createNativeExecutionAdapter(options) {
     toolCallTimeoutMs,
     delegateSubtask,
     executeWorktreeTool,
+    authorizeToolExecution,
     isPreparationTool,
     recordTool,
     requestToolApproval,

@@ -43,6 +43,7 @@ function normalizeAction(input = {}) {
     kind: text(input.kind, 80),
     summary: text(input.summary, 1200),
     stepId: text(input.stepId, 180) || undefined,
+    employeeId: text(input.employeeId || input.responsibilityEmployeeId, 180) || undefined,
     routeId: text(input.routeId, 240) || undefined,
     toolName: text(input.toolName, 180) || undefined,
     toolCallId: text(input.toolCallId, 180) || undefined,
@@ -98,6 +99,13 @@ export function validateAutonomousDecisionProposal(run = {}, input = {}) {
     if (proposal.selectedAction.stepId) {
       const node = run.adaptivePlanGraph?.nodes?.find((item) => item.id === proposal.selectedAction.stepId);
       if (!node || node.status === 'superseded') errors.push(`工具动作绑定了无效步骤 ${proposal.selectedAction.stepId}`);
+      if (node) {
+        if (!['running', 'queued'].includes(node.status)) errors.push(`工具动作绑定的步骤当前不可执行：${node.status}`);
+        const completed = new Set((run.adaptivePlanGraph?.nodes || []).filter((item) => item.status === 'completed').map((item) => item.id));
+        const unresolved = (node.dependsOn || []).filter((dependencyId) => !completed.has(dependencyId));
+        if (unresolved.length) errors.push(`工具动作仍等待依赖：${unresolved.join('、')}`);
+        if (proposal.selectedAction.employeeId && node.ownerEmployeeId && proposal.selectedAction.employeeId !== node.ownerEmployeeId) errors.push('工具动作的责任员工与步骤不一致');
+      }
     }
   }
   if (proposal.selectedAction.kind === 'await_user'

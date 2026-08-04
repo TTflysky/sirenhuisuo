@@ -1,9 +1,17 @@
 # 项目交接手册
 
 > 最后整理：2026-08-04
-> 当前源码与本机安装版本：`v3.13.0`；GitHub Release 已发布
+> 当前源码版本：`v3.14.0`；安装与 GitHub Release 状态见最新交接
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+
+## v3.14.0 统一执行前自主授权
+
+- 固定开工入口为 `TAIJI_V3_TO_V4_ROADMAP.md`，以后每轮先回顾完成证据、剩余差距与本轮边界。
+- `autonomousExecutionGate` 已覆盖助理、员工私聊、团队、团队交接读取和原生后台执行，统一校验目标、计划、责任步骤、责任员工、工具与提案。
+- 原生 `toolRuntime.execute`、动态委派和 Git Worktree 动作均在真实执行前经过任务账本与授权门禁。
+- Vitest `156/156`、原生执行专项、生产构建与三项结构门禁通过。
+- 详细报告：`TAIJI_STAGE_V3.14_PROGRESS.md`。下一阶段为 `v3.15` 长任务和跨重启验收，v4.0 尚未完成。
 
 ## v3.13.0 自主决策权与四类记忆
 

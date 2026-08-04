@@ -118,6 +118,7 @@ async function memberSpeak(
   try {
     if (/读取并继承|审查|修订/u.test(extraInstruction)) {
       const listArgs = JSON.stringify({ filter: '' });
+      await onAutonomousDecision?.('list_files', listArgs);
       onToolCall('list_files', listArgs, '');
       const listed = await executeTool({ id: `handoff-list-${Date.now()}-${emp.id}`, name: 'list_files', args: { filter: '' }, scope: `team:${team.id}`, workspaceId });
       onToolCall('list_files', listArgs, listed.output, listed.success);
@@ -125,6 +126,7 @@ async function memberSpeak(
       const fileContents: string[] = [];
       for (const filename of filenames) {
         const readArgs = JSON.stringify({ path: filename });
+        await onAutonomousDecision?.('read_file', readArgs);
         onToolCall('read_file', readArgs, '');
         const read = await executeTool({ id: `handoff-read-${Date.now()}-${emp.id}-${filename}`, name: 'read_file', args: { path: filename }, scope: `team:${team.id}`, workspaceId });
         onToolCall('read_file', readArgs, read.output, read.success);

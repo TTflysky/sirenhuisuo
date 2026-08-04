@@ -18,7 +18,9 @@ function makeApi(options: { accepted?: boolean } = {}) {
       return {
         ok: true,
         run: {
-          adaptivePlanGraph: { revision: 3 },
+          goalState: { goalId: 'goal-one' },
+          adaptivePlanGraph: { revision: 3, nodes: [{ id: 'execution', status: 'queued', ownerEmployeeId: 'assistant', dependsOn: [] }] },
+          autonomousDecisionProposal: proposal,
           autonomousControl: {
             decisionAuthority: {
               accepted: options.accepted !== false,
@@ -62,7 +64,7 @@ describe('chat task bridge autonomous decision authority', () => {
     expect(order).toEqual(['decision', 'attempt']);
     expect(api.taskServiceUpdate.mock.calls[0][0].patch.autonomousDecisionProposal).toMatchObject({
       source: 'model', goalId: 'goal-one', planRevision: 3,
-      selectedAction: { kind: 'use_tool', toolName: 'write_file' },
+      selectedAction: { kind: 'use_tool', stepId: 'execution', employeeId: 'assistant', toolName: 'write_file' },
     });
   });
 

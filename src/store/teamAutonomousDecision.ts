@@ -1,4 +1,5 @@
 import type { TaskRun } from '../types';
+import { createAutonomousToolAction, validateAutonomousToolExecution } from '../engine/autonomousExecutionGate.mjs';
 
 export function createTeamAutonomousDecisionRecorder(input: {
   getRun: () => TaskRun | undefined;
@@ -17,12 +18,12 @@ export function createTeamAutonomousDecisionRecorder(input: {
         source: 'model',
         goalId: run.goalState!.goalId,
         planRevision: run.adaptivePlanGraph!.revision,
-        selectedAction: {
-          kind: 'use_tool',
+        selectedAction: createAutonomousToolAction({
           stepId,
+          employeeId,
           toolName,
           summary: `${run.memberSnapshot.find((member) => member.id === employeeId)?.name || employeeId} 在责任步骤中调用 ${toolName} 产生可验证证据。`,
-        },
+        }),
         observedFactIds: run.situationModel?.confirmedFacts.slice(-12).map((fact) => fact.id) || [],
         publicRationale: '该工具由当前责任员工根据项目目标、阶段交接和真实现场选择；内核只校验目标、计划、权限和证据边界。',
         expectedEvidence: run.acceptanceCriteria || [],
@@ -31,7 +32,15 @@ export function createTeamAutonomousDecisionRecorder(input: {
         createdAt: Date.now(),
       };
     });
-    const authority = input.getRun()?.autonomousControl?.decisionAuthority;
-    if (!authority?.accepted || authority.proposalId !== proposalId) throw new Error(authority?.reason || '团队自主行动没有通过当前目标与计划校验');
+    const authorizedRun = input.getRun();
+    const gate = validateAutonomousToolExecution(authorizedRun, {
+      proposalId,
+      goalId: current.goalState.goalId,
+      planRevision: current.adaptivePlanGraph.revision,
+      stepId,
+      employeeId,
+      toolName,
+    });
+    if (!gate.allowed) throw new Error(gate.reason || '团队自主行动没有通过当前目标与计划校验');
   };
 }

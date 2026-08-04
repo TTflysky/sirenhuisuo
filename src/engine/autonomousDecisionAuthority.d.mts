@@ -6,7 +6,7 @@ export interface AutonomousDecisionProposal {
   source: 'model' | 'runtime' | 'user' | 'system';
   goalId: string;
   planRevision: number;
-  selectedAction: AutonomousAction & { toolName?: string; toolCallId?: string; requiredUserInput?: string };
+  selectedAction: AutonomousAction & { employeeId?: string; toolName?: string; toolCallId?: string; requiredUserInput?: string };
   observedFactIds: string[];
   publicRationale: string;
   expectedEvidence: string[];
