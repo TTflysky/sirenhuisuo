@@ -21,6 +21,10 @@ function parseEvent(eventText, state, onTextDelta) {
   if (payload.usage) state.usage = payload.usage;
   for (const choice of payload.choices ?? []) {
     const delta = choice?.delta ?? {};
+    if (typeof delta.reasoning_content === 'string') {
+      state.reasoningSeen = true;
+      state.reasoningContent += delta.reasoning_content;
+    }
     if (typeof delta.content === 'string' && delta.content) {
       state.content += delta.content;
       onTextDelta?.(delta.content, state.content);
@@ -34,7 +38,7 @@ export async function consumeOpenAIChatStream(response, options = {}) {
   if (!response?.body?.getReader) throw new Error('当前接口没有返回可读取的流式响应');
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  const state = { content: '', model: '', usage: undefined, toolCalls: new Map() };
+  const state = { content: '', reasoningContent: '', reasoningSeen: false, model: '', usage: undefined, toolCalls: new Map() };
   let buffer = '';
   let doneEvent = false;
   while (!doneEvent) {
@@ -53,6 +57,7 @@ export async function consumeOpenAIChatStream(response, options = {}) {
   if (buffer.trim()) parseEvent(buffer, state, options.onTextDelta);
   return {
     content: state.content.trim() || null,
+    reasoningContent: state.reasoningSeen ? state.reasoningContent : undefined,
     model: state.model,
     usage: state.usage,
     toolCalls: [...state.toolCalls.entries()]

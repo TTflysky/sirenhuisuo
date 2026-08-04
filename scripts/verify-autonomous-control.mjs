@@ -36,7 +36,10 @@ try {
   const run = first.runs[0];
   assert.equal(run.goalState.goalId, 'goal-legacy-run');
   assert.equal(run.goalState.conversationId, 'conversation-autonomous');
-  assert.equal(run.autonomousControl.mode, 'shadow');
+  assert.equal(run.autonomousControl.mode, 'adaptive');
+  assert.equal(run.adaptivePlanGraph.graphVersion, 1);
+  assert.equal(run.adaptivePlanGraph.revision, 1);
+  assert.equal(run.autonomousControl.planRevision, run.adaptivePlanGraph.revision);
   assert.equal(run.autonomousControl.currentDecision.selectedAction.kind, 'start_step');
   assert.equal(run.workspaceId, legacy.workspaceId);
   assert.deepEqual(run.memberSnapshot, legacy.memberSnapshot);
@@ -76,7 +79,8 @@ try {
     await fs.writeFile(path.join(oldRoot, 'task-events.jsonl'), '', 'utf8');
     const migrated = await createTaskRuntimeStore(oldRoot).read({ taskId: 'old-run' });
     assert.equal(migrated.runs[0].goalState.goalId, 'goal-old-run');
-    assert.equal(migrated.runs[0].autonomousControl.controlVersion, 1);
+    assert.equal(migrated.runs[0].autonomousControl.controlVersion, 2);
+    assert.equal(migrated.runs[0].adaptivePlanGraph.graphVersion, 1);
     assert.deepEqual(migrated.runs[0].steps, makeRun('old-run').steps);
   } finally {
     await fs.rm(oldRoot, { recursive: true, force: true });

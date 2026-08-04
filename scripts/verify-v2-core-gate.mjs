@@ -4,6 +4,7 @@ const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const checks = [
   'build',
   'verify:autonomous-control',
+  'verify:adaptive-plan',
   'verify:phase1',
   'verify:unified-turn-runtime',
   'verify:turn-lifecycle',
@@ -39,6 +40,7 @@ const checks = [
   'verify:user-memory-quality',
   'verify:native-execution-policy',
   'verify:module-boundaries',
+  'verify:function-boundaries',
   'verify:phase3-performance',
 ];
 

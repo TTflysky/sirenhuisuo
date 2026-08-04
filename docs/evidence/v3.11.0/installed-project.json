@@ -1,0 +1,194 @@
+{
+  "passed": true,
+  "installedExe": "C:\\Users\\Administrator\\AppData\\Local\\Programs\\taiji-office\\太极 AI 办公会所.exe",
+  "taskId": "installed-v311-1785816224289",
+  "status": "completed",
+  "planRevision": 3,
+  "preservedCompletedNodeIds": [
+    "brief"
+  ],
+  "revisionHistory": [
+    {
+      "revision": 1,
+      "revisionId": "revision-goal-installed-v311-1785816224289-1",
+      "trigger": "migration",
+      "reason": "Initial adaptive plan created from the existing task plan.",
+      "operations": [
+        {
+          "type": "initialize",
+          "nodeIds": [
+            "brief",
+            "build",
+            "review"
+          ]
+        }
+      ],
+      "affectedNodeIds": [
+        "brief",
+        "build",
+        "review"
+      ],
+      "preservedCompletedNodeIds": [
+        "brief"
+      ],
+      "evidenceIds": [],
+      "at": 1785816224462
+    },
+    {
+      "revision": 2,
+      "revisionId": "revision-goal-installed-v311-1785816224289-2",
+      "trigger": "failure",
+      "reason": "Initial layout review did not cover the real 375px viewport.",
+      "operations": [
+        {
+          "type": "switch_route",
+          "nodeId": "build",
+          "summary": "Switch route for build"
+        }
+      ],
+      "affectedNodeIds": [
+        "build"
+      ],
+      "preservedCompletedNodeIds": [
+        "brief"
+      ],
+      "evidenceIds": [],
+      "at": 1785816224503
+    },
+    {
+      "revision": 3,
+      "revisionId": "revision-goal-installed-v311-1785816224289-3",
+      "trigger": "staffing",
+      "reason": "The owner added a responsive specialist after the first 375px verification gap.",
+      "operations": [
+        {
+          "type": "register_member",
+          "nodeId": "",
+          "summary": "Register team member 响应式专家"
+        }
+      ],
+      "affectedNodeIds": [
+        "build",
+        "review"
+      ],
+      "preservedCompletedNodeIds": [
+        "brief"
+      ],
+      "evidenceIds": [],
+      "at": 1785816224526
+    }
+  ],
+  "activeRoute": "installed-risk-board-verification-v1",
+  "rosterChange": {
+    "employeeId": "responsive",
+    "employeeName": "响应式专家",
+    "reason": "The owner added a responsive specialist after the first 375px verification gap.",
+    "affectedNodeIds": [
+      "build",
+      "review"
+    ],
+    "acceptanceCriteria": [
+      "Verify the real 375px viewport before review."
+    ],
+    "revision": 3,
+    "at": 1785816224526
+  },
+  "attempts": [
+    {
+      "id": "brief",
+      "status": "completed",
+      "attempts": 0
+    },
+    {
+      "id": "build",
+      "status": "completed",
+      "attempts": 2
+    },
+    {
+      "id": "review",
+      "status": "completed",
+      "attempts": 2
+    }
+  ],
+  "evidence": [
+    {
+      "ts": 1785816224678,
+      "source": "tool",
+      "kind": "file",
+      "summary": "risk-board.html · 3721 字节 · 已验证",
+      "verified": true,
+      "artifact": {
+        "path": "risk-board.html",
+        "filename": "risk-board.html",
+        "workspaceId": "tasks/team/team-v311-installed/installed-v311-1785816224289",
+        "diskPath": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\taiji-v311-installed-PIoPrL\\workspace\\tasks\\team\\team-v311-installed\\installed-v311-1785816224289\\risk-board.html",
+        "bytes": 3721,
+        "category": "final",
+        "persistence": "disk",
+        "verification": "read_back",
+        "verified": true,
+        "recordedAt": 1785816224676
+      }
+    },
+    {
+      "ts": 1785816226225,
+      "source": "tool",
+      "kind": "file",
+      "summary": "risk-board-desktop-1440x900.png · 68976 字节 · 已验证",
+      "verified": true,
+      "artifact": {
+        "path": ".taiji-verification/risk-board-desktop-1440x900.png",
+        "filename": "risk-board-desktop-1440x900.png",
+        "workspaceId": "tasks/team/team-v311-installed/installed-v311-1785816224289",
+        "diskPath": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\taiji-v311-installed-PIoPrL\\workspace\\tasks\\team\\team-v311-installed\\installed-v311-1785816224289\\.taiji-verification\\risk-board-desktop-1440x900.png",
+        "bytes": 68976,
+        "category": "working",
+        "persistence": "disk",
+        "verification": "write_ack",
+        "verified": true,
+        "recordedAt": 1785816226225
+      }
+    },
+    {
+      "ts": 1785816226225,
+      "source": "tool",
+      "kind": "file",
+      "summary": "risk-board-narrow-375x844.png · 35386 字节 · 已验证",
+      "verified": true,
+      "artifact": {
+        "path": ".taiji-verification/risk-board-narrow-375x844.png",
+        "filename": "risk-board-narrow-375x844.png",
+        "workspaceId": "tasks/team/team-v311-installed/installed-v311-1785816224289",
+        "diskPath": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\taiji-v311-installed-PIoPrL\\workspace\\tasks\\team\\team-v311-installed\\installed-v311-1785816224289\\.taiji-verification\\risk-board-narrow-375x844.png",
+        "bytes": 35386,
+        "category": "working",
+        "persistence": "disk",
+        "verification": "write_ack",
+        "verified": true,
+        "recordedAt": 1785816226225
+      }
+    },
+    {
+      "ts": 1785816226802,
+      "source": "review",
+      "kind": "review",
+      "summary": "审查通过：The risk board exists and the installed verifier confirmed desktop and 375px layouts.",
+      "verified": true,
+      "review": {
+        "decision": "pass",
+        "reason": "The risk board exists and the installed verifier confirmed desktop and 375px layouts.",
+        "checkedArtifacts": [
+          "risk-board.html"
+        ],
+        "submittedAt": 1785816226802
+      }
+    }
+  ],
+  "modelCalls": 6,
+  "userData": "C:\\Users\\Administrator\\AppData\\Local\\Temp\\taiji-v311-installed-PIoPrL",
+  "preservedArtifactPath": "E:\\私人办公会所项目\\docs\\evidence\\v3.11.0\\risk-board.html",
+  "preservedScreenshots": [
+    "E:\\私人办公会所项目\\docs\\evidence\\v3.11.0\\risk-board-desktop-1440x900.png",
+    "E:\\私人办公会所项目\\docs\\evidence\\v3.11.0\\risk-board-narrow-375x844.png"
+  ]
+}

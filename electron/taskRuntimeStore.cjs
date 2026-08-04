@@ -187,6 +187,7 @@ function mergeWorkerAuthority(current, incoming, source) {
     if (!next.projectId && current.projectId) next.projectId = current.projectId;
     if (!next.goalState && current.goalState) next.goalState = clone(current.goalState);
     if (!next.situationModel && current.situationModel) next.situationModel = clone(current.situationModel);
+    if (!next.adaptivePlanGraph && current.adaptivePlanGraph) next.adaptivePlanGraph = clone(current.adaptivePlanGraph);
     if (!next.autonomousControl && current.autonomousControl) next.autonomousControl = clone(current.autonomousControl);
   }
   if (source !== 'renderer' || !current?.worker) return next;
@@ -474,7 +475,7 @@ function createTaskRuntimeStore(rootDir, options = {}) {
       const event = createEvent({
         type: 'task_changed', taskId: current.id, teamId: current.teamId,
         source: 'autonomous-control-migration', previousStatus: current.status, nextStatus: candidate.status,
-        domains: eventDomains(changes), detail: 'Initialized the v3.6 autonomous shadow-control snapshot.',
+        domains: eventDomains(changes), detail: 'Initialized or upgraded the v3.7 adaptive planning snapshot.',
         payload: { changes },
       }, head);
       appended.push(event);

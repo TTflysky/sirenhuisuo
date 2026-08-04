@@ -1,6 +1,7 @@
 export interface StreamedToolCall { id: string; name: string; arguments: string }
 export interface StreamedChatResult {
   content: string | null;
+  reasoningContent?: string;
   model: string;
   usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
   toolCalls: StreamedToolCall[];

@@ -472,7 +472,9 @@ export interface TaskRun {
   goalState?: import('./engine/autonomousControl.mjs').GoalState;
   /** Evidence-grounded scene model. Unverified model claims remain assumptions. */
   situationModel?: import('./engine/autonomousControl.mjs').SituationModel;
-  /** v3.6 shadow controller; records public decisions without replacing the current executor yet. */
+  /** v3.7 revisable plan graph shared by execution, recovery and team supervision. */
+  adaptivePlanGraph?: import('./engine/adaptivePlanGraph.mjs').AdaptivePlanGraph;
+  /** v3.7 adaptive controller; deterministic boundaries validate model-proposed plan changes. */
   autonomousControl?: import('./engine/autonomousControl.mjs').AutonomousControlSnapshot;
   /** 标识真正执行此任务的客户端进程，供重启恢复判断。 */
   executionSessionId?: string;

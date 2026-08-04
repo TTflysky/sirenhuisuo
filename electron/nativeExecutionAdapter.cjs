@@ -1,11 +1,13 @@
-const crypto = require('crypto');
 const path = require('path');
+const { createNativeExecutionControl } = require('./nativeExecutionControl.cjs');
+const { createNativeStepExecutor } = require('./nativeStepExecutor.cjs');
 const { createExecutionObservability } = require('./executionObservability.cjs');
 const { projectNativeJob } = require('./nativeExecutionProjection.cjs');
 const { createNativeCollaborationProtocol } = require('./nativeCollaborationProtocol.cjs');
 const { pathToFileURL } = require('url');
 const { ADAPTER_PROTOCOL_VERSION } = require('./executionAdapterProtocol.cjs');
 const { callNativeModel } = require('./nativeModelGateway.cjs');
+const { markAdaptiveStepStarted, applyAdaptiveStepFailure, buildStaffingPlanRevision } = require('./adaptiveExecutionRecovery.cjs');
 const {
   ROLE_DUTY,
   toolKey,
@@ -233,8 +235,9 @@ function createNativeExecutionAdapter(options) {
         import(pathToFileURL(path.join(projectRoot, 'src/engine/moaRuntime.mjs')).href),
         import(pathToFileURL(path.join(projectRoot, 'src/engine/capabilityGraph.mjs')).href),
         import(pathToFileURL(path.join(projectRoot, 'src/engine/explicitResourceContract.mjs')).href),
-      ]).then(([fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol, turnRuntime, turnLifecycle, moaRuntime, capabilityGraph, explicitResource]) => ({
-        fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol, turnRuntime, turnLifecycle, moaRuntime, capabilityGraph, explicitResource,
+        import(pathToFileURL(path.join(projectRoot, 'src/engine/adaptivePlanGraph.mjs')).href),
+      ]).then(([fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol, turnRuntime, turnLifecycle, moaRuntime, capabilityGraph, explicitResource, adaptivePlan]) => ({
+        fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol, turnRuntime, turnLifecycle, moaRuntime, capabilityGraph, explicitResource, adaptivePlan,
       }));
     }
     return engineModulesPromise;
@@ -569,7 +572,7 @@ function createNativeExecutionAdapter(options) {
         }
       }, `原生 Adapter 动态委派 ${appended.delegation.employeeName}`);
       const childStart = child?.task?.id
-        ? await start({
+        ? await control.start({
           taskId: child.task.id,
           members: [...job.members.values()],
           attachments: job.attachments,
@@ -619,427 +622,51 @@ function createNativeExecutionAdapter(options) {
       structuredEvidence: { worktreeCheckpoint: checkpoint.checkpoint } };
   }
 
-  async function executeStep(job, run, step, member, executionOptions = {}) {
-    const { fidelity, toolRegistry, contextRouter, turnRuntime, turnLifecycle, moaRuntime, explicitResource } = await loadEngineModules();
-    const stepDeliverableType = inferStepDeliverableType(step, run);
-    let runtime = turnRuntime.createTurnRuntime({
-      taskId: job.taskId,
-      scope: `team:${run.teamId}`,
-      // Each team member is verified against its own contractual stage. The
-      // full project goal remains in the system prompt and final run checks.
-      goal: step.assignment || run.goal || run.request,
-      contract: { ...(run.contract || {}), goal: step.assignment || run.goal || run.request, deliverableType: stepDeliverableType },
-    });
-    const layeredMemory = options.memoryManager
-      ? await options.memoryManager.context({ query: run.goal || run.request, teamId: run.teamId, employeeId: member.id, limit: 16 }).catch(() => ({ context: '' }))
-      : { context: '' };
-    const stepRecoveryPrompt = contextRouter.buildRecoveryPrompt({
-      ...run,
-      steps: run.steps.filter((item) => item.status === 'completed' || item.id === step.id),
-    });
-    const advisorGuidance = executionOptions.compensation
-      ? ''
-      : await consultStepAdvisors(job, run, step, member, moaRuntime, run.evidence || []);
-    const explicitResourceContract = explicitResource.createExplicitResourceContract(run.goal || run.request);
-    const explicitResourceGuidance = explicitResource.buildExplicitResourceGuidance(explicitResourceContract);
-    const messages = [
-      { role: 'system', content: `${buildSystem(run, step, member, job, turnRuntime.buildTurnGuidance(runtime), advisorGuidance)}${explicitResourceGuidance ? `\n\n${explicitResourceGuidance}` : ''}${layeredMemory.context ? `\n\n## 太极分层热记忆\n${layeredMemory.context}\n\n以上记忆只作为可复用背景；与老板当前明确要求冲突时，以当前要求为准。` : ''}${buildInheritedTaskContext(run)}${buildChildTaskContext(run)}\n\n${stepRecoveryPrompt}` },
-      buildUserTurn(run, step, job),
-    ];
-    const availableDefinitions = [...options.toolRuntime.definitions, ...(job.connectorTools || [])]
-      .filter((definition) => toolAvailableForStep(definition?.function?.name, run, step));
-    const registry = toolRegistry.buildToolRegistry(availableDefinitions);
-    const tools = registry.definitions;
-    emit(job, 'tool_registry_ready', {
-      stepId: step.id,
-      registryProtocolVersion: registry.protocolVersion,
-      ready: registry.ready,
-      blocked: registry.blocked,
-      collisions: registry.collisions,
-      invalid: registry.invalid,
-    });
-    if (!tools.length) throw new Error('统一工具注册中心没有可用工具，任务无法开始');
-    const cache = new Map();
-    const callLog = [];
-    let workspaceMutationEpoch = 0;
-    let preparationStreak = 0;
-    let finalContent = '';
-    let review;
-    let forceActionCount = 0;
-    let appliedSteering = job.steering.length;
-    let liveBudget = contextRouter.createContextBudget(run.recoveryContext?.budget);
-    const longGenerationStep = requiresLongModelRequest(step, stepDeliverableType);
-    const maxModelRounds = longGenerationStep ? MAX_LONG_MODEL_ROUNDS_PER_STEP : MAX_MODEL_ROUNDS_PER_STEP;
-    for (let round = 0; round < maxModelRounds; round += 1) {
-      await assertCanContinue(job);
-      if (round === MAX_MODEL_ROUNDS_PER_STEP && longGenerationStep) {
-        const hasMaterialProgress = shouldExtendModelRoundBudget(step, stepDeliverableType, callLog);
-        if (!hasMaterialProgress) break;
-        messages.push({ role: 'system', content: `前 ${MAX_MODEL_ROUNDS_PER_STEP} 轮已经产生真实写入、运行或连接证据，因此自动进入收尾阶段。只补齐尚缺的验证与总结，不得重做已完成文件；总轮次仍受 ${MAX_LONG_MODEL_ROUNDS_PER_STEP} 轮硬上限约束。` });
-        emit(job, 'model_round_budget_extended', {
-          stepId: step.id,
-          completedRounds: round,
-          maxRounds: maxModelRounds,
-          reason: 'material-progress',
-        });
-      }
-      const currentPromptTokens = contextRouter.estimateTokens(messages.map((item) => item.content || item.tool_calls || '').join('\n'));
-      const budgetAssessment = contextRouter.assessContextBudget(liveBudget, { currentPromptTokens });
-      const stageBoundary = round > 0 && round % MODEL_ROUNDS_PER_STAGE === 0;
-      if ((budgetAssessment.action === 'compact' || budgetAssessment.action === 'checkpoint' || stageBoundary) && messages.length > 8) {
-        const compacted = contextRouter.compactMessageWindow(messages, { keepRecent: 10 });
-        messages.splice(0, messages.length, ...compacted.messages);
-        await updateRun(job.taskId, (next) => {
-          if (!next.recoveryContext) return;
-          const budget = contextRouter.createContextBudget(next.recoveryContext.budget);
-          budget.compactions += 1;
-          if (stageBoundary) budget.stage += 1;
-          budget.estimatedTokens = contextRouter.estimateTokens(messages.map((item) => item.content || '').join('\n'));
-          budget.updatedAt = Date.now();
-          next.recoveryContext.budget = budget;
-          liveBudget = budget;
-          next.recoveryContext.summary = `长任务已完成第 ${budget.stage - 1} 阶段压缩，保留原始目标、证据和未决问题后继续。`;
-          next.recoveryCapsule = contextRouter.createRecoveryCapsule(next, { reason: `上下文阶段 ${budget.stage} 压缩` });
-          next.turnLifecycle = turnLifecycle.recordLifecycleContext(
-            turnLifecycle.restoreTurnLifecycle(next.turnLifecycle, {
-              taskId: next.id,
-              conversationId: next.conversationId,
-              scope: `team:${next.teamId}`,
-              goal: next.goal || next.request,
-              deliverableType: next.contract?.deliverableType,
-            }),
-            {
-              compacted: true,
-              stage: budget.stage,
-              estimatedTokens: budget.estimatedTokens,
-              contextWindowTokens: budget.contextWindowTokens,
-              summary: next.recoveryContext.summary,
-              unresolvedIssues: next.recoveryContext.unresolvedIssues,
-            },
-          );
-          next.lifecycleRecovery = turnLifecycle.createLifecycleRecoveryCapsule(next.turnLifecycle);
-        }, '原生 Adapter 压缩长任务上下文');
-        if (stageBoundary) await options.store.createRecoveryPoint({ taskId: job.taskId, label: `自动阶段 ${Math.floor(round / MODEL_ROUNDS_PER_STAGE)} 恢复点` });
-        emit(job, 'context_compacted', { stepId: step.id, removedMessages: compacted.removed, round, reason: stageBoundary ? 'stage-boundary' : budgetAssessment.reason });
-      }
-      if (budgetAssessment.action === 'replan') {
-        messages.push({ role: 'system', content: '连续多轮没有新增可验证证据。立即停止当前重复路线，说明根因并选择本质不同的工具、来源或实现方法。' });
-        emit(job, 'route_replan_required', { stepId: step.id, reason: budgetAssessment.reason });
-      }
-      if (job.steering.length > appliedSteering) {
-        const updates = job.steering.slice(appliedSteering);
-        runtime = turnRuntime.applySteering(runtime, updates);
-        await updateRun(job.taskId, (next) => {
-          next.turnLifecycle = turnLifecycle.recordLifecycleSteering(
-            turnLifecycle.restoreTurnLifecycle(next.turnLifecycle, {
-              taskId: next.id,
-              conversationId: next.conversationId,
-              scope: `team:${next.teamId}`,
-              goal: next.goal || next.request,
-              deliverableType: next.contract?.deliverableType,
-            }),
-            updates,
-          );
-          next.lifecycleRecovery = turnLifecycle.createLifecycleRecoveryCapsule(next.turnLifecycle);
-        }, '原生 Adapter 将用户插话写入 Turn Lifecycle');
-        messages.push({ role: 'system', content: `老板在执行中补充了要求。先结合原目标判断影响，再调整当前路线：\n${updates.join('\n')}` });
-        messages.push({ role: 'system', content: turnRuntime.buildTurnGuidance(runtime) });
-        appliedSteering = job.steering.length;
-      }
-      job.modelRounds += 1;
-      const modelMember = step.kind === 'review' && job.reviewModelConfig
-        ? { ...member, modelConfig: job.reviewModelConfig }
-        : member;
-      let response;
-      try {
-        response = await callModel(job, modelMember, messages, tools, {
-          timeoutMs: requiresLongModelRequest(step, stepDeliverableType)
-            ? longModelRequestTimeoutMs
-            : modelRequestTimeoutMs,
-        });
-      } catch (error) {
-        if (error instanceof ExecutionControlSignal) throw error;
-        const observed = turnRuntime.observeToolResult(runtime, {
-          toolCallId: `model-${job.taskId}-${step.id}-${round + 1}`,
-          name: 'model_request',
-          args: { model: modelName(modelMember.modelConfig), round: round + 1 },
-          success: false,
-          useful: false,
-          output: error?.message || String(error),
-          kind: 'model',
-        });
-        runtime = observed.runtime;
-        const recovery = turnRuntime.decideRecovery(runtime, observed.error || error);
-        runtime = recovery.runtime;
-        const terminalStatus = recovery.decision.action === 'waiting_user' ? 'waiting_user' : 'failed';
-        const finalContent = recovery.decision.userMessage || recovery.decision.message || '模型请求失败';
-        const finalized = turnRuntime.finalizeTurn(runtime, {
-          status: terminalStatus,
-          content: finalContent,
-          waitingFor: terminalStatus === 'waiting_user' ? finalContent : '',
-        });
-        runtime = finalized.runtime;
-        await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 收尾模型请求异常');
-        if (terminalStatus === 'waiting_user') throw new ExecutionControlSignal('awaiting_user', finalContent);
-        throw error;
-      }
-      const message = response.message;
-      const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
-      const observedDecision = turnRuntime.observeModelDecision(runtime, {
-        content: message.content,
-        toolCalls: toolCalls.map((call) => ({
-          name: call?.function?.name,
-          arguments: call?.function?.arguments,
-        })),
-      });
-      runtime = observedDecision.runtime;
-      await updateRun(job.taskId, (next) => {
-        next.turnLifecycle = turnLifecycle.recordLifecycleDecision(
-          turnLifecycle.restoreTurnLifecycle(next.turnLifecycle, {
-            taskId: next.id,
-            conversationId: next.conversationId,
-            scope: `team:${next.teamId}`,
-            goal: next.goal || next.request,
-            deliverableType: next.contract?.deliverableType,
-          }),
-          observedDecision.decision,
-        );
-        next.lifecycleRecovery = turnLifecycle.createLifecycleRecoveryCapsule(next.turnLifecycle);
-      }, '原生 Adapter 保存模型公开决策');
-      liveBudget = contextRouter.recordContextUsage({
-        ...liveBudget,
-        contextWindowTokens: Number(modelMember.modelConfig?.contextWindowTokens) || liveBudget.contextWindowTokens,
-      }, {
-        promptTokens: Number(response.usage.prompt_tokens) || 0,
-          completionTokens: Number(response.usage.completion_tokens) || 0,
-          estimatedTokens: currentPromptTokens,
-          modelRounds: 1,
-          progress: toolCalls.length > 0,
-      });
-      if (toolCalls.length > 0 || (round + 1) % 3 === 0 || round === maxModelRounds - 1) {
-        await updateRun(job.taskId, (next) => {
-          if (!next.recoveryContext) return;
-          next.recoveryContext.budget = liveBudget;
-          next.recoveryCapsule = contextRouter.createRecoveryCapsule(next, { reason: '模型轮次用量检查点' });
-        }, '记录原生模型上下文用量');
-      }
-      if (toolCalls.length) {
-        messages.push({ role: 'assistant', content: message.content || null, tool_calls: toolCalls });
-        const completedToolCallIds = new Set();
-        try {
-          for (const call of toolCalls) {
-          await assertCanContinue(job);
-          if (callLog.length >= MAX_TOOL_CALLS_PER_STEP) {
-            const latestRun = await readRun(job.taskId);
-            const latestStep = latestRun?.steps?.find((item) => item.id === step.id);
-            if (verifiedFileStepCompletesStep(step, stepDeliverableType, callLog, latestStep?.evidence)) {
-              const content = `当前步骤已产生真实文件，并通过成功的运行验证；达到 ${MAX_TOOL_CALLS_PER_STEP} 次工具预算后按现有证据完成收口，没有执行额外的重复命令。`;
-              emit(job, 'tool_budget_completed_from_evidence', {
-                stepId: step.id,
-                toolCalls: callLog.length,
-                reason: 'verified-file-and-command-evidence',
-              });
-              const finalized = turnRuntime.finalizeTurn(runtime, { status: 'completed', content });
-              runtime = finalized.runtime;
-              await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 依据真实证据在工具预算边界完成步骤');
-              return { content, review, callLog, usageModel: response.model, turnRuntime: runtime, turnFinalization: finalized.finalization };
-            }
-            throw new ExecutionControlSignal('checkpoint', `当前步骤达到 ${MAX_TOOL_CALLS_PER_STEP} 次工具预算，现场和证据已保存；请从恢复点继续或更换模型。`);
-          }
-          const rawName = String(call?.function?.name || '');
-          const normalizedCall = turnRuntime.normalizeToolCall(rawName, call?.function?.arguments || '{}');
-          const name = normalizedCall.name || rawName;
-          const args = normalizedCall.args || {};
-          let result;
-          const key = toolKey(name, args);
-          const cacheKey = toolCacheKey(name, args, workspaceMutationEpoch);
-          const preflight = toolRegistry.preflightToolCall(registry, name, args, { approvalGranted: true });
-          const explicitResourceGate = explicitResource.validateExplicitResourceToolCall(explicitResourceContract, name, args, callLog);
-          if (!normalizedCall.ok) result = { name, success: false, output: normalizedCall.error || '工具参数无效' };
-          else if (!explicitResourceGate.allowed) result = { name, success: false, output: explicitResourceGate.reason };
-          else if (!preflight.ok) result = { name, success: false, output: `工具预检未通过：${preflight.message}` };
-          else if (job.approvalDenials?.has(key)) result = { name, success: false, output: '用户已经拒绝这项完全相同的操作，不得重复申请；必须改用不需要该权限的路线。' };
-          else if (cache.has(cacheKey)) result = { name, success: false, duplicate: true, output: '完全相同的工具调用已执行，不能重复消耗算力，必须更换路线。' };
-          else {
-            await reportActivity(job, 'tool_started', `${member.name} 正在调用 ${name}`, {
-              stepId: step.id, member: publicMember(member), toolName: name,
-            });
-            const deadline = timeoutPromise(toolCallTimeoutMs, `工具 ${name} 在 ${Math.ceil(toolCallTimeoutMs / 1000)} 秒内没有返回`, () => {});
-            try {
-              const execution = name === 'delegate_subtask'
-                ? delegateSubtask(job, run, step, args)
-                : name === 'prepare_git_worktree' || name === 'checkpoint_git_worktree'
-                  ? executeWorktreeTool(job, run, name, args)
-                  : options.toolRuntime.execute(name, args, {
-                    taskId: job.taskId, scope: `team:${run.teamId}`, workspaceId: run.workspaceId, worktreePath: run.worktree?.path,
-                    goal: run.goal || run.request,
-                    executionPolicy: job.executionPolicy, connectors: job.connectors, connectorActions: job.connectorActions,
-                    approvalGranted: job.approvalGrants?.has(key) === true,
-                  });
-              result = await Promise.race([execution, deadline.promise]);
-            } catch (error) {
-              if (error?.code === 'TAIJI_OPERATION_TIMEOUT') {
-                job.lastError = `${error.message}。结果是否已产生尚未确认，为避免重复执行，任务已安全暂停。`;
-                throw new ExecutionControlSignal('stall', job.lastError);
-              }
-              throw error;
-            } finally {
-              deadline.clear();
-            }
-          }
-          cache.set(cacheKey, { success: result.success, output: result.output });
-          if (result.success && isWorkspaceMutationTool(name, args)) workspaceMutationEpoch += 1;
-          callLog.push({ name, args: JSON.stringify(args), result: result.output, success: result.success });
-          if (result.structuredEvidence?.review) review = result.structuredEvidence.review;
-          preparationStreak = result.success && isPreparationTool(name) ? preparationStreak + 1 : result.success ? 0 : preparationStreak;
-          await recordTool(job, run, step, member, name, args, result);
-          const resultReference = result.structuredEvidence?.artifacts?.[0]?.diskPath
-            || result.structuredEvidence?.artifacts?.[0]?.path
-            || '';
-          const observed = turnRuntime.observeToolResult(runtime, {
-            toolCallId: call.id,
-            name,
-            args,
-            success: result.success === true,
-            useful: result.success === true,
-            output: result.output,
-            errorType: !result.success && name === 'run_command' && args.verification === true ? 'verification_failed' : undefined,
-            resultRef: resultReference,
-            kind: result.structuredEvidence?.artifacts?.length
-              ? 'file'
-              : result.structuredEvidence?.connection ? 'connection'
-                : result.structuredEvidence?.review ? 'review' : 'tool',
-          });
-          runtime = observed.runtime;
-          await persistTurnRuntime(job, runtime, undefined, `${member.name}记录 Turn Runtime 工具证据`);
-          messages.push({ role: 'tool', tool_call_id: call.id, content: result.output.slice(0, 12000) });
-          completedToolCallIds.add(String(call.id || ''));
-          if (result.awaitingUser || result.awaitingApproval) {
-            if (result.awaitingApproval) await requestToolApproval(job, run, step, member, name, args, result);
-            const finalized = turnRuntime.finalizeTurn(runtime, { status: 'waiting_user', content: result.output, waitingFor: result.output });
-            runtime = finalized.runtime;
-            await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 等待用户条件');
-            throw new ExecutionControlSignal('awaiting_user', result.output);
-          }
-          if (observed.error && !result.duplicate) {
-            const routeAttempts = runtime.seenCalls?.[observed.evidence.callFingerprint]?.attempts || 1;
-            const recovery = turnRuntime.decideRecovery(runtime, observed.error, { routeAttempts });
-            runtime = recovery.runtime;
-            if (recovery.decision.action === 'retry') cache.delete(cacheKey);
-            messages.push({ role: 'system', content: `${turnRuntime.buildTurnGuidance(runtime)}\n\n失败类型：${recovery.decision.errorType}；下一恢复动作：${recovery.decision.action}。不要原样重复无效路线。` });
-            if (recovery.decision.action === 'waiting_user') {
-              const finalized = turnRuntime.finalizeTurn(runtime, { status: 'waiting_user', content: recovery.decision.userMessage, waitingFor: recovery.decision.message });
-              runtime = finalized.runtime;
-              await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 等待用户条件');
-              throw new ExecutionControlSignal('awaiting_user', recovery.decision.userMessage);
-            }
-            if (recovery.decision.action === 'checkpoint') {
-              const finalized = turnRuntime.finalizeTurn(runtime, { status: 'checkpointed', content: recovery.decision.message });
-              runtime = finalized.runtime;
-              await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 失败恢复检查点');
-              throw new ExecutionControlSignal('checkpoint', recovery.decision.message || '同类恢复已经达到上限');
-            }
-          }
-          if (preparationStreak >= MAX_PREPARATION_STREAK) {
-            messages.push({ role: 'system', content: `已连续 ${preparationStreak} 次只读取或检查，没有产生可验收结果。必须立即执行真实写入、运行、连接验证或明确交接唯一外部阻塞。` });
-          }
-          }
-        } catch (error) {
-          completeOutstandingToolMessages(messages, toolCalls, completedToolCallIds, error?.message || error);
-          throw error;
-        }
-        if (structuredReviewCompletesStep(step, stepDeliverableType, review)) {
-          const reviewContent = review.decision === 'pass'
-            ? `结构化结论已通过：${review.reason}`
-            : `结构化审查已退回：${review.reason}`;
-          const finalized = turnRuntime.finalizeTurn(runtime, { status: 'completed', content: reviewContent });
-          runtime = finalized.runtime;
-          await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 以结构化审查结论完成步骤');
-          return { content: reviewContent, review, callLog, usageModel: response.model, turnRuntime: runtime, turnFinalization: finalized.finalization };
-        }
-        continue;
-      }
-      finalContent = text(message.content, 20000);
-      const latestRun = await readRun(job.taskId);
-      const currentStep = latestRun.steps.find((item) => item.id === step.id);
-      const hasFile = currentStep?.evidence?.some((item) => item.kind === 'file' && item.verified);
-      const hasSuccessfulTool = callLog.some((call) => call.success);
-      if (executionOptions.compensation && !hasSuccessfulTool) {
-        forceActionCount += 1;
-        messages.push({ role: 'assistant', content: finalContent || '补偿步骤说明' });
-        messages.push({ role: 'system', content: '补偿步骤尚未形成真实工具执行证据。必须调用已注册工具完成声明的补偿动作，不能只用文字说明。' });
-        continue;
-      }
-      const fileEvidenceRequired = runtime.deliverableType === 'file'
-        || turnRuntime.requiresFileEvidence(run.contract || { goal: run.goal || run.request }, step);
-      if (!executionOptions.compensation && step.kind !== 'review' && fileEvidenceRequired && !hasFile) {
-        forceActionCount += 1;
-        messages.push({ role: 'assistant', content: finalContent || '当前步骤说明' });
-        messages.push({ role: 'system', content: forceActionCount <= 2
-          ? '当前是交付步骤，但还没有经过磁盘校验的文件证据。下一步必须调用 write_file 形成可交接文件，然后再总结。'
-          : '仍然没有经过磁盘校验的文件证据，禁止宣布完成。立即改用可行的真实写入路线；若缺少外部条件，只能明确交接该唯一条件。' });
-        continue;
-      }
-      if (!executionOptions.compensation && verifiedFileStepCompletesStep(step, stepDeliverableType, callLog, currentStep?.evidence)) {
-        const content = finalContent || '当前文件步骤已产生真实文件，并通过运行验证。';
-        emit(job, 'file_step_completed_from_evidence', {
-          stepId: step.id,
-          reason: 'verified-file-and-command-evidence',
-        });
-        const finalized = turnRuntime.finalizeTurn(runtime, { status: 'completed', content });
-        runtime = finalized.runtime;
-        await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 依据真实文件与运行验证完成步骤');
-        return { content, review, callLog, usageModel: response.model, turnRuntime: runtime, turnFinalization: finalized.finalization };
-      }
-      if (step.kind === 'review' && !review) {
-        forceActionCount += 1;
-        messages.push({ role: 'assistant', content: finalContent || '审查说明' });
-        messages.push({ role: 'system', content: forceActionCount <= 2
-          ? '审查步骤没有 submit_review 证据。必须先检查真实文件或运行结果，再调用 submit_review 提交 PASS 或 REJECT。'
-          : '仍然没有结构化审查证据，禁止宣布完成。立即读取或运行真实产出并提交 PASS/REJECT；无法继续时只交接具体阻塞。' });
-        continue;
-      }
-      if (executionOptions.compensation) {
-        const finalized = turnRuntime.finalizeTurn(runtime, { status: 'completed', content: finalContent || '补偿步骤已完成真实工具执行。' });
-        runtime = finalized.runtime;
-        await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 完成补偿步骤');
-        return { content: finalContent || '补偿步骤已完成真实工具执行。', review, callLog, usageModel: response.model, turnRuntime: runtime, turnFinalization: finalized.finalization };
-      }
-      if (substantiveDecisionCompletesStep(step, stepDeliverableType, finalContent)) {
-        const finalized = turnRuntime.finalizeTurn(runtime, { status: 'completed', content: finalContent });
-        runtime = finalized.runtime;
-        await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 完成实质决策步骤');
-        return { content: finalContent, review, callLog, usageModel: response.model, turnRuntime: runtime, turnFinalization: finalized.finalization };
-      }
-      const acceptance = fidelity.assessTaskCompletion(runtime.goal, finalContent, callLog);
-      const explicitAcceptance = explicitResource.assessExplicitResourceCompletion(explicitResourceContract, callLog);
-      acceptance.issues.push(...explicitAcceptance.issues);
-      acceptance.passed = acceptance.passed && explicitAcceptance.passed;
-      if (!acceptance.passed) {
-        forceActionCount += 1;
-        messages.push({ role: 'assistant', content: finalContent });
-        messages.push({ role: 'system', content: forceActionCount <= 2
-          ? `原始目标验收未通过：${acceptance.issues.join('；')}。请换路线补齐真实证据，不得宣布完成。`
-          : `原始目标仍未验收：${acceptance.issues.join('；')}。必须改走本质不同的路线、补齐证据或明确唯一外部阻塞，禁止以普通文本结束。` });
-        continue;
-      }
-      if (!finalContent) finalContent = '当前步骤已完成工具执行与真实结果验证。';
-      const finalized = turnRuntime.finalizeTurn(runtime, { status: 'completed', content: finalContent });
-      runtime = finalized.runtime;
-      await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 完成团队步骤');
-      return { content: finalContent, review, callLog, usageModel: response.model, turnRuntime: runtime, turnFinalization: finalized.finalization };
-    }
-    await options.store.createRecoveryPoint({ taskId: job.taskId, label: '模型轮次预算恢复点' }).catch(() => {});
-    if (run.worktree && options.worktreeManager) await options.worktreeManager.checkpoint(job.taskId, { label: '模型轮次预算恢复点' }).catch(() => {});
-    const completedRounds = shouldExtendModelRoundBudget(step, stepDeliverableType, callLog)
-      ? MAX_LONG_MODEL_ROUNDS_PER_STEP
-      : MAX_MODEL_ROUNDS_PER_STEP;
-    const finalized = turnRuntime.finalizeTurn(runtime, { status: 'checkpointed', content: `当前步骤经过 ${completedRounds} 轮仍未形成可验收结果。` });
-    runtime = finalized.runtime;
-    await persistTurnRuntime(job, runtime, finalized.finalization, 'Turn Runtime 模型轮次预算检查点');
-    throw new ExecutionControlSignal('checkpoint', `当前步骤经过 ${completedRounds} 轮仍未形成可验收结果。系统已保存目标、证据、未决问题和当前步骤，没有判定失败；可从恢复点继续或更换模型后继续。`);
-  }
-
+  const executeStep = createNativeStepExecutor({
+    options,
+    loadEngineModules,
+    inferStepDeliverableType,
+    consultStepAdvisors,
+    buildSystem,
+    buildInheritedTaskContext,
+    buildChildTaskContext,
+    buildUserTurn,
+    toolAvailableForStep,
+    emit,
+    requiresLongModelRequest,
+    MAX_LONG_MODEL_ROUNDS_PER_STEP,
+    MAX_MODEL_ROUNDS_PER_STEP,
+    MODEL_ROUNDS_PER_STAGE,
+    assertCanContinue,
+    shouldExtendModelRoundBudget,
+    updateRun,
+    callModel,
+    longModelRequestTimeoutMs,
+    modelRequestTimeoutMs,
+    ExecutionControlSignal,
+    modelName,
+    persistTurnRuntime,
+    readRun,
+    verifiedFileStepCompletesStep,
+    MAX_TOOL_CALLS_PER_STEP,
+    toolKey,
+    toolCacheKey,
+    isWorkspaceMutationTool,
+    reportActivity,
+    publicMember,
+    timeoutPromise,
+    toolCallTimeoutMs,
+    delegateSubtask,
+    executeWorktreeTool,
+    isPreparationTool,
+    recordTool,
+    requestToolApproval,
+    MAX_PREPARATION_STREAK,
+    completeOutstandingToolMessages,
+    structuredReviewCompletesStep,
+    text,
+    substantiveDecisionCompletesStep,
+  });
   function formalStep(runId, step) {
     const review = step.kind === 'review';
     return {
@@ -1066,6 +693,7 @@ function createNativeExecutionAdapter(options) {
       next.phase = 'executing';
       next.queuePosition = undefined;
       next.lastError = undefined;
+      markAdaptiveStepStarted(next, step.id);
       if (next.runner) {
         try { next.runner = runner.beginTaskStep(next.runner, step.id); } catch {}
       }
@@ -1234,33 +862,28 @@ function createNativeExecutionAdapter(options) {
   }
 
   async function failStep(job, step, member, error) {
-    const { runner, teamExecutionProtocol } = await loadEngineModules();
+    const { runner, teamExecutionProtocol, adaptivePlan } = await loadEngineModules();
     const reason = text(error?.message || error, 1200);
     const failedRun = await readRun(job.taskId).catch(() => undefined);
     if (failedRun?.worktree && options.worktreeManager) {
       await options.worktreeManager.checkpoint(job.taskId, { label: `步骤失败：${step.title}` }).catch(() => {});
     }
     try { await checkpoint(job, { kind: 'step_failed', stepId: step.id, summary: reason }); } catch {}
+    let recoveryAction = 'blocked';
     await updateRun(job.taskId, (run) => {
-      run.status = 'failed'; run.phase = 'blocked'; run.lastError = reason;
-      run.handoff = { ts: Date.now(), completed: run.steps.filter((item) => item.status === 'completed').map((item) => item.title), blocked: reason,
-        nextAction: '修复提示中的模型、授权、配置或工作区问题后继续，已完成内容不会重做。' };
+      const recovery = applyAdaptiveStepFailure(run, { step, adaptivePlan, reason, errorClass: error?.errorClass, memberName: member.name });
+      recoveryAction = recovery.action;
       if (run.runner) {
         try { run.runner = runner.recordTaskStepResult(run.runner, { stepId: step.id, success: false, retryable: false, error: reason }); run.plan = run.runner.plan; } catch {}
       }
       const delegated = run.delegations?.find((item) => item.id === step.delegationId);
       if (delegated) { delegated.status = 'failed'; delegated.updatedAt = Date.now(); delegated.completedAt = Date.now(); delegated.error = reason; }
       if (run.executionProtocol) run.executionProtocol = teamExecutionProtocol.projectTeamExecutionEvent(run.executionProtocol, { type: 'step_failed', stepId: step.id, employeeId: member.id, detail: reason, error: reason });
-      if (run.recoveryContext) {
-        run.recoveryContext.summary = `${member.name}的步骤被阻塞，主进程已保留上下文。`;
-        run.recoveryContext.unresolvedIssues = [...run.recoveryContext.unresolvedIssues, reason].slice(-20);
-        run.recoveryContext.interruptedAt = Date.now();
-        run.recoveryContext.interruptionReason = reason;
-      }
     }, `原生 Adapter 步骤失败 ${step.id}`);
     const delegated = failedRun?.delegations?.find((item) => item.id === step.delegationId);
     if (delegated?.childTaskId && options.taskService) await options.taskService.failStep(delegated.childTaskId, { stepId: 'step-1', error: reason, retryable: false }).catch(() => {});
     emit(job, 'step_failed', { stepId: step.id, member: publicMember(member), error: reason });
+    return { action: recoveryAction, reason };
   }
 
   async function finishRun(job) {
@@ -1550,7 +1173,7 @@ function createNativeExecutionAdapter(options) {
         const childMembers = child.memberSnapshot?.some((member) => member?.modelConfig?.apiHost)
           ? child.memberSnapshot
           : [...job.members.values()];
-        const resumed = await start({
+        const resumed = await control.start({
           taskId: child.id,
           members: childMembers,
           attachments: job.attachments,
@@ -1568,7 +1191,6 @@ function createNativeExecutionAdapter(options) {
     }
     return { refreshed: false };
   }
-
   async function execute(job) {
     job.state = 'running';
     job.startedAt = job.startedAt || Date.now();
@@ -1593,7 +1215,9 @@ function createNativeExecutionAdapter(options) {
           await completeStep(job, await readRun(job.taskId), runnable, member, result);
         } catch (error) {
           if (error instanceof ExecutionControlSignal) throw error;
-          await failStep(job, runnable, member, error);
+          const recovery = await failStep(job, runnable, member, error);
+          if (recovery.action === 'replan') throw new ExecutionControlSignal('adaptive_replan', recovery.reason);
+          if (recovery.action === 'await_user') throw new ExecutionControlSignal('awaiting_user', recovery.reason);
           throw error;
         }
       }
@@ -1673,24 +1297,26 @@ function createNativeExecutionAdapter(options) {
             }
           }, 'Parent task yielded its queue slot while waiting for a child task').catch(() => {});
           emit(job, 'child_task_waiting', { error: error.message });
-        } else if (controlKind === 'steer') {
+        } else if (controlKind === 'steer' || controlKind === 'adaptive_replan') {
           job.state = 'queued';
           job.requeueAfterExecution = true;
           job.interruptReason = undefined;
           try {
             await updateRun(job.taskId, (run) => {
               run.status = 'queued';
-              run.phase = 'executing';
+              run.phase = 'preflight';
               run.lastError = undefined;
               run.steps.forEach((step) => {
                 if (step.status === 'running') {
                   step.status = 'queued';
-                  step.events.push({ ts: Date.now(), type: 'status', detail: '收到用户插话，正在按最新要求重新执行当前步骤' });
+                  step.events.push({ ts: Date.now(), type: 'status', detail: controlKind === 'adaptive_replan' ? '当前路线失败，正在按修订后的计划更换路线' : '收到用户插话，正在按最新要求重新执行当前步骤' });
                 }
               });
               if (run.recoveryContext) {
-                run.recoveryContext.summary = '已收到新的要求，正在合并原目标与最新约束后继续执行。';
-                run.recoveryContext.steeringMessages = [...(run.recoveryContext.steeringMessages || []), ...job.steering].slice(-20);
+                run.recoveryContext.summary = controlKind === 'adaptive_replan'
+                  ? '当前失败已完成归因，系统保留现有证据并按新计划继续。'
+                  : '已收到新的要求，正在合并原目标与最新约束后继续执行。';
+                if (controlKind === 'steer') run.recoveryContext.steeringMessages = [...(run.recoveryContext.steeringMessages || []), ...job.steering].slice(-20);
                 run.recoveryContext.autoResume = true;
                 run.recoveryContext.waitingFor = undefined;
               }
@@ -1746,7 +1372,7 @@ function createNativeExecutionAdapter(options) {
           await persistControlledLifecycle(job, 'stopped', error.message);
         }
         const controlledJobState = controlKind === 'stop' || controlKind === 'close' ? 'stopped' : controlKind === 'awaiting_user' ? 'awaiting_user' : 'paused';
-        if (controlKind !== 'steer' && controlKind !== 'delegate_wait') job.state = controlledJobState;
+        if (controlKind !== 'steer' && controlKind !== 'adaptive_replan' && controlKind !== 'delegate_wait') job.state = controlledJobState;
         emit(job, 'job_controlled', { control: controlKind, error: error.message });
       } else {
         job.lastError = text(error?.message || error, 1200);
@@ -1773,354 +1399,31 @@ function createNativeExecutionAdapter(options) {
     }
   }
 
-  async function start(input) {
-    const taskId = String(input?.taskId || input?.run?.id || '');
-    if (!taskId) return { ok: false, error: '原生 Adapter 缺少 taskId' };
-    const existing = jobs.get(taskId);
-    if (existing && ACTIVE_JOB_STATES.has(existing.state)) return { ok: true, idempotencyHit: true, job: safeJob(existing) };
-    let storedRun;
-    try { storedRun = await ensureRun({ ...input, taskId }); }
-    catch (error) { return { ok: false, error: error?.message || String(error) }; }
-    if (storedRun?.worktree && options.worktreeManager) {
-      const recovered = await options.worktreeManager.recover(taskId);
-      if (!recovered.ok) return { ok: false, error: recovered.error || '任务 Git Worktree 无法恢复' };
-      await updateRun(taskId, (next) => { next.workspaceId = recovered.worktree.workspaceId; next.worktree = { ...next.worktree, ...recovered.worktree }; }, '原生 Adapter 恢复 Git Worktree');
-    }
-    const members = new Map((input.members || []).map((member) => [String(member.id), { ...member, id: String(member.id) }]));
-    if (!members.size) return { ok: false, error: '原生 Adapter 没有收到可执行成员与模型配置' };
-    const connectorActions = [];
-    for (const connector of input.connectors || []) {
-      for (const action of connector.discoveredActions || connector.actions || []) {
-        connectorActions.push({ name: `connector_${connector.id}_${action.mcpToolName || action.name}`, connectorId: connector.id, action });
-      }
-    }
-    const job = {
-      protocolVersion: NATIVE_ADAPTER_VERSION,
-      jobId: `native-job-${taskId}-${crypto.randomUUID()}`,
-      taskId, state: 'queued', createdAt: Date.now(), updatedAt: Date.now(), lastProgressAt: Date.now(), currentActivity: '等待进入后台队列',
-      members, attachments: clone(input.attachments || []), extraSystemContext: text(input.extraSystemContext, 80000),
-      reviewModelConfig: clone(input.reviewModelConfig || undefined),
-      memoryWriteApproval: input.memoryWriteApproval !== false,
-      executionPolicy: clone(input.executionPolicy || { sandboxEnabled: true, approvalMode: 'delegate', connectorApprovalMode: 'delegate' }),
-      connectors: clone(input.connectors || []), connectorActions,
-      connectorTools: clone(input.connectorTools || []), steering: [], events: [], eventSequence: 0, messageSequence: 0,
-      approvalGrants: new Set((storedRun?.approvals || []).filter((item) => item.status === 'approved' || item.status === 'consumed').map((item) => item.approvalKey).filter(Boolean)),
-      approvalDenials: new Set((storedRun?.approvals || []).filter((item) => item.status === 'rejected').map((item) => item.approvalKey).filter(Boolean)),
-      checkpointSequence: 0, modelRounds: 0, toolCalls: 0,
-      claimSequence: 0,
-    };
-    jobs.set(taskId, job);
-    enqueueJob(job, 'submitted');
-    return { ok: true, job: safeJob(job) };
-  }
+  const control = createNativeExecutionControl({
+    NATIVE_ADAPTER_VERSION,
+    ACTIVE_JOB_STATES,
+    options,
+    jobs,
+    queue,
+    observability,
+    getActiveJob: () => activeJob,
+    safeJob,
+    clone,
+    text,
+    refreshQueuePositions,
+    enqueueJob,
+    enqueueCompensation,
+    emit,
+    ensureRun,
+    readRun,
+    updateRun,
+    runCompensations,
+    loadEngineModules,
+    formalStep,
+    buildStaffingPlanRevision,
+  });
 
-  function removeQueuedJob(job) {
-    const index = queue.indexOf(job);
-    if (index >= 0) queue.splice(index, 1);
-    refreshQueuePositions();
-  }
-
-  function applyJobControl(job, type) {
-    if (!job) return false;
-    const wasQueued = job.state === 'queued';
-    if (type === 'resume') {
-      job.control = undefined;
-      // The durable worker has already moved a failed/paused run back to
-      // queued before this control reaches the in-memory adapter. A failed
-      // job is therefore resumable; keeping it terminal here made the UI's
-      // "continue" button appear to work while no job was ever re-enqueued.
-      if (!['completed', 'stopped'].includes(job.state)) {
-        job.state = 'queued';
-        job.finishedAt = undefined;
-        job.lastError = undefined;
-        enqueueJob(job, 'resumed');
-      }
-      emit(job, 'control_received', { control: 'resume' });
-      return false;
-    }
-    const effectiveType = type === 'close' ? 'stop' : type;
-    job.control = effectiveType;
-    job.abortController?.abort();
-    if (effectiveType === 'pause') job.state = 'paused';
-    if (effectiveType === 'stop') job.state = 'stopped';
-    removeQueuedJob(job);
-    emit(job, 'control_received', { control: type });
-    return wasQueued;
-  }
-
-  async function cascadeChildControl(parentTaskId, type) {
-    if (!['pause', 'resume', 'stop', 'close'].includes(type)) return;
-    const snapshot = await options.store.read();
-    if (!snapshot.ok) return;
-    const descendants = [];
-    const pending = [String(parentTaskId)];
-    while (pending.length) {
-      const ancestorId = pending.shift();
-      for (const candidate of snapshot.runs.filter((run) => run.parentTaskId === ancestorId)) {
-        if (descendants.some((item) => item.id === candidate.id)) continue;
-        descendants.push(candidate);
-        pending.push(candidate.id);
-      }
-    }
-    const forwardedType = type === 'close' ? 'stop' : type;
-    const controllableDescendants = type === 'resume'
-      ? descendants.filter((item) => ['paused', 'failed', 'awaiting_user'].includes(item.status))
-      : descendants.filter((item) => !['completed', 'failed', 'stopped'].includes(item.status));
-    for (const child of controllableDescendants) {
-      const childJob = jobs.get(child.id);
-      // Resume the durable state before enqueueing the in-memory job. Doing
-      // this in the opposite order lets drainQueue race ahead and attempt to
-      // claim a task that is still paused/awaiting_user in the ledger.
-      const queuedBeforeControl = forwardedType === 'resume' ? false : applyJobControl(childJob, forwardedType);
-      const result = await options.worker.dispatch({
-        commandId: `native-cascade-${forwardedType}-${parentTaskId}-${child.id}-${crypto.randomUUID()}`,
-        taskId: child.id,
-        type: forwardedType,
-        requestedBy: `parent-task:${parentTaskId}`,
-        sessionId: options.sessionId,
-        payload: {},
-      });
-      if (result?.ok) {
-        if (forwardedType === 'resume') applyJobControl(childJob, forwardedType);
-        // A queued child has no active execute() catch block to initiate rollback.
-        // Complete its declared compensation before the active parent may compensate shared state.
-        if (queuedBeforeControl && forwardedType === 'stop' && childJob) {
-          await runCompensations(childJob, `Parent task ${parentTaskId} stopped before queued child ${child.id} could run`).catch(() => {});
-          emit(childJob, 'queued_child_compensation_finished', { parentTaskId });
-        }
-      }
-    }
-    const parentJob = jobs.get(String(parentTaskId));
-    if (parentJob && descendants.length) emit(parentJob, 'child_task_control_cascaded', {
-      control: type,
-      childTaskIds: descendants.map((item) => item.id),
-    });
-  }
-
-  async function handleControl(command, result) {
-    if (!result?.ok) return;
-    const taskId = String(command?.taskId || '');
-    const type = String(command?.type || '');
-    if (!['pause', 'resume', 'stop', 'close'].includes(type)) return;
-    const job = jobs.get(taskId);
-    if (type === 'resume' && job?.state === 'stopped') {
-      void readRun(taskId).then((run) => {
-        if ((run?.compensation || []).some((item) => item.status === 'awaiting_approval')) {
-          job.control = undefined;
-          enqueueCompensation(job, 'User approved a previously blocked compensation');
-        }
-      }).catch(() => {});
-    }
-    if (type === 'resume') {
-      // Resume descendants first. Otherwise the parent can re-enter execute(),
-      // observe a still-paused child and immediately fall back to awaiting_user.
-      if (job && !['completed', 'stopped'].includes(job.state)) {
-        job.control = undefined;
-        job.state = 'queued';
-        emit(job, 'resume_waiting_for_children');
-      }
-      try {
-        await cascadeChildControl(taskId, type);
-        applyJobControl(job, type);
-      } catch (error) {
-        emit(job, 'child_task_control_failed', { control: type, error: text(error?.message || error, 600) });
-      }
-      return;
-    }
-    const queuedBeforeControl = applyJobControl(job, type);
-    const cascade = cascadeChildControl(taskId, type).catch(() => {});
-    if (queuedBeforeControl && (type === 'stop' || type === 'close') && job) {
-      // The parent is not inside execute(), so queue compensation after child control
-      // rather than running a second tool loop in parallel with the active descendant.
-      void cascade.then(() => enqueueCompensation(job, `Queued task ${taskId} was ${type === 'close' ? 'closed' : 'stopped'} while a descendant was active`));
-    }
-  }
-
-  async function steer(taskId, message) {
-    const job = jobs.get(String(taskId || ''));
-    const value = text(message, 2000);
-    if (!job || !ACTIVE_JOB_STATES.has(job.state)) return { ok: false, error: '任务当前没有由原生 Adapter 执行' };
-    if (!value) return { ok: false, error: '插话内容不能为空' };
-    const { contextRouter, turnLifecycle } = await loadEngineModules();
-    const current = await readRun(job.taskId);
-    const routed = current ? contextRouter.routeTaskInput(current, value) : { route: contextRouter.classifyTaskInput(value, { status: job.state }) };
-    job.steering.push(value);
-    if (job.steering.length > 20) job.steering.splice(0, job.steering.length - 20);
-    job.steeringRoutes ||= [];
-    job.steeringRoutes.push(routed.route);
-    if (job.steeringRoutes.length > 20) job.steeringRoutes.splice(0, job.steeringRoutes.length - 20);
-    if (routed.run) {
-      await updateRun(job.taskId, (next) => {
-        next.context = routed.run.context;
-        next.recoveryContext = routed.run.recoveryContext;
-        next.recoveryCapsule = routed.run.recoveryCapsule;
-        next.turnLifecycle = turnLifecycle.recordLifecycleSteering(
-          turnLifecycle.restoreTurnLifecycle(next.turnLifecycle, {
-            taskId: next.id,
-            conversationId: next.conversationId,
-            scope: `team:${next.teamId}`,
-            goal: next.goal || next.request,
-            deliverableType: next.contract?.deliverableType,
-          }),
-          value,
-        );
-        next.lifecycleRecovery = turnLifecycle.createLifecycleRecoveryCapsule(next.turnLifecycle);
-      }, `上下文路由：${routed.route.kind} -> ${routed.route.action}`);
-    }
-    if (routed.route.action === 'pause') {
-      job.control = 'pause';
-      job.abortController?.abort();
-    } else if (routed.route.action === 'stop') {
-      job.control = 'stop';
-      job.abortController?.abort();
-    } else if (job.state === 'running' && routed.route.shouldPreempt) {
-      job.interruptReason = 'steer';
-      job.abortController?.abort();
-    }
-    emit(job, 'steering_received', { message: value, route: routed.route });
-    return { ok: true, job: safeJob(job) };
-  }
-
-  async function delegate(taskId, input = {}) {
-    const current = await readRun(String(taskId || '')).catch(() => undefined);
-    if (!current) return { ok: false, error: '找不到要委派子任务的父任务' };
-    const job = jobs.get(current.id);
-    const { runner, taskDelegation } = await loadEngineModules();
-    try {
-      const appended = taskDelegation.appendDelegation(current, input);
-      if (job && !job.members.has(appended.delegation.employeeId)) {
-        return { ok: false, error: `员工 ${appended.delegation.employeeName} 不在当前执行器成员列表中，请先把员工加入团队后再委派` };
-      }
-      const child = options.taskService
-        ? await options.taskService.createChild(current.id, {
-          employeeId: appended.delegation.employeeId,
-          title: appended.delegation.title,
-          assignment: appended.delegation.assignment,
-          goal: appended.delegation.assignment,
-          acceptanceCriteria: appended.delegation.acceptanceCriteria,
-        })
-        : undefined;
-      if (child?.task?.id && current.conversationId) {
-        await updateRun(child.task.id, (next) => {
-          next.conversationId = current.conversationId;
-          next.teamId = current.teamId;
-        }, `继承父任务 ${current.id} 的聊天会话`);
-      }
-      await updateRun(current.id, (next) => {
-        next.delegations = appended.run.delegations;
-        next.steps = appended.run.steps;
-        if (child?.task?.id) {
-          const delegation = next.delegations.find((item) => item.id === appended.delegation.id);
-          if (delegation) delegation.childTaskId = child.task.id;
-          const delegatedStep = next.steps.find((item) => item.id === appended.step.id);
-          if (delegatedStep) {
-            delegatedStep.childTaskId = child.task.id;
-            delegatedStep.externalChild = true;
-          }
-        }
-        if (next.runner) {
-          try { next.runner = runner.appendTaskRunnerSteps(next.runner, [formalStep(next.id, appended.step)], `手动添加子任务：${appended.delegation.title}`); next.plan = next.runner.plan; } catch {}
-        }
-      }, `手动动态委派 ${appended.delegation.employeeName}`);
-      const childStart = child?.task?.id && job
-        ? await start({
-          taskId: child.task.id,
-          members: [...job.members.values()],
-          attachments: job.attachments,
-          extraSystemContext: `Parent task ${current.id}; manually delegated by ${appended.delegation.employeeName}.`,
-          reviewModelConfig: job.reviewModelConfig,
-          memoryWriteApproval: job.memoryWriteApproval,
-          executionPolicy: job.executionPolicy,
-          connectors: job.connectors,
-          connectorTools: job.connectorTools,
-        })
-        : undefined;
-      if (child && job && !childStart?.ok) throw new Error(childStart?.error || 'Child task could not enter the native execution queue');
-      const delegation = { ...appended.delegation, childTaskId: child?.task?.id };
-      const step = { ...appended.step, childTaskId: child?.task?.id, externalChild: Boolean(child?.task?.id) };
-      if (job) emit(job, 'subtask_delegated', { parentStepId: input.parentStepId, delegation, childJob: childStart?.job, source: 'manual' });
-      return { ok: true, delegation, step, childTask: child?.task, childJob: childStart?.job, job: job ? safeJob(job) : undefined };
-    } catch (error) {
-      return { ok: false, error: text(error?.message || error, 1000) };
-    }
-  }
-
-  // Team membership is allowed to grow while a project is running. Keep the
-  // durable member snapshot and in-memory execution roster in lockstep before
-  // a new expert can receive delegated work.
-  async function syncMembers(taskId, input = {}) {
-    const current = await readRun(String(taskId || '')).catch(() => undefined);
-    if (!current) return { ok: false, error: '找不到需要同步成员的任务' };
-    const incoming = Array.isArray(input.members) ? input.members
-      .filter((member) => member && text(member.id, 180))
-      .map((member) => ({ ...member, id: text(member.id, 180) })) : [];
-    if (!incoming.length) return { ok: false, error: '没有提供有效的团队成员名单' };
-    const job = jobs.get(current.id);
-    const known = new Map((current.memberSnapshot || []).map((member) => [String(member.id), member]));
-    const additions = incoming.filter((member) => !known.has(member.id));
-    if (!additions.length) return { ok: true, changed: false, job: job ? safeJob(job) : undefined };
-    if (job) {
-      for (const member of additions) job.members.set(member.id, { ...member });
-    }
-    const { teamExecutionProtocol } = await loadEngineModules();
-    await updateRun(current.id, (next) => {
-      const snapshots = incoming.map((member) => {
-        const snapshot = { ...member };
-        delete snapshot.modelConfig;
-        return snapshot;
-      });
-      const snapshotById = new Map((next.memberSnapshot || []).map((member) => [String(member.id), member]));
-      for (const member of snapshots) snapshotById.set(String(member.id), { ...snapshotById.get(String(member.id)), ...member });
-      next.memberSnapshot = [...snapshotById.values()];
-      next.memberRosterVersion = Number(next.memberRosterVersion || 0) + 1;
-      if (next.executionProtocol) {
-        next.executionProtocol = teamExecutionProtocol.reconcileTeamExecutionProtocol(next.executionProtocol, {
-          members: next.memberSnapshot,
-          steps: next.steps,
-        });
-      }
-    }, `团队执行名单已扩充：${additions.map((member) => text(member.name || member.id, 120)).join('、')}`);
-    if (job) emit(job, 'member_roster_updated', { additions: additions.map((member) => ({ id: member.id, name: text(member.name, 120) })), rosterSize: job.members.size });
-    return { ok: true, changed: true, additions: additions.map((member) => ({ id: member.id, name: text(member.name, 120) })), job: job ? safeJob(job) : undefined };
-  }
-
-  async function delegationStatus(taskId) {
-    const run = await readRun(String(taskId || '')).catch(() => undefined);
-    if (!run) return { ok: false, error: '找不到任务' };
-    const { taskDelegation } = await loadEngineModules();
-    return { ok: true, ...taskDelegation.delegationSummary(run), delegations: clone(run.delegations || []) };
-  }
-
-  function status(taskId) {
-    if (taskId) {
-      const job = jobs.get(String(taskId));
-      return { ok: true, job: job ? safeJob(job) : undefined, queue: { activeTaskId: activeJob?.taskId, queuedTaskIds: queue.map((item) => item.taskId), total: queue.length } };
-    }
-    return { ok: true, jobs: [...jobs.values()].map(safeJob), queue: { activeTaskId: activeJob?.taskId, queuedTaskIds: queue.map((item) => item.taskId), total: queue.length } };
-  }
-
-  function events(taskId, afterSequence = 0) {
-    const job = jobs.get(String(taskId || ''));
-    return { ok: true, events: job ? job.events.filter((event) => event.sequence > Number(afterSequence || 0)).map(clone) : [] };
-  }
-
-  function observabilityStatus(taskId) {
-    const queueState = { activeTaskId: activeJob?.taskId, queuedTaskIds: queue.map((item) => item.taskId), total: queue.length };
-    return taskId
-      ? { ok: true, task: observability.get(taskId), queue: queueState }
-      : { ok: true, tasks: observability.list(), queue: queueState };
-  }
-
-  function stopAll() {
-    for (const job of jobs.values()) {
-      if (!ACTIVE_JOB_STATES.has(job.state)) continue;
-      job.control = 'pause';
-      job.abortController?.abort();
-      if (job.heartbeat) clearInterval(job.heartbeat);
-    }
-  }
-
-  return { start, steer, decideApproval, delegate, syncMembers, delegationStatus, status, events, observability: observabilityStatus, handleControl, stopAll };
+  return { ...control, decideApproval };
 }
 
 module.exports = {

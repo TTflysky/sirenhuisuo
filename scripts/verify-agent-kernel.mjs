@@ -285,7 +285,7 @@ for (const argumentsText of repeatedSkillCalls) {
 assert.equal(executableReads, 1, '118 repeated Skill reads must collapse to one real read');
 
 const mainSource = await fs.readFile(new URL('../electron/main.cjs', import.meta.url), 'utf8');
-const clientSource = await fs.readFile(new URL('../src/data/hermesClient.ts', import.meta.url), 'utf8');
+const clientSource = `${await fs.readFile(new URL('../src/data/hermesClient.ts', import.meta.url), 'utf8')}\n${await fs.readFile(new URL('../src/data/agentLoopRuntime.ts', import.meta.url), 'utf8')}`;
 const assistantChatSource = await fs.readFile(new URL('../src/components/chat/AssistantChat.tsx', import.meta.url), 'utf8');
 const dmChatSource = await fs.readFile(new URL('../src/components/chat/DmChatApp.tsx', import.meta.url), 'utf8');
 const teamDiscussionSource = await fs.readFile(new URL('../src/engine/teamDiscussion.ts', import.meta.url), 'utf8');

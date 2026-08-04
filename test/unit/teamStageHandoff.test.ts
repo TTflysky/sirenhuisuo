@@ -72,11 +72,11 @@ describe('team stage handoff', () => {
   });
 
   it('keeps the collaboration rules in the runtime and built-in persona', () => {
-    const storeSource = readFileSync('src/store.tsx', 'utf8');
+    const discussionRuntimeSource = readFileSync('src/store/teamDiscussionRuntime.ts', 'utf8');
     const supervisorSource = readFileSync('src/engine/teamSupervisor.ts', 'utf8');
     const personaSource = readFileSync('src/components/settings/AssistantSettingsModal.tsx', 'utf8');
     expect(supervisorSource).toContain('当前项目真实状态');
-    expect(storeSource).toContain("kind: 'stage_summary'");
+    expect(discussionRuntimeSource).toContain("kind: 'stage_summary'");
     expect(personaSource).toContain('v3.3 团队主持、插话与阶段交接协议');
     expect(personaSource).toContain('用户拒绝某个完全相同的动作后不得原样再次申请');
   });

@@ -5,10 +5,11 @@ import { buildProjectBoard } from '../src/engine/projectBoard.mjs';
 const root = new URL('..', import.meta.url);
 const read = (relativePath) => fs.readFile(new URL(relativePath, root), 'utf8');
 
-const [matcher, adapter, store, employeeProjection, clipboard, assistant, dm, team] = await Promise.all([
+const [matcher, adapter, store, officeCommands, employeeProjection, clipboard, assistant, dm, team] = await Promise.all([
   read('src/engine/taskMatcher.ts'),
   read('electron/nativeExecutionAdapter.cjs'),
   read('src/store.tsx'),
+  read('src/store/officeCommands.ts'),
   read('src/store/nativeEmployeeProjection.ts'),
   read('src/utils/clipboard.ts'),
   read('src/components/chat/AssistantChat.tsx'),
@@ -33,8 +34,8 @@ assert.match(employeeProjection, /if \(step\.status === 'running'\) active\.set/
 assert.match(assistant, /isProjectApprovalIntent\(enriched\)/u);
 assert.match(assistant, /conversationId: conversationIdRef\.current/u);
 assert.match(assistant, /applyProjectRosterMutation/u);
-assert.match(store, /status: 'clarifying'/u);
-assert.match(store, /startProjectExecution/u);
+assert.match(officeCommands, /status: 'clarifying'/u);
+assert.match(officeCommands, /startProjectExecution/u);
 
 assert.match(clipboard, /copyAndArchiveChatTranscript/u);
 for (const source of [assistant, dm, team]) assert.match(source, /copyAndArchiveChatTranscript/u);

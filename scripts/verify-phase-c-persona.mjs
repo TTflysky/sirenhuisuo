@@ -5,11 +5,14 @@ const persona = await fs.readFile(new URL('../src/components/settings/AssistantS
 const assistant = await fs.readFile(new URL('../src/components/chat/AssistantChat.tsx', import.meta.url), 'utf8');
 const settings = await fs.readFile(new URL('../src/components/settings/SettingsModal.tsx', import.meta.url), 'utf8');
 
-assert.match(persona, /DEFAULT_PROMPT_VERSION = '21'/u);
+assert.match(persona, /DEFAULT_PROMPT_VERSION = '25'/u);
 assert.match(persona, /v3\.2 长任务与客户端性能协议/u);
 assert.match(persona, /负责人、已验证证据、耗时、等待条件和下一步/u);
-assert.match(assistant, /PERSONA_MIGRATION_APPENDIX_V21/u);
+assert.match(assistant, /PERSONA_MIGRATION_APPENDIX_V25/u);
 assert.doesNotMatch(assistant, /PERSONA_MIGRATION_APPENDIX\}/u, 'assistant chat must not migrate with only the legacy appendix');
-assert.match(settings, /PERSONA_MIGRATION_APPENDIX_V21/u);
+assert.match(settings, /PERSONA_MIGRATION_APPENDIX_V25/u);
+assert.match(persona, /v3\.7 动态计划与自主恢复协议/u);
+assert.match(persona, /v3\.11 模块化执行、检查点与真实收尾协议/u);
+assert.match(persona, /v3\.12 模型协议、任务事实与恢复一致性协议/u);
 
-console.log(JSON.stringify({ passed: true, promptVersion: 21, protocol: 'v3.2' }));
+console.log(JSON.stringify({ passed: true, promptVersion: 25, protocol: 'v3.2+v3.7+v3.11+v3.12' }));

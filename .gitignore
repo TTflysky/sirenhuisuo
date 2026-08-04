@@ -7,16 +7,21 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
+node_modules/
+.pnp/
+.pnp.js
 coverage/
-dist
-dist-ssr
-release/win-unpacked/
-release/*.exe
-release/*.blockmap
-release/builder-*.yml
-release/builder-*.yaml
-release/latest.yml
+dist/
+dist-ssr/
+out/
+build/
+!build/icon.ico
+release/
+*.exe
+*.msi
+*.dmg
+*.AppImage
+*.zip
 artifacts/
 downloads/
 .electron-builder-cache
@@ -29,7 +34,15 @@ outputs
 .test-data/
 .tmp-e2e-*/
 .test-user-data-*/
+local-backups/
 *.local
+.env
+.env.*
+!.env.example
+*.pem
+*.pfx
+*.key
+Thumbs.db
 
 # Editor directories and files
 .vscode/*

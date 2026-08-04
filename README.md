@@ -1,19 +1,77 @@
-# 太极 AI 办公会所 v3.6.0
+# 太极 AI 办公会所 v3.12.0
+
+[![Release](https://img.shields.io/github/v/release/TTflysky/sirenhuisuo?label=release)](https://github.com/TTflysky/sirenhuisuo/releases/latest)
+[![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D4)](https://github.com/TTflysky/sirenhuisuo/releases/latest)
+[![License](https://img.shields.io/badge/license-MIT-2ea44f)](./LICENSE)
+[![Release Gate](https://github.com/TTflysky/sirenhuisuo/actions/workflows/release-windows.yml/badge.svg)](https://github.com/TTflysky/sirenhuisuo/actions/workflows/release-windows.yml)
 
 > 面向 Windows 的多模型 AI 虚拟办公室。创建员工、组建团队，让不同模型按照职责协作完成真实任务。
 
 > 接手开发请先阅读：[项目交接手册](./docs/PROJECT_HANDOFF.md)。其中记录了当前架构、不可破坏规则、数据边界、发布流程和后续优先级。
 
+## 30 秒了解太极
+
+太极不是只有聊天框的 AI 客户端。用户可以在办公室中配置不同模型和专业员工，由章北海助理理解目标、组建团队、编排可恢复计划，并让成员在隔离工作区中查资料、写文件、运行命令、审查证据和交付结果。任务的状态、授权、重试、阶段交接和产出物都保存在本机，可在中断后继续。
+
+- [下载最新 Windows 安装包](https://github.com/TTflysky/sirenhuisuo/releases/latest)
+- [查看更新日志](./CHANGELOG.md)
+- [查看 v3.12 阶段报告](./docs/TAIJI_STAGE_V3.12_PROGRESS.md)
+- [查看 GitHub 仓库整改记录](./docs/GITHUB_REPOSITORY_REMEDIATION_V3.12.0.md)
+
+## 界面与真实产出
+
+### 智能体办公室
+
+![太极 v3.12.0 办公室，展示专业员工、部门筛选和实时状态](./docs/screenshots/office-overview.png)
+
+### 真实项目验收
+
+下面两张图来自安装版真实任务“离线项目风险看板”。系统保留已完成阶段，在第一次窄屏验收失败后只重开受影响步骤，并补入响应式专家重新验证。
+
+| 桌面视图 | 375px 窄屏视图 |
+| --- | --- |
+| ![离线项目风险看板桌面验收](./docs/evidence/v3.11.0/risk-board-desktop-1440x900.png) | ![离线项目风险看板窄屏验收](./docs/evidence/v3.11.0/risk-board-narrow-375x844.png) |
+
 ## 项目状态
 
-- 当前源码版本：`3.6.0`
-- 当前可安装验收版本：`3.6.0`
+- 当前源码版本：`3.12.0`
+- 当前可安装验收版本：`3.11.0`（v3.12.0 发布候选正在完成安装验收）
 - 发布分支：`main`
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 43、React 19、TypeScript 6、Ant Design 6、Vite 8
 - 模型接口：OpenAI 兼容的 `/chat/completions` API
 
 ## 核心能力
+
+### v3.12.0 模型兼容、任务事实与模块边界
+
+- 修复 DeepSeek thinking 模式工具续轮 `reasoning_content` 丢失造成的 `400 invalid_request`，覆盖普通聊天、员工、团队任务与 Coding Runtime。
+- 窗口注册、窗口 IPC、TaskService 查询、上下文、证据、审批和生命周期命令拆成独立模块，主文件与最长函数继续缩小，并由自动门禁阻止职责回流。
+- 代码任务即使没有显式填写仓库地址，也必须准备隔离工作区，并以检查点、补丁和通过的构建或测试证据收口。
+- 权限、鉴权和计费类阻塞保留任务现场并等待用户；批准普通授权后，从同一检查点重新入队，不再出现按钮已点但后台未恢复。
+- 内置章北海人格升级到 v25，聊天、设置和旧人格迁移入口统一使用同一协议。
+- GitHub 仓库补齐 MIT License、构建产物忽略规则、图文入口和更严格的 Actions 发布门禁。
+
+### v3.8.0-v3.11.0 核心职责拆分与结构防回流
+
+- 原生执行器拆出独立控制面与步骤执行器，任务启动/恢复/暂停/停止、单步工具调用、检查点和补偿不再集中在同一个适配器中。
+- 模型客户端拆出独立 Agent Loop；Store 拆出办公室命令、任务控制、团队消息和团队讨论运行时，避免模型请求、持久化、UI 状态和团队执行互相污染。
+- v3.11 再拆出 Agent 固定来源策略、团队 Worker 租约/心跳/检查点和最终验收收尾。指定 Skill 来源、失败交接、长任务恢复和交付证据各有独立所有权。
+- 新增文件行数与函数长度双门禁。`main.cjs`、`taskService.cjs`、`skills.cjs` 和 `nativeToolRuntime.cjs` 已纳入“只许缩小、不许继续膨胀”的第二梯队清单。
+- 内置章北海人格升级到 v24，明确区分模型判断、策略边界、Worker 检查点、阶段交接和最终验收；任一局部成功不得冒充整个目标完成。
+- 当前标准测试 `125/125`、TypeScript/Vite 生产构建、模块边界和函数边界门禁通过。完整安装版真实项目证据见 [docs/REAL_PROJECT_ACCEPTANCE_v3.11.0.md](./docs/REAL_PROJECT_ACCEPTANCE_v3.11.0.md)。
+- Windows 安装包为 [`release/taiji-office-setup-3.11.0.exe`](./release/taiji-office-setup-3.11.0.exe)，大小 `195887039` 字节，SHA-256 `05C7DFF7A4C2C23708F629B8FEF07863F6A88C34726B3E597538F1C8A51483C2`；已覆盖安装到当前用户目录并完成真实项目验收。
+
+### v3.7.0 动态计划与自主恢复
+
+- 任务计划升级为可持久化、可迁移和可回放的 `AdaptivePlanGraph`；计划具有稳定 ID、版本号、修订历史、路线历史和人员变更记录。
+- 助理可以通过正式工具修改同一份计划：增加或更新节点、调整依赖、换人、局部重开、废弃节点和切换执行路线；不再靠复制整份任务伪装成恢复。
+- 审查退回只重开责任节点及受影响下游，未受影响的已完成节点和真实证据继续保留。
+- 失败先分类为鉴权、权限、计费、限流、网络、超时、校验、配置、依赖、结果不符或验收失败；可恢复故障最多进行两轮本质不同的换路，之后停止空转。
+- 运行中补人进入同一任务名单，并记录加入原因、影响节点和新增验收要求；节点改派同步回可执行步骤。
+- 固定步数预算改为进展、风险、上下文和硬安全上限组合判断。历史任务恢复只计算真实 `startedAt`，不再把任务创建时间误当连续执行时间。
+- 普通步骤现在统一递增尝试次数。修复了失败次数始终为 1、导致自适应换路无限重排和资源持续占用的根因。
+- 自适应失败控制已从 `nativeExecutionAdapter` 拆为独立模块；当前标准测试 `120/120`、400 条语义基准和完整 `v2` 核心门禁通过。
 
 ### v3.6.0 自主控制内核（影子模式）
 
@@ -320,15 +378,15 @@
 
 ### 使用安装包
 
-`v3.3.0` 已完成核心回归和安装包完整性检查。源码、交接和远端安装资产以 `main` 与对应 GitHub Release 为准。
+正式版本均通过核心回归、包内版本核验和发布资产一致性检查。源码、交接和远端安装资产以 `main` 与对应 GitHub Release 为准。
 
-- [直接下载 v3.3.0 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v3.3.0/taiji-office-setup-3.3.0.exe)
-- [查看 v3.3.0 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v3.3.0)
+- [直接下载 v3.12.0 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v3.12.0/taiji-office-setup-3.12.0.exe)
+- [查看 v3.12.0 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v3.12.0)
 
 本地构建的安装程序生成在：
 
 ```text
-release/taiji-office-setup-3.3.0.exe
+release/taiji-office-setup-3.12.0.exe
 ```
 
 可以直接覆盖安装旧版本。应用数据保存在用户目录，正常覆盖安装不会删除员工、团队、聊天和模型配置。

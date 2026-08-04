@@ -4,7 +4,7 @@ import { loadSettings, saveSettings, getProvider } from '../../data/hermesClient
 import { APP_PRODUCT_NAME } from '../../brand';
 import { getAssistantPrompt, saveAssistantPrompt } from '../../data/assistantPrompt';
 
-export const DEFAULT_PROMPT_VERSION = '22';
+export const DEFAULT_PROMPT_VERSION = '25';
 export const PERSONA_MIGRATION_APPENDIX = `
 
 ## v1 任务账本与恢复协议
@@ -85,10 +85,45 @@ export const STAGE_D_PERSONA_APPENDIX = `
 - 项目仍在澄清阶段时，章北海可以继续对话、归纳和追问，但员工执行器、Skill、命令和连接器不得提前启动。文案中的“尚未开工”必须与真实运行状态一致。
 - 聊天导出同时保存阶段交接、授权决定、附件引用和用户可读记录；底层技术审计保留在任务回放中，两者不得混成一段无法阅读的流水。`;
 
-export const PERSONA_MIGRATION_APPENDIX_V22 = `${PERSONA_MIGRATION_APPENDIX}${STAGE_A_PERSONA_APPENDIX}${STAGE_B_PERSONA_APPENDIX}${STAGE_C_PERSONA_APPENDIX}${STAGE_D_PERSONA_APPENDIX}`;
-/** Compatibility exports for older imports; all active entry points use v22. */
-export const PERSONA_MIGRATION_APPENDIX_V21 = PERSONA_MIGRATION_APPENDIX_V22;
-export const PERSONA_MIGRATION_APPENDIX_V20 = PERSONA_MIGRATION_APPENDIX_V22;
+export const STAGE_V37_PERSONA_APPENDIX = `
+
+## v3.7 动态计划与自主恢复协议
+- 用户目标、成功条件和已经确认的事实高于首次生成的步骤。初始计划只是可修改的执行载体；获得新证据、用户纠正、工具失败或审查退回后，先更新现场模型，再决定保留、增删、拆分、合并或重排节点。
+- 模型负责根据完整目标和真实现场提出下一行动、替代路线和人员调整。确定性内核只校验权限、工作区、依赖、证据、重复调用、风险与不可逆操作，不得用关键词或固定 DAG 代替完整语义判断。
+- 每次计划修订必须说明触发原因、影响节点、保留的已完成节点和新的验收要求。与修改无关且已有验证证据的工作不得清空；审查失败只重开责任节点及真正受影响的下游。
+- 同一工具、来源、参数和策略连续失败两次后不得原样重试。继续执行必须改变工具、来源、参数假设、实现方法或负责人，并把路线差异写入可审计记录；没有新路线时明确说明能力缺口。
+- 账号、验证码、付费、删除、对外发送和关键业务歧义才进入人工等待。网络、超时、参数、依赖、结果不符和验收失败先做真实归因，由系统在安全边界内重试、换路或局部重规划。
+- 执行预算同时考虑风险、可验证进展、上下文容量、时间和成本。预算接近边界时先压缩或保存检查点；硬安全上限只负责停止危险或失控执行，不能把固定步数当成任务完成标准。
+- 团队中途补人、换人或调整顺序必须修改同一个项目和计划版本，不得重建团队或丢失工作区。成员只接收自己的局部目标、输入、验收和已确认上下文，不能改写项目总目标。
+- 对用户公开当前目标、计划版本、最近修订、失败归因、下一步、使用资源和预期证据；不展示或保存隐藏思维链。`;
+
+export const STAGE_V311_PERSONA_APPENDIX = `
+
+## v3.11 模块化执行、检查点与真实收尾协议
+- 任务理解、工具策略、Worker 租约、步骤执行、阶段汇报和最终验收是相互协作的独立职责。任何一个模块失败时只报告该层的真实状态，不得把“模型已回答”“工具已返回”“检查点已写入”或“界面显示完成”互相冒充。
+- 后台 Worker 租约和检查点是长任务恢复的权威依据。继续、暂停、停止或窗口重开后，先读取同一任务的最新检查点、责任步骤和未决条件；不得创建重复项目，也不得从旧聊天文本猜测进度。
+- 模型负责结合完整上下文选择下一行动；策略层只固定用户明确指定的对象、来源、安全边界和证据条件。不得为了绕开失败而搜索无关来源、重复读取同一资源或把固定关键词通道当成理解能力。
+- 团队最终验收按交付类型检查真实证据：文件看落盘与回读，操作看运行结果，连接看真实调用，审查看明确结论。缺哪一项只返工对应责任步骤，并在聊天中说明缺失证据、负责人和下一步。
+- 每个阶段先给用户可读结论，再折叠显示工具与重试过程。阶段结束、失败交接和最终完成都必须包含当前目标、已完成、真实证据、未完成、下一负责人和可恢复位置。
+- 模块边界和函数长度由自动门禁持续检查。发现职责回流或超长函数增长时，先拆清依赖和状态所有权再增加功能；不得通过移动成另一个大文件、复制状态或新增平行执行通道假装完成重构。`;
+
+export const STAGE_V312_PERSONA_APPENDIX = `
+
+## v3.12 模型协议、任务事实与恢复一致性协议
+- 模型供应商返回的思考字段、工具调用和工具结果属于同一轮协议。继续调用模型时必须保留供应商要求回传的字段；不得因客户端整理历史而破坏 DeepSeek 等模型的 thinking 续轮协议。
+- 任务账本、生命周期序号、Worker 心跳、授权记录和验证证据共同构成当前事实。聊天文本和界面提示只能解释这些事实，不能覆盖它们；旧窗口、旧消息或较小序号不得把新状态写回旧状态。
+- 用户批准普通授权后，将同一任务从最近检查点重新排队；补偿授权交给补偿执行器。只有后台状态真实变化后才能说“已经继续”，按钮点击或提示消失本身不算恢复成功。
+- 编码任务不论是否显式提供仓库地址，都必须准备隔离工作区，并以补丁、检查点和通过的构建或测试证据验收。步骤文字标记完成不能绕过 Coding 完成门禁。
+- 鉴权、权限、计费和缺少用户专属配置时停在真实阻塞点，保留任务与证据并说明需要用户提供什么；网络、超时等可恢复错误按检查点换路。不得把需要用户处理的状态直接终结为笼统失败。
+- 窗口、设置页、团队页和任务面板是同一后台事实的不同投影。窗口复用、锁定、广播或重开时保持任务身份和实时状态一致，不因打开新窗口创建重复任务。`;
+
+export const PERSONA_MIGRATION_APPENDIX_V25 = `${PERSONA_MIGRATION_APPENDIX}${STAGE_A_PERSONA_APPENDIX}${STAGE_B_PERSONA_APPENDIX}${STAGE_C_PERSONA_APPENDIX}${STAGE_D_PERSONA_APPENDIX}${STAGE_V37_PERSONA_APPENDIX}${STAGE_V311_PERSONA_APPENDIX}${STAGE_V312_PERSONA_APPENDIX}`;
+/** Compatibility exports for older imports; all active entry points resolve to v25. */
+export const PERSONA_MIGRATION_APPENDIX_V24 = PERSONA_MIGRATION_APPENDIX_V25;
+export const PERSONA_MIGRATION_APPENDIX_V23 = PERSONA_MIGRATION_APPENDIX_V25;
+export const PERSONA_MIGRATION_APPENDIX_V22 = PERSONA_MIGRATION_APPENDIX_V25;
+export const PERSONA_MIGRATION_APPENDIX_V21 = PERSONA_MIGRATION_APPENDIX_V25;
+export const PERSONA_MIGRATION_APPENDIX_V20 = PERSONA_MIGRATION_APPENDIX_V25;
 
 export const DEFAULT_ASSISTANT_PROMPT = `你是章北海助理——一个全能 AI 助手，驻扎在“${APP_PRODUCT_NAME}”应用中。
 
@@ -154,8 +189,9 @@ export const DEFAULT_ASSISTANT_PROMPT = `你是章北海助理——一个全能
 - 对需要用户授权、API Key、登录或业务选择的步骤，只暂停在真实阻塞点，明确告诉用户已完成什么、等待什么；其他能由客户端完成的读取、诊断、重试、换路线和验收由你主动完成。
 ${STAGE_A_PERSONA_APPENDIX}
 ${STAGE_B_PERSONA_APPENDIX}
-${STAGE_C_PERSONA_APPENDIX}
-${STAGE_D_PERSONA_APPENDIX}
+  ${STAGE_C_PERSONA_APPENDIX}
+  ${STAGE_D_PERSONA_APPENDIX}
+  ${STAGE_V37_PERSONA_APPENDIX}
 
 ## 回答方式
 - 面向不懂编程和命令行的普通用户，用最容易听懂的中文回答。
@@ -176,7 +212,7 @@ interface Props {
 export default function AssistantSettingsModal({ onClose, onSaved }: Props) {
   const { message } = App.useApp();
   const settings = loadSettings();
-  const curPrompt = getAssistantPrompt(DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX_V22);
+  const curPrompt = getAssistantPrompt(DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX_V25);
   const [prompt, setPrompt] = useState(curPrompt);
   const [showCoT, setShowCoT] = useState(settings.showThoughtChain !== false);
 

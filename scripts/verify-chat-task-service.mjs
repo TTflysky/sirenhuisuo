@@ -4,15 +4,15 @@ import { readFile } from 'node:fs/promises';
 const root = new URL('../', import.meta.url);
 const read = (file) => readFile(new URL(file, root), 'utf8');
 
-const [client, assistant, dm, bridge] = await Promise.all([
-  read('src/data/hermesClient.ts'),
+const [agentRuntime, assistant, dm, bridge] = await Promise.all([
+  read('src/data/agentLoopRuntime.ts'),
   read('src/components/chat/AssistantChat.tsx'),
   read('src/components/chat/DmChatApp.tsx'),
   read('src/engine/taskServiceBridge.ts'),
 ]);
 
-assert.match(client, /onTaskPrepared\?: \(decision: TaskDecision\) => Promise<void> \| void/);
-assert.match(client, /if \(!conversationOnly\) await onTaskPrepared\?\./);
+assert.match(agentRuntime, /onTaskPrepared\?: \(decision: TaskDecision\) => Promise<void> \| void/);
+assert.match(agentRuntime, /if \(!conversationOnly\) await onTaskPrepared\?\./);
 assert.match(assistant, /onTaskPrepared: \(decision\) => taskBridge\.prepare\(decision\)/);
 assert.match(assistant, /taskBridge\.toolStarted\(/);
 assert.match(assistant, /taskBridge\.toolFinished\(/);

@@ -38,8 +38,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Run unit tests
-        run: npm.cmd run test:run -- --reporter=dot
+      - name: Run release gates
+        run: |
+          npm.cmd run verify:v2-core-gate
+          npm.cmd run verify:phase-c-persona
+          npm.cmd run verify:release-governance
 
       - name: Build and verify Windows package
         shell: pwsh

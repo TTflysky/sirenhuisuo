@@ -29,6 +29,9 @@ const { createLearningReviewQueue } = require('./learningReviewQueue.cjs');
 const { createWebResourceAcquirer } = require('./resourceAcquisition.cjs');
 const { createBrowserPageReader } = require('./browserPageReader.cjs');
 const { createWebArtifactVerifier } = require('./webArtifactVerifier.cjs');
+const { createWindowRegistry } = require('./windowRegistry.cjs');
+const { registerWindowIpc } = require('./windowIpc.cjs');
+const { registerTaskServiceIpc } = require('./taskServiceIpc.cjs');
 const { configureAppUserData } = require('./appIdentityMigration.cjs');
 const { applyRenderingPolicy, attachRendererDiagnostics, revealWindowAfterLoad } = require('./renderingPolicy.cjs');
 // Configure the canonical Taiji data root before any module resolves userData.
@@ -138,6 +141,7 @@ const nativeToolRuntime = createNativeToolRuntime({
   runCommand: executeWorkspaceCommand,
   verifyWebArtifact,
   codingRuntime,
+  taskService,
 });
 const ecosystemHealth = createEcosystemHealth({
   appVersion: APP_VERSION,
@@ -334,9 +338,9 @@ async function executeWorkspaceCommand(payload) {
   });
 }
 
-const chatWindows = new Map();
-const toolWindows = new Map();
-const toolWindowPayloads = new Map();
+const chatWindows = createWindowRegistry('chat-windows');
+const toolWindows = createWindowRegistry('tool-windows');
+const toolWindowPayloads = createWindowRegistry('tool-window-payloads');
 const TOOL_WINDOW_TYPES = new Set(['add-employee', 'edit-employee', 'create-team', 'rename-team', 'manage-team-members', 'connector-config', 'assistant-settings']);
 const CHAT_WINDOW_WIDTH = 560;
 const CHAT_WINDOW_HEIGHT = 700;
@@ -437,6 +441,29 @@ function getChatWindowBounds(sourceWindow) {
   }
   const position = candidates.find(({ x, y }) => !occupied.has(`${x},${y}`)) ?? candidates[0];
   return { ...position, width, height };
+}
+
+function createChatBrowserWindow(type, bounds) {
+  return new BrowserWindow({
+    ...bounds,
+    minWidth: CHAT_WINDOW_MIN_WIDTH,
+    minHeight: CHAT_WINDOW_MIN_HEIGHT,
+    title: type === 'team-chat' ? `${APP_TITLE} · 团队聊天` : `${APP_TITLE} · 员工私聊`,
+    skipTaskbar: false,
+    frame: false,
+    show: false,
+    backgroundColor: '#ffffff',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+}
+
+async function loadRendererWindow(window, hash) {
+  if (!app.isPackaged) return window.loadURL(`${DEV_SERVER_URL}/#${hash}`);
+  return window.loadFile(path.join(__dirname, '../dist/index.html'), { hash });
 }
 
 let mainWindow = null;
@@ -898,133 +925,34 @@ function createWindow() {
     return result;
   };
 
-  // ===== 窗口控制：始终作用于发起事件的窗口（支持原生聊天子窗口）=====
-  const senderWin = (event) => BrowserWindow.fromWebContents(event.sender);
-  ipcMain.on('win:minimize', (event) => senderWin(event)?.minimize());
-  ipcMain.on('win:toggle-max', (event) => {
-    const w = senderWin(event);
-    if (!w) return;
-    if (w.isMaximized()) w.unmaximize();
-    else w.maximize();
-  });
-  ipcMain.on('win:close', (event) => senderWin(event)?.close());
-  ipcMain.handle('win:getAssistantLock', () => ({ locked: assistantCompanionLocked }));
-  ipcMain.handle('win:setAssistantLock', async (_event, locked) => {
-    assistantCompanionLocked = locked === true;
-    saveAssistantCompanionLockPreference();
-    if (assistantCompanionLocked) {
-      const companion = await createAssistantCompanion(mainWindow, { focus: false });
-      if (companion && !companion.isDestroyed()) {
-        if (companion.isMinimized()) companion.restore();
-        companion.showInactive();
-        syncLockedAssistantCompanion();
-      }
-    }
-    return { locked: assistantCompanionLocked };
-  });
-  ipcMain.handle('win:getChatLock', (_event, opts) => {
-    const normalized = normalizeChatOptions(opts);
-    return { locked: Boolean(normalized && normalized.type !== 'assistant-chat' && lockedChatWindowKeys.has(normalized.key)) };
-  });
-  ipcMain.handle('win:setChatLock', (_event, opts) => {
-    const normalized = normalizeChatOptions(opts);
-    if (!normalized || normalized.type === 'assistant-chat') return { locked: false };
-    if (opts?.locked === true) {
-      // The left-side dock is a single workspace slot. Replacing its occupant
-      // keeps team and private chats from overlapping one another.
-      lockedChatWindowKeys.clear();
-      lockedChatWindowKeys.add(normalized.key);
-    }
-    else lockedChatWindowKeys.delete(normalized.key);
-    saveAssistantCompanionLockPreference();
-    if (lockedChatWindowKeys.has(normalized.key)) {
-      const chat = chatWindows.get(normalized.key);
-      if (chat && !chat.isDestroyed()) {
-        if (chat.isMinimized()) chat.restore();
-        chat.showInactive();
-      }
-      syncLockedChatWindows();
-    }
-    return { locked: lockedChatWindowKeys.has(normalized.key) };
-  });
-
-  // ===== 窗口间广播（renderer 任意窗口发出，转发给除发送者外的所有窗口）=====
-  // 用于主办公室窗口与原生聊天子窗口之间实时同步状态（聊天消息、任务、产出物等）
-  ipcMain.on('win:broadcast', (event, data) => {
-    const sender = BrowserWindow.fromWebContents(event.sender);
-    for (const w of BrowserWindow.getAllWindows()) {
-      if (w !== sender && !w.isDestroyed()) {
-        try { w.webContents.send('win:broadcast', data); } catch {}
-      }
-    }
-  });
-
-  // ===== 打开原生聊天窗口（真实桌面窗口，可在屏幕上自由拖动）=====
-  ipcMain.handle('win:openChat', async (event, opts) => {
-    const normalized = normalizeChatOptions(opts);
-    if (!normalized) return { ok: false, error: '无效的聊天窗口参数' };
-    const { type, refId, key } = normalized;
-    if (type === 'assistant-chat') {
-      try {
-        const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : BrowserWindow.fromWebContents(event.sender);
-        await createAssistantCompanion(owner, { focus: true });
-        return { ok: true, reused: true };
-      } catch (error) {
-        return { ok: false, error: String(error?.message ?? error) };
-      }
-    }
-    const existing = chatWindows.get(key);
-    if (existing && !existing.isDestroyed()) {
-      focusChatWindow(existing);
-      return { ok: true, reused: true };
-    }
-    if (existing) chatWindows.delete(key);
-
-    const requester = BrowserWindow.fromWebContents(event.sender);
-    const owner = getRootOwner(requester) ?? (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null);
-    const bounds = getChatWindowBounds(requester ?? owner);
-    const child = new BrowserWindow({
-      ...bounds,
-      minWidth: CHAT_WINDOW_MIN_WIDTH,
-      minHeight: CHAT_WINDOW_MIN_HEIGHT,
-      // Keep chat windows independent. On Windows this gives a minimized chat a
-      // normal taskbar entry instead of a hard-to-restore grey child-window item.
-      title: type === 'team-chat' ? `${APP_TITLE} · 团队聊天` : type === 'dm-chat' ? `${APP_TITLE} · 员工私聊` : `${APP_TITLE} · 章北海助理`,
-      skipTaskbar: false,
-      frame: false,
-      show: false,
-      backgroundColor: '#ffffff',
-      webPreferences: {
-        preload: path.join(__dirname, 'preload.cjs'),
-        contextIsolation: true,
-        nodeIntegration: false,
-      },
-    });
-    trackActiveWindow(child);
-    chatWindows.set(key, child);
-    attachRendererDiagnostics(child, { log, label: `chat:${type}` });
-    revealWindowAfterLoad(child, {
-      log,
-      label: `chat:${type}`,
-      onReveal: () => bringToFront(child),
-    });
-    // focus 仅由 trackActiveWindow 记录，避免触发置顶/焦点循环。
-    child.on('closed', () => {
-      if (chatWindows.get(key) === child) chatWindows.delete(key);
-    });
-
-    const hash = `chat?type=${encodeURIComponent(type)}&id=${encodeURIComponent(refId)}`;
-    try {
-      if (!app.isPackaged) {
-        await child.loadURL(`${DEV_SERVER_URL}/#${hash}`);
-      } else {
-        await child.loadFile(path.join(__dirname, '../dist/index.html'), { hash });
-      }
-      return { ok: true, reused: false };
-    } catch (error) {
-      if (!child.isDestroyed()) child.destroy();
-      return { ok: false, error: String(error?.message ?? error) };
-    }
+  registerWindowIpc({
+    ipcMain,
+    BrowserWindow,
+    chatWindows,
+    toolWindowPayloads,
+    lockedChatWindowKeys,
+    normalizeChatOptions,
+    getMainWindow: () => mainWindow,
+    getAssistantCompanionWindow: () => assistantCompanionWindow,
+    isAssistantCompanionLocked: () => assistantCompanionLocked,
+    setAssistantCompanionLocked: (locked) => { assistantCompanionLocked = locked; },
+    saveWindowLockPreferences: saveAssistantCompanionLockPreference,
+    createAssistantCompanion,
+    syncLockedAssistantCompanion,
+    syncLockedChatWindows,
+    focusChatWindow,
+    getRootOwner,
+    getChatWindowBounds,
+    createChatWindow: createChatBrowserWindow,
+    trackActiveWindow,
+    attachRendererDiagnostics,
+    revealWindowAfterLoad,
+    bringToFront,
+    loadRenderer: loadRendererWindow,
+    createSettingsWindow,
+    getSettingsWindow: () => settingsWindow,
+    createToolWindow,
+    log,
   });
 
   // ===== 命令执行 IPC（handle 模式，支持 async/await）=====
@@ -1176,78 +1104,7 @@ function createWindow() {
   ipcMain.handle('task-recovery:list', async (_event, options) => taskRuntimeStore.listRecoveryPoints(options));
   ipcMain.handle('task-recovery:rebuild', async (_event, options) => taskRuntimeStore.rebuild(options));
   ipcMain.handle('task-recovery:restore', async (_event, input) => taskRuntimeStore.restoreRecoveryPoint(input?.recoveryPointId, input?.metadata));
-  ipcMain.handle('task-service:read', async (_event, options) => taskService.read(options));
-  ipcMain.handle('task-service:create', async (_event, input) => {
-    try { return await taskService.create(input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
-  });
-  ipcMain.handle('task-service:update', async (_event, input) => {
-    try {
-      return await taskService.update(input?.taskId, (task) => Object.assign(task, input?.patch || {}), input?.detail || '统一任务服务更新任务');
-    } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
-  });
-  ipcMain.handle('task-service:tool-attempt', async (_event, input) => {
-    try { return await taskService.recordToolAttempt(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
-  });
-  ipcMain.handle('task-service:artifact', async (_event, input) => {
-    try { return await taskService.addArtifact(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
-  });
-  ipcMain.handle('task-service:reference', async (_event, input) => {
-    try { return await taskService.addReference(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
-  });
-  ipcMain.handle('task-service:create-child', async (_event, input) => {
-    try { return await taskService.createChild(input?.parentTaskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
-  });
-  ipcMain.handle('task-service:context', async (_event, input) => {
-    try { return await taskService.context(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
-  });
-  ipcMain.handle('task-service:ready-steps', async (_event, taskId) => {
-    try { return await taskService.readySteps(taskId); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
-  });
-  ipcMain.handle('task-service:complete-step', async (_event, input) => {
-    try { return await taskService.completeStep(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
-  });
-  ipcMain.handle('task-service:review-decision', async (_event, input) => {
-    try { return await taskService.recordReviewDecision(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
-  });
-  ipcMain.handle('task-service:fail-step', async (_event, input) => {
-    try { return await taskService.failStep(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
-  });
-  ipcMain.handle('task-service:request-approval', async (_event, input) => {
-    try { return await taskService.requestApproval(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
-  });
-  ipcMain.handle('task-service:decide-approval', async (_event, input) => {
-    try { return await taskService.decideApproval(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
-  });
-  ipcMain.handle('task-service:usage', async (_event, input) => {
-    try { return await taskService.recordUsage(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
-  });
-  ipcMain.handle('task-service:metrics', async (_event, taskId) => {
-    try { return await taskService.metrics(taskId); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
-  });
-  ipcMain.handle('task-service:tree', async (_event, taskId) => {
-    try { return await taskService.tree(taskId); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
-  });
-  ipcMain.handle('task-service:recovery-plan', async (_event, taskId) => {
-    try { return await taskService.recoveryPlan(taskId); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
-  });
-  ipcMain.handle('task-service:heartbeat', async (_event, input) => {
-    try { return await taskService.heartbeat(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
-  });
-  ipcMain.handle('task-service:lifecycle', async (_event, input) => {
-    try { return await taskService.recordLifecycle(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
-  });
-  ipcMain.handle('task-service:checkpoint', async (_event, input) => {
-    try { return await taskService.recordCheckpoint(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
-  });
-  ipcMain.handle('task-service:verification', async (_event, input) => {
-    try { return await taskService.recordVerification(input?.taskId, input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
-  });
-  ipcMain.handle('task-service:validate-completion', async (_event, taskId) => {
-    try { return await taskService.validateCompletion(taskId); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
-  });
-  ipcMain.handle('task-service:status', async (_event, input) => {
-    try { return await taskService.setStatus(input?.taskId, input?.status, input?.detail); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
-  });
+  registerTaskServiceIpc(ipcMain, taskService);
   ipcMain.handle('task-worker:command', async (_event, command) => {
     if (command?.type === 'resume') {
       try {
@@ -1586,29 +1443,6 @@ function createWindow() {
     assistantCompanionWindow = null;
   });
 
-  ipcMain.handle('win:openSettings', async (event) => {
-    try {
-      const existing = settingsWindow && !settingsWindow.isDestroyed();
-      await createSettingsWindow(BrowserWindow.fromWebContents(event.sender) ?? mainWindow);
-      return { ok: true, reused: existing };
-    } catch (error) {
-      return { ok: false, error: String(error?.message ?? error) };
-    }
-  });
-
-  ipcMain.handle('win:openTool', async (event, opts) => {
-    try {
-      const result = await createToolWindow(opts, BrowserWindow.fromWebContents(event.sender) ?? mainWindow);
-      return { ok: true, reused: result.reused };
-    } catch (error) {
-      return { ok: false, error: String(error?.message ?? error) };
-    }
-  });
-  ipcMain.handle('win:getToolPayload', (event, session) => {
-    const record = toolWindowPayloads.get(String(session ?? ''));
-    const sender = BrowserWindow.fromWebContents(event.sender);
-    return record && sender?.id === record.windowId ? record.payload : null;
-  });
 }
 
 // Isolated verification must not collide with an installed production client.

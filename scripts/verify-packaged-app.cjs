@@ -67,7 +67,7 @@ for (const marker of ['后台 Worker', 'Worker 命令记录', '真实进展', '�
   assert.match(rendererSource, new RegExp(marker), `Worker marker missing from packaged renderer: ${marker}`);
 }
 assert.match(rendererSource, /verify_web_artifact/u, 'Built-in Web artifact verification tool is missing from the packaged renderer');
-for (const marker of ['自主判断', '影子模式', '查看判断依据']) {
+for (const marker of ['自主判断', '动态计划第', '查看判断依据', '最近计划修订', '执行预算判断']) {
   assert.match(rendererSource, new RegExp(marker), `Autonomous-control marker missing from packaged renderer: ${marker}`);
 }
 

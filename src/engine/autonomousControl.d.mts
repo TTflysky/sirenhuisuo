@@ -27,12 +27,14 @@ export interface DecisionRecord {
 }
 export interface PublicDecisionSummary {
   currentGoal: string; confirmedFacts: string[]; currentGap: string; attemptedRoutes: string[]; nextAction: string; rationale: string;
-  resources: string[]; expectedEvidence: string[]; needsUser: boolean;
+  resources: string[]; expectedEvidence: string[]; needsUser: boolean; planRevision: number; planChange: string;
+  affectedNodes: string[]; preservedCompletedNodes: string[]; budgetAction: string; budgetReason: string;
 }
 export interface AutonomousControlSnapshot {
-  controlVersion: number; mode: 'shadow'; protocol: 'observe-interpret-propose-validate-act-verify-reflect'; loopPhase: DecisionRecord['phase'];
+  controlVersion: number; mode: 'shadow' | 'adaptive'; protocol: 'observe-interpret-propose-validate-act-verify-reflect'; loopPhase: DecisionRecord['phase'];
   planRevision: number; currentDecision: DecisionRecord; decisionHistory: DecisionRecord[]; decisionBasis: Record<string, unknown>;
-  routeHistory: SituationModel['routeHistory']; repeatedRouteDetected: boolean; shouldAwaitUser: boolean; publicSummary: PublicDecisionSummary; updatedAt: number;
+  routeHistory: SituationModel['routeHistory']; repeatedRouteDetected: boolean; shouldAwaitUser: boolean; publicSummary: PublicDecisionSummary;
+  budgetAssessment?: { action: string; reason: string; dimension?: string }; updatedAt: number;
 }
 export function createGoalState(input?: Record<string, unknown>): GoalState;
 export function restoreGoalState(snapshot?: unknown, fallback?: Record<string, unknown>): GoalState;
@@ -40,7 +42,7 @@ export function applyGoalSteering(snapshot: unknown, steering?: { relation?: Goa
 export function deriveSituationModel(run?: Record<string, any>, goalSnapshot?: unknown): SituationModel;
 export function createDecisionRecord(input?: Record<string, any>): DecisionRecord;
 export function buildPublicDecisionSummary(goal: GoalState, situation: SituationModel, decision: DecisionRecord): PublicDecisionSummary;
-export function reconcileAutonomousControl<T extends Record<string, any>>(run: T, options?: { now?: number }): T & { projectId: string; goalState: GoalState; situationModel: SituationModel; autonomousControl: AutonomousControlSnapshot };
+export function reconcileAutonomousControl<T extends Record<string, any>>(run: T, options?: { now?: number }): T & { projectId: string; goalState: GoalState; situationModel: SituationModel; adaptivePlanGraph: import('./adaptivePlanGraph.mjs').AdaptivePlanGraph; autonomousControl: AutonomousControlSnapshot };
 export const AUTONOMOUS_CONTROL_VERSION: number;
 export const AUTONOMOUS_GOAL_VERSION: number;
 export const AUTONOMOUS_SITUATION_VERSION: number;

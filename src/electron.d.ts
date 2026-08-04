@@ -486,7 +486,13 @@ declare global {
     diagnosticsSummary: (options?: { taskId?: string; teamId?: string }) => Promise<{ ok: boolean; total: number; errors: number; recoverable: number; byFailureClass: Record<string, number>; latest: OperationDiagnosticEntry[] }>;
     diagnosticsExport: (options?: { taskId?: string; teamId?: string }) => Promise<{ ok: boolean; canceled?: boolean; path?: string; count?: number; error?: string }>;
     taskExecutionSteer: (input: { taskId: string; message: string }) => Promise<NativeExecutionResult>;
-    taskExecutionSyncMembers: (input: { taskId: string; members: Array<import('./types').TaskRunMemberSnapshot & { modelConfig: import('./types').ModelConfig }> }) => Promise<NativeExecutionResult>;
+    taskExecutionSyncMembers: (input: {
+      taskId: string;
+      members: Array<import('./types').TaskRunMemberSnapshot & { modelConfig: import('./types').ModelConfig }>;
+      reason?: string;
+      affectedNodeIds?: string[];
+      acceptanceCriteria?: string[];
+    }) => Promise<NativeExecutionResult>;
     taskDelegationCreate: (input: TaskDelegationCreateInput) => Promise<TaskDelegationResult>;
     taskDelegationStatus: (taskId: string) => Promise<TaskDelegationResult>;
     worktreeInspect: (sourceRepo: string) => Promise<WorktreeResult>;

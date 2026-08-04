@@ -47,11 +47,13 @@ const normalized = normalizeTaskDecision({
 assert.equal(normalized.primaryRoute, 'read_web_page', 'The kernel must override model drift for an explicit webpage transformation');
 assert(normalized.requiredConstraints.some((item) => item.includes(target)), 'The exact URL must survive into the task contract');
 
-const [clientSource, nativeSource] = await Promise.all([
-  fs.readFile(new URL('../src/data/hermesClient.ts', import.meta.url), 'utf8'),
+const [agentSource, nativeAdapterSource, nativeStepSource] = await Promise.all([
+  fs.readFile(new URL('../src/data/agentLoopRuntime.ts', import.meta.url), 'utf8'),
   fs.readFile(new URL('../electron/nativeExecutionAdapter.cjs', import.meta.url), 'utf8'),
+  fs.readFile(new URL('../electron/nativeStepExecutor.cjs', import.meta.url), 'utf8'),
 ]);
-for (const source of [clientSource, nativeSource]) {
+const nativeSource = `${nativeAdapterSource}\n${nativeStepSource}`;
+for (const source of [agentSource, nativeSource]) {
   assert.match(source, /validateExplicitResourceToolCall/u);
   assert.match(source, /assessExplicitResourceCompletion/u);
   assert.match(source, /buildExplicitResourceGuidance/u);

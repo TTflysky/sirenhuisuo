@@ -12,13 +12,13 @@ assert.equal(classifyTeamMention('@铁柱 请汇报当前进度', { assistantRel
 assert.equal(isTeamMentionTask('@铁柱 修改页面'), true);
 assert.equal(isTeamMentionTask('@铁柱 还在吗'), false);
 
-const store = await fs.readFile(new URL('../src/store.tsx', import.meta.url), 'utf8');
+const teamMessageCommands = await fs.readFile(new URL('../src/store/teamMessageCommands.ts', import.meta.url), 'utf8');
 const discussion = await fs.readFile(new URL('../src/engine/teamDiscussion.ts', import.meta.url), 'utf8');
-assert.match(store, /runTeamMentionReply/);
-assert.match(store, /runDirectEmployeeReply/);
-assert.match(store, /enqueueTeamAssistantReply/);
-assert.match(store, /directMentions\.length > 0 && !supervisorMentioned/);
-assert.doesNotMatch(store, /relayAssistantMentions/);
+assert.match(teamMessageCommands, /runTeamMentionReply/);
+assert.match(teamMessageCommands, /runDirectEmployeeReply/);
+assert.match(teamMessageCommands, /enqueueTeamAssistantReply/);
+assert.match(teamMessageCommands, /directMentions\.length > 0 && !supervisorMentioned/);
+assert.doesNotMatch(teamMessageCommands, /relayAssistantMentions/);
 assert.match(discussion, /export async function runTeamMentionReply/);
 assert.match(discussion, /不要擅自创建任务、安排其他成员或生成文件/);
 

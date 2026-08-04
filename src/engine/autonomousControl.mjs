@@ -1,4 +1,10 @@
-const CONTROL_VERSION = 1;
+import {
+  assessAdaptiveBudget,
+  readyAdaptiveNodes,
+  restoreAdaptivePlanGraph,
+} from './adaptivePlanGraph.mjs';
+
+const CONTROL_VERSION = 2;
 const GOAL_VERSION = 1;
 const SITUATION_VERSION = 1;
 const DECISION_VERSION = 1;
@@ -281,18 +287,23 @@ function nextReadyStep(run) {
   return (run.steps ?? []).filter((step) => step.status === 'queued' && (step.dependsOnStepIds ?? []).every((id) => completed.has(id))).sort((a, b) => a.order - b.order)[0];
 }
 
-function recommendAction(run, situation) {
+function recommendAction(run, situation, adaptivePlanGraph, budgetAssessment) {
   const repeatedRoute = situation.routeHistory.find((route) => route.failures >= 2 && route.successes === 0);
   if (run.status === 'completed') return { kind: 'verify_completion', summary: 'Verify that every success criterion has evidence before closing the goal.' };
   if (run.status === 'awaiting_user') return { kind: 'await_user', summary: situation.blockedBy.at(-1) || 'Wait only for the specific user input required to proceed.' };
   if (run.status === 'paused' || run.status === 'stopped') return { kind: 'hold', summary: 'Keep the execution site intact until the user explicitly continues.' };
   if (repeatedRoute) return { kind: 'switch_route', routeId: repeatedRoute.routeId, summary: `Stop repeating route ${repeatedRoute.toolName || repeatedRoute.routeId}; select a materially different route.` };
+  if (budgetAssessment.action === 'stop') return { kind: 'stop_safely', summary: budgetAssessment.reason };
+  if (budgetAssessment.action === 'await_user') return { kind: 'await_user', summary: budgetAssessment.reason };
+  if (budgetAssessment.action === 'checkpoint') return { kind: 'checkpoint', summary: budgetAssessment.reason };
+  if (budgetAssessment.action === 'compact') return { kind: 'compact_context', summary: budgetAssessment.reason };
+  if (budgetAssessment.action === 'replan') return { kind: 'replan', summary: budgetAssessment.reason };
   if (run.status === 'failed') return { kind: 'reflect', summary: 'Classify the failure, preserve valid evidence, and replan only the affected work.' };
-  const running = (run.steps ?? []).find((step) => step.status === 'running');
+  const running = adaptivePlanGraph.nodes.find((step) => step.status === 'running');
   if (running) return { kind: 'continue_step', stepId: running.id, summary: `Continue ${running.title} and collect its required evidence.` };
-  const ready = nextReadyStep(run);
+  const ready = readyAdaptiveNodes(adaptivePlanGraph)[0] || nextReadyStep(run);
   if (ready) return { kind: 'start_step', stepId: ready.id, summary: `Start ${ready.title}; its dependencies are satisfied.` };
-  if ((run.steps ?? []).length === 0) return { kind: 'propose_plan', summary: 'Build a revisable plan from the current goal and verified situation.' };
+  if (!adaptivePlanGraph.nodes.length) return { kind: 'propose_plan', summary: 'Build a revisable plan from the current goal and verified situation.' };
   if (situation.blockedBy.length) return { kind: 'resolve_blocker', summary: situation.blockedBy.at(-1) };
   return { kind: 'observe', summary: 'Refresh the situation before selecting another action.' };
 }
@@ -328,7 +339,8 @@ export function createDecisionRecord(input = {}) {
   };
 }
 
-export function buildPublicDecisionSummary(goal, situation, decision) {
+export function buildPublicDecisionSummary(goal, situation, decision, adaptivePlanGraph, budgetAssessment) {
+  const latestRevision = adaptivePlanGraph?.revisionHistory?.at(-1);
   const attemptedRoutes = situation.routeHistory.slice(-4).map((route) => `${route.toolName || route.routeId}: ${route.lastOutcome || `${route.attempts} attempt(s)`}`);
   return {
     currentGoal: goal.currentGoal,
@@ -340,6 +352,12 @@ export function buildPublicDecisionSummary(goal, situation, decision) {
     resources: situation.activeMembers.map((member) => `${member.name} (${member.title})`),
     expectedEvidence: decision.expectedEvidence,
     needsUser: decision.selectedAction.kind === 'await_user',
+    planRevision: adaptivePlanGraph?.revision || 1,
+    planChange: latestRevision?.revision > 1 ? latestRevision.reason : '',
+    affectedNodes: latestRevision?.revision > 1 ? latestRevision.affectedNodeIds || [] : [],
+    preservedCompletedNodes: latestRevision?.revision > 1 ? latestRevision.preservedCompletedNodeIds || [] : [],
+    budgetAction: budgetAssessment?.action || 'continue',
+    budgetReason: budgetAssessment?.reason || '',
   };
 }
 
@@ -382,8 +400,21 @@ export function reconcileAutonomousControl(run, options = {}) {
   const situationCandidate = deriveSituationModel({ ...run, projectId: goal.projectId }, goal);
   const situationChanged = !run.situationModel || !equal(withoutUpdatedAt(run.situationModel), withoutUpdatedAt(situationCandidate));
   const situation = { ...situationCandidate, updatedAt: situationChanged ? now : Number(run.situationModel.updatedAt) || now };
-  const action = recommendAction(run, situation);
+  const adaptivePlanCandidate = restoreAdaptivePlanGraph(run.adaptivePlanGraph, { run, goalId: goal.goalId, projectId: goal.projectId, now });
+  const adaptivePlanChanged = !run.adaptivePlanGraph || !equal(withoutUpdatedAt(run.adaptivePlanGraph), withoutUpdatedAt(adaptivePlanCandidate));
+  const adaptivePlanGraph = { ...adaptivePlanCandidate, updatedAt: adaptivePlanChanged ? now : Number(run.adaptivePlanGraph?.updatedAt) || now };
   const routeRepeated = situation.routeHistory.some((route) => route.failures >= 2 && route.successes === 0);
+  const contextWindowTokens = Number(run.recoveryContext?.budget?.contextWindowTokens) || 0;
+  const estimatedTokens = Number(run.recoveryContext?.budget?.estimatedTokens || run.usage?.estimatedTokens) || 0;
+  const budgetAssessment = assessAdaptiveBudget({
+    usage: run.usage,
+    elapsedMs: run.startedAt ? Math.max(0, now - Number(run.startedAt)) : 0,
+    contextRatio: contextWindowTokens > 0 ? estimatedTokens / contextWindowTokens : 0,
+    noProgressRounds: run.recoveryContext?.budget?.noProgressRounds,
+    repeatedRouteDetected: routeRepeated,
+    needsApproval: run.pendingApproval?.status === 'pending',
+  });
+  const action = recommendAction(run, situation, adaptivePlanGraph, budgetAssessment);
   const previousControl = run.autonomousControl;
   const previousDecision = previousControl?.currentDecision;
   const decisionBasis = {
@@ -393,6 +424,8 @@ export function reconcileAutonomousControl(run, options = {}) {
     blockers: situation.blockedBy,
     failures: situation.failures.map((item) => item.id),
     status: run.status,
+    planRevision: adaptivePlanGraph.revision,
+    budgetAction: budgetAssessment.action,
   };
   const decisionChanged = !previousDecision || !equal(previousControl?.decisionBasis, decisionBasis);
   const cycle = decisionChanged ? Math.max(0, Number(previousDecision?.cycle) || 0) + 1 : Number(previousDecision.cycle) || 1;
@@ -415,27 +448,28 @@ export function reconcileAutonomousControl(run, options = {}) {
   const decisionHistory = decisionChanged
     ? [...(previousControl?.decisionHistory ?? []), decision].slice(-MAX_DECISIONS)
     : clone(previousControl?.decisionHistory ?? [decision]);
-  const publicSummary = buildPublicDecisionSummary(goal, situation, decision);
+  const publicSummary = buildPublicDecisionSummary(goal, situation, decision, adaptivePlanGraph, budgetAssessment);
   const controlCandidate = {
     controlVersion: CONTROL_VERSION,
-    mode: 'shadow',
+    mode: 'adaptive',
     protocol: 'observe-interpret-propose-validate-act-verify-reflect',
     loopPhase: decision.phase,
-    planRevision: Math.max(1, Number(previousControl?.planRevision) || 1),
+    planRevision: adaptivePlanGraph.revision,
     currentDecision: decision,
     decisionHistory,
     decisionBasis,
     routeHistory: situation.routeHistory,
     repeatedRouteDetected: routeRepeated,
     shouldAwaitUser: action.kind === 'await_user',
+    budgetAssessment,
     publicSummary,
     updatedAt: now,
   };
   const controlChanged = !previousControl || !equal(withoutUpdatedAt(previousControl), withoutUpdatedAt(controlCandidate));
   const control = { ...controlCandidate, updatedAt: controlChanged ? now : Number(previousControl.updatedAt) || now };
   const projectIdChanged = run.projectId !== goal.projectId;
-  if (!goalChanged && !situationChanged && !controlChanged && !projectIdChanged) return run;
-  return { ...run, projectId: goal.projectId, goalState: goal, situationModel: situation, autonomousControl: control };
+  if (!goalChanged && !situationChanged && !adaptivePlanChanged && !controlChanged && !projectIdChanged) return run;
+  return { ...run, projectId: goal.projectId, goalState: goal, situationModel: situation, adaptivePlanGraph, autonomousControl: control };
 }
 
 export const AUTONOMOUS_CONTROL_VERSION = CONTROL_VERSION;

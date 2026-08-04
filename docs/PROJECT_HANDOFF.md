@@ -1,9 +1,35 @@
 # 项目交接手册
 
 > 最后整理：2026-08-04
-> 当前源码版本：`v3.6.1`（真实项目闭环与窄屏验收）
+> 当前源码版本：`v3.12.0`；发布候选正在完成安装与远端验收
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+
+## v3.12.0 发布候选
+
+- DeepSeek thinking 模式工具续轮已兼容 `reasoning_content`，覆盖流式、非流式、普通聊天、员工、团队与 Coding Runtime。
+- Electron 已拆出窗口注册表、窗口 IPC 和 TaskService IPC；聊天窗口新开、复用、广播、锁定和销毁具备专项测试。
+- TaskService 已拆出指标/任务树/恢复计划、上下文/就绪步骤/完成门禁、执行证据、审批和生命周期模块。
+- `createWindow` 最长函数 593 行；`taskService.cjs` 581 行，最长 `createTaskService` 285 行。新增模块与函数门禁禁止职责回流。
+- 编码任务必须保留检查点和通过的验证证据；权限、鉴权和计费错误进入等待用户，批准普通授权后重新排队。
+- 当前通过 Vitest `139/139`、语义基准 `400/400`、生产构建、Lint 和完整 v2 核心门禁。
+- 内置章北海人格已升级到 v25；README 与仓库整改报告加入真实办公室和项目验收快照。
+- 仓库补齐 MIT License、忽略规则、包元数据与强化后的 GitHub Actions 发布门禁；历史安装包清理延期到项目收尾执行。
+- Windows 安装包、本机覆盖和 GitHub Release 正在验收，未取得证据前不得写成已完成。
+
+## v3.11.0 核心职责拆分与结构防回流
+
+- v3.8：原生执行器拆出 `nativeExecutionControl.cjs` 和 `nativeStepExecutor.cjs`，控制面与单步工具执行不再混写。
+- v3.9：`hermesClient.ts` 拆出 `agentLoopRuntime.ts`，模型请求协议与 Agent 执行循环分离。
+- v3.10：`store.tsx` 拆出办公室命令、任务控制、团队消息和团队讨论运行时，Store 只负责组合和公开状态。
+- v3.11：新增 Agent 策略、团队 Worker 租约和团队最终验收模块；指定来源 Skill、检查点恢复、最终完成判断都具备独立所有权与单测。
+- 双门禁同时限制文件总行数和 TypeScript AST 识别出的单函数长度。第二梯队 `main.cjs`、`taskService.cjs`、`skills.cjs`、`nativeToolRuntime.cjs` 已冻结增长，后续按窗口生命周期、任务编译/恢复、技能扫描/安装和工具调度继续拆分。
+- 内置人格为 v24，新增 v3.11 模块化执行、检查点和真实收尾协议。不得把模型回答、工具返回、检查点写入、界面投影或某一项测试通过互相冒充。
+- 当前已通过 `125/125` 标准测试、400 条语义基准、生产构建、模块边界、函数边界、Skill/网页/图片/Coding/诊断/性能专项和完整 v2 核心门禁。
+- Windows 安装包 `release/taiji-office-setup-3.11.0.exe` 为 `195887039` 字节，SHA-256 `05C7DFF7A4C2C23708F629B8FEF07863F6A88C34726B3E597538F1C8A51483C2`；包内版本、23 个必需文件和六款字体通过校验。
+- 已安装到 `%LOCALAPPDATA%\Programs\taiji-office`，产品版本 `3.11.0.0`，桌面快捷方式已更新。用户数据文件覆盖前后均为 314 个；精简备份位于 `local-backups/preinstall-3.11.0-20260804-113614`。
+- 安装版风险看板项目最终任务 `installed-v311-1785816224289` 为 `completed`，计划修订 3 次、模型调用 6 次；故意的窄屏失败只重开构建路线，已完成 `brief` 持续保留。完整证据见 `evidence/v3.11.0/`。
+
 
 ## v3.6.1 真实任务闭环与窄屏验收
 

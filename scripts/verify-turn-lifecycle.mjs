@@ -122,21 +122,23 @@ interruptedLifecycle = synchronizeTurnLifecycle(interruptedLifecycle, recoveredR
 assert.equal(interruptedLifecycle.toolCalls.length, 1, '恢复时不得复制相同 callId 的工具调用');
 assert.equal(interruptedLifecycle.toolCalls[0].status, 'succeeded', '恢复时必须用真实证据闭合进行中的工具调用');
 
-const [client, bridge, assistant, dm, adapter, service, preload, main] = await Promise.all([
-  readFile('src/data/hermesClient.ts', 'utf8'),
+const [agentRuntime, bridge, assistant, dm, adapter, service, lifecycleCommands, taskServiceIpc, preload, main] = await Promise.all([
+  readFile('src/data/agentLoopRuntime.ts', 'utf8'),
   readFile('src/engine/taskServiceBridge.ts', 'utf8'),
   readFile('src/components/chat/AssistantChat.tsx', 'utf8'),
   readFile('src/components/chat/DmChatApp.tsx', 'utf8'),
   readFile('electron/nativeExecutionAdapter.cjs', 'utf8'),
   readFile('electron/taskService.cjs', 'utf8'),
+  readFile('electron/taskServiceLifecycleCommands.cjs', 'utf8'),
+  readFile('electron/taskServiceIpc.cjs', 'utf8'),
   readFile('electron/preload.cjs', 'utf8'),
   readFile('electron/main.cjs', 'utf8'),
 ]);
-assert.match(client, /onTurnLifecycle\?:/);
-assert.match(client, /recordLifecycleToolStarted/);
-assert.match(client, /recordLifecycleToolFinished/);
-assert.match(client, /recordLifecycleContext/);
-assert.match(client, /recordLifecycleSteering/);
+assert.match(agentRuntime, /onTurnLifecycle\?:/);
+assert.match(agentRuntime, /recordLifecycleToolStarted/);
+assert.match(agentRuntime, /recordLifecycleToolFinished/);
+assert.match(agentRuntime, /recordLifecycleContext/);
+assert.match(agentRuntime, /recordLifecycleSteering/);
 assert.match(bridge, /taskServiceLifecycle/);
 assert.match(bridge, /finalStatus === 'waiting_user'/);
 assert.match(bridge, /finalStatus === 'paused' \|\| finalStatus === 'checkpointed'/);
@@ -144,9 +146,15 @@ assert.match(assistant, /onTurnLifecycle\(state\)/);
 assert.match(dm, /onTurnLifecycle\(state\)/);
 assert.match(adapter, /turnLifecycle\.synchronizeTurnLifecycle/);
 assert.match(adapter, /persistControlledLifecycle/);
-assert.match(service, /async function recordLifecycle/);
+assert.match(service, /createTaskServiceLifecycleCommands\(update\)/);
+assert.match(lifecycleCommands, /async function recordLifecycle/);
+assert.match(lifecycleCommands, /incoming\.sequence <= currentSequence/);
+assert.match(lifecycleCommands, /async function heartbeat/);
+assert.match(lifecycleCommands, /async function setStatus/);
 assert.match(preload, /taskServiceLifecycle/);
-assert.match(main, /task-service:lifecycle/);
+assert.match(taskServiceIpc, /task-service:lifecycle/);
+assert.match(taskServiceIpc, /taskService\.recordLifecycle/);
+assert.match(main, /registerTaskServiceIpc\(ipcMain, taskService\)/);
 
 console.log(JSON.stringify({
   passed: true,

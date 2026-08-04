@@ -50,10 +50,14 @@ const feasibility = createFallbackTaskDecision({
 });
 assert.notEqual(feasibility.deliverableType, 'connection', '连接可行性判断不能被硬判为真实连接交付');
 
-const storeSource = await fs.readFile(new URL('../src/store.tsx', import.meta.url), 'utf8');
+const [storeSource, teamMessageCommands, teamRunFinalization] = await Promise.all([
+  fs.readFile(new URL('../src/store.tsx', import.meta.url), 'utf8'),
+  fs.readFile(new URL('../src/store/teamMessageCommands.ts', import.meta.url), 'utf8'),
+  fs.readFile(new URL('../src/store/teamRunFinalization.ts', import.meta.url), 'utf8'),
+]);
 assert.doesNotMatch(storeSource, /assistant-supervisor|relayAssistantMentions|监工禁止/u, '临时调度身份或自动抢答链路不应残留');
-assert.match(storeSource, /任务简报/u, '团队执行必须先由章北海发一条简洁任务简报');
-assert.match(storeSource, /deliverableType === 'file'/u, '旧执行入口必须按任务交付类型验收');
-assert.doesNotMatch(storeSource, /label: '真实产出'/u, '方案和回答任务不能再被无条件要求文件交付');
+assert.match(teamMessageCommands, /任务简报/u, '团队执行必须先由章北海发一条简洁任务简报');
+assert.match(teamRunFinalization, /deliverableType === 'file'/u, '团队执行必须按任务交付类型验收');
+assert.doesNotMatch(teamRunFinalization, /label: '真实产出'/u, '方案和回答任务不能再被无条件要求文件交付');
 
 console.log(JSON.stringify({ passed: true, projects: projects.length, stages: projects[0].stages.map((stage) => stage.id), feasibility: feasibility.deliverableType, archived: archived[0].section }));

@@ -203,6 +203,7 @@ export default function TeamChatApp({ teamId }: Props) {
       ...(run.steps ?? []).map((step) => `- ${step.order}. ${state.employees.find((employee) => employee.id === step.employeeId)?.name ?? step.title}：${step.assignment}｜${stepStatusLabel(step.status)}｜尝试 ${step.attempts} 次`),
       '', '## Worker 状态', run.worker ? `- ${run.worker.state}：${run.worker.activity ?? '无活动说明'}` : '- 未记录 Worker 状态',
       '', '## 验收证据', ...(run.verification ?? []).map((item) => `- ${item.status}: ${item.label} - ${item.detail ?? ''}`),
+      '', '## 自适应计划', run.adaptivePlanGraph ? `- 当前版本：第 ${run.adaptivePlanGraph.revision} 版\n- 最近修订：${run.adaptivePlanGraph.revisionHistory.at(-1)?.reason ?? '初始计划'}\n- 影响节点：${run.adaptivePlanGraph.revisionHistory.at(-1)?.affectedNodeIds?.join('、') || '无'}` : '- 尚未建立自适应计划',
       '', '## 交接与阻塞', run.handoff ? `- 阻塞：${run.handoff.blocked}\n- 下一步：${run.handoff.nextAction}\n- 已完成：${(run.handoff.completed ?? []).join('、')}` : '- 无交接记录',
       '', '## 执行事件', ...replay.events.map((event) => `- ${new Date(event.ts).toLocaleString('zh-CN')}：${event.summary}`),
       '', '## 原始证据（JSON）', '```json', JSON.stringify(replay, null, 2), '```',
@@ -222,6 +223,7 @@ export default function TeamChatApp({ teamId }: Props) {
         ...(run.steps ?? []).map((step) => `- ${step.order}. ${state.employees.find((employee) => employee.id === step.employeeId)?.name ?? step.title}｜${stepStatusLabel(step.status)}｜${step.assignment}｜尝试 ${step.attempts} 次`),
         '', '### Worker', run.worker ? `- ${run.worker.state}：${run.worker.activity ?? '无活动说明'}` : '- 未记录',
         '', '### 验收证据', ...(run.verification ?? []).map((item) => `- ${item.status}｜${item.label}｜${item.detail ?? ''}`),
+        '', '### 自适应计划', run.adaptivePlanGraph ? `- 第 ${run.adaptivePlanGraph.revision} 版｜${run.adaptivePlanGraph.revisionHistory.at(-1)?.reason ?? '初始计划'}\n- 影响：${run.adaptivePlanGraph.revisionHistory.at(-1)?.affectedNodeIds?.join('、') || '无'}\n- 保留完成项：${run.adaptivePlanGraph.revisionHistory.at(-1)?.preservedCompletedNodeIds?.join('、') || '无'}` : '- 尚未建立',
         '', '### 交接', run.handoff ? `- 阻塞：${run.handoff.blocked}\n- 下一步：${run.handoff.nextAction}\n- 已完成：${(run.handoff.completed ?? []).join('、')}` : '- 无交接记录',
         '', '### 时间线', ...replay.events.map((event) => `- ${new Date(event.ts).toLocaleString('zh-CN')}｜${event.summary}`),
         '', '<details><summary>原始结构化回放</summary>', '', '```json', JSON.stringify(replay, null, 2), '```', '', '</details>',
@@ -615,13 +617,15 @@ export default function TeamChatApp({ teamId }: Props) {
     if (!control) return null;
     const summary = control.publicSummary;
     return <section className={`autonomous-summary phase-${control.loopPhase}`} aria-label="自主控制判断">
-      <div className="autonomous-summary-head"><strong>自主判断</strong><span>影子模式 · 第 {control.currentDecision.cycle} 轮</span></div>
+      <div className="autonomous-summary-head"><strong>自主判断</strong><span>{control.mode === 'adaptive' ? `动态计划第 ${summary.planRevision} 版` : '影子模式'} · 第 {control.currentDecision.cycle} 轮</span></div>
       <div className="autonomous-summary-primary"><span>下一步</span><b>{summary.nextAction}</b></div>
       <p>{summary.rationale}</p>
       {summary.currentGap && <div className="autonomous-summary-gap"><span>当前阻塞</span><b>{summary.currentGap}</b></div>}
       <details>
         <summary>查看判断依据</summary>
         <div><strong>当前目标</strong><p>{summary.currentGoal}</p></div>
+        {summary.planChange && <div><strong>最近计划修订</strong><p>{summary.planChange}</p>{summary.affectedNodes.length > 0 && <p>影响节点：{summary.affectedNodes.join('、')}</p>}{summary.preservedCompletedNodes.length > 0 && <p>保留完成项：{summary.preservedCompletedNodes.join('、')}</p>}</div>}
+        <div><strong>执行预算判断</strong><p>{summary.budgetAction}：{summary.budgetReason}</p></div>
         {summary.confirmedFacts.length > 0 && <div><strong>已确认事实</strong>{summary.confirmedFacts.map((item, index) => <p key={`${index}-${item.slice(0, 30)}`}>{item}</p>)}</div>}
         {summary.attemptedRoutes.length > 0 && <div><strong>已尝试路线</strong>{summary.attemptedRoutes.map((item, index) => <p key={`${index}-${item.slice(0, 30)}`}>{item}</p>)}</div>}
         {summary.expectedEvidence.length > 0 && <div><strong>预期证据</strong>{summary.expectedEvidence.map((item, index) => <p key={`${index}-${item.slice(0, 30)}`}>{item}</p>)}</div>}

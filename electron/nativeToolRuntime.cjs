@@ -41,6 +41,40 @@ const NATIVE_TOOL_DEFINITIONS = [
     assignment: stringField('子任务的具体工作内容'), employeeId: stringField('可选：当前团队成员 ID；不填由系统按职责选择'),
     title: stringField('可选：子任务标题'), acceptanceCriteria: { type: 'array', items: { type: 'string' } },
   }, ['assignment']),
+  tool('revise_task_plan', '根据新事实修订当前任务的同一份计划。只修改受影响节点，保留无关的已完成节点和证据；禁止为了重试而复制整份任务。', {
+    reason: stringField('必须说明出现了什么新事实，以及为什么需要修改计划'),
+    trigger: { type: 'string', enum: ['model', 'user_change', 'failure', 'review', 'staffing', 'budget'], description: '触发修订的原因类型' },
+    evidenceIds: { type: 'array', items: { type: 'string' } },
+    operations: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          type: { type: 'string', enum: ['add_node', 'update_node', 'replace_dependencies', 'reassign_node', 'register_member', 'reopen_node', 'supersede_node', 'switch_route'] },
+          nodeId: { type: 'string' },
+          node: { type: 'object' },
+          changes: { type: 'object' },
+          dependsOn: { type: 'array', items: { type: 'string' } },
+          employeeId: { type: 'string' },
+          employeeName: { type: 'string' },
+          affectedNodeIds: { type: 'array', items: { type: 'string' } },
+          acceptanceCriteria: { type: 'array', items: { type: 'string' } },
+          replacementNodeIds: { type: 'array', items: { type: 'string' } },
+          preserveCompleted: { type: 'boolean' },
+          strategy: { type: 'object' },
+          category: { type: 'string' },
+          reason: { type: 'string' },
+        },
+        required: ['type'],
+      },
+    },
+  }, ['reason', 'operations']),
+  tool('reassign_task_node', '把当前计划中的一个责任节点改派给已经进入团队的员工，并保留改派原因和原有完成证据。', {
+    nodeId: stringField('计划节点 ID'),
+    employeeId: stringField('新负责人的员工 ID'),
+    employeeName: stringField('新负责人名称'),
+    reason: stringField('改派原因'),
+  }, ['nodeId', 'employeeId', 'reason']),
   tool('prepare_git_worktree', '仅用于本地 Git 代码任务：从指定仓库创建当前任务独占的分支与 Worktree，后续文件和命令都在隔离工作树执行。', {
     sourceRepo: stringField('本地 Git 仓库绝对路径'), baseRef: stringField('可选：基线分支、Tag 或提交'),
   }, ['sourceRepo']),
@@ -295,6 +329,18 @@ function createNativeToolRuntime(options) {
       if (name === 'list_files') {
         const rows = await listWorkspace(context, args.filter);
         return succeeded(name, rows.length ? rows.map((item) => `- ${item.path} (${item.size} 字节)`).join('\n') : '工作区目前没有可交付文件。');
+      }
+      if (name === 'revise_task_plan' || name === 'reassign_task_node') {
+        if (!options.taskService || !context.taskId) return failed(name, '当前执行上下文没有可修订的任务计划。');
+        const result = name === 'reassign_task_node'
+          ? await options.taskService.reassignAdaptiveNode(context.taskId, args)
+          : await options.taskService.reviseAdaptivePlan(context.taskId, args);
+        const graph = result?.run?.adaptivePlanGraph || result?.task?.adaptivePlanGraph;
+        const latest = graph?.revisionHistory?.at(-1);
+        return succeeded(name, `计划已更新到第 ${graph?.revision || '?'} 版。影响节点：${latest?.affectedNodeIds?.join('、') || '仅人员名单/计划元数据'}；保留完成项：${latest?.preservedCompletedNodeIds?.join('、') || '无'}。`, {
+          adaptivePlanRevision: latest,
+          adaptivePlanGraph: graph,
+        });
       }
       if (name === 'coding_repository_index' || name === 'coding_search' || name === 'coding_dependencies' || name === 'coding_checkpoint'
         || name === 'coding_apply_patch' || name === 'coding_impact' || name === 'coding_select_tests' || name === 'coding_delivery') {

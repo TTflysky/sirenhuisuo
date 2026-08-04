@@ -1,5 +1,29 @@
 # 太极项目当前交接
 
+## v3.12.0 发布候选：窗口边界、DeepSeek 兼容与仓库治理（2026-08-04）
+
+- 当前源码版本为 `3.12.0`，正在完成 Windows 打包、本机覆盖和 GitHub Release；正式安装证据回写前不得声称发布完成。
+- 新增 `windowRegistry.cjs`、`windowIpc.cjs` 与 `taskServiceIpc.cjs`，窗口登记、窗口 IPC 和 24 个 TaskService IPC 命令已从 `main.cjs` 抽出；`createWindow` 最长函数从约 786 行降至 593 行。
+- 修复 DeepSeek 思考模式工具续轮 400：普通 Agent Loop、流式响应和原生团队/Coding 执行都会保留模型返回的 `reasoning_content`，并在提交工具结果后的下一轮原样带回；空字符串字段也不会被错误删除。
+- TaskService 已拆出查询、上下文、证据、审批和生命周期模块；主文件 581 行，最长 `createTaskService` 285 行。
+- 新增前端与原生消息兼容模块和回归测试。当前 Vitest `139/139`、生产构建、Lint、400 条语义基准和完整 `verify:v2-core-gate` 通过。
+- 旧门禁已同步为检查 `taskServiceIpc.cjs` 中的生命周期注册和 `main.cjs` 的统一装配，不允许为了测试把命令重新塞回主进程大函数。
+- 内置章北海人格已升级到 v25；README、阶段报告和 GitHub 整改报告加入真实办公室与项目验收快照。
+- 仓库补齐 MIT License、忽略规则、包元数据和强化后的 GitHub Actions 发布门禁。历史安装包使 Git pack 约为 `319.36 MiB`，历史重写延期到项目收尾统一执行。
+- 下一步继续拆步骤失败/审查返工/自适应恢复、Agent Loop 工具周期和窗口构造协调。
+
+## v3.11.0 核心职责拆分与结构防回流（2026-08-04）
+
+- 当前源码版本为 `3.11.0`，承接 v3.7 自适应计划，连续完成 v3.8-v3.11 四轮核心模块拆分；未回退已有动态计划、执行证据、团队恢复或 UI 能力。
+- `nativeExecutionAdapter` 已拆出控制面和步骤执行器；`hermesClient` 已拆出 Agent Loop；`store.tsx` 已拆出办公室命令、任务控制、团队消息和团队讨论运行时。
+- v3.11 新增 `agentLoopPolicy.ts`、`teamWorkerLease.ts`、`teamRunFinalization.ts`，分别负责固定来源与失败策略、Worker 租约/心跳/检查点、按交付类型最终验收。
+- 新增 `verify:function-boundaries`，与 `verify:module-boundaries` 同时进入 v2 核心门禁。当前最长函数仍是 `main.cjs:createWindow` 786 行、`taskService:createTaskService` 676 行、Agent Loop 850 行和团队 Runtime 560 行，已被锁定为下一轮拆分债务，不能继续增长。
+- 内置章北海人格为 v24。所有入口使用 `PERSONA_MIGRATION_APPENDIX_V24`，旧自定义人格只追加缺失协议，不覆盖用户原文。
+- 标准测试 `125/125`、生产构建、模块边界和函数边界已通过。Windows 安装包为 `release/taiji-office-setup-3.11.0.exe`，大小 `195887039` 字节，SHA-256 `05C7DFF7A4C2C23708F629B8FEF07863F6A88C34726B3E597538F1C8A51483C2`。
+- 已覆盖安装到 `%LOCALAPPDATA%\Programs\taiji-office`，实际产品版本 `3.11.0.0`，桌面快捷方式已更新；用户数据文件覆盖前后均为 314 个。精简备份位于 `local-backups/preinstall-3.11.0-20260804-113614`，包含 263 个配置、记忆、任务和工作区文件。
+- 安装版真实项目任务 `installed-v311-1785816224289` 完成，计划修订 3 次；第一次 375px 验收失败后保留 `brief`，切换到 `installed-risk-board-verification-v1`，补入响应式专家，构建和审查各执行 2 次，6 次模型调用后进入 `completed`。
+- 差异矩阵：`docs/TAIJI_STAGE_V3.8_TO_V3.11_GAP_MATRIX.md`；自评：`docs/SELF_EVALUATION_v3.11.0.md`；真实项目：`docs/REAL_PROJECT_ACCEPTANCE_v3.11.0.md`。
+
 ## v3.6.1 真实项目闭环与窄屏验收（2026-08-04）
 
 - 本轮使用真实任务“制作可使用的科学计算器，波普漫画风、黑白点状主体”验收自主智能体链路，不增加计算器关键词或专用执行分支。
@@ -559,6 +583,18 @@ npm.cmd run verify:package
 3. 验收发现的问题按同层级入口统一修复，不再恢复逐个截图、逐个小版本的发布节奏。
 
 补丁版本完成后升级版本并更新本文件，运行 `npm.cmd run dist:win` 和 `npm.cmd run verify:package`，只做本地安装验收；功能大版本在验收通过后提交到干净的 `main`，再运行 `npm.cmd run publish:release` 完成预检、回归、打包、推送、Release 上传和远端哈希校验。
+
+# v3.12.0 开发交接（2026-08-04）
+
+- 正式安装版仍为 `v3.11.0`；`v3.12.0` 尚未改版本号、打包或发布。
+- 已修复 DeepSeek thinking 模式续轮缺失 `reasoning_content` 的 `400 invalid_request`，覆盖普通聊天、员工、团队和 Coding Runtime。
+- Electron 新增 `windowRegistry.cjs` 与 `windowIpc.cjs`；窗口 IPC 已移出 `createWindow`，并覆盖新开、复用、广播、锁定和销毁测试。
+- TaskService 新增 `taskServiceIpc.cjs`、`taskServiceQueries.cjs`、`taskServiceContextQueries.cjs`、`taskServiceEvidenceCommands.cjs`、`taskServiceApprovalCommands.cjs` 与 `taskServiceLifecycleCommands.cjs`。
+- `taskService.cjs` 当前 581 行，最长 `createTaskService` 285 行；模块和函数边界门禁已锁定，不得把职责搬回主文件。
+- 编码任务统一进入 Git 工作树准备态并要求检查点、验证证据；权限、鉴权和计费错误进入等待用户，普通授权批准后重新排队。
+- 完整核心门禁通过：Vitest `139/139`、语义基准 `400/400`、构建、Lint、原生执行、恢复、Skill、网页、图片、Coding、诊断和性能全部通过。
+- 下一批：拆步骤失败/审查返工/自适应恢复命令，拆 Agent Loop 工具周期与收尾，继续拆窗口构造协调；随后升级内置章北海人格并做 Electron 实机验收。
+- 详细进度见 `docs/TAIJI_STAGE_V3.12_PROGRESS.md`。
 # v3.4.0 Stage E 发布交接（2026-08-01）
 
 - 版本：`3.4.0`，完成发布、迁移、安全演练基础能力。

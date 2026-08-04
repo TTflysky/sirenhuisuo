@@ -1,5 +1,59 @@
 # 更新日志
 
+## v3.12.0 (2026-08-04)
+
+- 新增窗口注册表和 TaskService IPC 注册模块，降低 `main.cjs` 的窗口与任务协议耦合。
+- 修复 DeepSeek thinking 模式兼容：解析并保留非流式及流式 `reasoning_content`，工具调用续轮在普通聊天、员工、团队和原生 Coding Runtime 中都会把该字段传回模型。
+- 对空 `reasoning_content` 同样保留字段存在性，避免思考模式不同轮次偶发 `400 invalid_request`。
+- 新增 DeepSeek 两轮工具调用、前端历史消息、原生历史消息、窗口注册表和 TaskService IPC 契约测试。
+- 窗口 IPC 已从 `createWindow` 拆出，新增聊天窗口新开、复用、广播、锁定和销毁专项测试。
+- TaskService 新增上下文查询、证据写入、审批和生命周期模块；主文件约 `676 -> 581` 行，`createTaskService` 最长函数降至 285 行。
+- 修正编码任务工作区和完成门禁：代码任务必须保留检查点与通过的验证证据；权限类错误进入等待用户而不是直接终止。
+- 模块与函数增长门禁覆盖新增窗口和 TaskService 模块，禁止职责回流。
+- 内置章北海人格升级到 v25，加入模型协议、任务事实、授权恢复、Coding 隔离工作区和多窗口一致性协议。
+- GitHub 仓库补齐 MIT License、构建产物忽略规则、发布门禁和图文 README；历史安装包造成的仓库膨胀已记录，历史重写延期到项目收尾统一执行。
+- 全量测试更新为 `139/139`，完整 `verify:v2-core-gate` 通过；Windows 安装包、本地覆盖和 GitHub Release 证据以本节最终发布记录为准。
+
+## v3.11.0 (2026-08-04)
+
+- 新增 `agentLoopPolicy.ts`，固定来源 Skill 的仓库边界、规则正文识别、安装约束和失败后的用户动作从 Agent Loop 抽离并单测。
+- 新增 `teamWorkerLease.ts`，统一团队 Worker 的领取、心跳、递增检查点、释放和错误汇总；继续/暂停/恢复不再直接操作分散的租约变量。
+- 新增 `teamRunFinalization.ts`，按文件、操作、连接、混合交付与审查证据统一决定完成、暂停、停止或失败，只返工缺失证据对应步骤。
+- 新增 `verify:function-boundaries`，使用 TypeScript AST 检查单函数长度；与文件行数门禁共同阻止职责回流和再次形成超大函数。
+- 第二梯队 `main.cjs`、`taskService.cjs`、`skills.cjs`、`nativeToolRuntime.cjs` 纳入函数增长门禁，后续版本按所有权继续拆分。
+- 内置章北海人格升级到 v24，新增模块化执行、Worker 检查点、真实阶段交接与最终收尾协议。
+- 标准测试增加到 `125/125`，模块边界、函数边界和生产构建通过。
+- Windows 安装包 `taiji-office-setup-3.11.0.exe` 为 `195887039` 字节，SHA-256 `05C7DFF7A4C2C23708F629B8FEF07863F6A88C34726B3E597538F1C8A51483C2`；Blockmap SHA-256 `69727A84DB0F5FC818293ECA82F36E426ED3D9A6BA02C21DAA55C8AD79243B1D`，`latest.yml` SHA-256 `2C4A27B517883BBB3EBDCE0C0F1793C95CFBE3DDCE9B90D81B8CB3AAC1BD5966`。
+- 已安装到 `%LOCALAPPDATA%\Programs\taiji-office` 并核对产品版本 `3.11.0.0`；桌面快捷方式已更新。覆盖前配置、记忆、任务和工作区备份位于 `local-backups/preinstall-3.11.0-20260804-113614`。
+- 安装版真实项目“离线项目风险看板”通过：保留产品阶段，记录一次 375px 验收失败，切换验证路线、补入响应式专家，最终 6 次模型调用完成 HTML、桌面/窄屏截图和审查证据。
+
+## v3.10.0 (2026-08-04)
+
+- Store 拆出 `officeCommands.ts`、`taskRunControls.ts`、`teamMessageCommands.ts` 与 `teamDiscussionRuntime.ts`；`store.tsx` 从约 2298 行降至约 833 行。
+- 任务恢复、团队消息、办公室命令与讨论调度分别持有自己的状态和依赖，Store 只保留组合与公开状态入口。
+
+## v3.9.0 (2026-08-04)
+
+- 模型客户端拆出 `agentLoopRuntime.ts`；`hermesClient.ts` 从约 2197 行降至约 1191 行。
+- 模型协议、配置与请求留在客户端，执行循环、控制器、工具证据和收尾进入独立运行时。
+
+## v3.8.0 (2026-08-04)
+
+- 原生执行器拆出 `nativeExecutionControl.cjs` 与 `nativeStepExecutor.cjs`；`nativeExecutionAdapter.cjs` 从约 2142 行降至约 1438 行。
+- 启动/恢复/停止控制和单步执行、补偿、检查点形成独立模块，原生执行专项通过。
+
+## v3.7.0 (2026-08-04)
+
+- 新增 `AdaptivePlanGraph`，旧任务可迁移并在重启后恢复稳定计划 ID、版本、节点状态、证据、修订与路线历史。
+- 新增模型可调用的 `revise_task_plan` 与 `reassign_task_node`；支持节点新增/更新、依赖调整、补人、换人、局部返工、废弃节点与本质不同的换路。
+- 审查退回只重开责任节点和依赖下游，保留不受影响的已完成结果。
+- 新增失败分类、自适应恢复和动态预算。鉴权/权限/计费等待用户；可恢复失败最多两轮换路，达到边界后明确停止。
+- 修复普通执行步骤未递增尝试次数导致反复重规划、任务不收口和资源占用持续增长的问题。
+- 运行中新增员工同步到执行名单和计划修订历史，并可携带影响节点与新增验收要求。
+- 章北海内置人格升级到 v23；旧自定义人格只追加缺失的 v3.7 协议，不覆盖用户原文。
+- 自适应恢复从超大原生执行器抽离；模块边界为 `nativeExecutionAdapter` 2143 行、`store.tsx` 2299 行，均通过既定门禁。
+- Vitest `120/120`、400 条语义基准、Lint、TypeScript/Vite 构建、原生执行器和完整 `verify:v2-core-gate` 通过。
+
 ## v3.6.1 (2026-08-04)
 
 - 修复 `run_command` 同时使用 `cmd` / `command` 时的路线去重错误，不同命令不再被误判为重复动作。

@@ -87,7 +87,7 @@ assert.ok(contract.requiredCapabilities.includes('frontend'));
 
 const taskRunsSource = await fs.readFile('src/data/taskRuns.ts', 'utf8');
 const storeSource = await fs.readFile('src/store.tsx', 'utf8');
-const clientSource = await fs.readFile('src/data/hermesClient.ts', 'utf8');
+const clientSource = `${await fs.readFile('src/data/hermesClient.ts', 'utf8')}\n${await fs.readFile('src/data/agentLoopRuntime.ts', 'utf8')}`;
 const adapterSource = await fs.readFile('electron/nativeExecutionAdapter.cjs', 'utf8');
 assert.match(taskRunsSource, /taskDecision\?: TaskDecision/);
 assert.match(taskRunsSource, /taskDecision\?\.requiredCapabilities/);

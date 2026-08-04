@@ -72,9 +72,9 @@ const replacedRoster = membership.applyProjectRosterMutation(
 assert.deepEqual(replacedRoster, ['planner', 'frontend', 'database', 'new-ui'], 'replacement must preserve the agreed non-UI roster');
 assert.equal(replacedRoster.includes('old-ui'), false, 'the old UI member must be removed structurally');
 
-const storeSource = await fs.readFile('src/store.tsx', 'utf8');
-assert.match(storeSource, /project\?\.status === 'archived' && Boolean\(project\.rejectionReason\)/u, 'rejected drafts must be revisable');
-assert.match(storeSource, /status: 'awaiting_approval',[\s\S]{0,120}rejectionReason: undefined/u, 'revising a rejected draft must restore approval state');
-assert.match(storeSource, /project\?\.status === 'archived' && Boolean\(project\.rejectionReason\) && Boolean\(override\?\.memberIds\?\.length\)/u, 'an explicit revised roster approval must restore a rejected draft atomically');
+const officeCommandsSource = await fs.readFile('src/store/officeCommands.ts', 'utf8');
+assert.match(officeCommandsSource, /project\?\.status === 'archived' && Boolean\(project\.rejectionReason\)/u, 'rejected drafts must be revisable');
+assert.match(officeCommandsSource, /status: 'awaiting_approval',[\s\S]{0,120}rejectionReason: undefined/u, 'revising a rejected draft must restore approval state');
+assert.match(officeCommandsSource, /project\?\.status === 'archived' && Boolean\(project\.rejectionReason\) && Boolean\(override\?\.memberIds\?\.length\)/u, 'an explicit revised roster approval must restore a rejected draft atomically');
 
 console.log(JSON.stringify({ passed: true, recognizedEmployees: employees.length, continuity: 'scoped-project-roster-replacement', rejectedDraftRecovery: true }, null, 2));

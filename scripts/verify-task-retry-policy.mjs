@@ -21,8 +21,11 @@ try {
   const denied = await service.failStep(taskId, { stepId: 'step-1', error: '权限拒绝' });
   assert.equal(denied.ok, true);
   task = (await service.read({ taskId })).runs[0];
-  assert.equal(task.steps[0].status, 'failed');
+  assert.equal(task.steps[0].status, 'paused');
   assert.equal(task.steps[0].errorClass, 'permission');
+  assert.equal(task.status, 'awaiting_user');
+  assert.equal(task.phase, 'awaiting_user');
+  assert.match(task.waitingFor, /权限拒绝/);
   console.log('verify-task-retry-policy: PASS');
 } finally {
   await rm(root, { recursive: true, force: true });
