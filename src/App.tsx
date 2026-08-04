@@ -13,6 +13,7 @@ import {
   PlayCircleOutlined,
   RobotOutlined,
   SettingOutlined,
+  SkinOutlined,
   StopOutlined,
   SyncOutlined,
   TeamOutlined,
@@ -30,15 +31,25 @@ import ChatOnlyView from './components/chat/ChatOnlyView';
 import ToolWindowView from './components/windows/ToolWindowView';
 import EditEmployeeModal from './components/sidebar/EditEmployeeModal';
 import SkillLibraryView from './components/skills/SkillLibraryView';
+import InteractionSoundControl from './components/settings/InteractionSoundControl';
 import { checkBackend } from './data/hermesClient';
 import { APP_VERSION } from './appVersion';
 import { BUS_CHANNELS, onBus, sendBus } from './ipcBus';
 import { formatExecutionDuration } from './hooks/useAgentExecutionControl';
 import { createUpgradeSnapshot } from './utils/configSync';
 import { APP_BRAND_NAME, APP_PRODUCT_NAME } from './brand';
+import {
+  getVisualStyle,
+  isVisualStyle,
+  loadThemeForStyle,
+  loadVisualPreferences,
+  saveVisualPreferences,
+  VISUAL_STYLE_OPTIONS,
+  type VisualPreferences,
+  type VisualStyle,
+} from './data/visualSystem';
 
 type View = 'office' | 'analytics' | 'team-hall' | 'skill-library';
-type ThemeName = 'light' | 'dark' | 'eye-care' | 'soft-gray' | 'ocean-blue' | 'quiet-blue' | 'glass-light' | 'glass-dark' | 'spruce' | 'graphite' | 'cyberpunk';
 
 interface AssistantActivity {
   state: 'idle' | 'running' | 'paused' | 'stopping';
@@ -47,20 +58,6 @@ interface AssistantActivity {
   elapsedSeconds: number;
   updatedAt: number;
 }
-
-const THEME_OPTIONS: Array<{ value: ThemeName; label: string; color: string }> = [
-  { value: 'light', label: '明亮', color: '#f7f8fb' },
-  { value: 'dark', label: '深色', color: '#242529' },
-  { value: 'eye-care', label: '护眼', color: '#dfe9dc' },
-  { value: 'soft-gray', label: '柔和灰', color: '#e5e7eb' },
-  { value: 'ocean-blue', label: '海湾蓝', color: '#cfe4f8' },
-  { value: 'quiet-blue', label: '静谧蓝', color: '#365f91' },
-  { value: 'glass-light', label: '玻璃晨光', color: 'rgba(236,246,255,.68)' },
-  { value: 'glass-dark', label: '玻璃深夜', color: 'rgba(35,48,63,.72)' },
-  { value: 'spruce', label: '云杉绿', color: '#294b43' },
-  { value: 'graphite', label: '石墨', color: '#535861' },
-  { value: 'cyberpunk', label: '霓虹赛博', color: '#20e3ff' },
-];
 
 export default function App() {
   const { state, openDmChat, openTeamChat, openAssistantChat, startTeamDemo, dispatch } = useStore();
@@ -79,18 +76,15 @@ export default function App() {
       return { state: 'idle', status: '', completedActions: 0, elapsedSeconds: 0, updatedAt: 0 };
     }
   });
-  const [themeName, setThemeName] = useState<ThemeName>(() => {
-    const saved = localStorage.getItem('hermes_office_theme');
-    return THEME_OPTIONS.some((option) => option.value === saved) ? saved as ThemeName : 'light';
-  });
+  const [visualStyle, setVisualStyle] = useState<VisualStyle>(() => loadVisualPreferences().style);
+  const [themeName, setThemeName] = useState<string>(() => loadVisualPreferences().theme);
   const unsubRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = themeName;
-    document.documentElement.dataset.colorMode = ['dark', 'quiet-blue', 'glass-dark', 'spruce', 'graphite', 'cyberpunk'].includes(themeName) ? 'dark' : 'light';
-    localStorage.setItem('hermes_office_theme', themeName);
-    window.electronAPI?.broadcast?.('theme-changed', themeName);
-  }, [themeName]);
+    const preferences = { style: visualStyle, theme: themeName };
+    saveVisualPreferences(preferences);
+    window.electronAPI?.broadcast?.('visual-preferences-changed', preferences);
+  }, [themeName, visualStyle]);
 
   useEffect(() => {
     const api = window.electronAPI;
@@ -111,21 +105,35 @@ export default function App() {
   }, [state.employees.length, state.taskRuns.length, state.teams.length]);
 
   useEffect(() => {
-    const applyTheme = (theme: unknown) => {
-      if (THEME_OPTIONS.some((option) => option.value === theme)) setThemeName(theme as ThemeName);
+    const applyPreferences = (value: unknown) => {
+      if (!value || typeof value !== 'object') return;
+      const preferences = value as Partial<VisualPreferences>;
+      if (!isVisualStyle(preferences.style)) return;
+      const theme = getVisualStyle(preferences.style).themes.some((option) => option.id === preferences.theme)
+        ? preferences.theme!
+        : loadThemeForStyle(preferences.style);
+      setVisualStyle(preferences.style);
+      setThemeName(theme);
     };
     const handleStorage = (event: StorageEvent) => {
-      if (event.key === 'hermes_office_theme') applyTheme(event.newValue);
+      if (event.key === 'taiji_visual_style' || event.key?.startsWith('taiji_color_theme_')) {
+        applyPreferences(loadVisualPreferences());
+      }
     };
     window.addEventListener('storage', handleStorage);
     const unsubscribe = window.electronAPI?.onBroadcast?.((message) => {
-      if (message.channel === 'theme-changed') applyTheme(message.payload);
+      if (message.channel === 'visual-preferences-changed') applyPreferences(message.payload);
     });
     return () => {
       window.removeEventListener('storage', handleStorage);
       unsubscribe?.();
     };
   }, []);
+
+  const chooseVisualStyle = (style: VisualStyle) => {
+    setVisualStyle(style);
+    setThemeName(loadThemeForStyle(style));
+  };
 
   useEffect(() => {
     window.electronAPI?.getAssistantLock?.().then(({ locked }) => setAssistantLocked(locked)).catch(() => {});
@@ -307,15 +315,31 @@ export default function App() {
           <Dropdown
             trigger={['click']}
             menu={{
-              selectedKeys: [themeName],
-              onClick: ({ key }) => setThemeName(key as ThemeName),
-              items: THEME_OPTIONS.map((option) => ({
-                key: option.value,
-                label: <span className="theme-menu-item"><i style={{ background: option.color }} />{option.label}</span>,
+              selectedKeys: [visualStyle],
+              onClick: ({ key }) => chooseVisualStyle(key as VisualStyle),
+              items: VISUAL_STYLE_OPTIONS.map((option) => ({
+                key: option.id,
+                label: <span className="visual-style-menu-item"><i data-style-preview={option.id} /><span><strong>{option.label}</strong><small>{option.description}</small></span></span>,
               })),
             }}
           >
-            <button className="titlebar-btn theme-toggle-btn" title="选择界面主题" aria-label="选择界面主题">
+            <button className="titlebar-btn visual-style-toggle-btn" title="选择界面风格" aria-label="选择界面风格">
+              <SkinOutlined />
+            </button>
+          </Dropdown>
+          <InteractionSoundControl />
+          <Dropdown
+            trigger={['click']}
+            menu={{
+              selectedKeys: [themeName],
+              onClick: ({ key }) => setThemeName(key),
+              items: getVisualStyle(visualStyle).themes.map((option) => ({
+                key: option.id,
+                label: <span className="theme-menu-item"><span className="theme-menu-swatches">{option.colors.map((color) => <i key={color} style={{ background: color }} />)}</span>{option.label}</span>,
+              })),
+            }}
+          >
+            <button className="titlebar-btn theme-toggle-btn" title={`${getVisualStyle(visualStyle).label}配色`} aria-label="选择界面配色">
               <BgColorsOutlined />
             </button>
           </Dropdown>

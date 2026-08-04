@@ -1,4 +1,4 @@
-# 太极 AI 办公会所 v3.13.0
+# 太极 AI 办公会所 v3.14.1
 
 [![Release](https://img.shields.io/github/v/release/TTflysky/sirenhuisuo?label=release)](https://github.com/TTflysky/sirenhuisuo/releases/latest)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D4)](https://github.com/TTflysky/sirenhuisuo/releases/latest)
@@ -34,15 +34,23 @@
 
 ## 项目状态
 
-- 当前源码版本：`3.13.0`
-- 当前可安装验收版本：`3.13.0`
+- 当前源码版本：`3.14.1`
+- 当前可安装验收版本：`3.14.1`
 - 发布分支：`main`
-- GitHub Release：[`v3.13.0`](https://github.com/TTflysky/sirenhuisuo/releases/tag/v3.13.0)，发布标签提交 `d4f0387`；安装器、Blockmap 和 `latest.yml` 已完成远端大小与 SHA-256 核验。
+- GitHub Release：[`v3.14.1`](https://github.com/TTflysky/sirenhuisuo/releases/tag/v3.14.1)；安装器、Blockmap 和 `latest.yml` 由发布脚本完成远端大小与 SHA-256 核验。
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 43、React 19、TypeScript 6、Ant Design 6、Vite 8
 - 模型接口：OpenAI 兼容的 `/chat/completions` API
 
 ## 核心能力
+
+### v3.14.1 风格化生产界面
+
+- 生产客户端支持原版商务、波普漫画和酸性暗黑三套完整视觉系统，共 25 套配色；主窗口、员工私聊、团队、设置与弹层实时同步。
+- 新安装默认使用波普漫画，三种风格分别记住上次配色；原版商务继续保留原有轻量边框和全部 11 套主题。
+- 波普漫画采用小点状背景、4px 主边框和 3px 次级控件边框；酸性暗黑提供 4 套霓虹配色并移除员工工牌顶部挂带。
+- 新增 FC、Mac 和街机三套互动音效，默认音量 80%，可调节、关闭和试听；遵循系统减少动态效果偏好。
+- 视觉迁移报告和真实生产快照见 [docs/TAIJI_VISUAL_SYSTEM_V3.14.1.md](./docs/TAIJI_VISUAL_SYSTEM_V3.14.1.md)。
 
 ### v3.13.0 自主决策权与四类记忆
 
@@ -392,13 +400,13 @@
 
 正式版本均通过核心回归、包内版本核验和发布资产一致性检查。源码、交接和远端安装资产以 `main` 与对应 GitHub Release 为准。
 
-- [直接下载 v3.13.0 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v3.13.0/taiji-office-setup-3.13.0.exe)
-- [查看 v3.13.0 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v3.13.0)
+- [直接下载 v3.14.1 安装包](https://github.com/TTflysky/sirenhuisuo/releases/download/v3.14.1/taiji-office-setup-3.14.1.exe)
+- [查看 v3.14.1 发布说明](https://github.com/TTflysky/sirenhuisuo/releases/tag/v3.14.1)
 
 本地构建的安装程序生成在：
 
 ```text
-release/taiji-office-setup-3.13.0.exe
+release/taiji-office-setup-3.14.1.exe
 ```
 
 可以直接覆盖安装旧版本。应用数据保存在用户目录，正常覆盖安装不会删除员工、团队、聊天和模型配置。

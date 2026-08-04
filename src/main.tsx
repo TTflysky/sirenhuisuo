@@ -7,11 +7,15 @@ import { StoreProvider } from './store';
 import { deliverBus } from './ipcBus';
 import { migrateToModelLibrary } from './data/hermesClient';
 import { applyAppearanceSettings, loadAppearanceSettings } from './data/appearance';
+import { applyVisualPreferences, loadVisualPreferences } from './data/visualSystem';
+import { installInteractionSounds } from './data/interactionSound';
 import { ensureBrandMigrationMarker } from './brand';
 
 // 迁移旧设置到多模型库格式（如果还没有）
 try { migrateToModelLibrary(); } catch {}
 try { applyAppearanceSettings(loadAppearanceSettings()); } catch {}
+try { applyVisualPreferences(loadVisualPreferences()); } catch {}
+try { installInteractionSounds(); } catch {}
 ensureBrandMigrationMarker();
 
 // Every renderer window shares the same durable diagnostic ledger in the
@@ -41,16 +45,17 @@ if (typeof window !== 'undefined' && window.electronAPI?.onBroadcast) {
 // antd 主题：贴合现有「白调极简办公室」配色，圆角/字体与 theme.css 一致
 const antdTheme = {
   token: {
-    colorPrimary: '#0a84ff',
-    colorInfo: '#0a84ff',
-    borderRadius: 6,
+    colorPrimary: 'var(--apple-accent)',
+    colorInfo: 'var(--apple-accent)',
+    borderRadius: 8,
     fontFamily: 'var(--ui-font-family)',
-    colorBgContainer: '#ffffff',
-    colorBorder: '#e2e6ef',
-    colorBorderSecondary: '#eef0f6',
-    colorText: '#1a1f36',
-    colorTextSecondary: '#5c6b8a',
-    colorTextTertiary: '#9aa4c2',
+    colorBgContainer: 'var(--surface)',
+    colorBgElevated: 'var(--surface-raised)',
+    colorBorder: 'var(--border)',
+    colorBorderSecondary: 'var(--border-light)',
+    colorText: 'var(--text)',
+    colorTextSecondary: 'var(--text-secondary)',
+    colorTextTertiary: 'var(--text-muted)',
     controlHeight: 34,
   },
 };
