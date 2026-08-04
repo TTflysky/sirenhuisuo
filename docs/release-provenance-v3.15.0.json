@@ -3,11 +3,11 @@
   "product": "太极 AI 办公会所",
   "package": "taiji-office",
   "version": "3.15.0",
-  "commit": "2bd06417d025476e6b37dc5ad96cf81f575d4e1d",
+  "commit": "a7d852be66a6a302c290560d73cda79f3605465f",
   "branch": "main",
   "sourceFileCount": 1253,
   "sourceFileListDigest": "53d44b135c56d4301df08eeea14ca8561bd65fddcaf32af4b434884a3912ed69",
-  "generatedAt": "2026-08-05T00:48:27+08:00",
+  "generatedAt": "2026-08-05T00:56:29+08:00",
   "build": {
     "platform": "win32",
     "node": "v24.15.0",
