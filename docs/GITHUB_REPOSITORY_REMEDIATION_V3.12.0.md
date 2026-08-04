@@ -17,6 +17,7 @@
 - README 和本报告使用真实界面/项目快照，不以模型描述代替运行证据。
 - Windows Release Actions 改为运行完整核心门禁、人格门禁和发布治理门禁，不再只运行基础单元测试。
 - 版本号、README、CHANGELOG、交接、SBOM、来源证明、安装包、Blockmap、`latest.yml` 和 SHA-256 继续作为同一发布门禁核对。
+- GitHub Description、Homepage 和 Topics 已同步；`v3.12.0` Release 已发布并完成远端提交、标签和资产哈希核验。
 
 ## 快照
 

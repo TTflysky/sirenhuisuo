@@ -37,6 +37,7 @@
 - 当前源码版本：`3.12.0`
 - 当前可安装验收版本：`3.12.0`
 - 发布分支：`main`
+- GitHub Release：[`v3.12.0`](https://github.com/TTflysky/sirenhuisuo/releases/tag/v3.12.0)，发布提交 `8bdc5d0`
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 43、React 19、TypeScript 6、Ant Design 6、Vite 8
 - 模型接口：OpenAI 兼容的 `/chat/completions` API

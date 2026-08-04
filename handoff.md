@@ -1,8 +1,8 @@
 # 太极项目当前交接
 
-## v3.12.0 发布候选：窗口边界、DeepSeek 兼容与仓库治理（2026-08-04）
+## v3.12.0 已发布：窗口边界、DeepSeek 兼容与仓库治理（2026-08-04）
 
-- 当前源码与本机安装版本均为 `3.12.0`；Windows 打包和覆盖验收已完成，GitHub Release 正在发布。
+- 当前源码与本机安装版本均为 `3.12.0`；GitHub Release `v3.12.0` 已发布，标签对应提交 `8bdc5d0762cdb7e162582ca3675fce559e6875f8`。
 - 新增 `windowRegistry.cjs`、`windowIpc.cjs` 与 `taskServiceIpc.cjs`，窗口登记、窗口 IPC 和 24 个 TaskService IPC 命令已从 `main.cjs` 抽出；`createWindow` 最长函数从约 786 行降至 593 行。
 - 修复 DeepSeek 思考模式工具续轮 400：普通 Agent Loop、流式响应和原生团队/Coding 执行都会保留模型返回的 `reasoning_content`，并在提交工具结果后的下一轮原样带回；空字符串字段也不会被错误删除。
 - TaskService 已拆出查询、上下文、证据、审批和生命周期模块；主文件 581 行，最长 `createTaskService` 285 行。
@@ -12,6 +12,8 @@
 - 仓库补齐 MIT License、忽略规则、包元数据和强化后的 GitHub Actions 发布门禁。历史安装包使 Git pack 约为 `319.36 MiB`，历史重写延期到项目收尾统一执行。
 - 安装器 `release/taiji-office-setup-3.12.0.exe` 为 `195887469` 字节，SHA-256 `40AA6B9F7182C4C9EA004B4EC5E2C1674116ACD1228AEF8DA75E9A083F658275`；Blockmap 和 `latest.yml` 均已生成并核验。
 - 已覆盖安装到 `%LOCALAPPDATA%\Programs\taiji-office`，产品版本 `3.12.0.0`、包内版本 `3.12.0`，启动存活正常。覆盖前后用户数据均为 320 个文件、`477263942` 字节；备份位于 `local-backups/preinstall-3.12.0-20260804-160237`。
+- GitHub 远端已核对 `main`、标签、安装器、Blockmap 和 `latest.yml` 的大小与 SHA-256；Release 地址为 `https://github.com/TTflysky/sirenhuisuo/releases/tag/v3.12.0`。
+- 仓库 Description、Homepage 和 Topics 已同步；公开首页现在能够直接说明产品定位并进入最新下载。
 - 下一步继续拆步骤失败/审查返工/自适应恢复、Agent Loop 工具周期和窗口构造协调。
 
 ## v3.11.0 核心职责拆分与结构防回流（2026-08-04）
