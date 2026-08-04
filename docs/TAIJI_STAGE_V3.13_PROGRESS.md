@@ -56,7 +56,7 @@
 - 模块边界、函数边界：通过。
 - TypeScript/Vite 构建、Lint：通过。
 - Windows 打包、包内验收和本机覆盖安装：通过。
-- GitHub 远端资产验收：待发布步骤完成后补充。
+- GitHub 远端资产验收：通过。
 
 ## 尚未完成
 
@@ -75,4 +75,6 @@
 - 覆盖前用户数据与备份均为 314 个文件、`222077920` 字节；备份位于 `local-backups/preinstall-3.13.0-20260804-173527`。
 - 安装包内实际记忆管理器完成 schema v2 迁移：184 条记忆，情景 40、语义 82、程序 46、用户偏好 16。
 - 迁移后重启 8 秒，5 个客户端进程全部响应。
-- GitHub 提交、标签、Release 和远端三项资产校验：待发布完成后补录。
+- GitHub Release：`https://github.com/TTflysky/sirenhuisuo/releases/tag/v3.13.0`。
+- 发布提交与标签：`2fe6b6a082f13fcb60796db43723081448ed28c6`。
+- 远端 `main`、标签、安装器、Blockmap 和 `latest.yml` 的大小与 SHA-256：全部通过发布脚本核验。
