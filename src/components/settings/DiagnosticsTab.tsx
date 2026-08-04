@@ -124,7 +124,7 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
             const state = capabilityStateLabels[entry.state] ?? capabilityStateLabels.unavailable;
             return <article key={entry.id}>
               <div><strong>{entry.label}</strong><span>{capabilityLabels[entry.kind] ?? entry.kind}</span></div>
-              <Tag color={state.color}>{state.label}</Tag>
+              <Tag className={`capability-state-tag is-${entry.state}`} color={state.color}>{state.label}</Tag>
               <small>{entry.checkedAt ? `上次真实检查：${new Date(entry.checkedAt).toLocaleString('zh-CN')}` : '尚无真实调用证据'}{entry.recoveryCount ? ` · 已恢复 ${entry.recoveryCount} 次` : ''}</small>
               <p>{entry.lastDetail || entry.resourceIdentity || '等待在对应功能中完成最小真实调用'}</p>
             </article>;

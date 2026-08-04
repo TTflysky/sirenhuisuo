@@ -64,6 +64,20 @@
 .memory-capacity > div:last-child { height: 4px; overflow: hidden; border-radius: 2px; background: var(--border-light); }
 .memory-capacity i { height: 100%; display: block; background: var(--apple-accent); transition: width .2s ease; }
 .memory-capacity.is-warning i { background: #d28b00; }
+.layered-memory-list { max-height: 260px; margin-top: 10px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+.layered-memory-empty { padding: 18px; color: var(--text-muted); font-size: 12px; text-align: center; }
+.layered-memory-entry { min-width: 0; display: flex; gap: 8px; padding: 9px 11px; border-bottom: 1px solid var(--border-light); }
+.layered-memory-entry:last-child { border-bottom: 0; }
+.layered-memory-copy { min-width: 0; flex: 1; }
+.layered-memory-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 4px; }
+.layered-memory-tags .ant-tag { margin: 0; border-color: var(--border-light) !important; background: var(--bg-deep) !important; color: var(--text-secondary) !important; }
+.layered-memory-tags .memory-kind-tag.is-episodic { border-color: #d99a28 !important; background: #fff4d2 !important; color: #8b5600 !important; }
+.layered-memory-tags .memory-kind-tag.is-semantic { border-color: color-mix(in srgb, var(--apple-accent) 42%, var(--border-light)) !important; background: color-mix(in srgb, var(--apple-accent) 10%, var(--surface)) !important; color: var(--text) !important; }
+.layered-memory-tags .memory-kind-tag.is-procedural,
+.layered-memory-tags .memory-confidence-tag.is-high { border-color: #63a67d !important; background: #e1f5e8 !important; color: #17623a !important; }
+.layered-memory-tags .memory-kind-tag.is-preference { border-color: #6b9bd2 !important; background: #e4f0ff !important; color: #245c96 !important; }
+.layered-memory-content { color: var(--text); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.layered-memory-copy > small { display: block; margin-top: 2px; color: var(--text-muted); font-size: 10px; }
 .memory-review-row,.memory-proposal-row { min-height: 52px; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 9px 10px; border: 1px solid var(--border-light); border-radius: 6px; margin-top: 6px; }
 .memory-review-row > div,.memory-proposal-row > div { min-width: 0; flex: 1; }
 .memory-review-row span { font-size: 12px; overflow-wrap: anywhere; }
@@ -128,6 +142,14 @@
 .external-capability-matrix article > small,.external-capability-matrix article p { grid-column: 1 / -1; }
 .external-capability-matrix article p { margin: 0; overflow: hidden; color: var(--text-secondary); font-size: 9px; line-height: 1.45; text-overflow: ellipsis; white-space: nowrap; }
 .external-capability-matrix .ant-tag { margin: 0; font-size: 9px; line-height: 17px; }
+.external-capability-matrix .capability-state-tag { border-color: var(--border-light) !important; background: var(--bg-deep) !important; color: var(--text) !important; font-weight: 700; }
+.external-capability-matrix .capability-state-tag.is-available { border-color: #65a77e !important; background: #e2f6e9 !important; color: #17623a !important; }
+.external-capability-matrix .capability-state-tag.is-not_tested { border-color: #d99a28 !important; background: #fff4d2 !important; color: #8b5600 !important; }
+.external-capability-matrix .capability-state-tag.is-authentication_failed,
+.external-capability-matrix .capability-state-tag.is-protocol_error,
+.external-capability-matrix .capability-state-tag.is-invalid_content,
+.external-capability-matrix .capability-state-tag.is-unavailable { border-color: #d97a7a !important; background: #fde7e7 !important; color: #8f2626 !important; }
+.external-capability-matrix .capability-state-tag.is-rate_limited { border-color: #dd985a !important; background: #ffeddc !important; color: #924b12 !important; }
 .diagnostics-list { display: flex; flex-direction: column; border: 1px solid var(--border-light); border-radius: 6px; overflow: hidden; }
 .diagnostic-item { min-height: 96px; display: grid; grid-template-columns: 24px minmax(0,1fr) auto; align-items: start; gap: 11px; padding: 13px 14px; border-bottom: 1px solid var(--border-light); background: var(--surface); }
 .diagnostic-item:last-child { border-bottom: 0; }

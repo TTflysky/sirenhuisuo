@@ -1,24 +1,24 @@
 import { useState, useEffect, useRef } from 'react';
 import { Segmented, Button, Dropdown } from 'antd';
 import {
-  AppstoreOutlined,
-  BarChartOutlined,
-  BgColorsOutlined,
-  BorderOutlined,
-  CloseOutlined,
-  HomeOutlined,
-  LockOutlined,
-  MinusOutlined,
-  PauseCircleOutlined,
-  PlayCircleOutlined,
-  RobotOutlined,
-  SettingOutlined,
-  SkinOutlined,
-  StopOutlined,
-  SyncOutlined,
-  TeamOutlined,
-  UnlockOutlined,
-} from '@ant-design/icons';
+  Blocks,
+  Bot,
+  Building2,
+  ChartNoAxesCombined,
+  CirclePlay,
+  Layers3,
+  Lock,
+  Minus,
+  Palette,
+  PauseCircle,
+  PlayCircle,
+  RefreshCw,
+  Settings,
+  Square,
+  UsersRound,
+  X,
+  Unlock,
+} from 'lucide-react';
 import type { Employee } from './types';
 import type { UpdateStatus } from './electron.d';
 import { useStore } from './storeContext';
@@ -226,7 +226,7 @@ export default function App() {
       <div className="titlebar">
         <div className="titlebar-left">
           <div className="titlebar-brand" aria-label={APP_PRODUCT_NAME}>
-            <span className="titlebar-brand-mark"><AppstoreOutlined /></span>
+            <span className="titlebar-brand-mark"><Building2 /></span>
             <span className="titlebar-title">{APP_BRAND_NAME}</span>
             <span className="titlebar-version" title={`当前版本 v${APP_VERSION}`}>v{APP_VERSION}</span>
           </div>
@@ -236,10 +236,10 @@ export default function App() {
               value={view}
               onChange={(v) => setView(v as View)}
               options={[
-                { label: <span className="view-tab-label"><HomeOutlined /><span>办公室</span></span>, value: 'office' },
-                { label: <span className="view-tab-label"><BarChartOutlined /><span>数据分析</span></span>, value: 'analytics' },
-                { label: <span className="view-tab-label"><TeamOutlined /><span>团队大厅</span></span>, value: 'team-hall' },
-                { label: <span className="view-tab-label"><AppstoreOutlined /><span>技能库</span></span>, value: 'skill-library' },
+                { label: <span className="view-tab-label"><Building2 /><span>办公室</span></span>, value: 'office' },
+                { label: <span className="view-tab-label"><ChartNoAxesCombined /><span>数据分析</span></span>, value: 'analytics' },
+                { label: <span className="view-tab-label"><UsersRound /><span>团队大厅</span></span>, value: 'team-hall' },
+                { label: <span className="view-tab-label"><Blocks /><span>技能库</span></span>, value: 'skill-library' },
               ]}
             />
           </div>
@@ -266,7 +266,7 @@ export default function App() {
             onClick={() => void handleUpdateControl()}
             disabled={['checking', 'available', 'downloading'].includes(updateStatus.status)}
           >
-            <SyncOutlined spin={updateStatus.status === 'checking' || updateStatus.status === 'downloading'} />
+            <RefreshCw className={updateStatus.status === 'checking' || updateStatus.status === 'downloading' ? 'is-spinning' : ''} />
             {updateStatus.status === 'idle' && '检查更新'}
             {updateStatus.status === 'checking' && '检查更新…'}
             {updateStatus.status === 'available' && '发现新版本'}
@@ -290,9 +290,9 @@ export default function App() {
               </button>
               <span className="assistant-background-controls">
                 {assistantActivity.state === 'paused'
-                  ? <button onClick={() => controlAssistant('resume')} title="继续后台任务" aria-label="继续后台任务"><PlayCircleOutlined /></button>
-                  : <button onClick={() => controlAssistant('pause')} disabled={assistantActivity.state === 'stopping'} title="完成当前动作后暂停" aria-label="暂停后台任务"><PauseCircleOutlined /></button>}
-                <button className="is-stop" onClick={() => controlAssistant('stop')} disabled={assistantActivity.state === 'stopping'} title="完成当前动作后停止" aria-label="停止后台任务"><StopOutlined /></button>
+                  ? <button onClick={() => controlAssistant('resume')} title="继续后台任务" aria-label="继续后台任务"><CirclePlay /></button>
+                  : <button onClick={() => controlAssistant('pause')} disabled={assistantActivity.state === 'stopping'} title="完成当前动作后暂停" aria-label="暂停后台任务"><PauseCircle /></button>}
+                <button className="is-stop" onClick={() => controlAssistant('stop')} disabled={assistantActivity.state === 'stopping'} title="完成当前动作后停止" aria-label="停止后台任务"><Square /></button>
               </span>
             </div>
           )}
@@ -302,7 +302,7 @@ export default function App() {
             aria-label="打开章北海助理"
             onClick={openAssistantChat}
           >
-            <RobotOutlined />
+            <Bot />
           </button>
           <button
             className={`titlebar-btn assistant-lock-btn ${assistantLocked ? 'is-locked' : ''}`}
@@ -310,7 +310,7 @@ export default function App() {
             aria-label={assistantLocked ? '解除助手窗口联动' : '锁定助手窗口联动'}
             onClick={() => void toggleAssistantLock()}
           >
-            {assistantLocked ? <LockOutlined /> : <UnlockOutlined />}
+            {assistantLocked ? <Lock /> : <Unlock />}
           </button>
           <Dropdown
             trigger={['click']}
@@ -324,7 +324,7 @@ export default function App() {
             }}
           >
             <button className="titlebar-btn visual-style-toggle-btn" title="选择界面风格" aria-label="选择界面风格">
-              <SkinOutlined />
+              <Layers3 />
             </button>
           </Dropdown>
           <InteractionSoundControl />
@@ -340,24 +340,24 @@ export default function App() {
             }}
           >
             <button className="titlebar-btn theme-toggle-btn" title={`${getVisualStyle(visualStyle).label}配色`} aria-label="选择界面配色">
-              <BgColorsOutlined />
+              <Palette />
             </button>
           </Dropdown>
-          <Button className="titlebar-command" size="small" icon={<PlayCircleOutlined />} onClick={handleDemo} disabled={state.status.demoRunning}>
+          <Button className="titlebar-command" size="small" icon={<PlayCircle />} onClick={handleDemo} disabled={state.status.demoRunning}>
             协作演示
           </Button>
           <button className="titlebar-btn" onClick={() => window.electronAPI?.openSettings?.() ?? setShowSettings(true)} title="设置" aria-label="打开设置">
-            <SettingOutlined />
+            <Settings />
           </button>
           <div className="titlebar-actions">
             <button className="titlebar-btn window-control" title="最小化" aria-label="最小化" onClick={() => window.electronAPI?.minimize()}>
-              <MinusOutlined />
+              <Minus />
             </button>
             <button className="titlebar-btn window-control" title="最大化" aria-label="最大化" onClick={() => window.electronAPI?.toggleMax()}>
-              <BorderOutlined />
+              <Square />
             </button>
             <button className="titlebar-btn window-control window-control-close" title="关闭" aria-label="关闭" onClick={() => window.electronAPI?.close()}>
-              <CloseOutlined />
+              <X />
             </button>
           </div>
         </div>

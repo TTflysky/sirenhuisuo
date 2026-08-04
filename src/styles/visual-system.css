@@ -47,8 +47,8 @@
   --hairline-strong: var(--pop-ink);
   --visual-primary-border: 4px;
   --visual-secondary-border: 3px;
-  --visual-radius: 9px;
-  --visual-control-radius: 8px;
+  --visual-radius: 16px;
+  --visual-control-radius: 12px;
   --online: var(--pop-green);
   --busy: #eaa600;
   --offline: var(--pop-red);
@@ -117,44 +117,89 @@
 .theme-menu-item { min-width: 148px; display: flex; align-items: center; gap: 9px; }
 .theme-menu-swatches { display: inline-flex; overflow: hidden; border: 1px solid currentColor; border-radius: 5px; }
 .theme-menu-swatches i { width: 13px; height: 18px; display: block; }
-.interaction-sound-panel { width: 250px; display: flex; flex-direction: column; gap: 10px; color: var(--text); }
-.interaction-sound-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.interaction-sound-panel > header > div { display: flex; flex-direction: column; }
-.interaction-sound-panel > header strong { font-size: 13px; }
-.interaction-sound-panel > header small { color: var(--text-muted); font-size: 9px; }
-.interaction-sound-volume { display: flex; align-items: center; justify-content: space-between; color: var(--text-secondary); font-size: 10px; }
+.interaction-sound-popover .ant-popover-inner { padding: 0 !important; overflow: hidden; }
+.interaction-sound-panel { width: 270px; padding: 12px; color: var(--text); }
+.interaction-sound-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 11px; }
+.interaction-sound-panel > header > div { min-width: 0; }
+.interaction-sound-eyebrow { display: block; color: var(--text-muted); font: 800 9px/1 ui-monospace, Consolas, monospace; }
+.interaction-sound-panel h3 { margin: 3px 0 0; color: var(--text); font-size: 16px; line-height: 1.1; }
+.interaction-sound-preset-label { padding: 4px 7px; border: 2px solid var(--border); border-radius: 999px; background: var(--bg-deep); color: var(--text); font: 900 10px/1 ui-monospace, Consolas, monospace; }
+.interaction-sound-presets { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; }
+.interaction-sound-presets button { min-width: 0; min-height: 58px; display: grid; place-items: center; gap: 4px; padding: 6px; border: 2px solid var(--border); border-radius: 12px; background: var(--surface-raised); color: var(--text); cursor: pointer; font: 800 10px/1 var(--ui-font-family); }
+.interaction-sound-presets button svg { width: 18px; height: 18px; }
+.interaction-sound-presets button:hover { background: var(--bg-deep); }
+.interaction-sound-presets button.active { border-color: var(--apple-accent); background: color-mix(in srgb, var(--apple-accent) 18%, var(--surface-raised)); color: var(--text); box-shadow: 3px 3px 0 var(--border); transform: translate(-1px, -1px); }
+.interaction-sound-enable-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 12px; padding: 9px 0; border-top: 3px dashed var(--border); border-bottom: 3px dashed var(--border); }
+.interaction-sound-enable-row > span { min-width: 0; display: flex; align-items: center; gap: 7px; }
+.interaction-sound-enable-row > span > svg { width: 17px; height: 17px; flex: 0 0 17px; }
+.interaction-sound-enable-row > span > span { min-width: 0; display: grid; gap: 1px; }
+.interaction-sound-enable-row strong { font-size: 10px; }
+.interaction-sound-enable-row small { overflow: hidden; color: var(--text-muted); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
+.interaction-sound-switch { position: relative; width: 73px; height: 30px; flex: 0 0 73px; display: flex; align-items: center; justify-content: flex-end; gap: 5px; padding: 3px 7px 3px 4px; border: 2px solid var(--border); border-radius: 999px; background: var(--surface-raised); color: var(--text); cursor: pointer; font: 800 8px/1 var(--ui-font-family); }
+.interaction-sound-switch i { position: absolute; left: 4px; width: 20px; height: 20px; border: 2px solid var(--border); border-radius: 50%; background: var(--text-muted); transition: left .18s ease, background-color .18s ease; }
+.interaction-sound-switch.is-on { justify-content: flex-start; padding: 3px 4px 3px 7px; background: var(--online); color: #07120c; }
+.interaction-sound-switch.is-on i { left: 47px; background: #fff; }
+.interaction-sound-switch b { pointer-events: none; }
+.interaction-sound-volume { display: flex; align-items: center; justify-content: space-between; margin: 13px 1px 5px; color: var(--text-secondary); font-size: 11px; }
+.interaction-sound-volume span { display: inline-flex; align-items: center; gap: 6px; font-weight: 800; }
+.interaction-sound-volume svg { width: 15px; height: 15px; }
 .interaction-sound-volume strong { color: var(--text); font-variant-numeric: tabular-nums; }
-.interaction-sound-panel > button { min-height: 32px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-raised); color: var(--text); cursor: pointer; font: 600 10px/1 var(--ui-font-family); }
-.interaction-sound-panel > button:hover { border-color: var(--apple-accent); color: var(--apple-accent); }
+.interaction-sound-range { width: 100%; height: 8px; margin: 0; accent-color: var(--apple-accent); cursor: pointer; }
+.interaction-sound-panel.is-muted .interaction-sound-volume,
+.interaction-sound-panel.is-muted .interaction-sound-range { opacity: .45; }
+.interaction-sound-test { width: 100%; height: 34px; display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 12px; border: 2px solid var(--border); border-radius: 12px; background: var(--text); color: var(--surface); cursor: pointer; font: 800 10px/1 var(--ui-font-family); }
+.interaction-sound-test svg { width: 15px; height: 15px; }
+.interaction-sound-test:hover { background: var(--apple-accent); color: #fff; }
+.sound-toggle-btn[aria-expanded='true'] { border-color: var(--apple-accent) !important; background: color-mix(in srgb, var(--apple-accent) 18%, var(--surface-raised)) !important; }
 
 /* Pop comic applies the approved 4px/3px hierarchy throughout production. */
 :root[data-visual-style='pop'] body,
 :root[data-visual-style='pop'] .app-root {
+  /* The approved HTML demo is full-bleed: no desktop chrome inset. */
+  padding: 0;
+  gap: 0;
   background-color: var(--pop-paper);
   background-image: radial-gradient(circle, color-mix(in srgb, var(--pop-ink) 16%, transparent) 1px, transparent 1px);
   background-size: 12px 12px;
 }
-:root[data-visual-style='pop'] .titlebar,
+:root[data-visual-style='pop'] .titlebar {
+  min-height: 62px;
+  height: 62px;
+  flex-basis: 62px;
+  padding-inline: 10px;
+  border-radius: 0;
+  margin: 0;
+  border-bottom: var(--visual-primary-border) solid var(--pop-ink);
+  background: var(--pop-yellow);
+}
 :root[data-visual-style='pop'] .chat-only-titlebar {
-  min-height: 42px;
-  height: 42px;
+  min-height: 52px;
+  height: 52px;
+  flex-basis: 52px;
   border-bottom: var(--visual-primary-border) solid var(--pop-ink);
   background: var(--pop-yellow);
 }
 :root[data-visual-style='pop'] .titlebar-brand-mark,
 :root[data-visual-style='pop'] .titlebar-version,
-:root[data-visual-style='pop'] .titlebar-btn,
 :root[data-visual-style='pop'] .titlebar-command,
-:root[data-visual-style='pop'] .backend-status,
-:root[data-visual-style='pop'] .ant-segmented {
+:root[data-visual-style='pop'] .backend-status {
   border: var(--visual-secondary-border) solid var(--pop-ink) !important;
   border-radius: var(--visual-control-radius) !important;
   background: var(--pop-surface) !important;
   color: var(--pop-ink) !important;
   box-shadow: none !important;
 }
-:root[data-visual-style='pop'] .ant-segmented-item-selected { background: var(--pop-red) !important; color: #fff !important; box-shadow: none !important; }
-:root[data-visual-style='pop'] .sidebar { border-right: var(--visual-primary-border) solid var(--pop-ink); background: var(--pop-paper-2); }
+:root[data-visual-style='pop'] .titlebar-brand-mark { width: 42px; height: 42px; border-radius: 50% !important; background: var(--pop-ink) !important; color: #fff !important; }
+:root[data-visual-style='pop'] .titlebar-btn { border: var(--visual-secondary-border) solid var(--pop-ink); border-radius: 10px; background: transparent; color: var(--pop-ink); box-shadow: none; }
+:root[data-visual-style='pop'] .titlebar-btn:hover,
+:root[data-visual-style='pop'] .titlebar-btn[aria-expanded='true'] { border-color: var(--pop-ink) !important; background: var(--pop-yellow) !important; color: var(--pop-ink) !important; }
+:root[data-visual-style='pop'] .view-tabs .ant-segmented { padding: 0 !important; border: 0 !important; background: transparent !important; box-shadow: none !important; }
+:root[data-visual-style='pop'] .view-tabs .ant-segmented-item { min-height: 38px; border: var(--visual-secondary-border) solid transparent; border-radius: 10px !important; }
+:root[data-visual-style='pop'] .view-tabs .ant-segmented-item-label { min-height: 32px; line-height: 32px; }
+:root[data-visual-style='pop'] .view-tabs .ant-segmented-item-selected { border-color: var(--pop-ink); background: var(--pop-cyan) !important; color: var(--pop-ink) !important; box-shadow: 3px 3px 0 var(--pop-ink) !important; transform: translate(-1px,-1px); }
+:root[data-visual-style='pop'] .settings-center-content .ant-segmented { border: var(--visual-secondary-border) solid var(--pop-ink); border-radius: var(--visual-control-radius); background: var(--pop-paper-2); }
+:root[data-visual-style='pop'] .settings-center-content .ant-segmented-item-selected { background: var(--pop-cyan) !important; color: var(--pop-ink) !important; box-shadow: none !important; }
+:root[data-visual-style='pop'] .sidebar { width: 258px; min-width: 258px; margin-right: 0; border-right: var(--visual-primary-border) solid var(--pop-ink); border-radius: 0; background: var(--pop-paper-2); }
 :root[data-visual-style='pop'] .sidebar-header,
 :root[data-visual-style='pop'] .sidebar-section,
 :root[data-visual-style='pop'] .connector-panel { border-color: var(--pop-ink); }
@@ -208,7 +253,7 @@
 :root[data-visual-style='pop'] textarea,
 :root[data-visual-style='pop'] input,
 :root[data-visual-style='pop'] select { border-width: var(--visual-secondary-border) !important; border-color: var(--pop-ink) !important; border-radius: var(--visual-control-radius) !important; }
-:root[data-visual-style='pop'] .settings-center { border: var(--visual-primary-border) solid var(--pop-ink); background: var(--pop-surface); }
+:root[data-visual-style='pop'] .settings-center { border: var(--visual-primary-border) solid var(--pop-ink); border-radius: var(--visual-radius); background: var(--pop-surface); }
 :root[data-visual-style='pop'] .settings-center-nav { border-right: var(--visual-primary-border) solid var(--pop-ink); background: var(--pop-yellow); }
 :root[data-visual-style='pop'] .settings-nav-section { border-color: var(--pop-ink); }
 :root[data-visual-style='pop'] .settings-nav-section button { border: 2px solid transparent; border-radius: var(--visual-control-radius); color: var(--pop-ink); }
@@ -216,14 +261,31 @@
 :root[data-visual-style='pop'] .settings-center-content { background: var(--pop-surface); }
 :root[data-visual-style='pop'] .settings-switch-row,
 :root[data-visual-style='pop'] .settings-action-list,
-:root[data-visual-style='pop'] .settings-memory-section { border-width: var(--visual-secondary-border); border-color: var(--pop-ink); }
+:root[data-visual-style='pop'] .settings-memory-section,
+:root[data-visual-style='pop'] .memory-status-strip,
+:root[data-visual-style='pop'] .layered-memory-list,
+:root[data-visual-style='pop'] .diagnostics-optimizer-bar,
+:root[data-visual-style='pop'] .diagnostics-summary,
+:root[data-visual-style='pop'] .external-capability-matrix,
+:root[data-visual-style='pop'] .diagnostics-list { border-width: var(--visual-secondary-border); border-color: var(--pop-ink); border-radius: var(--visual-control-radius); }
+:root[data-visual-style='pop'] .layered-memory-entry,
+:root[data-visual-style='pop'] .external-capability-matrix article,
+:root[data-visual-style='pop'] .diagnostic-item { border-color: var(--pop-ink); background: var(--pop-surface); }
 :root[data-visual-style='pop'] .ant-modal-content,
 :root[data-visual-style='pop'] .ant-dropdown-menu,
 :root[data-visual-style='pop'] .ant-select-dropdown,
 :root[data-visual-style='pop'] .ant-popover-inner { border: var(--visual-primary-border) solid var(--pop-ink) !important; border-radius: var(--visual-radius) !important; background: var(--pop-surface) !important; box-shadow: 6px 6px 0 var(--pop-ink) !important; }
 :root[data-visual-style='pop'] .ant-btn { border-width: var(--visual-secondary-border); border-color: var(--pop-ink); border-radius: var(--visual-control-radius); box-shadow: none; }
 :root[data-visual-style='pop'] .ant-btn-primary { background: var(--pop-red); color: #fff; }
-:root[data-visual-style='pop'] .interaction-sound-panel > button { border: var(--visual-secondary-border) solid var(--pop-ink); background: var(--pop-yellow); color: var(--pop-ink); }
+:root[data-visual-style='pop'] .interaction-sound-popover .ant-popover-inner { border: var(--visual-primary-border) solid var(--pop-ink) !important; border-radius: var(--visual-radius) !important; background: var(--pop-paper) !important; box-shadow: 7px 7px 0 var(--pop-ink) !important; }
+:root[data-visual-style='pop'] .interaction-sound-presets button,
+:root[data-visual-style='pop'] .interaction-sound-switch,
+:root[data-visual-style='pop'] .interaction-sound-test { border-width: var(--visual-secondary-border); border-color: var(--pop-ink); }
+:root[data-visual-style='pop'] .interaction-sound-presets button.active { background: var(--pop-cyan); color: var(--pop-ink); box-shadow: 3px 3px 0 var(--pop-ink); }
+:root[data-visual-style='pop'] .interaction-sound-preset-label { border-color: var(--pop-ink); background: var(--pop-yellow); color: var(--pop-ink); }
+:root[data-visual-style='pop'] .interaction-sound-enable-row { border-color: var(--pop-ink); }
+:root[data-visual-style='pop'] .interaction-sound-test { background: var(--pop-ink); color: #fff; }
+:root[data-visual-style='pop'] .interaction-sound-test:hover { background: var(--pop-red); color: #fff; }
 
 /* Acid is restrained: charcoal surfaces, one signal color, no badge strap. */
 :root[data-visual-style='acid'] body,
@@ -253,6 +315,20 @@
 :root[data-visual-style='acid'] .ant-dropdown-menu,
 :root[data-visual-style='acid'] .ant-select-dropdown,
 :root[data-visual-style='acid'] .ant-popover-inner { border-color: #414a42 !important; background: #0d100e !important; color: var(--text); box-shadow: 0 18px 50px rgba(0,0,0,.55) !important; }
+:root[data-visual-style='acid'] .layered-memory-tags .ant-tag,
+:root[data-visual-style='acid'] .external-capability-matrix .capability-state-tag { border-color: #414a42 !important; background: #171b18 !important; color: #eef4ec !important; }
+:root[data-visual-style='acid'] .layered-memory-tags .memory-kind-tag.is-episodic,
+:root[data-visual-style='acid'] .layered-memory-tags .memory-kind-tag.is-semantic,
+:root[data-visual-style='acid'] .layered-memory-tags .memory-kind-tag.is-procedural,
+:root[data-visual-style='acid'] .layered-memory-tags .memory-kind-tag.is-preference,
+:root[data-visual-style='acid'] .layered-memory-tags .memory-confidence-tag.is-high,
+:root[data-visual-style='acid'] .external-capability-matrix .capability-state-tag.is-available,
+:root[data-visual-style='acid'] .external-capability-matrix .capability-state-tag.is-not_tested { border-color: var(--acid) !important; background: #1a2018 !important; color: var(--acid) !important; }
+:root[data-visual-style='acid'] .interaction-sound-presets button,
+:root[data-visual-style='acid'] .interaction-sound-switch { border-color: #414a42; background: #151815; }
+:root[data-visual-style='acid'] .interaction-sound-presets button.active { border-color: var(--acid); background: #1a2018; color: var(--acid); box-shadow: inset 3px 0 0 var(--acid); transform: none; }
+:root[data-visual-style='acid'] .interaction-sound-preset-label,
+:root[data-visual-style='acid'] .interaction-sound-test { border-color: var(--acid); background: var(--acid); color: var(--acid-on); }
 
 @media (prefers-reduced-motion: reduce) {
   :root[data-visual-style] *, :root[data-visual-style] *::before, :root[data-visual-style] *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }

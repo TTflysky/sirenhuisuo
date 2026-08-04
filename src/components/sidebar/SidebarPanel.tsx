@@ -24,7 +24,8 @@ export default function SidebarPanel() {
   const { state, openDmChat } = useStore();
   const [collapsed, setCollapsed] = useState(false);
   const [employeesCollapsed, setEmployeesCollapsed] = useState(() => localStorage.getItem('hermes_office_sidebar_employees_collapsed') === '1');
-  const [sidebarWidth, setSidebarWidth] = useState(() => Number(localStorage.getItem('hermes_office_sidebar_width')) || 260);
+  // The approved HTML Demo uses a 258px rail; keep user-resized widths when present.
+  const [sidebarWidth, setSidebarWidth] = useState(() => Number(localStorage.getItem('hermes_office_sidebar_width')) || 258);
   const [filter, setFilter] = useState<Filter>('all');
   const [showAddEmp, setShowAddEmp] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);

@@ -4,7 +4,7 @@ import DmChatApp from './DmChatApp';
 import TeamChatApp from './TeamChatApp';
 import AssistantChat from './AssistantChat';
 import { fetchInitial } from '../../data/hermesClient';
-import { BorderOutlined, CloseOutlined, LockOutlined, MessageOutlined, MinusOutlined, RobotOutlined, TeamOutlined, UnlockOutlined } from '@ant-design/icons';
+import { Bot, Lock, MessageSquare, Minus, Square, UsersRound, X, Unlock } from 'lucide-react';
 import { APP_VERSION } from '../../appVersion';
 import { APP_BRAND_NAME } from '../../brand';
 
@@ -87,7 +87,7 @@ export default function ChatOnlyView({ hash }: Props) {
 
   let title = '聊天';
   let subtitle = APP_BRAND_NAME;
-  let titleIcon = <MessageOutlined />;
+  let titleIcon = <MessageSquare />;
   if (type === 'dm-chat' || type === 'dm') {
     const emp = state.employees.find((e) => e.id === id);
     title = emp ? `与 ${emp.name} 私聊` : '员工私聊';
@@ -96,18 +96,18 @@ export default function ChatOnlyView({ hash }: Props) {
     const team = state.teams.find((t) => t.id === id);
     title = team?.name ?? '团队协作';
     subtitle = team ? `${team.memberIds.length} 名成员` : '团队对话';
-    titleIcon = <TeamOutlined />;
+    titleIcon = <UsersRound />;
   } else if (type === 'assistant-chat' || type === 'assistant') {
     title = '章北海助理';
     subtitle = '执行、调度与交付';
-    titleIcon = <RobotOutlined />;
+    titleIcon = <Bot />;
   }
 
   if ((type === 'team-chat' || type === 'team') && !state.teams.some((team) => team.id === id)) {
     return (
       <div className="chat-only-view chat-team-hydrating">
         <div className="chat-team-hydrating-card">
-          <TeamOutlined />
+          <UsersRound />
           <strong>{teamHydrating ? '正在同步团队…' : '团队窗口无效'}</strong>
           <small>{teamHydrating ? '正在等待批准结果写入本地团队列表' : '这个窗口没有对应的团队记录，可以关闭后重新打开'}</small>
           {!teamHydrating && <button type="button" className="btn btn-sm" onClick={() => window.electronAPI?.close()}>关闭窗口</button>}
@@ -125,10 +125,10 @@ export default function ChatOnlyView({ hash }: Props) {
           <span className="chat-only-title"><strong>{title}<span className="window-version-badge" title={`当前版本 v${APP_VERSION}`}>v{APP_VERSION}</span></strong><small>{subtitle}</small></span>
         </div>
         <div className="chat-only-traffic">
-          {canLockToMain && <button type="button" className={`titlebar-btn window-control chat-window-lock ${locked ? 'is-locked' : ''}`} title={locked ? '解除与主界面的左侧联动' : '锁定到主界面的左侧'} aria-label={locked ? '解除聊天窗口联动' : '锁定聊天窗口联动'} onClick={() => void toggleLock()}>{locked ? <LockOutlined /> : <UnlockOutlined />}</button>}
-          <button type="button" className="titlebar-btn window-control" title="最小化" aria-label="最小化聊天窗口" onClick={() => window.electronAPI?.minimize()}><MinusOutlined /></button>
-          <button type="button" className="titlebar-btn window-control" title="最大化" aria-label="最大化聊天窗口" onClick={() => window.electronAPI?.toggleMax()}><BorderOutlined /></button>
-          <button type="button" className="titlebar-btn window-control window-control-close" title="关闭" aria-label="关闭聊天窗口" onClick={() => window.electronAPI?.close()}><CloseOutlined /></button>
+          {canLockToMain && <button type="button" className={`titlebar-btn window-control chat-window-lock ${locked ? 'is-locked' : ''}`} title={locked ? '解除与主界面的左侧联动' : '锁定到主界面的左侧'} aria-label={locked ? '解除聊天窗口联动' : '锁定聊天窗口联动'} onClick={() => void toggleLock()}>{locked ? <Lock /> : <Unlock />}</button>}
+          <button type="button" className="titlebar-btn window-control" title="最小化" aria-label="最小化聊天窗口" onClick={() => window.electronAPI?.minimize()}><Minus /></button>
+          <button type="button" className="titlebar-btn window-control" title="最大化" aria-label="最大化聊天窗口" onClick={() => window.electronAPI?.toggleMax()}><Square /></button>
+          <button type="button" className="titlebar-btn window-control window-control-close" title="关闭" aria-label="关闭聊天窗口" onClick={() => window.electronAPI?.close()}><X /></button>
         </div>
       </div>
 

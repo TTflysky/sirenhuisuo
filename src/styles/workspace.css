@@ -564,6 +564,7 @@
 
 .titlebar-left {
   min-width: 0;
+  overflow: hidden;
   gap: 10px;
   padding-left: 0;
 }
@@ -637,13 +638,21 @@
 .titlebar-right { flex: 0 0 auto; gap: 5px; }
 .titlebar-actions { gap: 0; padding-left: 4px; border-left: 1px solid var(--hairline); }
 .titlebar-btn {
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  flex: 0 0 34px;
   border-radius: 6px;
   color: var(--text-secondary);
   font-size: 14px;
   transition: color .14s ease, background-color .14s ease, transform .14s ease;
 }
+.titlebar-btn svg,
+.titlebar-command svg,
+.view-tab-label svg { width: 17px; height: 17px; stroke-width: 2.2; }
+.is-spinning { animation: titlebar-icon-spin 1s linear infinite; }
+@keyframes titlebar-icon-spin { to { transform: rotate(360deg); } }
 .titlebar-btn:hover { color: var(--text); background: color-mix(in srgb, var(--text) 7%, transparent); }
 .titlebar-btn:active { transform: scale(.96); }
 .window-control { border-radius: 0; }
@@ -813,6 +822,10 @@
   box-shadow: none;
 }
 
+@media (max-width: 1280px) {
+  .update-status { display: none; }
+}
+
 @media (max-width: 1180px) {
   .backend-status span { display: none; }
   .backend-status { padding-inline: 5px; }
@@ -820,14 +833,25 @@
   .titlebar-command { width: 32px; padding-inline: 0 !important; }
 }
 
+@media (max-width: 1080px) {
+  .assistant-background-status,
+  .backend-status,
+  .titlebar-command { display: none !important; }
+  .titlebar-right { gap: 3px; }
+}
+
 @media (max-width: 920px) {
-  .titlebar-title { display: none; }
+  .titlebar-title,
+  .titlebar-version { display: none; }
+  .titlebar-left { gap: 4px; }
+  .titlebar-brand { padding-right: 0; }
   .view-tabs { margin-left: 0 !important; }
   .view-tabs .ant-segmented-item-label { padding-inline: 8px; }
   .office-grid { grid-template-columns: repeat(3, minmax(140px, 1fr)); }
 }
 
 @media (max-width: 720px) {
+  .assistant-lock-btn { display: none; }
   .view-tab-label > span:last-child { display: none; }
   .view-tabs .ant-segmented-item-label { width: 34px; padding-inline: 0; }
   .office-grid { grid-template-columns: repeat(2, minmax(130px, 1fr)); }
@@ -1186,11 +1210,11 @@
 .chat-only-title small { color: var(--text-muted); font-size: 9px; font-weight: 400; }
 .chat-only-traffic { align-self: stretch; gap: 0; }
 .chat-only-traffic .titlebar-btn {
-  width: 32px;
-  height: 32px;
-  min-width: 32px;
-  min-height: 32px;
-  flex: 0 0 32px;
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  min-height: 34px;
+  flex: 0 0 34px;
   align-self: center;
   border-radius: 0;
   color: var(--text-muted);
