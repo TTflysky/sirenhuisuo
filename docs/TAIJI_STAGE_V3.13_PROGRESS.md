@@ -76,5 +76,6 @@
 - 安装包内实际记忆管理器完成 schema v2 迁移：184 条记忆，情景 40、语义 82、程序 46、用户偏好 16。
 - 迁移后重启 8 秒，5 个客户端进程全部响应。
 - GitHub Release：`https://github.com/TTflysky/sirenhuisuo/releases/tag/v3.13.0`。
-- 发布提交与标签：`2fe6b6a082f13fcb60796db43723081448ed28c6`。
+- 历史净化后的发布标签提交：`d4f0387e13f2273eea9a86a2bd71aa3e57104c44`。
 - 远端 `main`、标签、安装器、Blockmap 和 `latest.yml` 的大小与 SHA-256：全部通过发布脚本核验。
+- 源码仓库不再保存安装器和 Blockmap；正式二进制资产只保留在 GitHub Releases。

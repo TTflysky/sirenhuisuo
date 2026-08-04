@@ -16,7 +16,9 @@ dist-ssr/
 out/
 build/
 !build/icon.ico
-release/
+# Local packaging output. Release binaries belong in GitHub Releases, not Git history.
+release/*
+!release/README.md
 *.exe
 *.msi
 *.dmg

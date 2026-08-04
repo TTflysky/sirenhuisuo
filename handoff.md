@@ -13,13 +13,14 @@
 - 安装器 `release/taiji-office-setup-3.13.0.exe` 为 `195896339` 字节，SHA-256 `D7690E007BABE8D4A685880BCFCE4B380AEEA68865E8C1303B85DA13287AE515`；Blockmap 为 `206822` 字节，SHA-256 `05662FE0E187322C529822C07197C3A3CFC7CBD97E27D6550B0375D584AC74BA`；`latest.yml` 为 `356` 字节，SHA-256 `3D1C081767DB288597C56814A499F2BA018B43D20F4159209A1AE209B2A0AEF5`。
 - 已覆盖安装，产品版本 `3.13.0.0`、包内版本 `3.13.0`。覆盖前用户数据与备份均为 314 个文件、`222077920` 字节；备份为 `local-backups/preinstall-3.13.0-20260804-173527`。
 - 安装包内模块已真实迁移 184 条记忆到 schema v2：情景 40、语义 82、程序 46、偏好 16；重启后 5 个客户端进程全部响应。
-- 发布提交为 `2fe6b6a082f13fcb60796db43723081448ed28c6`；远端 `main`、标签和三项 Release 资产的大小与 SHA-256 已通过核验。Release：`https://github.com/TTflysky/sirenhuisuo/releases/tag/v3.13.0`。
+- 历史净化后的发布标签提交为 `d4f0387e13f2273eea9a86a2bd71aa3e57104c44`；标签和三项 Release 资产的大小与 SHA-256 已通过核验。Release：`https://github.com/TTflysky/sirenhuisuo/releases/tag/v3.13.0`。
+- 2026-08-04 已从全部 Git 历史和标签中清除旧 `release/` 构建资产。安装器、Blockmap 与 `latest.yml` 只发布到 GitHub Releases；旧文档里的历史提交短哈希不再作为版本定位依据。
 - 阶段报告：`docs/TAIJI_STAGE_V3.13_PROGRESS.md`；差距矩阵：`docs/TAIJI_STAGE_V3.13_GAP_MATRIX.md`。
 - 尚未完成并不得冒充：正式 8 小时驻留、真实第三方账号矩阵、代码签名、`createWindow` 继续拆分和 v4.0 唯一自主主持入口。
 
 ## v3.12.0 已发布：窗口边界、DeepSeek 兼容与仓库治理（2026-08-04）
 
-- 当前源码与本机安装版本均为 `3.12.0`；GitHub Release `v3.12.0` 已发布，标签对应提交 `8bdc5d0762cdb7e162582ca3675fce559e6875f8`。
+- 当前源码与本机安装版本均为 `3.12.0`；GitHub Release `v3.12.0` 已发布，历史净化后的标签对应提交 `e5a00f3468035209af7dd57c84c05a771d199ce3`。
 - 新增 `windowRegistry.cjs`、`windowIpc.cjs` 与 `taskServiceIpc.cjs`，窗口登记、窗口 IPC 和 24 个 TaskService IPC 命令已从 `main.cjs` 抽出；`createWindow` 最长函数从约 786 行降至 593 行。
 - 修复 DeepSeek 思考模式工具续轮 400：普通 Agent Loop、流式响应和原生团队/Coding 执行都会保留模型返回的 `reasoning_content`，并在提交工具结果后的下一轮原样带回；空字符串字段也不会被错误删除。
 - TaskService 已拆出查询、上下文、证据、审批和生命周期模块；主文件 581 行，最长 `createTaskService` 285 行。

@@ -1,0 +1,20 @@
+name: Repository Hygiene
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tracked-assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Reject tracked release binaries
+        run: node scripts/verify-repository-hygiene.mjs

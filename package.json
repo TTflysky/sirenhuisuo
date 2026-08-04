@@ -138,6 +138,7 @@
     "verify:update-transaction": "node scripts/verify-update-transaction.cjs",
     "generate:sbom": "node scripts/generate-sbom.mjs",
     "generate:provenance": "node scripts/generate-release-provenance.mjs",
+    "verify:repository-hygiene": "node scripts/verify-repository-hygiene.mjs",
     "verify:release-governance": "node scripts/verify-release-governance.mjs",
     "verify:phase3": "node scripts/verify-phase3.mjs",
     "verify:task-semantics-benchmark": "node scripts/verify-task-semantics-benchmark.mjs",

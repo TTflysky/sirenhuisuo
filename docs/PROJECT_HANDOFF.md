@@ -19,8 +19,9 @@
 - Windows 安装包 `release/taiji-office-setup-3.13.0.exe` 为 `195896339` 字节，SHA-256 `D7690E007BABE8D4A685880BCFCE4B380AEEA68865E8C1303B85DA13287AE515`；Blockmap 为 `206822` 字节，SHA-256 `05662FE0E187322C529822C07197C3A3CFC7CBD97E27D6550B0375D584AC74BA`；`latest.yml` 为 `356` 字节，SHA-256 `3D1C081767DB288597C56814A499F2BA018B43D20F4159209A1AE209B2A0AEF5`。
 - 已覆盖安装到 `%LOCALAPPDATA%\Programs\taiji-office`，产品版本 `3.13.0.0`、`app.asar` 包内版本 `3.13.0`。覆盖前用户数据与备份均为 314 个文件、`222077920` 字节；备份位于 `local-backups/preinstall-3.13.0-20260804-173527`。
 - 已安装包内模块真实迁移 184 条记忆到 schema v2：情景 40、语义 82、程序 46、用户偏好 16；迁移后重启 8 秒，5 个客户端进程全部响应。
-- GitHub Release `v3.13.0` 已发布，标签对应提交 `2fe6b6a082f13fcb60796db43723081448ed28c6`；远端 `main`、标签、安装器、Blockmap 和 `latest.yml` 的大小与 SHA-256 已通过发布脚本核验。
+- GitHub Release `v3.13.0` 已发布，历史净化后的标签对应提交 `d4f0387e13f2273eea9a86a2bd71aa3e57104c44`；远端标签、安装器、Blockmap 和 `latest.yml` 的大小与 SHA-256 已通过发布脚本核验。
 - Release 地址：`https://github.com/TTflysky/sirenhuisuo/releases/tag/v3.13.0`。
+- 2026-08-04 已清除 Git 历史中的旧 `release/` 安装资产；此日期之前文档里记录的旧提交短哈希仅作历史说明，版本定位以 Git 标签和 GitHub Release 为准。
 - 明确遗留：`createWindow` 仍约 593 行；团队主持尚未成为完全统一的唯一入口；正式 8 小时驻留、真实第三方账号矩阵和代码签名仍未完成，不得冒充已验收。
 
 详见 `TAIJI_STAGE_V3.13_PROGRESS.md` 与 `TAIJI_STAGE_V3.13_GAP_MATRIX.md`。
@@ -37,7 +38,7 @@
 - 仓库补齐 MIT License、忽略规则、包元数据与强化后的 GitHub Actions 发布门禁；历史安装包清理延期到项目收尾执行。
 - Windows 安装包 `release/taiji-office-setup-3.12.0.exe` 为 `195887469` 字节，SHA-256 `40AA6B9F7182C4C9EA004B4EC5E2C1674116ACD1228AEF8DA75E9A083F658275`；Blockmap 与 `latest.yml` 已核验。
 - 已覆盖安装到 `%LOCALAPPDATA%\Programs\taiji-office`，产品版本 `3.12.0.0`、包内版本 `3.12.0`，启动 12 秒后正常响应。覆盖前后用户数据均为 320 个文件、`477263942` 字节；备份为 `local-backups/preinstall-3.12.0-20260804-160237`。
-- GitHub Release `v3.12.0` 已发布，标签对应提交 `8bdc5d0762cdb7e162582ca3675fce559e6875f8`；远端安装器、Blockmap、`latest.yml` 的大小与 SHA-256 全部通过核对。
+- GitHub Release `v3.12.0` 已发布，历史净化后的标签对应提交 `e5a00f3468035209af7dd57c84c05a771d199ce3`；远端安装器、Blockmap、`latest.yml` 的大小与 SHA-256 全部通过核对。
 - 仓库 Description、Homepage 和 Topics 已同步。Release 地址：`https://github.com/TTflysky/sirenhuisuo/releases/tag/v3.12.0`。
 
 ## v3.11.0 核心职责拆分与结构防回流

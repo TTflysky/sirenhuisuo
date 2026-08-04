@@ -40,6 +40,7 @@ jobs:
 
       - name: Run release gates
         run: |
+          npm.cmd run verify:repository-hygiene
           npm.cmd run verify:v2-core-gate
           npm.cmd run verify:phase-c-persona
           npm.cmd run verify:release-governance
