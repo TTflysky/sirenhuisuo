@@ -1,9 +1,16 @@
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { EllipsisOutlined, MessageOutlined, SwapOutlined } from '@ant-design/icons';
 import type { Employee } from '../../types';
 import AgentAvatar from './AgentAvatar';
 import { resolveAvatarFrame } from '../../data/avatarFrames';
 import { employeeBadgeProfile } from '../../data/employeeProfiles';
+
+const POP_EMPLOYEE_ACCENTS = [
+  'var(--pop-yellow)',
+  'var(--pop-cyan)',
+  'var(--pop-red)',
+  'var(--pop-green)',
+] as const;
 
 interface Props {
   stationIndex: number;
@@ -22,6 +29,12 @@ export default function Workstation({ stationIndex, employee, isWorking, onClick
   const hasEmp = employee !== null;
   const frame = employee ? resolveAvatarFrame(employee.avatarFrame) : null;
   const profile = employee ? employeeBadgeProfile(employee) : null;
+  const employeeAccentIndex = employee
+    ? Math.abs((employee.stationIndex >= 0 ? employee.stationIndex : stationIndex) % POP_EMPLOYEE_ACCENTS.length)
+    : 0;
+  const employeeAccent = employee ? POP_EMPLOYEE_ACCENTS[employeeAccentIndex] : POP_EMPLOYEE_ACCENTS[0];
+  const cardStyle = hasEmp ? ({ '--employee-accent': employeeAccent } as CSSProperties) : undefined;
+  const statusLabel = !employee?.isOnline ? '离线' : isWorking || employee.isWorking ? '工作中' : '空闲';
   const openChat = () => onClick?.();
   const flip = (event: React.MouseEvent) => {
     event.stopPropagation();
@@ -32,6 +45,7 @@ export default function Workstation({ stationIndex, employee, isWorking, onClick
     <div
       className={`station-card ${hasEmp ? 'occupied employee-id-card' : 'empty'}${flipped ? ' is-flipped' : ''}`}
       data-role={employee?.role}
+      style={cardStyle}
       title={hasEmp ? `${employee.name} - ${employee.title}` : `空位 #${stationIndex + 1}`}
     >
       {hasEmp ? (
@@ -54,7 +68,7 @@ export default function Workstation({ stationIndex, employee, isWorking, onClick
               role="button"
               tabIndex={flipped ? -1 : 0}
             >
-              <div className="employee-id-meta"><span>TAIJI STAFF</span><i className={!employee.isOnline ? 'offline' : isWorking || employee.isWorking ? 'busy' : 'idle'} /></div>
+              <div className="employee-id-meta"><span>TAIJI STAFF · {String(stationIndex + 1).padStart(2, '0')}</span><i className={!employee.isOnline ? 'offline' : isWorking || employee.isWorking ? 'busy' : 'idle'} /></div>
               <div className="employee-id-identity">
                 <div className="station-avatar-ring">
                   <AgentAvatar employee={employee} size={58} />
@@ -64,6 +78,7 @@ export default function Workstation({ stationIndex, employee, isWorking, onClick
               </div>
               <p className="employee-id-summary">{profile?.summary}</p>
               <div className="employee-id-abilities">{profile?.abilities.slice(0, 3).map((ability) => <span key={ability}>{ability}</span>)}</div>
+              <div className="employee-id-foot"><span>{statusLabel}</span><span>TAIJI OFFICE</span></div>
             </section>
             <section className="employee-id-face employee-id-back" aria-hidden={!flipped}>
               <div className="employee-id-back-heading"><div><strong>{employee.name}</strong><span>{employee.title}</span></div><small>能力档案</small></div>

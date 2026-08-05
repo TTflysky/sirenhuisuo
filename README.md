@@ -1,4 +1,4 @@
-# 太极 AI 办公会所 v3.15.0
+# 太极 AI 办公会所 v3.15.1
 
 [![Release](https://img.shields.io/github/v/release/TTflysky/sirenhuisuo?label=release)](https://github.com/TTflysky/sirenhuisuo/releases/latest)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D4)](https://github.com/TTflysky/sirenhuisuo/releases/latest)
@@ -19,6 +19,12 @@
 - [查看 GitHub 仓库整改记录](./docs/GITHUB_REPOSITORY_REMEDIATION_V3.12.0.md)
 
 ## 界面与真实产出
+
+### 最新 UI 预览
+
+当前通过验收的波普漫画风界面快照（办公室、聊天流、任务观察和主题面板）：
+
+![太极 v3.15.1 波普漫画 UI 最新快照](./docs/screenshots/ui-latest-pop-demo.png)
 
 ### 智能体办公室
 

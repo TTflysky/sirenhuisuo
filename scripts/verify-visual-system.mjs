@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const root = new URL('../', import.meta.url);
-const [catalog, css, workspaceCss, app, sound] = await Promise.all([
+const [catalog, css, workspaceCss, app, sound, workstation] = await Promise.all([
   readFile(new URL('src/data/visualSystem.ts', root), 'utf8'),
   readFile(new URL('src/styles/visual-system.css', root), 'utf8'),
   readFile(new URL('src/styles/workspace.css', root), 'utf8'),
   readFile(new URL('src/App.tsx', root), 'utf8'),
   readFile(new URL('src/data/interactionSound.ts', root), 'utf8'),
+  readFile(new URL('src/components/office/Workstation.tsx', root), 'utf8'),
 ]);
 
 assert.match(catalog, /id: 'original'/u);
@@ -17,6 +18,17 @@ assert.match(css, /data-visual-style='pop'/u);
 assert.match(css, /data-visual-style='acid'/u);
 assert.match(css, /--visual-primary-border: 4px/u);
 assert.match(css, /\.employee-id-strap \{ display: none; \}/u);
+assert.match(css, /\.office-summary \{[^}]*background:\s*var\(--pop-surface\)/su);
+assert.match(css, /\.office-summary \{[^}]*grid-template-columns:\s*repeat\(3, 88px\)/su);
+assert.match(css, /\.office-summary \{[^}]*border:\s*var\(--visual-primary-border\)/su);
+assert.match(css, /\.office-summary > div \{[^}]*background:\s*var\(--pop-surface\)/su);
+assert.match(css, /\.office-summary > div\.is-active \{[^}]*background:\s*var\(--pop-yellow\)/su);
+assert.match(css, /\.office-workspace \.office-container \{[\s\S]*?background-image:[\s\S]*?linear-gradient[\s\S]*?radial-gradient/su);
+assert.doesNotMatch(css, /\.employee-id-face \{[^}]*border-top:\s*12px solid var\(--pop-cyan\)/su);
+assert.match(css, /\.employee-id-meta \{[^}]*background:\s*var\(--employee-accent\)/su);
+assert.match(css, /\.employee-id-meta > i \{\s*display:\s*none;/su);
+assert.match(css, /\.employee-id-foot \{[^}]*background:\s*var\(--pop-ink\)/su);
+assert.match(workstation, /--employee-accent/u);
 assert.match(workspaceCss, /\.titlebar-btn\s*\{[^}]*width:\s*34px;[^}]*height:\s*34px;[^}]*min-width:\s*34px;[^}]*min-height:\s*34px;[^}]*flex:\s*0 0 34px;/su);
 assert.match(workspaceCss, /\.chat-only-traffic \.titlebar-btn\s*\{[^}]*width:\s*34px;[^}]*height:\s*34px;[^}]*min-width:\s*34px;[^}]*min-height:\s*34px;[^}]*flex:\s*0 0 34px;/su);
 assert.doesNotMatch(workspaceCss, /\.chat-only-traffic \.titlebar-btn\s*\{[^}]*height:\s*100%/su);

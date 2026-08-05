@@ -1168,6 +1168,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.employee-id-foot { display: none; }
 .employee-id-back-heading { min-width: 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; padding-right: 31px; text-align: left; }
 .employee-id-back-heading > div { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .employee-id-back-heading strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
