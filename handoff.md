@@ -1,3 +1,41 @@
+# 当前 V5 交接（2026-08-06）
+
+## 本次 V5 安装与真实陪跑
+
+- 源码提交：`90e2633 feat: complete taiji v5 autonomous agent core`，`package.json` 为 `5.0.0`，构建树已恢复干净。
+- 已构建并覆盖本机旧客户端：`E:\AI办公会所\hermes-office-pro\太极 AI 办公会所.exe`，文件版本和产品版本均为 `5.0.0`。用户数据目录 `%APPDATA%\taiji-office` 保留。
+- 构建验证：`npm.cmd run build`、`npm.cmd run lint`、`npm.cmd run test:run -- --reporter=dot`（48 个测试文件、166 个测试通过）、`npm.cmd run verify:v5` 均通过。
+- 本机陪跑使用禁用 GPU 的客户端调试端口 `9336`，已确认 User-Agent 为 `taiji-office/5.0.0`。
+
+### 陪跑项目一：科学计算器
+
+请求：制作可运行的科学计算器，波普漫画风、黑白点状主体。
+
+观察结果：新对话被创建，模型回复了完成说明，但客户端没有产生对应 `projectId`、`taskId`、结构化产物登记或可定位文件；按工作区和全盘检索也找不到它声称写入的 HTML。这个结果不能判定为完成，已保存于 `test-results/scientific-calculator-live/2026-08-05T22-32-40-831Z-draft.json`。
+
+### 陪跑项目二：离线风险看板团队
+
+请求：自主选择成员、创建隔离工作区和阶段计划，制作支持新增、筛选、优先级、JSON/Markdown 导出的离线风险看板，并完成运行验证。
+
+观察结果：客户端创建了独立工作区元数据，例如 `%APPDATA%\taiji-office\workspace\tasks\assistant\default\run-1785970197006-gztag\.taiji-workspace.json`，但模型随后把 `<｜｜DSML｜｜tool_calls>` 原始文本直接显示在聊天中，没有转成 `list_files` 工具调用；没有生成团队提案、项目文档、产物或可执行任务记录。客户端随后回到可发送状态，属于“模型声称/输出工具格式但未执行”的失败现场。
+
+陪跑脚本：`scripts/live-v5-team-project.mjs`、`scripts/monitor-v5-live-team.mjs`。这些脚本只用于记录真实运行证据，不向任务内核添加项目专用关键词。
+
+## 真实陪跑结论
+
+V5 的静态门禁和工作区隔离代码已存在，但真实客户端仍有两个 P0 缺口：
+
+1. 普通助理入口在“直接写文件”路径上可能绕过结构化项目/任务登记，造成口头完成、无文件和无证据。
+2. 当前 `deepseek-v4-flash` 返回的 DSML 工具调用没有被统一适配层解析，原始标签会进入聊天文本，导致任务停在“选择动作/单次回复”而不是执行工具。
+
+下一轮应优先修复统一模型输出适配和普通助理入口的 TaskService/ProjectContext 接入，再重复这两个陪跑项目；在这两个现场通过前，不应把 V5 宣称为真实自主智能体团队完成版。不要用提示词或项目专用分支掩盖这两个内核问题。
+
+## 当前交接动作
+
+- 本次只覆盖安装本地客户端，没有创建 `v5.0.0` GitHub Release 或上传安装包。
+- 安装过程中仓库 `package.json` 曾被外部运行过程改回旧 `2.3.0` 内容，已核对并恢复为 `5.0.0`，未把该异常带入提交。
+- 下次开始前先读本节、`AGENTS.md` 和 `docs/TAIJI_V5_AUTONOMOUS_AGENT_ROADMAP.md`，再从“统一工具调用解析 -> 任务/项目登记 -> 真实文件证据”顺序修复。
+
 # 当前 V5 交接（2026-08-05）
 
 ## 本轮目标
