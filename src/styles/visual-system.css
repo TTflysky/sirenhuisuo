@@ -357,6 +357,63 @@
 :root[data-visual-style='pop'] .interaction-sound-test { background: var(--pop-ink); color: #fff; }
 :root[data-visual-style='pop'] .interaction-sound-test:hover { background: var(--pop-red); color: #fff; }
 
+/* Team hall follows the same approved Pop material as the office and chat. */
+:root[data-visual-style='pop'] .team-hall {
+  padding: 0 0 32px;
+  background-color: var(--pop-paper);
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--pop-ink) 14%, transparent) 1px, transparent 1.15px);
+  background-size: 8px 8px;
+}
+:root[data-visual-style='pop'] .team-hall-header {
+  max-width: none;
+  min-height: 118px;
+  align-items: center;
+  margin: 0 0 24px;
+  padding: 20px 26px;
+  border-bottom: var(--visual-primary-border) solid var(--pop-ink);
+  background: var(--pop-paper);
+}
+:root[data-visual-style='pop'] .team-hall-header h1 { margin-top: 5px; font-size: 30px; font-weight: 900; }
+:root[data-visual-style='pop'] .team-hall-eyebrow { width: max-content; padding: 3px 7px; border: 2px solid var(--pop-ink); border-radius: 5px; background: var(--pop-red); color: #fff; }
+:root[data-visual-style='pop'] .team-hall-header-actions { padding: 8px; border: var(--visual-secondary-border) solid var(--pop-ink); border-radius: var(--visual-control-radius); background: var(--pop-surface); box-shadow: 4px 4px 0 var(--pop-ink); }
+:root[data-visual-style='pop'] .team-hall-header-actions .ant-segmented { padding: 0; border: 0; background: var(--pop-paper-2); }
+:root[data-visual-style='pop'] .team-hall-header-actions .ant-segmented-item { border: 2px solid transparent; border-radius: 7px; }
+:root[data-visual-style='pop'] .team-hall-header-actions .ant-segmented-item-selected { border-color: var(--pop-ink); background: var(--pop-cyan); color: var(--pop-ink); box-shadow: 2px 2px 0 var(--pop-ink); }
+:root[data-visual-style='pop'] .team-hall-grid { max-width: none; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 18px; padding: 0 26px 24px; }
+:root[data-visual-style='pop'] .team-hall-card {
+  position: relative;
+  min-height: 310px;
+  gap: 12px;
+  padding: 20px 16px 16px;
+  border: var(--visual-primary-border) solid var(--pop-ink);
+  border-radius: var(--visual-radius);
+  background: var(--pop-surface);
+  box-shadow: 6px 6px 0 var(--pop-ink);
+}
+:root[data-visual-style='pop'] .team-hall-card::before { position: absolute; top: 0; left: 0; width: 100%; height: 10px; border-bottom: var(--visual-secondary-border) solid var(--pop-ink); border-radius: 11px 11px 0 0; background: var(--pop-yellow); content: ''; }
+:root[data-visual-style='pop'] .team-hall-card:hover { border-color: var(--pop-ink); box-shadow: 8px 8px 0 var(--pop-ink); transform: translate(-2px, -2px); }
+:root[data-visual-style='pop'] .team-hall-card-top { padding-bottom: 10px; border-bottom: var(--visual-secondary-border) dashed var(--pop-ink); }
+:root[data-visual-style='pop'] .team-hall-icon { width: 44px; height: 44px; flex-basis: 44px; border: var(--visual-secondary-border) solid var(--pop-ink); border-radius: 12px; background: var(--pop-cyan); color: var(--pop-ink); }
+:root[data-visual-style='pop'] .team-hall-card-title h2 { color: var(--pop-ink); font-size: 18px; font-weight: 900; }
+:root[data-visual-style='pop'] .team-hall-card-title span { color: var(--pop-muted); font-weight: 700; }
+:root[data-visual-style='pop'] .team-hall-more { width: 34px; min-width: 34px; height: 34px; padding: 0; border: var(--visual-secondary-border) solid var(--pop-ink); background: var(--pop-yellow); color: var(--pop-ink); }
+:root[data-visual-style='pop'] .team-hall-members { min-height: 86px; max-height: 112px; padding: 8px; border: var(--visual-secondary-border) solid var(--pop-ink); border-radius: var(--visual-control-radius); background: var(--pop-paper-2); }
+:root[data-visual-style='pop'] .team-hall-member span { color: var(--pop-ink); font-weight: 750; }
+:root[data-visual-style='pop'] .team-hall-description { min-height: 42px; flex: 1; color: var(--pop-ink); }
+:root[data-visual-style='pop'] .team-hall-meta { padding-top: 9px; border-top: var(--visual-secondary-border) dashed var(--pop-ink); color: var(--pop-ink); }
+:root[data-visual-style='pop'] .team-hall-card > .ant-btn { min-height: 38px; background: var(--pop-cyan); color: var(--pop-ink); font-weight: 850; box-shadow: 3px 3px 0 var(--pop-ink); }
+:root[data-visual-style='pop'] .team-hall-empty { max-width: 520px; min-height: 250px; padding: 26px; border: var(--visual-primary-border) solid var(--pop-ink); border-radius: var(--visual-radius); background: var(--pop-surface); box-shadow: 7px 7px 0 var(--pop-ink); }
+:root[data-visual-style='pop'] .team-hall-empty > .anticon { order: 0; color: var(--pop-red); }
+:root[data-visual-style='pop'] .team-hall-empty > strong { order: 1; color: var(--pop-ink); }
+:root[data-visual-style='pop'] .team-hall-empty > span { order: 2; color: var(--pop-muted); }
+:root[data-visual-style='pop'] .team-hall-empty > .ant-btn { order: 3; min-width: 136px; box-shadow: 3px 3px 0 var(--pop-ink); }
+
+@media (max-width: 760px) {
+  :root[data-visual-style='pop'] .team-hall-header { align-items: stretch; padding: 18px 14px; }
+  :root[data-visual-style='pop'] .team-hall-header-actions { width: 100%; justify-content: space-between; }
+  :root[data-visual-style='pop'] .team-hall-grid { grid-template-columns: 1fr; padding-inline: 14px; }
+}
+
 /* Acid is restrained: charcoal surfaces, one signal color, no badge strap. */
 :root[data-visual-style='acid'] body,
 :root[data-visual-style='acid'] .app-root { background-color: #050605; background-image: radial-gradient(circle,color-mix(in srgb,var(--acid) 10%,transparent) 1px,transparent 1px); background-size: 16px 16px; }
@@ -399,6 +456,15 @@
 :root[data-visual-style='acid'] .interaction-sound-presets button.active { border-color: var(--acid); background: #1a2018; color: var(--acid); box-shadow: inset 3px 0 0 var(--acid); transform: none; }
 :root[data-visual-style='acid'] .interaction-sound-preset-label,
 :root[data-visual-style='acid'] .interaction-sound-test { border-color: var(--acid); background: var(--acid); color: var(--acid-on); }
+:root[data-visual-style='acid'] .team-hall { background-color: #070908; background-image: radial-gradient(circle, color-mix(in srgb, var(--acid) 9%, transparent) 1px, transparent 1px); background-size: 16px 16px; }
+:root[data-visual-style='acid'] .team-hall-header { border-bottom-color: #414a42; background: rgba(8,10,9,.96); }
+:root[data-visual-style='acid'] .team-hall-card { border-color: #343a35; background: #111411; box-shadow: none; }
+:root[data-visual-style='acid'] .team-hall-card:hover { border-color: var(--acid); box-shadow: 0 0 0 1px var(--acid); }
+:root[data-visual-style='acid'] .team-hall-icon,
+:root[data-visual-style='acid'] .team-hall-members { border-color: #414a42; background: #171b18; color: var(--acid); }
+:root[data-visual-style='acid'] .team-hall-card-top,
+:root[data-visual-style='acid'] .team-hall-meta { border-color: #414a42; }
+:root[data-visual-style='acid'] .team-hall-card > .ant-btn { border-color: var(--acid); background: var(--acid); color: var(--acid-on); }
 
 @media (prefers-reduced-motion: reduce) {
   :root[data-visual-style] *, :root[data-visual-style] *::before, :root[data-visual-style] *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }

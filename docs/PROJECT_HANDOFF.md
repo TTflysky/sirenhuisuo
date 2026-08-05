@@ -1,7 +1,7 @@
 # 项目交接手册
 
 > 最后整理：2026-08-04
-> 当前源码版本：`v3.15.3`；安装与 GitHub Release 状态见最新交接
+> 当前源码版本：`v3.15.4`；安装与 GitHub Release 状态见最新交接
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
 

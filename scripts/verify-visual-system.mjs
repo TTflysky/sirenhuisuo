@@ -35,6 +35,10 @@ assert.doesNotMatch(workspaceCss, /\.chat-only-traffic \.titlebar-btn\s*\{[^}]*h
 assert.match(css, /data-visual-style='pop'\] \.app-root[\s\S]*?padding:\s*0;[\s\S]*?gap:\s*0;/u);
 assert.match(css, /data-visual-style='pop'\] \.titlebar-btn\s*\{[^}]*border:\s*var\(--visual-secondary-border\)\s+solid\s+var\(--pop-ink\)/su);
 assert.match(css, /data-visual-style='pop'\] \.sidebar\s*\{[^}]*width:\s*258px;[^}]*min-width:\s*258px;/su);
+assert.match(css, /data-visual-style='pop'\] \.team-hall\s*\{[^}]*background-image:\s*radial-gradient/su);
+assert.match(css, /data-visual-style='pop'\] \.team-hall-card\s*\{[^}]*border:\s*var\(--visual-primary-border\) solid var\(--pop-ink\);[^}]*box-shadow:\s*6px 6px 0 var\(--pop-ink\)/su);
+assert.match(css, /data-visual-style='pop'\] \.team-hall-members\s*\{[^}]*border:\s*var\(--visual-secondary-border\) solid var\(--pop-ink\)/su);
+assert.match(css, /data-visual-style='acid'\] \.team-hall-card\s*\{[^}]*background:\s*#111411/su);
 assert.match(app, /visual-preferences-changed/u);
 assert.match(app, /InteractionSoundControl/u);
 assert.match(sound, /volume: 80/u);
