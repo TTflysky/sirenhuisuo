@@ -628,6 +628,8 @@ export default function TeamChatApp({ teamId }: Props) {
         <div><strong>执行预算判断</strong><p>{summary.budgetAction}：{summary.budgetReason}</p></div>
         {summary.confirmedFacts.length > 0 && <div><strong>已确认事实</strong>{summary.confirmedFacts.map((item, index) => <p key={`${index}-${item.slice(0, 30)}`}>{item}</p>)}</div>}
         {summary.attemptedRoutes.length > 0 && <div><strong>已尝试路线</strong>{summary.attemptedRoutes.map((item, index) => <p key={`${index}-${item.slice(0, 30)}`}>{item}</p>)}</div>}
+        {summary.factLedger && <div><strong>事实账本</strong><p>{String(summary.factLedger.currentFacts ?? 0)} 条当前事实 · {String(summary.factLedger.factVersions ?? 0)} 个版本 · {String(summary.factLedger.openConflicts ?? 0)} 个未决冲突</p></div>}
+        {summary.factConflicts?.length > 0 && <div className="autonomous-summary-conflicts"><strong>冲突证据</strong>{summary.factConflicts.map((item) => <p key={String(item.id)}>{String(item.factKey)}：{String(item.previousStatement)} ↔ {String(item.latestStatement)}{item.requiresUser ? ' · 等待确认' : ' · 需要补证据'}</p>)}</div>}
         {summary.expectedEvidence.length > 0 && <div><strong>预期证据</strong>{summary.expectedEvidence.map((item, index) => <p key={`${index}-${item.slice(0, 30)}`}>{item}</p>)}</div>}
       </details>
     </section>;

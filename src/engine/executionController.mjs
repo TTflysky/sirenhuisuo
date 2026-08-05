@@ -83,10 +83,22 @@ function decision(kind, reason, extra = {}) {
 function routeRecord(state, routeId, toolName) {
   let route = state.routeHistory.find((item) => item.id === routeId);
   if (!route) {
-    route = { id: routeId, toolName, strategySignature: routeId, routeDifference: '', attempts: 0, failures: 0, successes: 0, lastOutcome: 'pending', resultFingerprints: [], updatedAt: Date.now() };
+    route = { id: routeId, toolName, strategySignature: routeId, routeDifference: '', attempts: 0, failures: 0, successes: 0, successRate: 0, failureRate: 0, lastOutcome: 'pending', resultFingerprints: [], lastSuccessAt: 0, lastFailureAt: 0, updatedAt: Date.now() };
     state.routeHistory.push(route);
     state.routeHistory = state.routeHistory.slice(-24);
   }
+  route.attempts = Math.max(Number(route.attempts) || 0, 0);
+  route.successes = Math.max(Number(route.successes) || 0, 0);
+  route.failures = Math.max(Number(route.failures) || 0, 0);
+  route.successRate = route.attempts ? route.successes / route.attempts : 0;
+  route.failureRate = route.attempts ? route.failures / route.attempts : 0;
+  return route;
+}
+
+function refreshRouteMetrics(route) {
+  const attempts = Math.max(Number(route.attempts) || 0, 0);
+  route.successRate = attempts ? Number((route.successes / attempts).toFixed(4)) : 0;
+  route.failureRate = attempts ? Number((route.failures / attempts).toFixed(4)) : 0;
   return route;
 }
 
@@ -150,7 +162,7 @@ export function restoreExecutionController(snapshot, options = {}) {
   restored.resultFingerprints = Array.isArray(snapshot.resultFingerprints) ? snapshot.resultFingerprints : [];
   restored.checkpoints = Array.isArray(snapshot.checkpoints) ? snapshot.checkpoints : [];
   restored.unresolvedQuestions = Array.isArray(snapshot.unresolvedQuestions) ? snapshot.unresolvedQuestions : [];
-  restored.routeHistory = restored.routeHistory.map((route) => ({ strategySignature: route.id, routeDifference: '', resultFingerprints: [], ...route }));
+  restored.routeHistory = restored.routeHistory.map((route) => refreshRouteMetrics({ strategySignature: route.id, routeDifference: '', resultFingerprints: [], successRate: 0, failureRate: 0, lastSuccessAt: 0, lastFailureAt: 0, ...route }));
   const active = restored.failures.find((item) => item.id === restored.activeFailureId && !item.resolved);
   restored.decision = active
     ? decision(active.needsUser ? 'await_user' : active.retryable ? 'retry' : 'switch_route', `继续处理上次未解决的问题：${active.label}`, { failureClass: active.classification, routeId: active.routeId, requiresUser: active.needsUser })
@@ -213,6 +225,8 @@ export function observeExecutionResult(snapshot, input = {}) {
   if (success) {
     route.successes += 1;
     route.lastOutcome = 'success';
+    route.lastSuccessAt = now;
+    refreshRouteMetrics(route);
     state.progressCount += 1;
     state.consecutiveFailures = 0;
     if (input.contributesEvidence !== false) {
@@ -244,6 +258,8 @@ export function observeExecutionResult(snapshot, input = {}) {
 
   route.failures += 1;
   route.lastOutcome = 'failure';
+  route.lastFailureAt = now;
+  refreshRouteMetrics(route);
   state.consecutiveFailures += 1;
   const failure = duplicateOutcome
     ? { code: 'duplicate', category: 'evidence_insufficient', retryable: false, needsUser: false, label: '同一路线返回了完全相同的结果' }
@@ -296,6 +312,32 @@ export function observeExecutionResult(snapshot, input = {}) {
   }
   state.updatedAt = now;
   return state;
+}
+
+/**
+ * Return route-level evidence quality without exposing raw tool payloads.
+ * The controller keeps the counters; this projection makes the signal usable
+ * by the autonomous planner, diagnostics and task replay consumers.
+ */
+export function summarizeRoutePerformance(snapshot, options = {}) {
+  const limit = Math.max(1, Math.min(64, Number(options.limit) || 24));
+  return (snapshot?.routeHistory || []).slice(-limit).map((route) => {
+    const normalized = refreshRouteMetrics({ ...route });
+    return {
+      routeId: normalized.id,
+      toolName: normalized.toolName,
+      strategySignature: normalized.strategySignature,
+      attempts: normalized.attempts,
+      successes: normalized.successes,
+      failures: normalized.failures,
+      successRate: normalized.successRate,
+      failureRate: normalized.failureRate,
+      lastOutcome: normalized.lastOutcome,
+      lastSuccessAt: normalized.lastSuccessAt || 0,
+      lastFailureAt: normalized.lastFailureAt || 0,
+      updatedAt: normalized.updatedAt || 0,
+    };
+  });
 }
 
 export function recordExecutionUsage(snapshot, delta = {}) {

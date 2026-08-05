@@ -4,10 +4,12 @@ import {
   restoreAdaptivePlanGraph,
 } from './adaptivePlanGraph.mjs';
 import { selectAutonomousDecision } from './autonomousDecisionAuthority.mjs';
+import { createFactLedger, factLedgerSummary, openFactConflicts } from './factLedger.mjs';
+import { buildUnifiedHostState } from './unifiedHost.mjs';
 
 const CONTROL_VERSION = 2;
 const GOAL_VERSION = 1;
-const SITUATION_VERSION = 1;
+const SITUATION_VERSION = 2;
 const DECISION_VERSION = 1;
 const MAX_FACTS = 24;
 const MAX_DECISIONS = 24;
@@ -145,9 +147,17 @@ export function applyGoalSteering(snapshot, steering = {}) {
   return state;
 }
 
-function fact(statement, source, sourceId, at, verified = true) {
+function fact(statement, source, sourceId, at, verified = true, factKey) {
   const clean = text(statement, 900);
-  return clean ? { id: recordId(verified ? 'fact' : 'assumption', source, sourceId, clean), statement: clean, source, sourceId: text(sourceId, 180) || undefined, at: Number(at) || 0, verified } : undefined;
+  return clean ? {
+    id: recordId(verified ? 'fact' : 'assumption', source, sourceId, clean),
+    statement: clean,
+    source,
+    sourceId: text(sourceId, 180) || undefined,
+    factKey: text(factKey, 240) || undefined,
+    at: Number(at) || 0,
+    verified,
+  } : undefined;
 }
 
 function uniqueRecords(records, max = MAX_FACTS) {
@@ -191,6 +201,10 @@ function routeRecords(run) {
     attempts: Math.max(0, Number(route.attempts) || 0),
     failures: Math.max(0, Number(route.failures) || 0),
     successes: Math.max(0, Number(route.successes) || 0),
+    successRate: Math.max(0, Math.min(1, Number(route.successRate) || (Number(route.attempts) ? Number(route.successes || 0) / Number(route.attempts) : 0))),
+    failureRate: Math.max(0, Math.min(1, Number(route.failureRate) || (Number(route.attempts) ? Number(route.failures || 0) / Number(route.attempts) : 0))),
+    lastSuccessAt: Number(route.lastSuccessAt) || 0,
+    lastFailureAt: Number(route.lastFailureAt) || 0,
     lastOutcome: text(route.lastOutcome, 500),
     updatedAt: Number(route.updatedAt) || 0,
   }));
@@ -201,7 +215,7 @@ export function deriveSituationModel(run = {}, goalSnapshot) {
   const confirmedFacts = [];
   const assumptions = [];
   for (const item of run.evidence ?? []) {
-    const entry = fact(item.summary, 'task_evidence', item.id || `${item.ts || 0}`, item.ts, item.verified === true);
+    const entry = fact(item.summary, 'task_evidence', item.id || `${item.ts || 0}`, item.ts, item.verified === true, item.factKey || item.claimKey || item.subject);
     if (item.verified === true) confirmedFacts.push(entry);
     else assumptions.push(entry);
   }
@@ -212,6 +226,7 @@ export function deriveSituationModel(run = {}, goalSnapshot) {
       item.evidenceId || item.toolCallId,
       item.createdAt,
       item.success === true && item.useful !== false,
+      item.factKey || item.claimKey || item.subject,
     );
     if (item.success === true && item.useful !== false) confirmedFacts.push(entry);
     else assumptions.push(entry);
@@ -224,15 +239,16 @@ export function deriveSituationModel(run = {}, goalSnapshot) {
       item.id,
       item.finishedAt || item.startedAt,
       true,
+      item.factKey || item.claimKey || item.subject,
     ));
   }
   for (const item of run.verification ?? []) {
-    if (item.status === 'passed') confirmedFacts.push(fact(`${item.label}: ${item.detail}`, 'verification', item.label, 0, true));
+    if (item.status === 'passed') confirmedFacts.push(fact(`${item.label}: ${item.detail}`, 'verification', item.label, item.at, true, item.factKey || item.claimKey || item.subject || item.label));
   }
   for (const step of run.steps ?? []) {
-    if (step.status === 'completed') confirmedFacts.push(fact(`Completed step: ${step.title}`, 'task_step', step.id, step.completedAt, true));
+    if (step.status === 'completed') confirmedFacts.push(fact(`Completed step: ${step.title}`, 'task_step', step.id, step.completedAt, true, step.factKey || step.claimKey || step.id));
     for (const item of step.evidence ?? []) {
-      const entry = fact(item.summary, 'step_evidence', `${step.id}:${item.id || item.ts || 0}`, item.ts, item.verified === true);
+      const entry = fact(item.summary, 'step_evidence', `${step.id}:${item.id || item.ts || 0}`, item.ts, item.verified === true, item.factKey || item.claimKey || item.subject);
       if (item.verified === true) confirmedFacts.push(entry);
       else assumptions.push(entry);
     }
@@ -265,6 +281,13 @@ export function deriveSituationModel(run = {}, goalSnapshot) {
   ], 60, 180);
   const activeIds = new Set((run.steps ?? []).filter((step) => step.status === 'running').map((step) => step.employeeId));
   const activeMembers = (run.memberSnapshot ?? []).filter((member) => activeIds.has(member.id)).map((member) => ({ id: member.id, name: member.name, title: member.title }));
+  const factObservations = [...confirmedFacts, ...assumptions].map((item) => ({
+    ...item,
+    factKey: item.factKey || `${item.source}:${item.sourceId || item.id}`,
+    evidenceIds: item.sourceId ? [item.sourceId] : [],
+  }));
+  const factLedger = createFactLedger({ snapshot: run.factLedger || run.situationModel?.factLedger, observations: factObservations, now: Number(run.updatedAt) || Date.now() });
+  const openConflicts = openFactConflicts(factLedger);
   return {
     situationVersion: SITUATION_VERSION,
     goalId: goal.goalId,
@@ -279,6 +302,8 @@ export function deriveSituationModel(run = {}, goalSnapshot) {
     blockedBy: list(blockers, 16),
     userSteering,
     routeHistory: routeRecords(run),
+    factLedger,
+    openFactConflicts: openConflicts,
     updatedAt: Number(run.updatedAt) || Date.now(),
   };
 }
@@ -288,7 +313,23 @@ function nextReadyStep(run) {
   return (run.steps ?? []).filter((step) => step.status === 'queued' && (step.dependsOnStepIds ?? []).every((id) => completed.has(id))).sort((a, b) => a.order - b.order)[0];
 }
 
-function recommendAction(run, situation, adaptivePlanGraph, budgetAssessment) {
+function recommendAction(run, situation, adaptivePlanGraph, budgetAssessment, unifiedHost) {
+  if (unifiedHost?.capabilityReadiness?.enforced && !unifiedHost.capabilityReadiness.ready) {
+    const missing = unifiedHost.capabilityReadiness.missing.join(', ');
+    const blocked = unifiedHost.capabilityReadiness.blocked.map((item) => `${item.requirement}: ${item.state}`).join(', ');
+    return {
+      kind: 'await_user',
+      summary: `External capability preflight is incomplete${missing ? `; missing ${missing}` : ''}${blocked ? `; blocked ${blocked}` : ''}.`,
+      requiredUserInput: 'Configure or verify the blocked capability, then continue this task.',
+    };
+  }
+  const openConflict = situation.openFactConflicts?.[0];
+  if (openConflict?.requiresUser) {
+    return { kind: 'await_user', summary: `事实“${openConflict.factKey}”存在互相矛盾的已验证证据，请确认保留哪一版。` };
+  }
+  if (openConflict) {
+    return { kind: 'resolve_conflict', summary: `事实“${openConflict.factKey}”出现新旧版本差异，先补充证据再继续。` };
+  }
   const repeatedRoute = situation.routeHistory.find((route) => route.failures >= 2 && route.successes === 0);
   if (run.status === 'completed') return { kind: 'verify_completion', summary: 'Verify that every success criterion has evidence before closing the goal.' };
   if (run.status === 'awaiting_user') return { kind: 'await_user', summary: situation.blockedBy.at(-1) || 'Wait only for the specific user input required to proceed.' };
@@ -311,7 +352,7 @@ function recommendAction(run, situation, adaptivePlanGraph, budgetAssessment) {
 
 function decisionPhase(action) {
   if (action.kind === 'verify_completion') return 'verify';
-  if (action.kind === 'reflect' || action.kind === 'switch_route') return 'reflect';
+  if (action.kind === 'reflect' || action.kind === 'switch_route' || action.kind === 'resolve_conflict') return 'reflect';
   if (action.kind === 'await_user' || action.kind === 'hold') return 'validate';
   if (action.kind === 'propose_plan' || action.kind === 'observe') return 'propose';
   return 'act';
@@ -342,7 +383,10 @@ export function createDecisionRecord(input = {}) {
 
 export function buildPublicDecisionSummary(goal, situation, decision, adaptivePlanGraph, budgetAssessment) {
   const latestRevision = adaptivePlanGraph?.revisionHistory?.at(-1);
-  const attemptedRoutes = situation.routeHistory.slice(-4).map((route) => `${route.toolName || route.routeId}: ${route.lastOutcome || `${route.attempts} attempt(s)`}`);
+  const attemptedRoutes = situation.routeHistory.slice(-4).map((route) => {
+    const rate = route.attempts ? `${Math.round((route.successRate || 0) * 100)}% 成功率` : '暂无样本';
+    return `${route.toolName || route.routeId}: ${route.lastOutcome || `${route.attempts} attempt(s)`}（${rate}，${route.successes}/${route.attempts}）`;
+  });
   return {
     currentGoal: goal.currentGoal,
     confirmedFacts: situation.confirmedFacts.slice(-5).map((item) => item.statement),
@@ -359,6 +403,14 @@ export function buildPublicDecisionSummary(goal, situation, decision, adaptivePl
     preservedCompletedNodes: latestRevision?.revision > 1 ? latestRevision.preservedCompletedNodeIds || [] : [],
     budgetAction: budgetAssessment?.action || 'continue',
     budgetReason: budgetAssessment?.reason || '',
+    factConflicts: (situation.openFactConflicts || []).map((item) => ({
+      id: item.id,
+      factKey: item.factKey,
+      requiresUser: item.requiresUser === true,
+      previousStatement: item.previousStatement,
+      latestStatement: item.latestStatement,
+    })),
+    factLedger: factLedgerSummary(situation.factLedger),
   };
 }
 
@@ -404,6 +456,12 @@ export function reconcileAutonomousControl(run, options = {}) {
   const adaptivePlanCandidate = restoreAdaptivePlanGraph(run.adaptivePlanGraph, { run, goalId: goal.goalId, projectId: goal.projectId, now });
   const adaptivePlanChanged = !run.adaptivePlanGraph || !equal(withoutUpdatedAt(run.adaptivePlanGraph), withoutUpdatedAt(adaptivePlanCandidate));
   const adaptivePlanGraph = { ...adaptivePlanCandidate, updatedAt: adaptivePlanChanged ? now : Number(run.adaptivePlanGraph?.updatedAt) || now };
+  const unifiedHost = buildUnifiedHostState({
+    run: { ...run, goalState: goal, adaptivePlanGraph, situationModel: situation },
+    entrypoint: run.hostEntrypoint || (run.taskType === 'dm' ? 'employee' : run.taskType === 'team' ? 'team' : run.taskType === 'child' ? 'worker' : 'assistant'),
+    capabilityMatrix: run.capabilityMatrix || run.externalCapabilityMatrix,
+    now,
+  });
   const routeRepeated = situation.routeHistory.some((route) => route.failures >= 2 && route.successes === 0);
   const contextWindowTokens = Number(run.recoveryContext?.budget?.contextWindowTokens) || 0;
   const estimatedTokens = Number(run.recoveryContext?.budget?.estimatedTokens || run.usage?.estimatedTokens) || 0;
@@ -415,7 +473,7 @@ export function reconcileAutonomousControl(run, options = {}) {
     repeatedRouteDetected: routeRepeated,
     needsApproval: run.pendingApproval?.status === 'pending',
   });
-  const fallbackAction = recommendAction(run, situation, adaptivePlanGraph, budgetAssessment);
+  const fallbackAction = recommendAction(run, situation, adaptivePlanGraph, budgetAssessment, unifiedHost);
   const previousControl = run.autonomousControl;
   const previousDecision = previousControl?.currentDecision;
   const authoritySelection = selectAutonomousDecision(
@@ -435,6 +493,9 @@ export function reconcileAutonomousControl(run, options = {}) {
     status: run.status,
     planRevision: adaptivePlanGraph.revision,
     budgetAction: budgetAssessment.action,
+    hostRequestId: unifiedHost.request.requestId,
+    hostEntrypoint: unifiedHost.entrypoint,
+    capabilityReady: unifiedHost.capabilityReadiness.ready,
   };
   const decisionChanged = !previousDecision || !equal(previousControl?.decisionBasis, decisionBasis);
   const cycle = decisionChanged ? Math.max(0, Number(previousDecision?.cycle) || 0) + 1 : Number(previousDecision.cycle) || 1;
@@ -473,13 +534,23 @@ export function reconcileAutonomousControl(run, options = {}) {
     shouldAwaitUser: action.kind === 'await_user',
     budgetAssessment,
     publicSummary,
+    unifiedHost,
     updatedAt: now,
   };
   const controlChanged = !previousControl || !equal(withoutUpdatedAt(previousControl), withoutUpdatedAt(controlCandidate));
   const control = { ...controlCandidate, updatedAt: controlChanged ? now : Number(previousControl.updatedAt) || now };
   const projectIdChanged = run.projectId !== goal.projectId;
   if (!goalChanged && !situationChanged && !adaptivePlanChanged && !controlChanged && !projectIdChanged) return run;
-  return { ...run, projectId: goal.projectId, goalState: goal, situationModel: situation, adaptivePlanGraph, autonomousControl: control };
+  return {
+    ...run,
+    projectId: goal.projectId,
+    goalState: goal,
+    situationModel: situation,
+    factLedger: situation.factLedger,
+    adaptivePlanGraph,
+    unifiedHost,
+    autonomousControl: control,
+  };
 }
 
 export const AUTONOMOUS_CONTROL_VERSION = CONTROL_VERSION;

@@ -45,6 +45,7 @@ function registerTaskServiceIpc(ipcMain, taskService) {
   register('task-service:verification', (_event, input) => taskService.recordVerification(input?.taskId, input));
   register('task-service:validate-completion', (_event, taskId) => taskService.validateCompletion(taskId));
   register('task-service:status', (_event, input) => taskService.setStatus(input?.taskId, input?.status, input?.detail));
+  register('task-service:resolve-fact-conflict', (_event, input) => taskService.resolveFactConflict(input?.taskId, input));
 }
 
 module.exports = { createSafeHandler, registerTaskServiceIpc };

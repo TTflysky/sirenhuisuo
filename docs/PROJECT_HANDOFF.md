@@ -1,9 +1,43 @@
 # 项目交接手册
 
-> 最后整理：2026-08-04
-> 当前源码版本：`v3.15.4`；安装与 GitHub Release 状态见最新交接
+> 最后整理：2026-08-05
+> 当前源码版本：`v4.0.0`；源码与发布门禁已完成，尚未创建 GitHub Release
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+
+## v3.16.0 事实、路线与记忆闭环（2026-08-05）
+
+- `src/engine/factLedger.mjs` 以 `factKey` 建立事实版本链，保留新旧陈述、观察记录、来源和证据 ID；冲突不会被新值静默覆盖。
+- `SituationModel` 持久化 `factLedger` 与 `openFactConflicts`。两个已验证陈述冲突时自主决策进入 `await_user`；只有未验证冲突时先要求补证据。任务详情展示账本摘要和冲突内容。
+- `resolveFactConflict()` 支持接受最新、保留旧版、两者并存和驳回四种处理；冲突处理结果可随任务账本回放。
+- `executionController` 路线记录新增成功率、失败率和最近成功/失败时间，公开决策摘要显示成功率与成功/尝试次数，不再只展示“调用过几次”。
+- `electron/memoryManager.cjs` schema 升级到 v3，记忆按类型使用指数半衰期并输出 `decayScore`；旧 v1/v2 状态自动迁移并写入审计，`context()` 排序降低过时记忆权重。
+- `scripts/verify-v316-fact-route-decay.mjs` 与 `npm.cmd run verify:v316` 已加入事实冲突、统一自主控制、路线统计、迁移和时间衰减回归。
+- 当前源码构建与 Lint 已通过。该行是 v3.16 阶段交接记录；后续 v3.17、v3.18 和 v4.0 已在本手册上方收口。
+
+## v3.17.0 统一主持与能力矩阵（2026-08-05）
+
+- `src/engine/unifiedHost.mjs` 统一 assistant、employee、team、worker、background 五类入口，持久化请求 ID、入口身份、目标和能力预检状态。
+- TaskService 新任务写入 `hostEntrypoint`、`requiredCapabilities` 和能力矩阵快照；无矩阵的旧任务不会被误阻断，但会保持未同步的可见状态。
+- 有真实配置和探测记录的能力才强制阻断：工具动作若需要不可用的网页、技能、GitHub、知识库或图像能力，会在调用前等待配置或用户处理。
+- 原生 Worker 与聊天任务桥都复用统一主持动作校验；旧 Autopilot 没有独立执行权。
+- `task-service:resolve-fact-conflict` 已加入主进程、IPC、preload 和类型声明，处理结果进入任务事件账本。
+- 门禁：`npm.cmd run verify:v317`、`npm.cmd run build`、`npm.cmd run lint` 已通过。
+- 下一阶段严格进入 `v3.18` 更新事务、迁移矩阵、健康检查和回滚证据，不新增平行调度器。
+
+## v3.18.0 升级事务与回滚治理（2026-08-05）
+
+- `electron/upgradeGovernance.cjs` 定义员工、团队、会话、任务、记忆、模型、连接器和工作区八个迁移域，并为每个域保留状态、检查结果与证据。
+- `electron/updateTransaction.cjs` 在准备、健康检查和提交阶段接入迁移域门禁；关键域未通过时不能提交升级。
+- `electron/autoUpdate.cjs` 安装后验证绑定目标版本、数据保留、工作区可写、Worker 和统一主持可用性；回滚记录保留失败阶段、备份摘要、旧包校验和恢复结果。
+- `scripts/verify-v318-upgrade-governance.cjs`、`verify:update-transaction` 和 `verify:ecosystem-health` 已通过。
+
+## v4.0.0 自主智能体发布收口（2026-08-05）
+
+- `src/engine/v4ReleaseReadiness.mjs` 将统一主持、五类入口、迁移矩阵、回滚证据、安装后健康和发布材料收成单一清单；`scripts/verify-v4-release-readiness.mjs` 验证清单完整性。
+- 已生成 `docs/sbom-v4.0.0.json` 和 `docs/release-provenance-v4.0.0.json`，版本与 lockfile 均为 `4.0.0`。
+- 发布门禁 `npm.cmd run verify:v4-release`、全量构建和 Lint 已通过。当前未配置代码签名证书，因此保留 Windows SmartScreen warning；开启“发布必须签名”策略会正确阻断。
+- v4 源码实现完成，但尚未创建 GitHub Release；不要把“源码门禁通过”误写成“已发布安装包”。
 
 ## v3.15.0 长任务驻留与通用语义验收（2026-08-05）
 
@@ -13,7 +47,7 @@
 - `verify_web_artifact` 支持任务合同驱动的 `semanticChecks`：`group`、`order`、`adjacent`、`grid`、`interaction` 五类通用契约。语义检查与越界/裁切/运行错误同等阻断完成，不包含计算器专用分支。
 - `verify-web-semantic-contract.cjs` 真实 Electron 回归已证明错误网格被拒绝，修正后分组、顺序、相邻、网格和交互全部通过；`verify-v315-soak-kernel.mjs` 覆盖两次上下文压缩、两次用户插话、跨会话恢复和连续 5 个检查点。
 - 门禁：`npm.cmd run verify:v315`、Build、Lint 通过。多窗口图形耐久脚本仍保留；本机若出现 Electron `launch-failed / exitCode 49`，属于图形驱动运行环境，不能冒充内核失败。
-- 下一步严格进入 `v3.16`：事实版本、冲突证据、路线成功率与时间衰减；`v4.0` 仍未完成。
+- 下一步严格进入 `v3.16`：事实版本、冲突证据、路线成功率与时间衰减。该行是 v3.15 阶段交接记录；当前 v4.0 源码门禁已完成。
 
 ## v3.14.1 风格化生产界面（2026-08-04）
 

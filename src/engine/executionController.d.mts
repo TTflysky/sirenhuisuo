@@ -13,7 +13,7 @@ export interface ExecutionControllerSnapshot {
   attemptCount: number; progressCount: number; consecutiveFailures: number; recoveryCycles: number; routeChanges: number;
   maxAttempts: number; maxSameRouteRetries: number; maxRouteChanges: number;
   budgets: ExecutionBudgets; usage: ExecutionUsage; budgetStopReason?: keyof ExecutionBudgets;
-  routeHistory: Array<{ id: string; toolName: string; strategySignature: string; routeDifference: string; attempts: number; failures: number; successes: number; lastOutcome: string; resultFingerprints: string[]; updatedAt: number }>;
+  routeHistory: Array<{ id: string; toolName: string; strategySignature: string; routeDifference: string; attempts: number; failures: number; successes: number; successRate: number; failureRate: number; lastOutcome: string; resultFingerprints: string[]; lastSuccessAt?: number; lastFailureAt?: number; updatedAt: number }>;
   forbiddenRouteIds: string[]; resultFingerprints: string[];
   observations: Array<{ ts: number; toolName: string; routeId: string; success: boolean; resultFingerprint?: string; duplicate?: boolean }>;
   evidence: ExecutionEvidence[];
@@ -31,6 +31,7 @@ export function createExecutionController(options?: ExecutionControllerOptions):
 export function restoreExecutionController(snapshot: ExecutionControllerSnapshot | Record<string, unknown> | undefined, options?: ExecutionControllerOptions): ExecutionControllerSnapshot;
 export function canExecuteRoute(state: ExecutionControllerSnapshot, input?: { routeKey?: string; toolName?: string; strategySignature?: string; routeDifference?: string }): { allowed: boolean; routeId: string; reason?: string };
 export function observeExecutionResult(state: ExecutionControllerSnapshot, input?: { routeKey?: string; toolName?: string; success?: boolean; result?: string; reason?: string; contributesEvidence?: boolean; verified?: boolean; evidenceKind?: string; retryLimit?: number; strategySignature?: string; routeDifference?: string; tokenUsage?: number }): ExecutionControllerSnapshot;
+export function summarizeRoutePerformance(state: ExecutionControllerSnapshot, options?: { limit?: number }): Array<{ routeId: string; toolName: string; strategySignature: string; attempts: number; successes: number; failures: number; successRate: number; failureRate: number; lastOutcome: string; lastSuccessAt: number; lastFailureAt: number; updatedAt: number }>;
 export function recordExecutionUsage(state: ExecutionControllerSnapshot, delta?: Partial<ExecutionBudgets>): ExecutionControllerSnapshot;
 export function evaluateExecutionConclusion(state: ExecutionControllerSnapshot, input?: { content?: string; reviewed?: boolean; acceptancePassed?: boolean; acceptanceIssues?: string[] }): ExecutionControllerSnapshot;
 export function applyExecutionSteering(state: ExecutionControllerSnapshot, instruction?: string): ExecutionControllerSnapshot;

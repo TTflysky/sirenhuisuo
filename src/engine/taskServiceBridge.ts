@@ -4,6 +4,8 @@ import type { ToolExecutionEvidence } from './executionEvidence.mjs';
 import { createLifecycleRecoveryCapsule, type TurnLifecycleState } from './turnLifecycle.mjs';
 import type { TurnRuntimeState } from './turnRuntime.mjs';
 import { validateAutonomousToolExecution } from './autonomousExecutionGate.mjs';
+import { loadExternalCapabilityMatrix } from '../data/externalCapabilityMatrix';
+import { validateUnifiedHostAction } from './unifiedHost.mjs';
 
 type Reference = { kind?: string; id?: string; label?: string; sourceUrl?: string; state?: string };
 type Usage = { promptTokens?: number; completionTokens?: number; totalTokens?: number };
@@ -151,6 +153,18 @@ export function createChatTaskBridge(input: {
         employeeId: typeof selectedAction.employeeId === 'string' ? selectedAction.employeeId : undefined,
         toolName: typeof selectedAction.toolName === 'string' ? selectedAction.toolName : undefined,
       });
+      const persistedRun = result.run || {};
+      const hostGate = validateUnifiedHostAction({
+        run: persistedRun,
+        taskId: currentTaskId,
+        goalId,
+        goal: input.goal,
+        entrypoint: input.taskType === 'dm' ? 'employee' : 'assistant',
+        action: selectedAction,
+        capabilityMatrix: persistedRun.capabilityMatrix,
+        requiredCapabilities: persistedRun.requiredCapabilities || persistedRun.contract?.requiredCapabilities,
+      });
+      if (!hostGate.allowed) throw new Error(hostGate.reason || 'Unified host rejected the tool action');
       if (!gate.allowed) throw new Error(gate.reason || '工具动作没有通过统一自主执行门禁');
     }
   };
@@ -166,6 +180,9 @@ export function createChatTaskBridge(input: {
         parentTaskId: input.parentTaskId,
         acceptanceCriteria: decision.acceptanceCriteria, constraints: decision.requiredConstraints,
         taskDecision: decision,
+        requiredCapabilities: decision.requiredCapabilities,
+        capabilityMatrix: loadExternalCapabilityMatrix(),
+        hostEntrypoint: input.taskType === 'dm' ? 'employee' : 'assistant',
         workspaceId: input.workspaceId,
         idempotencyKey: input.idempotencyKey,
         conversationId: input.conversationId,

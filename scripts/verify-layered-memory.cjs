@@ -77,7 +77,7 @@ async function main() {
     const migrated = createMemoryManager(migrationRoot);
     const migratedList = await migrated.list({ includeAudit: true });
     assert.equal(migratedList.entries[0].memoryKind, 'semantic');
-    assert(migratedList.audit.some((event) => event.action === 'schema_migrated' && event.toVersion === 2));
+    assert(migratedList.audit.some((event) => event.action === 'schema_migrated' && event.toVersion === 3));
     console.log(`layered memory verified: ${listed.entries.length} entries, ${listed.audit.length} audit events`);
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 }

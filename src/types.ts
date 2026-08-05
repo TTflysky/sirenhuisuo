@@ -470,6 +470,7 @@ export interface TaskRun {
   codingProject?: import('./engine/codingProject.mjs').CodingProject;
   /** Stable project goal shared by assistant, employee, team and background recovery paths. */
   goalState?: import('./engine/autonomousControl.mjs').GoalState;
+  factLedger?: import('./engine/factLedger.mjs').FactLedger;
   /** Evidence-grounded scene model. Unverified model claims remain assumptions. */
   situationModel?: import('./engine/autonomousControl.mjs').SituationModel;
   /** v3.7 revisable plan graph shared by execution, recovery and team supervision. */

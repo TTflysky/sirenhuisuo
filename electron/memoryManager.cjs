@@ -2,12 +2,13 @@ const crypto = require('crypto');
 const fs = require('fs/promises');
 const path = require('path');
 
-const MEMORY_SCHEMA_VERSION = 2;
-const MEMORY_MANAGER_VERSION = 2;
+const MEMORY_SCHEMA_VERSION = 3;
+const MEMORY_MANAGER_VERSION = 3;
 const VALID_SCOPES = new Set(['organization', 'team', 'employee', 'user']);
 const VALID_CATEGORIES = new Set(['identity', 'preference', 'constraint', 'workflow', 'decision', 'project', 'lesson']);
 const VALID_MEMORY_KINDS = new Set(['episodic', 'semantic', 'procedural', 'preference']);
 const DEFAULT_LIMITS = { organization: 6000, team: 4000, employee: 2600, user: 2600 };
+const DEFAULT_DECAY_HALF_LIFE_DAYS = { episodic: 45, semantic: 365, procedural: 180, preference: 180 };
 
 function clone(value) { return value === undefined ? undefined : JSON.parse(JSON.stringify(value)); }
 function stable(value) {
@@ -51,6 +52,15 @@ function inferMemoryKind(input, evidence = []) {
   if (input?.taskId || input?.category === 'decision') return 'episodic';
   return 'semantic';
 }
+function decayHalfLifeDays(input = {}) {
+  const kind = VALID_MEMORY_KINDS.has(input.memoryKind) ? input.memoryKind : inferMemoryKind(input, input.evidence || []);
+  return Math.max(7, Math.min(3650, Math.round(Number(input.decayHalfLifeDays) || DEFAULT_DECAY_HALF_LIFE_DAYS[kind] || 180)));
+}
+function memoryDecayMultiplier(entry, now = Date.now()) {
+  const halfLifeDays = Math.max(7, Number(entry?.decayHalfLifeDays) || DEFAULT_DECAY_HALF_LIFE_DAYS[entry?.memoryKind] || 180);
+  const ageMs = Math.max(0, Number(now) - (Number(entry?.updatedAt) || Number(entry?.createdAt) || Number(now)));
+  return Math.max(0.05, Math.pow(0.5, ageMs / (halfLifeDays * 86400000)));
+}
 function scopeKey(scope, scopeId) { return `${scope}:${scopeId || 'default'}`; }
 function safeScopeId(value) { return text(value || 'default', 160).replace(/[^a-z0-9._-]+/giu, '-').replace(/^-+|-+$/gu, '') || 'default'; }
 function emptyState() { return { schemaVersion: MEMORY_SCHEMA_VERSION, entries: [], proposals: [], audit: [], imports: [], updatedAt: Date.now() }; }
@@ -85,6 +95,9 @@ function normalizeEntry(input, now = Date.now()) {
     importance: Math.max(1, Math.min(5, Math.round(Number(input?.importance) || 3))),
     confidence: Math.max(0, Math.min(1, Number(input?.confidence) || 0.8)),
     fingerprint: fingerprint(content),
+    decayHalfLifeDays: decayHalfLifeDays({ ...input, memoryKind: inferMemoryKind(input, evidence) }),
+    lastAccessedAt: Number(input?.lastAccessedAt) || Number(input?.updatedAt) || now,
+    accessCount: Math.max(0, Number(input?.accessCount) || 0),
     createdAt: Number(input?.createdAt) || now,
     updatedAt: Number(input?.updatedAt) || now,
   };
@@ -122,7 +135,7 @@ function createMemoryManager(rootDir, options = {}) {
       state.proposals = Array.isArray(state.proposals) ? state.proposals : [];
       state.audit = Array.isArray(state.audit) ? state.audit : [];
       state.imports = Array.isArray(state.imports) ? state.imports : [];
-      if (previousSchemaVersion < MEMORY_SCHEMA_VERSION) state.audit.push({ id: crypto.randomUUID(), ts: Date.now(), action: 'schema_migrated', fromVersion: previousSchemaVersion, toVersion: MEMORY_SCHEMA_VERSION });
+      if (previousSchemaVersion < MEMORY_SCHEMA_VERSION) state.audit.push({ id: crypto.randomUUID(), ts: Date.now(), action: 'schema_migrated', fromVersion: previousSchemaVersion, toVersion: MEMORY_SCHEMA_VERSION, detail: '新增事实访问记录与时间衰减参数' });
     } catch (error) {
       if (error?.code !== 'ENOENT') {
         const corruptPath = `${statePath}.corrupt-${Date.now()}`;
@@ -259,7 +272,8 @@ function createMemoryManager(rootDir, options = {}) {
       && (!filter.taskId || entry.taskId === filter.taskId)
       && (!filter.category || entry.category === filter.category)
       && (!filter.memoryKind || entry.memoryKind === filter.memoryKind)
-      && (!requestedKinds?.size || requestedKinds.has(entry.memoryKind)));
+      && (!requestedKinds?.size || requestedKinds.has(entry.memoryKind)))
+      .map((entry) => ({ ...entry, decayScore: memoryDecayMultiplier(entry) }));
     const scopeUsages = {};
     for (const entry of state.entries) scopeUsages[scopeKey(entry.scope, entry.scopeId)] = usage(entry.scope, entry.scopeId);
     for (const scope of ['organization', 'user']) scopeUsages[scopeKey(scope, 'default')] ||= usage(scope, 'default');
@@ -272,13 +286,15 @@ function createMemoryManager(rootDir, options = {}) {
     const allowed = new Set(['organization:default', 'user:default']);
     if (input.teamId) allowed.add(scopeKey('team', safeScopeId(input.teamId)));
     if (input.employeeId) allowed.add(scopeKey('employee', safeScopeId(input.employeeId)));
-    const now = Date.now();
+    const now = Number(input.now) || Date.now();
     const requestedKinds = Array.isArray(input.memoryKinds) ? new Set(input.memoryKinds.filter((item) => VALID_MEMORY_KINDS.has(item))) : undefined;
     const ranked = state.entries.filter((entry) => allowed.has(scopeKey(entry.scope, entry.scopeId))
       && (!input.memoryKind || entry.memoryKind === input.memoryKind)
       && (!requestedKinds?.size || requestedKinds.has(entry.memoryKind))).map((entry) => ({
-      entry,
-      score: similarity(input.query || '', entry.content) * 100 + entry.importance * 8 + entry.confidence * 6 + Math.max(0, 5 - (now - entry.updatedAt) / (90 * 86400000)),
+      entry: { ...entry, decayScore: memoryDecayMultiplier(entry, now) },
+      score: similarity(input.query || '', entry.content) * 100 * memoryDecayMultiplier(entry, now)
+        + entry.importance * 8 * memoryDecayMultiplier(entry, now)
+        + entry.confidence * 6,
     })).sort((a, b) => b.score - a.score).slice(0, Math.max(4, Math.min(24, Number(input.limit) || 14)));
     const labels = { organization: '组织共享经验', team: '当前团队共享经验', employee: '当前员工个人经验', user: '老板画像与偏好' };
     const blocks = [];
@@ -366,4 +382,4 @@ function createMemoryManager(rootDir, options = {}) {
   return { initialize, list, context, upsert, remove, propose, reviewProposal, importLegacy, statePath, projectionDir };
 }
 
-module.exports = { MEMORY_SCHEMA_VERSION, MEMORY_MANAGER_VERSION, DEFAULT_LIMITS, VALID_MEMORY_KINDS, createMemoryManager, inferMemoryKind, similarity, sanitize };
+module.exports = { MEMORY_SCHEMA_VERSION, MEMORY_MANAGER_VERSION, DEFAULT_LIMITS, DEFAULT_DECAY_HALF_LIFE_DAYS, VALID_MEMORY_KINDS, createMemoryManager, inferMemoryKind, memoryDecayMultiplier, similarity, sanitize };

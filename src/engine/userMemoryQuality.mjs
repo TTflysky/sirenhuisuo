@@ -1,4 +1,4 @@
-export const USER_MEMORY_QUALITY_VERSION = 1;
+export const USER_MEMORY_QUALITY_VERSION = 2;
 export const MAX_USER_MEMORY_ITEMS = 100;
 
 export const USER_MEMORY_CATEGORY_LABELS = {
@@ -11,6 +11,15 @@ export const USER_MEMORY_CATEGORY_LABELS = {
 };
 
 const REVIEW_INTERVAL_DAYS = {
+  identity: 365,
+  preference: 180,
+  constraint: 365,
+  workflow: 180,
+  decision: 180,
+  project: 90,
+};
+
+const DECAY_HALF_LIFE_DAYS = {
   identity: 365,
   preference: 180,
   constraint: 365,
@@ -81,6 +90,12 @@ function reviewIntervalMs(item) {
   return baseDays * importanceFactor * 24 * 60 * 60 * 1000;
 }
 
+export function memoryDecayScore(item, now = Date.now()) {
+  const halfLifeDays = Math.max(7, Number(item?.decayHalfLifeDays) || DECAY_HALF_LIFE_DAYS[item?.category] || 180);
+  const ageMs = Math.max(0, Number(now) - (Number(item?.updatedAt) || Number(item?.ts) || Number(now)));
+  return Math.max(0.05, Math.pow(0.5, ageMs / (halfLifeDays * 24 * 60 * 60 * 1000)));
+}
+
 export function normalizeMemoryItem(item, options = {}) {
   const now = Number(options.now) || Date.now();
   const content = String(item?.content || '').trim();
@@ -97,6 +112,7 @@ export function normalizeMemoryItem(item, options = {}) {
     confidence: clampMemoryValue(Number(item.confidence) || (item.source === '手动添加' ? 1 : 0.8), 0, 1),
     updatedAt,
     fingerprint: memoryFingerprint(content),
+    decayHalfLifeDays: Math.max(7, Math.min(3650, Math.round(Number(item.decayHalfLifeDays) || DECAY_HALF_LIFE_DAYS[category] || 180))),
     lastReviewedAt: Number.isFinite(item.lastReviewedAt) ? Number(item.lastReviewedAt) : undefined,
     lastChangeReason: String(item.lastChangeReason || `从“${item.source || '历史记忆'}”保留`).slice(0, 240),
     supersedes: item.supersedes ? String(item.supersedes).slice(0, 240) : undefined,

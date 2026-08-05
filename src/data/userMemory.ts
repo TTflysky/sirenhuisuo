@@ -3,6 +3,7 @@ import {
   clampMemoryValue,
   inferMemoryCategory,
   memoryQualitySummary,
+  memoryDecayScore,
   memoryReviewState,
   memorySimilarity,
   normalizeMemoryItem,
@@ -24,6 +25,7 @@ export {
   memoryQualitySummary,
   memoryReviewState,
   memorySimilarity,
+  memoryDecayScore,
 };
 
 export function loadUserMemory(): UserMemoryItem[] {
@@ -82,8 +84,8 @@ export function buildUserContext(query = ''): string {
       const relevance = query.trim() ? memorySimilarity(query, item.content) * 100 : 0;
       const importance = (item.importance ?? 3) * 8;
       const confidence = (item.confidence ?? 0.8) * 5;
-      const recency = Math.max(0, 5 - (now - (item.updatedAt ?? item.ts)) / (90 * 24 * 60 * 60 * 1000));
-      return relevance + importance + confidence + recency;
+      const decay = memoryDecayScore(item, now);
+      return relevance * decay + importance * decay + confidence;
     };
     return score(right) - score(left);
   });

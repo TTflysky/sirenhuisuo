@@ -32,6 +32,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   taskServiceVerification: (input) => ipcRenderer.invoke('task-service:verification', input),
   taskServiceValidateCompletion: (taskId) => ipcRenderer.invoke('task-service:validate-completion', taskId),
   taskServiceStatus: (input) => ipcRenderer.invoke('task-service:status', input),
+  taskServiceResolveFactConflict: (input) => ipcRenderer.invoke('task-service:resolve-fact-conflict', input),
   taskLedgerRead: (options) => ipcRenderer.invoke('task-ledger:read', options),
   taskLedgerAudit: (options) => ipcRenderer.invoke('task-ledger:audit', options),
   taskRecoveryCreate: (options) => ipcRenderer.invoke('task-recovery:create', options),

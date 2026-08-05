@@ -10,6 +10,9 @@ export interface UserMemoryItem {
   updatedAt?: number;
   fingerprint?: string;
   reviewAfter?: number;
+  decayHalfLifeDays?: number;
+  lastAccessedAt?: number;
+  accessCount?: number;
   lastReviewedAt?: number;
   lastChangeReason?: string;
   supersedes?: string;
@@ -21,6 +24,7 @@ export function clampMemoryValue(value: number, min: number, max: number): numbe
 export function normalizeMemoryText(value: string): string;
 export function memoryFingerprint(value: string): string;
 export function memorySimilarity(left: string, right: string): number;
+export function memoryDecayScore(item: UserMemoryItem, now?: number): number;
 export function inferMemoryCategory(content: string): UserMemoryCategory;
 export function normalizeMemoryItem(item: UserMemoryItem, options?: { now?: number }): UserMemoryItem | null;
 export function memoryReviewState(item: UserMemoryItem, now?: number): UserMemoryReviewState;

@@ -482,6 +482,7 @@ declare global {
     taskServiceVerification: (input: Record<string, unknown> & { taskId: string; label: string; status: 'passed' | 'failed' | 'blocked' }) => Promise<TaskServiceResult>;
     taskServiceValidateCompletion: (taskId: string) => Promise<TaskServiceResult & { passed?: boolean; checks?: Array<Record<string, unknown>> }>;
     taskServiceStatus: (input: { taskId: string; status: string; detail?: string }) => Promise<TaskServiceResult>;
+    taskServiceResolveFactConflict: (input: { taskId: string; conflictId: string; resolution: 'accept_latest' | 'keep_previous' | 'accept_both' | 'dismiss'; resolvedBy?: string }) => Promise<TaskServiceResult>;
     taskLedgerRead: (options?: { taskId?: string; limit?: number }) => Promise<TaskStoreReadResult>;
     taskLedgerAudit: (options?: TaskStoreQueryOptions) => Promise<TaskStoreReadResult>;
     taskRecoveryCreate: (options?: { taskId?: string; label?: string }) => Promise<TaskRecoveryResult>;

@@ -12,10 +12,16 @@ const TASK_SERVICE_VERSION = 4;
 const TASK_TYPES = new Set(['assistant', 'dm', 'team', 'child', 'coding']);
 const DELIVERABLE_TYPES = new Set(['answer', 'file', 'connection', 'operation', 'decision', 'mixed']);
 let adaptivePlanPromise;
+let factLedgerPromise;
 
 function loadAdaptivePlan() {
   if (!adaptivePlanPromise) adaptivePlanPromise = import(pathToFileURL(path.join(__dirname, '../src/engine/adaptivePlanGraph.mjs')).href);
   return adaptivePlanPromise;
+}
+
+function loadFactLedger() {
+  if (!factLedgerPromise) factLedgerPromise = import(pathToFileURL(path.join(__dirname, '../src/engine/factLedger.mjs')).href);
+  return factLedgerPromise;
 }
 
 function clone(value) {
@@ -120,6 +126,9 @@ function normalizeTaskInput(input = {}) {
     acceptanceCriteria: list(input.acceptanceCriteria, ['完成用户目标', '留下真实可观察结果', '完成必要验收']),
     constraints: list(input.constraints),
     taskDecision,
+    requiredCapabilities: list(input.requiredCapabilities || rawTaskDecision?.requiredCapabilities),
+    capabilityMatrix: input.capabilityMatrix && typeof input.capabilityMatrix === 'object' ? clone(input.capabilityMatrix) : undefined,
+    hostEntrypoint: text(input.hostEntrypoint || (taskType === 'dm' ? 'employee' : taskType === 'team' ? 'team' : taskType === 'child' ? 'worker' : 'assistant'), 40),
     projectBrief: input.projectBrief && typeof input.projectBrief === 'object' ? clone(input.projectBrief) : undefined,
     deliverableType: taskDeliverableType,
     memberSnapshot: Array.isArray(input.memberSnapshot) ? clone(input.memberSnapshot) : undefined,
@@ -463,6 +472,27 @@ function createTaskService(store, options = {}) {
     return { ok: true, parentTaskId: parent.id, repaired };
   }
 
+  async function resolveFactConflict(taskId, input = {}) {
+    const conflictId = text(input.conflictId, 220);
+    const resolution = text(input.resolution, 40);
+    if (!conflictId || !resolution) throw new Error('TaskService: conflictId and resolution are required');
+    const factLedger = await loadFactLedger();
+    await update(taskId, (task) => {
+      const current = task.factLedger || task.situationModel?.factLedger;
+      if (!current) throw new Error('TaskService: task has no fact ledger');
+      const ledger = factLedger.resolveFactConflict(current, conflictId, resolution, {
+        resolvedBy: text(input.resolvedBy || 'task-service', 160),
+        now: Number(input.now) || Date.now(),
+      });
+      task.factLedger = ledger;
+      task.situationModel = { ...(task.situationModel || {}), factLedger: ledger };
+      task.serviceEvents = Array.isArray(task.serviceEvents) ? task.serviceEvents : [];
+      appendServiceEvent(task, 'fact_conflict_resolved', `事实冲突已处理：${resolution}`, { conflictId, resolution });
+    }, 'TaskService resolved a fact conflict through the unified host');
+    const snapshot = await store.read({ taskId });
+    return { ok: true, task: snapshot.runs?.[0] };
+  }
+
   async function completeStep(taskId, input = {}) {
     const stepId = text(input.stepId, 160);
     if (!stepId) throw new Error('TaskService: stepId is required');
@@ -479,7 +509,7 @@ function createTaskService(store, options = {}) {
     }, `记录步骤完成：${stepId}`);
   }
 
-  return { version: TASK_SERVICE_VERSION, read, create, update, recordToolAttempt, addArtifact, addReference, createChild, repairDelegationCollisions, context, recordLifecycle, readySteps, completeStep, recordReviewDecision, failStep, reviseAdaptivePlan, reassignAdaptiveNode, requestApproval, decideApproval, recordUsage, metrics, tree, recoveryPlan, heartbeat, recordCheckpoint, recordVerification, validateCompletion, setStatus };
+  return { version: TASK_SERVICE_VERSION, read, create, update, recordToolAttempt, addArtifact, addReference, createChild, repairDelegationCollisions, resolveFactConflict, context, recordLifecycle, readySteps, completeStep, recordReviewDecision, failStep, reviseAdaptivePlan, reassignAdaptiveNode, requestApproval, decideApproval, recordUsage, metrics, tree, recoveryPlan, heartbeat, recordCheckpoint, recordVerification, validateCompletion, setStatus };
 }
 
 module.exports = { TASK_SERVICE_VERSION, createTaskService };

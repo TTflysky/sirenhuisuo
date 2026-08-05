@@ -187,6 +187,7 @@ function mergeWorkerAuthority(current, incoming, source) {
     if (!next.projectId && current.projectId) next.projectId = current.projectId;
     if (!next.goalState && current.goalState) next.goalState = clone(current.goalState);
     if (!next.situationModel && current.situationModel) next.situationModel = clone(current.situationModel);
+    if (!next.factLedger && current.factLedger) next.factLedger = clone(current.factLedger);
     if (!next.adaptivePlanGraph && current.adaptivePlanGraph) next.adaptivePlanGraph = clone(current.adaptivePlanGraph);
     if (!next.autonomousControl && current.autonomousControl) next.autonomousControl = clone(current.autonomousControl);
   }

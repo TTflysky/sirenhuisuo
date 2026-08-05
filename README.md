@@ -1,4 +1,4 @@
-# 太极 AI 办公会所 v3.15.4
+# 太极 AI 办公会所 v4.0.0
 
 [![Release](https://img.shields.io/github/v/release/TTflysky/sirenhuisuo?label=release)](https://github.com/TTflysky/sirenhuisuo/releases/latest)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D4)](https://github.com/TTflysky/sirenhuisuo/releases/latest)
@@ -24,7 +24,7 @@
 
 当前通过验收的波普漫画风界面快照（办公室、聊天流、任务观察和主题面板）：
 
-![太极 v3.15.4 波普漫画 UI 最新快照](./docs/screenshots/ui-latest-pop-demo.png)
+![太极当前波普漫画 UI 快照](./docs/screenshots/ui-latest-pop-demo.png)
 
 ### 智能体办公室
 
@@ -40,10 +40,10 @@
 
 ## 项目状态
 
-- 当前源码版本：`3.14.1`
-- 当前可安装验收版本：`3.14.1`
+- 当前源码版本：`4.0.0`
+- 当前可安装验收版本：尚未创建 v4.0.0 Release
 - 发布分支：`main`
-- GitHub Release：[`v3.14.1`](https://github.com/TTflysky/sirenhuisuo/releases/tag/v3.14.1)；安装器、Blockmap 和 `latest.yml` 由发布脚本完成远端大小与 SHA-256 核验。
+- GitHub Release：尚未创建 `v4.0.0`；源码发布门禁已通过，正式发布前需补齐签名策略。
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 43、React 19、TypeScript 6、Ant Design 6、Vite 8
 - 模型接口：OpenAI 兼容的 `/chat/completions` API

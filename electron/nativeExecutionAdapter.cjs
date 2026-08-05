@@ -237,8 +237,9 @@ function createNativeExecutionAdapter(options) {
         import(pathToFileURL(path.join(projectRoot, 'src/engine/explicitResourceContract.mjs')).href),
         import(pathToFileURL(path.join(projectRoot, 'src/engine/adaptivePlanGraph.mjs')).href),
         import(pathToFileURL(path.join(projectRoot, 'src/engine/autonomousExecutionGate.mjs')).href),
-      ]).then(([fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol, turnRuntime, turnLifecycle, moaRuntime, capabilityGraph, explicitResource, adaptivePlan, autonomousExecutionGate]) => ({
-        fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol, turnRuntime, turnLifecycle, moaRuntime, capabilityGraph, explicitResource, adaptivePlan, autonomousExecutionGate,
+        import(pathToFileURL(path.join(projectRoot, 'src/engine/unifiedHost.mjs')).href),
+      ]).then(([fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol, turnRuntime, turnLifecycle, moaRuntime, capabilityGraph, explicitResource, adaptivePlan, autonomousExecutionGate, unifiedHost]) => ({
+        fidelity, runner, toolRegistry, contextRouter, taskDelegation, teamExecutionProtocol, turnRuntime, turnLifecycle, moaRuntime, capabilityGraph, explicitResource, adaptivePlan, autonomousExecutionGate, unifiedHost,
       }));
     }
     return engineModulesPromise;
@@ -625,7 +626,7 @@ function createNativeExecutionAdapter(options) {
 
   let autonomousProposalSequence = 0;
   async function authorizeToolExecution(job, run, step, member, toolName, toolCallId) {
-    const { autonomousExecutionGate } = await loadEngineModules();
+    const { autonomousExecutionGate, unifiedHost } = await loadEngineModules();
     const current = await readRun(job.taskId) || run;
     autonomousProposalSequence += 1;
     const proposalId = `proposal-native-${job.taskId}-${Date.now()}-${autonomousProposalSequence}`;
@@ -660,6 +661,14 @@ function createNativeExecutionAdapter(options) {
       toolName,
     });
     if (!gate.allowed) throw new Error(`Autonomous execution gate rejected ${toolName}: ${gate.reason}`);
+    const hostGate = unifiedHost.validateUnifiedHostAction({
+      run: updated || current,
+      entrypoint: 'worker',
+      action: { kind: 'use_tool', toolName, stepId: step.id, employeeId: member.id },
+      capabilityMatrix: (updated || current).capabilityMatrix || (updated || current).externalCapabilityMatrix,
+      requiredCapabilities: (updated || current).requiredCapabilities || (updated || current).contract?.requiredCapabilities,
+    });
+    if (!hostGate.allowed) throw new Error(`Unified host rejected ${toolName}: ${hostGate.reason}`);
     return updated;
   }
 

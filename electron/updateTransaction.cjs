@@ -1,6 +1,13 @@
 const fs = require('fs/promises');
 const path = require('path');
 const crypto = require('crypto');
+const {
+  REQUIRED_MIGRATION_DOMAINS,
+  createMigrationMatrix,
+  normalizeResult,
+  validateMigrationMatrix,
+  summarizeMigrationMatrix,
+} = require('./upgradeGovernance.cjs');
 
 const TRANSACTION_SCHEMA = 1;
 const PHASES = ['prepare', 'download', 'verify', 'backup', 'install', 'migrate', 'health', 'commit', 'rollback'];
@@ -22,7 +29,8 @@ function createUpdateTransaction(options = {}) {
     return write({
       ...(previous || {}), id: input.id || `upgrade-${Date.now()}`, fromVersion: String(input.fromVersion || ''), toVersion: String(input.toVersion || ''),
       phase: 'prepare', status: 'prepared', startedAt: previous?.startedAt || new Date().toISOString(),
-      domains: Array.isArray(input.domains) ? input.domains : ['employees', 'teams', 'sessions', 'tasks', 'memory', 'models', 'connectors', 'workspace'],
+      domains: Array.isArray(input.domains) ? input.domains : [...REQUIRED_MIGRATION_DOMAINS],
+      domainMatrix: createMigrationMatrix(input.domains || REQUIRED_MIGRATION_DOMAINS),
       evidence: [], failure: undefined,
     });
   }
@@ -34,7 +42,25 @@ function createUpdateTransaction(options = {}) {
     }
     const allowed = phase === 'rollback' || PHASES.indexOf(phase) >= PHASES.indexOf(current.phase || 'prepare');
     if (!allowed) throw new Error(`升级阶段不能从 ${current.phase} 回退到 ${phase}`);
+    if (input.requireDomainValidation === true && (phase === 'health' || phase === 'commit')) {
+      const readiness = validateMigrationMatrix(current.domainMatrix, current.domains);
+      if (!readiness.ready) {
+        return write({ ...current, phase, status: 'failed', failure: `Migration domains are not ready: ${[...readiness.missing, ...readiness.blocked].join(', ')}`, domainReadiness: readiness });
+      }
+    }
     return write({ ...current, phase, status: input.status || (phase === 'commit' ? 'committed' : phase === 'rollback' ? 'rolling_back' : 'running'), evidence: [...(current.evidence || []), { phase, at: new Date().toISOString(), detail: String(input.detail || '').slice(0, 500), digest: input.digest || undefined }].slice(-100), failure: input.failure || current.failure });
+  }
+  async function recordDomainValidation(domain, result = {}) {
+    const current = (await read()) || await begin({});
+    const name = String(domain || '').trim().slice(0, 80);
+    if (!current.domains.includes(name)) throw new Error(`Unknown migration domain: ${name}`);
+    const nextMatrix = { ...(current.domainMatrix || createMigrationMatrix(current.domains)), [name]: normalizeResult(name, result) };
+    return write({ ...current, domainMatrix: nextMatrix, domainReadiness: validateMigrationMatrix(nextMatrix, current.domains) });
+  }
+  async function validateReadiness() {
+    const current = (await read()) || await begin({});
+    const readiness = validateMigrationMatrix(current.domainMatrix, current.domains);
+    return { ...readiness, summary: summarizeMigrationMatrix(current.domainMatrix) };
   }
   async function fail(error, phase) { return transition(phase || (await read())?.phase || 'prepare', { status: 'failed', failure: String(error?.message || error).slice(0, 800), detail: '故障注入或真实升级失败' }); }
   async function digestFile(file) { const data = await fs.readFile(file); return crypto.createHash('sha256').update(data).digest('hex'); }
@@ -50,7 +76,7 @@ function createUpdateTransaction(options = {}) {
     }
     return { passed: false, reason: 'failure point was not reached', journal: await read() };
   }
-  return { begin, transition, fail, simulateFailure, read, digestFile, journalPath, phases: PHASES, schema: TRANSACTION_SCHEMA };
+  return { begin, transition, recordDomainValidation, validateReadiness, fail, simulateFailure, read, digestFile, journalPath, phases: PHASES, schema: TRANSACTION_SCHEMA };
 }
 
 module.exports = { TRANSACTION_SCHEMA, PHASES, createUpdateTransaction };

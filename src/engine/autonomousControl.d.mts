@@ -8,14 +8,16 @@ export interface GoalState {
   appliedSteeringEventIds: string[];
   status: GoalStatus; createdAt: number; updatedAt: number;
 }
-export interface SituationRecord { id: string; statement: string; source: string; sourceId?: string; at: number; verified: boolean }
+export interface SituationRecord { id: string; statement: string; source: string; sourceId?: string; factKey?: string; at: number; verified: boolean }
+export interface FactLedger { ledgerVersion: number; factVersions: Array<Record<string, unknown>>; conflicts: Array<Record<string, unknown>>; updatedAt: number }
 export interface SituationModel {
   situationVersion: number; goalId: string; confirmedFacts: SituationRecord[]; assumptions: SituationRecord[]; openQuestions: string[];
   availableCapabilities: string[]; activeMembers: Array<{ id: string; name: string; title: string }>;
   artifacts: Array<{ id: string; path: string; source: string; at: number; verified: boolean }>;
   evidence: SituationRecord[]; failures: Array<{ id: string; stepId?: string; summary: string; at: number }>;
   blockedBy: string[]; userSteering: Array<{ id: string; summary: string; at: number }>;
-  routeHistory: Array<{ routeId: string; toolName: string; strategy: string; attempts: number; failures: number; successes: number; lastOutcome: string; updatedAt: number }>;
+  routeHistory: Array<{ routeId: string; toolName: string; strategy: string; attempts: number; failures: number; successes: number; successRate: number; failureRate: number; lastSuccessAt: number; lastFailureAt: number; lastOutcome: string; updatedAt: number }>;
+  factLedger: FactLedger; openFactConflicts: Array<Record<string, unknown>>;
   updatedAt: number;
 }
 export interface AutonomousAction { kind: string; summary: string; stepId?: string; employeeId?: string; routeId?: string; toolName?: string; toolCallId?: string; requiredUserInput?: string }
@@ -28,7 +30,7 @@ export interface DecisionRecord {
 export interface PublicDecisionSummary {
   currentGoal: string; confirmedFacts: string[]; currentGap: string; attemptedRoutes: string[]; nextAction: string; rationale: string;
   resources: string[]; expectedEvidence: string[]; needsUser: boolean; planRevision: number; planChange: string;
-  affectedNodes: string[]; preservedCompletedNodes: string[]; budgetAction: string; budgetReason: string;
+  affectedNodes: string[]; preservedCompletedNodes: string[]; budgetAction: string; budgetReason: string; factConflicts: Array<Record<string, unknown>>; factLedger: Record<string, unknown>;
 }
 export interface AutonomousControlSnapshot {
   controlVersion: number; mode: 'shadow' | 'adaptive'; protocol: 'observe-interpret-propose-validate-act-verify-reflect'; loopPhase: DecisionRecord['phase'];

@@ -1,6 +1,47 @@
 # 太极项目当前交接
 
-## 当前版本：v3.15.4（2026-08-05）
+## 当前版本：v4.0.0（2026-08-05；源码与门禁已完成，尚未创建 GitHub Release）
+
+## v4.0.0 收口交接
+
+- `src/engine/v4ReleaseReadiness.mjs` 与 `scripts/verify-v4-release-readiness.mjs` 固化 v4 发布清单：统一主持唯一入口、五类执行入口、迁移、健康、回滚和发布证据必须齐全。
+- `electron/upgradeGovernance.cjs` 和 `electron/updateTransaction.cjs` 已把八个迁移域接入升级事务，安装后健康检查失败或回滚证据缺失时不会提交升级。
+- `docs/sbom-v4.0.0.json`、`docs/release-provenance-v4.0.0.json` 已生成；`package.json`、`package-lock.json` 均为 `4.0.0`。
+- 已通过 `verify:v316`、`verify:v317`、`verify:v318`、`verify:v4-release`、构建和 Lint。当前未配置代码签名，正式发布前需明确是否接受 SmartScreen warning。
+- v4 源码尚未创建 GitHub Release，也没有上传安装包；这不是未完成代码，而是发布动作尚未执行。
+
+### 每轮路线回顾
+
+1. v3.16：事实账本、冲突证据、路线成功率和记忆时间衰减。
+2. v3.17：统一主持唯一入口、能力矩阵和事实冲突处理入口。
+3. v3.18：升级事务、八域迁移矩阵、健康检查和回滚治理。
+4. v4.0：把以上能力收成发布清单和可审计证据，保持单一主持层，不新增平行调度器。
+
+## v3.17.0 统一主持交接
+
+- 新增 `src/engine/unifiedHost.mjs`：所有聊天、员工、团队、Worker 和后台任务共享同一主持请求合同；入口、目标、请求 ID 和能力预检随任务账本持久化。
+- TaskService 新建任务保存 `hostEntrypoint`、`requiredCapabilities` 和 `capabilityMatrix`；有真实能力清单时才执行强制前置检查，旧任务不因历史缺字段而整体停摆。
+- 原生 Worker 工具调用与 `src/engine/taskServiceBridge.ts` 均在 `autonomousExecutionGate` 后调用统一主持动作校验。
+- `task-service:resolve-fact-conflict` 已贯通 TaskService、IPC、preload 和 `src/electron.d.ts`，冲突处理会写入服务事件，可被任务回放读取。
+- 验证：`npm.cmd run verify:v317`、`npm.cmd run build`、`npm.cmd run lint` 通过。
+- 下一步是 `v3.18` 的更新事务完整性与迁移/回滚治理；不要恢复旧 Autopilot 执行入口，也不要把能力判断散落到窗口组件。
+
+## v3.16.0 事实与经验闭环（本轮）
+
+- `src/engine/factLedger.mjs` 建立事实版本链：按 `factKey` 记录版本、来源、观察次数和证据 ID；不同陈述会生成冲突记录，不再静默覆盖旧事实。
+- 冲突支持 `accept_latest`、`keep_previous`、`accept_both`、`dismiss` 四种处理；已验证证据冲突会让自主决策进入“等待用户确认”，未验证冲突先要求补证据。
+- `SituationModel` 和任务详情接入事实账本摘要；任务回放可看到事实版本、未决冲突、旧值和新值。
+- 执行控制器路线记录新增 `successRate`、`failureRate`、最近成功/失败时间，公开判断的“已尝试路线”显示 `成功率 + 成功/尝试次数`。
+- Electron 分层记忆 schema 从 v2 迁移到 v3，新增按记忆类型配置的指数半衰期、`decayScore`、访问元数据；上下文排序会降低过时记忆的权重，迁移写入审计事件。
+- 新增 `scripts/verify-v316-fact-route-decay.mjs` 与 `npm.cmd run verify:v316`，覆盖事实冲突、统一自主控制阻断、路线统计、记忆迁移和衰减。
+
+### 本轮验证
+
+- `npm.cmd run verify:v316`：通过。
+- `npm.cmd run build`：通过。
+- `npm.cmd run lint`：通过。
+- `node scripts/verify-execution-controller.mjs`、`verify-layered-memory.cjs`、`verify-autonomous-control.mjs`：通过。
+- 这次只更新源码和验证门禁，尚未上传 GitHub Release；下一步是 `v3.17` 统一主持唯一入口与第三方矩阵。
 
 ### 已完成
 
@@ -29,9 +70,9 @@
 
 ### 下一步计划
 
-1. 发布 `v3.15.1` 源码 Release，不上传安装包；核验 GitHub `main`、标签和 Release 说明。
-2. 进入 `v3.16`：事实版本、冲突证据、路线成功率和时间衰减。
-3. 保持 `v3 -> v4` 路线不跑偏：`v3.17` 统一主持唯一入口与第三方矩阵，`v4.0` 再做覆盖安装、回滚、签名和正式发布验收。
+1. 需要对外发布时，先决定是否配置代码签名，再创建 `v4.0.0` GitHub Release；按当前约定不上传安装包，除非另行要求。
+2. 发布前重新运行 `npm.cmd run verify:v4-release`，并把 Release URL、签名状态和资产清单写回本文件。
+3. 后续问题按新的 v4 任务/缺陷记录处理，不回退到旧 Autopilot 或另起平行调度器。
 
 ### 踩过的坑
 

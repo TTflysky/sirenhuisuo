@@ -136,9 +136,20 @@ ipcMain.handle('upgrade:recordValidation', async (_event, validation) => {
     const dataPreserved = ['employees', 'teams', 'models', 'taskRuns'].every((key) => Number(validation?.[key] || 0) >= Number(expected[key] || 0));
     const runtimeHealth = runtimeHealthProvider ? await runtimeHealthProvider() : null;
     const runtimeReady = !runtimeHealth || runtimeHealth.ok === true;
-    const ok = Boolean(validation?.workspaceReady) && dataPreserved && runtimeReady;
+    const transaction = createUpdateTransaction({ root: upgradeDir() });
+    const countCheck = (key) => Number(validation?.[key] || 0) >= Number(expected[key] || 0);
+    const checks = {
+      employees: countCheck('employees'), teams: countCheck('teams'), models: countCheck('models'), tasks: countCheck('taskRuns'),
+      workspace: Boolean(validation?.workspaceReady), memory: validation?.domainChecks?.memory?.ok !== false,
+      connectors: validation?.domainChecks?.connectors?.ok !== false, sessions: validation?.domainChecks?.sessions?.ok !== false,
+    };
+    for (const [domain, passed] of Object.entries(checks)) {
+      await transaction.recordDomainValidation(domain, { ok: passed, detail: passed ? 'post-install validation passed' : 'post-install validation failed' });
+    }
+    const domainReadiness = await transaction.validateReadiness();
+    const ok = Boolean(validation?.workspaceReady) && dataPreserved && runtimeReady && domainReadiness.ready;
     journal.status = ok ? 'validated' : 'validation-failed';
-    journal.validation = { ...validation, ok, dataPreserved, runtimeReady, runtimeHealth, checkedAt: new Date().toISOString() };
+    journal.validation = { ...validation, ok, dataPreserved, runtimeReady, runtimeHealth, domainReadiness, checkedAt: new Date().toISOString() };
     await writeJournal(journal);
     await createUpdateTransaction({ root: upgradeDir() }).transition(ok ? 'commit' : 'rollback', { status: ok ? 'committed' : 'failed', detail: ok ? '升级后数据与运行时健康检查通过' : '升级后健康检查未通过' });
     return { ok: true, recorded: true };
