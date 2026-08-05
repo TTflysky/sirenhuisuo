@@ -1,4 +1,4 @@
-import type { AppState, AvatarFrameConfig, Employee, OpcRoleId, Project, ProjectMember, Team } from '../types';
+import type { AppState, AvatarFrameConfig, Employee, OpcRoleId, Project, ProjectMember, ProjectProposalSnapshot, Team, TeamMemberPlan } from '../types';
 import { ROLE_SCARF } from '../types';
 import { findFreeStation } from '../data/officeStations';
 import { expertToEmployee, findExpertCatalogEntry, employeePlanningPool } from '../data/expertCatalog';
@@ -8,6 +8,8 @@ import { prepareProjectExecution } from '../engine/teamControl';
 import { syncNativeTaskRoster } from '../data/taskExecutionBridge';
 import * as client from '../data/hermesClient';
 import type { AppStateAction } from './appStateReducer';
+import { appendProjectEvent, conversationProjectId, initializeProjectContext, projectDocumentPath, projectWorkspaceId } from '../utils/projectContext';
+import { ensureActiveChatSession } from '../data/chatSessions';
 
 interface OfficeCommandDependencies {
   getState: () => AppState;
@@ -16,6 +18,43 @@ interface OfficeCommandDependencies {
 }
 
 export function createOfficeCommands({ getState, dispatch, startTaskRun }: OfficeCommandDependencies) {
+  const newProposalId = () => `proposal-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const proposalSnapshot = (id: string, revision: number, status: ProjectProposalSnapshot['status'], members: ProjectMember[], reason?: string, supersededByProposalId?: string): ProjectProposalSnapshot => ({
+    id, revision, status, members, reason, supersededByProposalId, createdAt: Date.now(),
+  });
+  const supersedeCurrentProposal = (project: Project, members: ProjectMember[], reason: string) => {
+    const nextRevision = (project.proposalRevision ?? 0) + 1;
+    const nextId = newProposalId();
+    const previousId = project.proposalId;
+    const history = [...(project.proposalHistory ?? [])];
+    if (previousId) {
+      const existingIndex = history.findIndex((item) => item.id === previousId);
+      if (existingIndex >= 0) history[existingIndex] = { ...history[existingIndex], status: 'superseded', supersededByProposalId: nextId, reason };
+      else if (project.members.length) history.push(proposalSnapshot(previousId, project.proposalRevision ?? 1, 'superseded', project.members, reason, nextId));
+    }
+    history.push(proposalSnapshot(nextId, nextRevision, 'pending', members, reason));
+    return { proposalId: nextId, proposalRevision: nextRevision, proposalStatus: 'pending' as const, proposalHistory: history, supersededByProposalId: undefined };
+  };
+  const buildMemberPlans = (teamId: string, project: Project, memberIds: string[], directory: Map<string, Employee>): TeamMemberPlan[] => {
+    const stages = project.brief?.stages ?? [];
+    return memberIds.map((employeeId, index) => {
+      const employee = directory.get(employeeId);
+      const assignedStages = stages.filter((stage) => stage.memberIds.includes(employeeId)).map((stage) => stage.title);
+      const responsibility = assignedStages.length ? assignedStages.join('、') : employee?.title ?? '项目协作';
+      const initialPlan = `先阅读项目目标和已有资料，围绕“${responsibility}”给出可核对的第一份结果，再把结果交给下一位负责人。`;
+      return {
+        id: `member-plan-${teamId}-${employeeId}-${Date.now()}-${index}`,
+        teamId,
+        employeeId,
+        responsibility,
+        initialPlan,
+        dependencies: index === 0 ? ['项目方向确认'] : ['项目方向确认', '前置成员的可核对结果'],
+        risks: ['目标边界或输入资料未确认', '外部工具/模型不可用时需要换路线'],
+        status: 'planned',
+        updatedAt: Date.now(),
+      };
+    });
+  };
   const addEmployee = (
     name: string,
     title: string,
@@ -144,8 +183,9 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
         mentions: added.map((employee) => employee.id),
         timestamp: Date.now(),
         kind: 'text',
-      }],
+        }],
     });
+    if (team.projectId) void appendProjectEvent(team.projectId, { type: 'members_added', projectId: team.projectId, teamId, memberIds: added.map((employee) => employee.id), reason: '老板授权后追加团队成员' });
     return added;
   };
 
@@ -196,6 +236,7 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
     for (const run of current.taskRuns.filter((run) => run.teamId === teamId && ['queued', 'running', 'paused'].includes(run.status))) {
       void syncNativeTaskRoster(run.id, roster, `老板调整了项目团队名单，新加入：${newlyAssigned.map((employee) => employee.name).join('、') || '无'}`);
     }
+    if (team.projectId) void appendProjectEvent(team.projectId, { type: 'members_reconciled', projectId: team.projectId, teamId, added: newlyAssigned.map((employee) => employee.id), removed: removed.map((employee) => employee.id), reason: '老板调整团队成员名单' });
     return { added: newlyAssigned, removed };
   };
 
@@ -227,6 +268,7 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
       content: `已将 ${removed.map((employee) => employee.name).join('、')} 从「${team.name}」移出。未开始的任务会按最新名单重新分配；已开始的任务保留原有执行记录。`,
       mentions: removed.map((employee) => employee.id), timestamp: Date.now(), kind: 'text',
     }] });
+    if (team.projectId) void appendProjectEvent(team.projectId, { type: 'members_removed', projectId: team.projectId, teamId, memberIds: removed.map((employee) => employee.id), reason: '老板授权后移除团队成员' });
     return removed;
   };
 
@@ -241,12 +283,16 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
     const members = [...new Set(memberIds)]
       .filter((employeeId) => employees.some((employee) => employee.id === employeeId))
       .map((employeeId) => ({ employeeId, reason: recommended.get(employeeId) ?? '按老板最新的成员调整加入' }));
+    const proposal = supersedeCurrentProposal(project, members, '老板修订了团队成员；旧提案立即失效');
     dispatch({ type: 'UPDATE_PROJECT', id: projectId, partial: {
       members,
       status: 'awaiting_approval',
       rejectionReason: undefined,
       rosterRevision: (project.rosterRevision ?? 1) + 1,
+      ...proposal,
     } });
+    void initializeProjectContext({ ...project, members, ...proposal, updatedAt: Date.now() });
+    void appendProjectEvent(project.id, { type: 'proposal_superseded', projectId, previousProposalId: project.proposalId, proposalId: proposal.proposalId, proposalRevision: proposal.proposalRevision, reason: '老板修订了团队成员' });
     return members;
   };
 
@@ -255,6 +301,7 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
     const latestEmployees = employeePlanningPool(client.fetchInitial().employees);
     const selectionRequest = [input.request, ...(input.requiredCapabilities ?? [])].filter(Boolean).join('\n所需能力：');
     const members = matchProjectMembers(latestEmployees, selectionRequest);
+    const proposalId = newProposalId();
     const project: Project = {
       id: `project-${now}-${Math.random().toString(36).slice(2, 7)}`,
       title: input.title.trim() || '未命名项目',
@@ -266,15 +313,26 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
       brief: buildProfessionalProjectBrief({ request: input.request, members }),
       requiredCapabilities: input.requiredCapabilities?.filter(Boolean),
       decisionReason: input.decisionReason?.trim(),
+      proposalId,
+      proposalRevision: 1,
+      proposalStatus: 'pending',
+      proposalHistory: [proposalSnapshot(proposalId, 1, 'pending', members, '初始需求生成团队提案')],
+      conversationProjectId: input.conversationId ? conversationProjectId(input.conversationId) : undefined,
       status: 'awaiting_approval', rosterRevision: 1, createdAt: now, updatedAt: now,
     };
+    project.workspaceId = projectWorkspaceId(project.id);
+    project.documentPath = projectDocumentPath(project.id);
     dispatch({ type: 'CREATE_PROJECT', project });
+    void initializeProjectContext(project);
+    void appendProjectEvent(project.id, { type: 'project_created', projectId: project.id, conversationId: project.conversationId, proposalId, proposalRevision: 1, request: project.request });
   };
 
-  const approveProject = (projectId: string, override?: { memberIds?: string[]; requiredCapabilities?: string[]; decisionReason?: string }): ProjectMember[] => {
+  const approveProject = (projectId: string, override?: { memberIds?: string[]; requiredCapabilities?: string[]; decisionReason?: string; proposalRevision?: number }): ProjectMember[] => {
     const project = getState().projects.find((item) => item.id === projectId);
     const rejectedDraft = project?.status === 'archived' && Boolean(project.rejectionReason) && Boolean(override?.memberIds?.length);
     if (!project || (project.status !== 'awaiting_approval' && !rejectedDraft)) return [];
+    if (override?.proposalRevision !== undefined && override.proposalRevision !== (project.proposalRevision ?? 1)) return [];
+    if (!rejectedDraft && project.proposalStatus && project.proposalStatus !== 'pending') return [];
     const memberDirectory = new Map(getState().employees.map((employee) => [employee.id, employee]));
     const planningEmployees = employeePlanningPool(client.fetchInitial().employees);
     const recommended = new Map(matchProjectMembers(
@@ -289,18 +347,32 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
     const memberIds = effectiveMembers.map((member) => member.employeeId);
     if (!memberIds.length) return [];
     for (const employee of addCatalogExperts(memberIds)) memberDirectory.set(employee.id, employee);
+    const teamId = `team-project-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const conversationId = ensureActiveChatSession(`team:${teamId}`);
+    const memberPlans = buildMemberPlans(teamId, project, memberIds, memberDirectory);
+    const planMessages = memberPlans.map((plan) => {
+      const employee = memberDirectory.get(plan.employeeId);
+      return {
+        id: `msg-member-plan-${plan.id}`,
+        authorId: plan.employeeId,
+        roleId: employee?.role ?? 'custom',
+        content: `初步规划（正式执行前可修改）\n负责：${plan.responsibility}\n计划：${plan.initialPlan}\n依赖：${plan.dependencies.join('、')}\n风险：${plan.risks.join('；')}`,
+        mentions: [], timestamp: Date.now(), kind: 'text' as const, conversationId,
+      };
+    });
     const team: Team = {
-      id: `team-project-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      id: teamId,
       name: project.title,
       description: project.request.slice(0, 240),
       createdAt: Date.now(),
       updatedAt: Date.now(),
-      icon: '📌', memberIds, projectId,
+      icon: '📌', memberIds, projectId, memberPlans,
       chatMessages: [{ id: `msg-project-${Date.now()}`, authorId: 'assistant', roleId: 'custom',
-        content: `团队已建立。成员名单已按批准方案固定：${memberIds.map((id) => `@${memberDirectory.get(id)?.name ?? id}`).join('、')}。\n\n现在还不会开工。请先一次性确认：\n1. 要解决的核心问题和第一版边界；\n2. 使用哪些资料或知识来源、部署到哪里；\n3. 必须具备的检索/权限/连接能力；\n4. 界面风格与最优先的使用场景。\n\n你回复后，点击“确认方向并开始执行”，团队才会生成分阶段计划。`, mentions: memberIds, timestamp: Date.now(), kind: 'text' }],
+        content: `团队已建立。成员名单已按批准方案固定：${memberIds.map((id) => `@${memberDirectory.get(id)?.name ?? id}`).join('、')}。\n\n现在还不会开工。请先一次性确认：\n1. 要解决的核心问题和第一版边界；\n2. 使用哪些资料或知识来源、部署到哪里；\n3. 必须具备的检索/权限/连接能力；\n4. 界面风格与最优先的使用场景。\n\n每位成员会先提交初步规划；你回复后，点击“确认方向并开始执行”，团队才会生成分阶段计划。`, mentions: memberIds, timestamp: Date.now(), kind: 'text', conversationId }, ...planMessages],
       tasks: [],
     };
     dispatch({ type: 'ADD_TEAM', team });
+    const assembledHistory = (project.proposalHistory ?? []).map((item) => item.id === project.proposalId ? { ...item, status: 'assembled' as const, members: effectiveMembers } : item);
     dispatch({ type: 'UPDATE_PROJECT', id: projectId, partial: {
       status: 'clarifying',
       teamId: team.id,
@@ -308,7 +380,11 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
       requiredCapabilities: override?.requiredCapabilities?.filter(Boolean) ?? project.requiredCapabilities,
       decisionReason: override?.decisionReason?.trim() || project.decisionReason,
       rejectionReason: undefined,
+      proposalStatus: 'assembled',
+      proposalHistory: assembledHistory,
     } });
+    void initializeProjectContext({ ...project, teamId: team.id, members: effectiveMembers, proposalStatus: 'assembled', updatedAt: Date.now() });
+    void appendProjectEvent(project.id, { type: 'team_assembled', projectId, teamId: team.id, proposalId: project.proposalId, proposalRevision: project.proposalRevision, memberIds });
     memberIds.forEach((id) => dispatch({ type: 'UPDATE_EMPLOYEE', id, partial: { currentTeamId: team.id } }));
     return effectiveMembers;
   };
@@ -317,6 +393,7 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
     const prepared = prepareProjectExecution(getState(), projectId, clarificationResponse);
     if (!prepared) return;
     dispatch({ type: 'UPDATE_PROJECT', id: prepared.project.id, partial: { status: 'running', clarificationResponse: prepared.clarificationResponse, brief: prepared.brief } });
+    void appendProjectEvent(prepared.project.id, { type: 'execution_started', projectId: prepared.project.id, teamId: prepared.team.id, clarificationResponse: prepared.clarificationResponse });
     dispatch({ type: 'APPEND_CHAT', teamId: prepared.team.id, msgs: [{
       id: `msg-project-start-${Date.now()}`,
       authorId: 'assistant', roleId: 'custom',
@@ -330,13 +407,16 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
     const project = getState().projects.find((item) => item.id === projectId);
     if (!project) return;
     dispatch({ type: 'UPDATE_PROJECT', id: projectId, partial: { status: 'archived' } });
+    void appendProjectEvent(projectId, { type: 'project_archived', projectId });
     if (project.teamId) dispatch({ type: 'UPDATE_TEAM', id: project.teamId, partial: { archived: true } });
   };
 
   const rejectProject = (projectId: string, reason = '用户驳回团队方案') => {
     const project = getState().projects.find((item) => item.id === projectId);
     if (!project || project.status !== 'awaiting_approval') return;
-    dispatch({ type: 'UPDATE_PROJECT', id: projectId, partial: { status: 'archived', rejectionReason: reason } });
+    const history = (project.proposalHistory ?? []).map((item) => item.id === project.proposalId ? { ...item, status: 'cancelled' as const, reason } : item);
+    dispatch({ type: 'UPDATE_PROJECT', id: projectId, partial: { status: 'archived', rejectionReason: reason, proposalStatus: 'cancelled', proposalHistory: history } });
+    void appendProjectEvent(projectId, { type: 'proposal_cancelled', projectId, proposalId: project.proposalId, proposalRevision: project.proposalRevision, reason });
   };
 
 

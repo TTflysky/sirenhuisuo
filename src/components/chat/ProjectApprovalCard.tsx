@@ -16,6 +16,8 @@ export default function ProjectApprovalCard({ project, employees, onApprove, onR
   const members = project.members
     .map((member) => ({ ...member, employee: planningEmployees.find((employee) => employee.id === member.employeeId) }))
     .filter((member): member is typeof member & { employee: Employee } => !!member.employee);
+  const isCurrentPending = !project.proposalStatus || project.proposalStatus === 'pending';
+  const supersededCount = (project.proposalHistory ?? []).filter((proposal) => proposal.status === 'superseded').length;
 
   return (
     <section className="project-approval-card" aria-label="团队方案授权">
@@ -25,8 +27,9 @@ export default function ProjectApprovalCard({ project, employees, onApprove, onR
           <div className="project-approval-kicker">需要你的授权</div>
           <h3>{project.title}</h3>
         </div>
-        <Tag color="gold">待批准</Tag>
+        <Tag color={isCurrentPending ? 'gold' : 'default'}>{isCurrentPending ? `待批准 · v${project.proposalRevision ?? 1}` : project.proposalStatus}</Tag>
       </div>
+      {supersededCount > 0 && <div className="project-approval-muted">此前 {supersededCount} 个提案已失效，当前只接受这一版。</div>}
       <p className="project-approval-request">{project.request}</p>
       {project.brief && <div className="project-approval-section">
         <strong>项目策划</strong>
@@ -54,8 +57,8 @@ export default function ProjectApprovalCard({ project, employees, onApprove, onR
       )}
       {project.expectedOutputs.length > 0 && <div className="project-approval-output">预期产出：{project.expectedOutputs.join('、')}</div>}
       <div className="project-approval-actions">
-        <Button type="primary" icon={<CheckOutlined />} disabled={members.length === 0} onClick={onApprove}>批准并建立团队</Button>
-        <Button danger icon={<CloseOutlined />} onClick={onReject}>驳回</Button>
+        <Button type="primary" icon={<CheckOutlined />} disabled={members.length === 0 || !isCurrentPending} onClick={onApprove}>{isCurrentPending ? '批准并建立团队' : '提案已失效'}</Button>
+        {isCurrentPending && <Button danger icon={<CloseOutlined />} onClick={onReject}>驳回</Button>}
       </div>
     </section>
   );

@@ -59,7 +59,7 @@ export interface StoreCtx {
   addCatalogExperts: (expertIds: string[]) => Employee[];
   setProjectMembers: (projectId: string, memberIds: string[]) => ProjectMember[];
   createProjectDraft: (input: { title: string; request: string; conversationId?: string; steps?: string[]; expectedOutputs?: string[]; requiredCapabilities?: string[]; decisionReason?: string }) => void;
-  approveProject: (projectId: string, override?: { memberIds?: string[]; requiredCapabilities?: string[]; decisionReason?: string }) => ProjectMember[];
+  approveProject: (projectId: string, override?: { memberIds?: string[]; requiredCapabilities?: string[]; decisionReason?: string; proposalRevision?: number }) => ProjectMember[];
   startProjectExecution: (projectId: string, clarificationResponse: string) => void;
   rejectProject: (projectId: string, reason?: string) => void;
   archiveProject: (projectId: string) => void;
@@ -527,6 +527,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     busy: supervisorBusyRef.current,
     queued: supervisorQueuedRef.current,
     employeeModelSummary,
+    setPresence: (presence) => dispatch({
+      type: 'SET_STATUS',
+      partial: { teamAssistantPresence: { ...presence, updatedAt: Date.now() } },
+    }),
   });
 
   const startNativeTaskExecution = async (run: TaskRun, extraSystemContext: string, attachments?: import('./data/hermesClient').Attachment[]) => {

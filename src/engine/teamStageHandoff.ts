@@ -14,6 +14,25 @@ function durationMs(run: TaskRun, step: TaskRunStep): number {
   return Math.max(0, Number(step.completedAt || Date.now()) - Number(step.startedAt || run.createdAt || Date.now()));
 }
 
+export function buildRunCompletionSummary(run: TaskRun): NonNullable<TaskRun['completionSummary']> {
+  const completed = run.steps.filter((step) => step.status === 'completed').map((step) => step.title);
+  const unfinished = run.steps.filter((step) => !['completed', 'stopped'].includes(step.status)).map((step) => step.title);
+  const evidence = (run.evidence ?? []).filter((item) => item.verified).map((item) => item.summary).slice(-10);
+  const blockers = [
+    ...(run.lastError ? [run.lastError] : []),
+    ...run.steps.filter((step) => step.lastError).map((step) => `${step.title}：${step.lastError}`),
+    ...(run.recoveryContext?.unresolvedIssues ?? []),
+  ].filter(Boolean).slice(-8);
+  const nextAction = run.status === 'completed'
+    ? '由章北海助理汇总最终交付并等待老板验收。'
+    : run.status === 'paused'
+      ? '等待老板点击继续；已完成内容和工作区保持不变。'
+      : run.status === 'stopped'
+        ? '任务已停止；如需继续，应由老板明确恢复或重新定义目标。'
+        : '先处理阻塞原因，再由对应责任人从当前检查点继续。';
+  return { status: run.status, completed, unfinished, evidence, blockers, nextAction, publishedAt: Date.now() };
+}
+
 export function buildWorkStageSummary(input: {
   run: TaskRun;
   step: TaskRunStep;

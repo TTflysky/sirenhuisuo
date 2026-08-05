@@ -164,6 +164,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ===== 自动更新 =====
   // 手动触发检查更新
   checkUpdate: () => ipcRenderer.invoke('update:check'),
+  // 读取最近一次更新状态，设置窗口打开后可恢复启动阶段的检查/下载进度
+  getUpdateStatus: () => ipcRenderer.invoke('update:status'),
   // 重启安装已下载的更新
   installUpdate: (snapshot) => ipcRenderer.invoke('update:install', snapshot),
   getUpgradeStatus: () => ipcRenderer.invoke('upgrade:status'),

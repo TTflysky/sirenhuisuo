@@ -5,6 +5,9 @@ import type { OperationDiagnosticEntry } from '../../electron';
 import { runSystemDiagnostics, type SystemDiagnosticItem, type SystemDiagnosticReport } from '../../diagnostics/systemDiagnostics';
 import { optimizeSystemDiagnostics, type DiagnosticOptimizationResult } from '../../diagnostics/diagnosticOptimizer';
 import { getModelCapabilities, loadSettings, saveSettings } from '../../data/hermesClient';
+import type { UpdateStatus } from '../../electron.d';
+import { APP_VERSION } from '../../appVersion';
+import { createUpgradeSnapshot } from '../../utils/configSync';
 
 type TargetTab = NonNullable<SystemDiagnosticItem['settingsTab']>;
 
@@ -28,6 +31,7 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
   const [error, setError] = useState('');
   const [operationSummary, setOperationSummary] = useState<{ total: number; errors: number; recoverable: number; latest: OperationDiagnosticEntry[] }>();
   const [exporting, setExporting] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ status: 'idle', message: '点击检查更新' });
 
   const run = async () => {
     setRunning(true);
@@ -72,7 +76,37 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
       setOptimizing(false);
     }
   };
-  useEffect(() => { void run(); }, []);
+  const handleUpdateControl = async () => {
+    const api = window.electronAPI;
+    if (!api) {
+      setUpdateStatus({ status: 'error', message: '当前运行环境不支持自动更新，请使用桌面客户端' });
+      return;
+    }
+    if (updateStatus.status === 'downloaded') {
+      const result = await api.installUpdate(createUpgradeSnapshot());
+      if (result && !result.ok) setUpdateStatus({ status: 'error', message: `更新前备份失败：${result.error ?? '未知错误'}` });
+      return;
+    }
+    if (!['idle', 'not-available', 'error'].includes(updateStatus.status)) return;
+    setUpdateStatus({ status: 'checking', message: '正在检查更新…' });
+    const result = await api.checkUpdate();
+    if (result && !result.ok) setUpdateStatus({ status: 'error', message: `检查更新失败：${result.error ?? '未知错误'}。点击这里重试。` });
+  };
+  useEffect(() => {
+    void run();
+    const api = window.electronAPI;
+    if (!api) return undefined;
+    let active = true;
+    const currentStatus = api.getUpdateStatus?.();
+    void currentStatus?.then((status) => {
+      if (active && status) setUpdateStatus(status);
+    }).catch(() => {});
+    const unsubscribe = api.onUpdateStatus?.((status) => setUpdateStatus(status));
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, []);
 
   return <div className="settings-content-page diagnostics-page">
     <header className="diagnostics-header">
@@ -82,6 +116,31 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
         <Button icon={<DownloadOutlined />} loading={exporting} onClick={() => void exportDiagnostics()}>导出错误日志</Button>
       </div>
     </header>
+    <section className={`diagnostics-update-panel update-${updateStatus.status}`}>
+      <div className="diagnostics-update-copy">
+        <div className="diagnostics-update-title"><ReloadOutlined className={updateStatus.status === 'checking' || updateStatus.status === 'downloading' ? 'is-spinning' : ''} /><div><strong>应用更新</strong><span>当前版本 v{APP_VERSION}{updateStatus.version ? ` · 目标版本 v${updateStatus.version}` : ''}</span></div></div>
+        <small>{updateStatus.message}</small>
+      </div>
+      <div className="diagnostics-update-action">
+        {updateStatus.status === 'downloading' && <span className="diagnostics-update-progress">{Math.round(updateStatus.percent ?? 0)}%</span>}
+        <button
+          type="button"
+          className={`update-status update-${updateStatus.status}`}
+          title={updateStatus.message}
+          onClick={() => void handleUpdateControl()}
+          disabled={['checking', 'available', 'downloading'].includes(updateStatus.status)}
+        >
+          <ReloadOutlined className={updateStatus.status === 'checking' || updateStatus.status === 'downloading' ? 'is-spinning' : ''} />
+          {updateStatus.status === 'idle' && '检查更新'}
+          {updateStatus.status === 'checking' && '检查更新…'}
+          {updateStatus.status === 'available' && '正在下载'}
+          {updateStatus.status === 'downloading' && '下载中'}
+          {updateStatus.status === 'downloaded' && '重启安装更新'}
+          {updateStatus.status === 'not-available' && '已是最新版 · 再检查'}
+          {updateStatus.status === 'error' && '更新失败 · 重试'}
+        </button>
+      </div>
+    </section>
     <section className="diagnostics-optimizer-bar">
       <RobotOutlined />
       <div><strong>诊断优化模型</strong><span>{settings.diagnosticModelId ? '已指定专用模型' : '尚未指定'}</span></div>

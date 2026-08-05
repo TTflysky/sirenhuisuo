@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { Segmented, Button, Dropdown } from 'antd';
 import {
   Blocks,
@@ -12,7 +12,6 @@ import {
   Palette,
   PauseCircle,
   PlayCircle,
-  RefreshCw,
   Settings,
   Square,
   UsersRound,
@@ -20,7 +19,6 @@ import {
   Unlock,
 } from 'lucide-react';
 import type { Employee } from './types';
-import type { UpdateStatus } from './electron.d';
 import { useStore } from './storeContext';
 import SidebarPanel from './components/sidebar/SidebarPanel';
 import OfficeView from './components/office/OfficeView';
@@ -36,7 +34,6 @@ import { checkBackend } from './data/hermesClient';
 import { APP_VERSION } from './appVersion';
 import { BUS_CHANNELS, onBus, sendBus } from './ipcBus';
 import { formatExecutionDuration } from './hooks/useAgentExecutionControl';
-import { createUpgradeSnapshot } from './utils/configSync';
 import { APP_BRAND_NAME, APP_PRODUCT_NAME } from './brand';
 import {
   getVisualStyle,
@@ -66,7 +63,6 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [editingEmployee, setEditingEmployee] = useState<Employee | null>(null);
   const [view, setView] = useState<View>('office');
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ status: 'idle', message: '点击检查更新' });
   const [assistantLocked, setAssistantLocked] = useState(false);
   const [assistantActivity, setAssistantActivity] = useState<AssistantActivity>(() => {
     try {
@@ -78,7 +74,6 @@ export default function App() {
   });
   const [visualStyle, setVisualStyle] = useState<VisualStyle>(() => loadVisualPreferences().style);
   const [themeName, setThemeName] = useState<string>(() => loadVisualPreferences().theme);
-  const unsubRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const preferences = { style: visualStyle, theme: themeName };
@@ -157,18 +152,6 @@ export default function App() {
     () => typeof location !== 'undefined' && location.hash.startsWith('#tool'),
   );
 
-  // 监听自动更新状态（仅在 Electron 桌面端生效）
-  useEffect(() => {
-    if (window.electronAPI?.onUpdateStatus) {
-      unsubRef.current = window.electronAPI.onUpdateStatus((status) => {
-        setUpdateStatus(status);
-      });
-    }
-    return () => {
-      unsubRef.current?.();
-    };
-  }, []);
-
   // ===== 如果是原生聊天子窗口，只渲染聊天视图 =====
   if (isChatWindow) {
     return <ChatOnlyView hash={location.hash} />;
@@ -204,18 +187,6 @@ export default function App() {
 
   const controlAssistant = (command: 'pause' | 'resume' | 'stop') => {
     sendBus(BUS_CHANNELS.ASSISTANT_EXECUTION_COMMAND, { command, requestedAt: Date.now() });
-  };
-
-  const handleUpdateControl = async () => {
-    if (updateStatus.status === 'downloaded') {
-      const result = await window.electronAPI?.installUpdate(createUpgradeSnapshot());
-      if (result && !result.ok) setUpdateStatus({ status: 'error', message: `更新前备份失败：${result.error ?? '未知错误'}` });
-      return;
-    }
-    if (!['idle', 'not-available', 'error'].includes(updateStatus.status)) return;
-    setUpdateStatus({ status: 'checking', message: '正在检查更新…' });
-    const result = await window.electronAPI?.checkUpdate();
-    if (result && !result.ok) setUpdateStatus({ status: 'error', message: `检查更新失败：${result.error ?? '未知错误'}。点击这里重试。` });
   };
 
   const progress = state.status.progress;
@@ -258,23 +229,6 @@ export default function App() {
               </div>
             </div>
           )}
-          {/* 自动更新状态 */}
-          <button
-            type="button"
-            className={`update-status update-${updateStatus.status}`}
-            title={updateStatus.message}
-            onClick={() => void handleUpdateControl()}
-            disabled={['checking', 'available', 'downloading'].includes(updateStatus.status)}
-          >
-            <RefreshCw className={updateStatus.status === 'checking' || updateStatus.status === 'downloading' ? 'is-spinning' : ''} />
-            {updateStatus.status === 'idle' && '检查更新'}
-            {updateStatus.status === 'checking' && '检查更新…'}
-            {updateStatus.status === 'available' && '发现新版本'}
-            {updateStatus.status === 'downloading' && `下载中 ${Math.round(updateStatus.percent ?? 0)}%`}
-            {updateStatus.status === 'downloaded' && '重启安装更新'}
-            {updateStatus.status === 'not-available' && '已是最新版 · 再检查'}
-            {updateStatus.status === 'error' && '更新失败 · 重试'}
-          </button>
           <span className="backend-status" title={state.status.backendOnline ? '默认模型连接正常' : '默认模型当前不可用'}>
             <i className={state.status.backendOnline ? 'is-online' : 'is-offline'} />
             <span>{state.status.backendOnline ? '模型可用' : '模型离线'}</span>

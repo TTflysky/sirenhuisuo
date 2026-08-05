@@ -72,6 +72,35 @@ export interface Team {
   updatedAt?: number;
   archived?: boolean;     // 归档后不出现在活跃列表，可恢复
   projectId?: string;
+  /** 新团队正式执行前的成员规划回合；规划消息不等于任务已开始。 */
+  memberPlans?: TeamMemberPlan[];
+}
+
+export type TeamMemberPlanStatus = 'planned' | 'acknowledged' | 'working' | 'submitted' | 'blocked';
+
+export interface TeamMemberPlan {
+  id: string;
+  teamId: string;
+  employeeId: string;
+  responsibility: string;
+  initialPlan: string;
+  dependencies: string[];
+  risks: string[];
+  status: TeamMemberPlanStatus;
+  messageId?: string;
+  updatedAt: number;
+}
+
+export type ProjectProposalStatus = 'draft' | 'pending' | 'approved' | 'superseded' | 'cancelled' | 'assembled';
+
+export interface ProjectProposalSnapshot {
+  id: string;
+  revision: number;
+  status: ProjectProposalStatus;
+  members: ProjectMember[];
+  createdAt: number;
+  supersededByProposalId?: string;
+  reason?: string;
 }
 
 export type ProjectStatus = 'awaiting_approval' | 'clarifying' | 'running' | 'completed' | 'failed' | 'archived';
@@ -122,6 +151,18 @@ export interface Project {
   rosterRevision?: number;
   /** Versioned source of truth for professional planning and approval. */
   brief?: ProjectBrief;
+  /** Stable project workspace and long-lived project document. */
+  workspaceId?: string;
+  documentPath?: string;
+  /** Structured proposal identity; roster corrections advance the revision. */
+  proposalId?: string;
+  proposalRevision?: number;
+  proposalStatus?: ProjectProposalStatus;
+  supersededByProposalId?: string;
+  /** Immutable proposal trail; the latest proposal remains the source of truth. */
+  proposalHistory?: ProjectProposalSnapshot[];
+  /** Parent context created for a standalone chat session. */
+  conversationProjectId?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -536,6 +577,16 @@ export interface TaskRun {
   pendingApproval?: TaskApprovalContract;
   approvals?: TaskApprovalContract[];
   stageSummaries?: TaskStageSummary[];
+  /** User-facing final/blocked report emitted once when a run reaches a terminal state. */
+  completionSummary?: {
+    status: TaskRunStatus;
+    completed: string[];
+    unfinished: string[];
+    evidence: string[];
+    blockers: string[];
+    nextAction: string;
+    publishedAt: number;
+  };
   verification?: Array<{ kind: TaskEvidenceKind; label: string; status: 'passed' | 'blocked' | 'pending'; detail: string }>;
 }
 
@@ -545,6 +596,17 @@ export interface AgentStatus {
   demoRunning: boolean;
   activeDemoTeamId?: string;
   progress?: DiscussionProgress;  // 团队 AI 讨论实时进度
+  teamAssistantPresence?: TeamAssistantPresence;
+}
+
+export type TeamAssistantPresenceState = 'idle' | 'queued' | 'thinking' | 'answering' | 'error';
+
+export interface TeamAssistantPresence {
+  teamId: string;
+  conversationId: string;
+  state: TeamAssistantPresenceState;
+  message?: string;
+  updatedAt: number;
 }
 
 // ===== 团队讨论实时进度 =====

@@ -89,6 +89,29 @@
 .diagnostics-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .diagnostics-header > div { min-width: 0; }
 .diagnostics-header-actions { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; }
+.diagnostics-update-panel {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background: var(--bg-deep);
+}
+.diagnostics-update-panel.update-downloaded { border-color: #65a77e; background: #eaf8ee; }
+.diagnostics-update-panel.update-error { border-color: #d97a7a; background: #fff0f0; }
+.diagnostics-update-copy { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.diagnostics-update-title { display: flex; align-items: center; gap: 9px; }
+.diagnostics-update-title > .anticon { color: var(--apple-accent); font-size: 18px; }
+.diagnostics-update-title > div { min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+.diagnostics-update-title strong { font-size: 12px; }
+.diagnostics-update-title span { color: var(--text-muted); font-size: 10px; }
+.diagnostics-update-copy > small { color: var(--text-secondary); font-size: 10px; overflow-wrap: anywhere; }
+.diagnostics-update-action { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.diagnostics-update-action .update-status { display: inline-flex; }
+.diagnostics-update-progress { min-width: 34px; color: var(--text-secondary); font-size: 10px; font-variant-numeric: tabular-nums; text-align: right; }
 .diagnostics-optimizer-bar {
   min-height: 64px;
   display: grid;
@@ -178,6 +201,8 @@
   .memory-status-strip > div:nth-child(-n+2) { border-bottom: 1px solid var(--border-light); }
   .settings-memory-section-head,.memory-proposal-row { align-items: stretch; flex-direction: column; }
   .diagnostics-optimizer-bar { grid-template-columns: 24px minmax(0, 1fr); }
+  .diagnostics-update-panel { align-items: stretch; flex-direction: column; }
+  .diagnostics-update-action { justify-content: flex-end; }
   .diagnostics-optimizer-bar .ant-select,
   .diagnostics-optimizer-bar > button { grid-column: 1 / -1; }
   .external-capability-matrix > div { grid-template-columns: minmax(0,1fr); }

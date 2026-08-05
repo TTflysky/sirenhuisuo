@@ -1,3 +1,31 @@
+# 当前 V5 交接（2026-08-05）
+
+## 本轮目标
+
+把应用升级入口从首页标题栏迁移到“设置 -> 诊断中心”，不改变已有 Electron 更新事务、加密备份、安装、升级后验证和回滚能力。同时建立可被后续会话读取的项目上下文，避免上下文折叠后忘记自主智能体团队这一最高目标。
+
+## 已完成
+
+- `src/App.tsx` 删除首页升级按钮、更新状态监听和升级操作，首页只保留版本号与设置入口。
+- `src/components/settings/DiagnosticsTab.tsx` 增加应用更新面板：检查更新、下载进度、重启安装、失败重试、目标版本和真实提示。
+- `electron/autoUpdate.cjs` 将更新状态广播给所有 Electron 窗口，并保存最近状态；设置窗口晚打开也能恢复启动阶段的更新进度。
+- `electron/preload.cjs` 和 `src/electron.d.ts` 增加 `getUpdateStatus` IPC 合同。
+- 更新门禁和聊天控制面测试已改为断言：首页无升级控件，诊断中心有升级控件。
+- 根目录新增 `AGENTS.md`，规定每次开始先读取本交接和 V5 路线图，并锁定自主智能体而非固定工作流的产品边界。
+
+## 验证证据
+
+- `npm.cmd run build`：通过。
+- `npm.cmd run lint`：通过。
+- `npm.cmd run test:run -- --reporter=dot`：48 个测试文件、166 个测试通过。
+- `node scripts/verify-update-control.mjs`：通过，确认升级控制只在诊断中心，状态可恢复并广播到所有窗口。
+
+## 未完成与下一步
+
+- 本轮只完成升级入口迁移，V5 的 GoalFrame、项目文档/工作区隔离、提案版本化、成员真实响应、动态目标图和阶段汇报仍需按 `docs/TAIJI_V5_AUTONOMOUS_AGENT_ROADMAP.md` 继续实现。
+- 需要在 Electron 实机设置窗口验证：检查更新 -> 下载 -> 重启安装全链路，以及主窗口、设置窗口同时存在时状态不丢失。
+- 后续每轮先回顾 `AGENTS.md`、本节和路线图，再开始改动；完成后继续更新本节，不把临时项目修复当作 V5 内核完成。
+
 # 太极项目当前交接
 
 ## 当前版本：v4.0.0（2026-08-05；源码与门禁已完成，尚未创建 GitHub Release）
@@ -755,3 +783,35 @@ npm.cmd run verify:package
 
 - 最新“是否继续/是否批准”消息显示为高亮确认卡并关联等待或排队任务。
 - 点击确认卡会写入继续动作；普通插话继续使用现有 steering 队列重新评估同一任务。
+# V5.0.0 当前交接（2026-08-05）
+
+## 本轮结论
+
+V5 的目标是把太极继续收拢为“目标驱动的自主智能体协作团队”，不是针对某个项目添加关键词特例，也不是把模型锁进固定工作流。本轮已完成核心边界的代码化，并将版本与长期上下文更新为 `5.0.0`。
+
+## 已完成
+
+- 每个新聊天会创建独立 `conversationId`、`conversationProjectId`、项目工作区和长期项目文档；项目目录包含 `project.md`、`project.json`、`conversations/`、`tasks/`、`artifacts/{final,working,reference,logs}/`、`evidence/` 和串行写入的 `events.jsonl`。
+- 项目提案拥有 `proposalId` 和递增 `proposalRevision`。成员纠正会把旧提案标记为 `superseded`，生成新提案；审批必须匹配当前 revision，失效卡不可继续批准。
+- 新团队建立后会在群聊中为每位成员发布职责、初步计划、依赖和风险；成员计划状态会随真实步骤变为 `working`、`submitted` 或 `blocked`。
+- 团队助理 presence 由真实模型请求驱动：`queued`、`thinking`、`answering`、`error`、`idle`，群成员栏显示动态点和当前说明。
+- 每个工作/审查阶段继续写入阶段总结；任务进入完成、暂停、停止或失败状态时发布一次项目级汇报，并同步到项目事件账本。
+- 新增 `scripts/verify-v5-autonomous-agent.mjs` 和 `npm.cmd run verify:v5`，覆盖上述十项内核契约。
+
+## 验证证据
+
+- `npm.cmd run build`：通过。
+- `npm.cmd run lint`：通过。
+- `npm.cmd run test:run -- --reporter=dot`：48 个测试文件、166 个测试通过。
+- `npm.cmd run verify:v5`：10 项 V5 内核门禁全部通过。
+- Electron 多窗口实机图形 E2E 仍受本机图形驱动 `launch-failed / exitCode 49` 影响；这是已有环境故障，不能用业务代码绕过，需在图形环境正常的机器上做最终窗口验收。
+
+## 发布状态
+
+- `package.json` 与 `package-lock.json` 已同步为 `5.0.0`。
+- 本轮不上传安装包；待源码和长期上下文提交后创建不带安装包的 GitHub Release。
+
+## 后续边界
+
+- 不恢复首页升级入口；更新仍只在“设置 -> 诊断中心”。
+- 后续若继续深化，应优先把产物登记、成员回应超时/重试和跨重启项目文档读取接入同一事件账本，不能另起平行调度器。

@@ -10,6 +10,18 @@
 .team-member-sidebar-head button { width: 24px; height: 24px; padding: 0; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-muted); cursor: pointer; }
 .team-member-sidebar-head button:hover { border-color: var(--border); background: var(--bg-deep); color: var(--apple-accent); }
 .team-member-sidebar-actions { display: flex; align-items: center; gap: 2px; }
+.team-assistant-presence { display: flex; align-items: center; gap: 7px; margin: 7px 5px 5px; padding: 6px 7px; border: 1px solid color-mix(in srgb, var(--apple-accent) 32%, var(--border-light)); border-radius: 7px; background: color-mix(in srgb, var(--apple-accent) 7%, var(--surface)); color: var(--text); }
+.team-assistant-presence > span:last-child { min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.team-assistant-presence strong, .team-assistant-presence small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-assistant-presence strong { font-size: 10px; }
+.team-assistant-presence small { color: var(--text-muted); font-size: 9px; }
+.team-assistant-presence-dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: var(--online); }
+.team-assistant-presence.is-thinking .team-assistant-presence-dot,
+.team-assistant-presence.is-answering .team-assistant-presence-dot { background: var(--busy); animation: team-assistant-presence-pulse 1.15s ease-in-out infinite; }
+.team-assistant-presence.is-queued .team-assistant-presence-dot { background: #d58a00; animation: team-assistant-presence-pulse 1.6s ease-in-out infinite; }
+.team-assistant-presence.is-error .team-assistant-presence-dot { background: #d64045; }
+@keyframes team-assistant-presence-pulse { 50% { opacity: .35; transform: scale(.72); box-shadow: 0 0 0 4px color-mix(in srgb, var(--busy) 15%, transparent); } }
+.supervisor-presence-avatar .team-member-status.idle { background: var(--online); }
 .team-members-modal-title { display: inline-flex; align-items: center; gap: 8px; }
 .team-members-modal-body { display: grid; gap: 18px; padding-top: 4px; }
 .team-members-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; color: var(--text); font-size: 12px; }

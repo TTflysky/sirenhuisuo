@@ -1,4 +1,5 @@
 import type { ChatMessage } from '../types';
+import { conversationProjectId, initializeProjectContext, projectDocumentPath, projectWorkspaceId } from '../utils/projectContext';
 
 export type ChatSessionScope = 'assistant' | `dm:${string}` | `team:${string}`;
 
@@ -107,6 +108,21 @@ export function createChatSession(scope: ChatSessionScope, title = '新对话'):
   index.activeByScope[scope] = record.id;
   index.sessions = [record, ...index.sessions];
   writeIndex(index);
+  const projectId = conversationProjectId(record.id);
+  void initializeProjectContext({
+    id: projectId,
+    title: title || defaultTitle(scope),
+    request: '',
+    conversationId: record.id,
+    steps: [],
+    expectedOutputs: [],
+    members: [],
+    status: 'running',
+    workspaceId: projectWorkspaceId(projectId),
+    documentPath: projectDocumentPath(projectId),
+    createdAt: now,
+    updatedAt: now,
+  });
   return record;
 }
 
@@ -165,4 +181,3 @@ export function syncChatSessionsFromMessages(scope: ChatSessionScope, messages: 
     });
   }
 }
-

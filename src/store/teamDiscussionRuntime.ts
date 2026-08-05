@@ -8,7 +8,8 @@ import { appendTaskRunnerSteps, beginTaskStep, recordTaskReviewDecision, recordT
 import { buildLayeredMemoryContext } from '../data/layeredMemory';
 import { cleanExecutionDisplay } from '../engine/executionDisplay.mjs';
 import { ensureActiveChatSession, messageBelongsToConversation } from '../data/chatSessions';
-import { buildReviewStageSummary, buildWorkStageSummary } from '../engine/teamStageHandoff';
+import { buildReviewStageSummary, buildRunCompletionSummary, buildWorkStageSummary } from '../engine/teamStageHandoff';
+import { appendProjectEvent } from '../utils/projectContext';
 import * as client from '../data/hermesClient';
 import { finalizeTeamRun } from './teamRunFinalization';
 import { createTeamWorkerLease } from './teamWorkerLease';
@@ -92,6 +93,13 @@ export function createTeamDiscussionRuntime({
       };
       dispatch({ type: 'SET_PROGRESS', progress });
     };
+    const updateMemberPlan = (employeeId: string, status: 'acknowledged' | 'working' | 'submitted' | 'blocked') => {
+      const currentTeam = getState().teams.find((item) => item.id === teamId);
+      if (!currentTeam?.memberPlans?.length) return;
+      dispatch({ type: 'UPDATE_TEAM', id: teamId, partial: {
+        memberPlans: currentTeam.memberPlans.map((plan) => plan.employeeId === employeeId ? { ...plan, status, updatedAt: Date.now() } : plan),
+      } });
+    };
     updateProgress(0, undefined, undefined, undefined, undefined);
 
     dispatch({ type: 'SET_STATUS', partial: { demoRunning: true, activeDemoTeamId: teamId } });
@@ -142,7 +150,10 @@ export function createTeamDiscussionRuntime({
         onExecutionState(controller, emp, stepId) {
           latestExecutionState = controller;
           const statusText = executionControllerStatus(controller);
-          if (emp) dispatch({ type: 'UPDATE_EMPLOYEE', id: emp.id, partial: { isWorking: controller.status === 'running', currentTask: statusText } });
+          if (emp) {
+            dispatch({ type: 'UPDATE_EMPLOYEE', id: emp.id, partial: { isWorking: controller.status === 'running', currentTask: statusText } });
+            updateMemberPlan(emp.id, controller.status === 'running' ? 'working' : controller.status === 'blocked' || controller.status === 'awaiting_user' ? 'blocked' : 'acknowledged');
+          }
           updateRun((run) => {
             if (!run.recoveryContext) return;
             run.recoveryContext.controller = controller;
@@ -254,6 +265,7 @@ export function createTeamDiscussionRuntime({
           });
           if (!stepId || (reportedStepId && reportedStepStatus)) {
             dispatch({ type: 'UPDATE_EMPLOYEE', id: emp.id, partial: { isWorking: false, currentTask: undefined } });
+            updateMemberPlan(emp.id, reportedStepStatus === 'failed' ? 'blocked' : 'submitted');
             void reportAdapterCheckpoint({
               kind: reportedStepStatus === 'failed' ? 'step_failed' : 'step_completed',
               stepId: reportedStepId,
@@ -278,6 +290,7 @@ export function createTeamDiscussionRuntime({
                   discussionId: opts?.discussionId, triggeredBy: 'task', conversationId,
                 }],
               });
+              if (liveRun.projectId) void appendProjectEvent(liveRun.projectId, { type: 'stage_summary', projectId: liveRun.projectId, taskId: liveRun.id, stepId: completedStep.id, status: summary.status, completed: summary.completed, evidence: summary.evidence, remaining: summary.remaining, nextAction: summary.nextAction });
             }
           } else if (stepSnapshot?.kind !== 'review') {
             dispatch({ type: 'APPEND_CHAT', teamId, msgs: executionSummary ? [executionSummary, msg] : [msg], conversationId });
@@ -422,6 +435,7 @@ export function createTeamDiscussionRuntime({
         onStepStart(stepId, emp) {
           updateProgress(Math.min(totalSteps, stepCounter + 1), emp.id, emp.name, emp.role, client.getEmployeeModel(emp).model);
           dispatch({ type: 'UPDATE_EMPLOYEE', id: emp.id, partial: { isWorking: true } });
+          updateMemberPlan(emp.id, 'working');
           updateRun((run) => {
             if (run.runner) {
               try { run.runner = beginTaskStep(run.runner, stepId); } catch (error) {
@@ -494,6 +508,7 @@ export function createTeamDiscussionRuntime({
                 discussionId: opts?.discussionId, triggeredBy: 'task', conversationId,
               }],
             });
+            if (liveRun.projectId) void appendProjectEvent(liveRun.projectId, { type: 'review_summary', projectId: liveRun.projectId, taskId: liveRun.id, stepId, status: summary.status, evidence: summary.evidence, nextAction: summary.nextAction });
           }
           void reportAdapterCheckpoint({
             kind: 'step_completed',
@@ -527,7 +542,39 @@ export function createTeamDiscussionRuntime({
           for (const memberId of team.memberIds) {
             dispatch({ type: 'UPDATE_EMPLOYEE', id: memberId, partial: { isWorking: false } });
           }
-          updateRun((run) => finalizeTeamRun(run, pausedRunIds.has(run.id), stoppedRunIds.has(run.id)));
+          let completionSummary: NonNullable<TaskRun['completionSummary']> | undefined;
+          let shouldPublishSummary = false;
+          updateRun((run) => {
+            finalizeTeamRun(run, pausedRunIds.has(run.id), stoppedRunIds.has(run.id));
+            if (!run.completionSummary || run.completionSummary.status !== run.status) {
+              completionSummary = buildRunCompletionSummary(run);
+              run.completionSummary = completionSummary;
+              shouldPublishSummary = true;
+            } else {
+              completionSummary = run.completionSummary;
+            }
+          });
+          if (liveRun && completionSummary && shouldPublishSummary) {
+            const summary = completionSummary;
+            const lines = [
+              `阶段汇报：任务“${liveRun.title}”已进入${summary.status === 'completed' ? '完成' : summary.status === 'paused' ? '暂停' : summary.status === 'stopped' ? '停止' : '阻塞'}状态。`,
+              `已完成：${summary.completed.length ? summary.completed.join('、') : '暂无可确认完成的步骤'}`,
+              `尚未完成：${summary.unfinished.length ? summary.unfinished.join('、') : '无'}`,
+              `证据：${summary.evidence.length ? summary.evidence.join('；') : '暂无已验证证据'}`,
+              summary.blockers.length ? `阻塞：${summary.blockers.join('；')}` : '阻塞：无',
+              `下一步：${summary.nextAction}`,
+            ].join('\n');
+            dispatch({ type: 'APPEND_CHAT', teamId, conversationId, msgs: [{
+              id: `msg-run-summary-${liveRun.id}-${summary.publishedAt}`,
+              authorId: 'assistant', authorName: '章北海助理', roleId: 'custom', content: lines,
+              mentions: [], timestamp: summary.publishedAt, kind: 'text', triggeredBy: 'task', conversationId,
+            }] });
+            if (liveRun.projectId) void appendProjectEvent(liveRun.projectId, {
+              type: 'run_summary', projectId: liveRun.projectId, taskId: liveRun.id, status: summary.status,
+              completed: summary.completed, unfinished: summary.unfinished, evidence: summary.evidence,
+              blockers: summary.blockers, nextAction: summary.nextAction,
+            });
+          }
           if (liveRun) void reportAdapterCheckpoint({
             kind: 'run_finished',
             finalStatus: liveRun.status,

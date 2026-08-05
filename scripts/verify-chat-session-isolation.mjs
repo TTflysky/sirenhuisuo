@@ -3,7 +3,10 @@ import fs from 'node:fs/promises';
 import ts from 'typescript';
 
 async function loadChatSessions() {
-  const source = await fs.readFile('src/data/chatSessions.ts', 'utf8');
+  const source = (await fs.readFile('src/data/chatSessions.ts', 'utf8')).replace(
+    /import \{[^}]+\} from ['"]\.\.\/utils\/projectContext['"];\r?\n/u,
+    "const conversationProjectId = (id) => `conversation-project-${id}`; const projectWorkspaceId = (id) => `projects/${id}`; const projectDocumentPath = (id) => `projects/${id}/project.md`; const initializeProjectContext = async () => ({ ok: true });\n",
+  );
   const output = ts.transpileModule(source, {
     compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext },
     fileName: 'src/data/chatSessions.ts',

@@ -303,6 +303,19 @@ export default function TeamChatApp({ teamId }: Props) {
     if (employee.isWorking && !employee.currentTask?.startsWith('执行：')) return { kind: 'working', label: '工作中' };
     return { kind: 'idle', label: '在线' };
   };
+  const assistantPresence = state.status.teamAssistantPresence?.teamId === teamId
+    && state.status.teamAssistantPresence.conversationId === conversationId
+    ? state.status.teamAssistantPresence
+    : undefined;
+  const assistantPresenceLabel = assistantPresence?.state === 'thinking'
+    ? '思考中'
+    : assistantPresence?.state === 'answering'
+      ? '回答中'
+      : assistantPresence?.state === 'queued'
+        ? '排队中'
+        : assistantPresence?.state === 'error'
+          ? '回复出错'
+          : '在线';
 
   const mentionCandidates = useMemo(() => {
     const allCandidates = [supervisorMention, ...teamMembers];
@@ -815,7 +828,8 @@ export default function TeamChatApp({ teamId }: Props) {
                   }} title="重命名团队" aria-label="重命名团队"><EditOutlined /></button>
                 </span>
               </div>
-              <button key={supervisorMention.id} className="team-member-item team-supervisor-item" onClick={() => insertMention(supervisorMention)} title={`@${supervisorMention.name}`}><SupervisorAvatar size={34} /><span className="team-member-info"><strong>{supervisorMention.name}</strong><small>{supervisorMention.title}</small><small className="is-working">随时可联系</small></span></button>
+              {assistantPresence && <div className={`team-assistant-presence is-${assistantPresence.state}`} role="status" aria-live="polite"><span className="team-assistant-presence-dot" /><span><strong>{assistantPresenceLabel}</strong><small>{assistantPresence.message ?? '章北海助理已接入当前会话'}</small></span></div>}
+              <button key={supervisorMention.id} className="team-member-item team-supervisor-item" onClick={() => insertMention(supervisorMention)} title={`@${supervisorMention.name}`}><span className="team-member-avatar supervisor-presence-avatar"><SupervisorAvatar size={34} />{assistantPresence && <span className={`team-member-status ${assistantPresence.state === 'error' ? 'offline' : assistantPresence.state === 'idle' ? 'idle' : 'working'}`} />}</span><span className="team-member-info"><strong>{supervisorMention.name}</strong><small>{supervisorMention.title}</small><small className={assistantPresence && assistantPresence.state !== 'idle' ? 'is-working' : ''}>{assistantPresenceLabel}</small></span></button>
               {teamMembers.map((emp) => {
                 const displayState = memberDisplayState(emp);
                 return <button key={emp.id} className="team-member-item" onClick={() => insertMention(emp)} title={`@${emp.name}`}><span className="team-member-avatar"><AgentAvatar employee={emp} size={34} /><span className={`team-member-status ${displayState.kind}`} /></span><span className="team-member-info"><strong>{emp.name}</strong><small style={{ color: emp.statusColor }}>{emp.title}</small><small className={displayState.kind === 'working' ? 'is-working' : displayState.kind === 'waiting' ? 'is-waiting' : ''}>{displayState.label}</small></span></button>;

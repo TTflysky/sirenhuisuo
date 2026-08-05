@@ -389,14 +389,15 @@ export default function AssistantChat() {
           ...(projectToApprove.requiredCapabilities ?? []),
           ...continuity.requiredCapabilities,
         ])];
-        const planningEmployees = employeePlanningPool(liveEmployees);
-        const rematched = matchProjectMembers(
-          planningEmployees,
-          [projectToApprove.request, continuity.request, ...requiredCapabilities].filter(Boolean).join('\n所需能力：'),
-        );
+        // Approval is a commit operation, not a fresh roster search. The
+        // current structured proposal already contains the last user-approved
+        // correction; explicit rematch requests are handled by the branch
+        // below and create a new proposal revision first.
+        const approvedRoster = projectToApprove.members;
         const approvedMembers = approveProject(projectToApprove.id, {
-          memberIds: rematched.map((member) => member.employeeId),
+          memberIds: approvedRoster.map((member) => member.employeeId),
           requiredCapabilities,
+          proposalRevision: projectToApprove.proposalRevision,
           decisionReason: continuity.contextual
             ? '已结合当前会话中的原始目标和最近确认方案更新团队名单'
             : projectToApprove.decisionReason,
@@ -1208,13 +1209,13 @@ ${employeeDirectory}
               );
             })}
             {state.projects
-              .filter((project) => project.status === 'awaiting_approval' && projectBelongsToConversation(project, conversationId))
+              .filter((project) => project.status === 'awaiting_approval' && (!project.proposalStatus || project.proposalStatus === 'pending') && projectBelongsToConversation(project, conversationId))
               .map((project) => (
                 <ProjectApprovalCard
                   key={project.id}
                   project={project}
                   employees={state.employees}
-                  onApprove={() => approveProject(project.id)}
+                  onApprove={() => approveProject(project.id, { proposalRevision: project.proposalRevision })}
                   onReject={() => rejectProject(project.id)}
                 />
               ))}

@@ -156,13 +156,11 @@ try {
     const state = {
       office: Boolean(document.querySelector('.office-floor, .office-scene, .office-grid')),
       settings: Boolean(document.querySelector('[aria-label="打开设置"]')),
-      update: Boolean(document.querySelector('.update-status')),
       text: document.body.innerText.slice(0, 2000)
     };
-    return state.office && state.settings && state.update ? state : null;
+    return state.office && state.settings ? state : null;
   })()`), '办公室主窗口没有完成加载');
   assert.equal(officeSurface.settings, true, '办公室缺少设置入口');
-  assert.equal(officeSurface.update, true, '办公室缺少更新状态入口');
   assert.equal(officeSurface.office, true, '办公室工位区域没有渲染');
 
   const assistant = await openChat(main, 'assistant-chat');
@@ -239,6 +237,7 @@ try {
     const state = {
       diagnostics: Boolean(document.querySelector('.diagnostics-page')),
       optimizer: [...document.querySelectorAll('button')].some((button) => button.textContent.includes('一键诊断并优化')),
+      update: Boolean(document.querySelector('.diagnostics-update-panel .update-status')),
       modelTab: [...document.querySelectorAll('button')].some((button) => button.textContent.includes('模型')),
       version: document.querySelector('.window-version-badge')?.textContent || ''
     };
@@ -246,6 +245,7 @@ try {
   })()`), '设置与诊断中心没有完成加载');
   assert.equal(settingsSurface.diagnostics, true, '设置窗口没有默认打开诊断中心');
   assert.equal(settingsSurface.optimizer, true, '诊断中心缺少一键诊断并优化入口');
+  assert.equal(settingsSurface.update, true, '诊断中心缺少更新入口');
   assert.equal(settingsSurface.modelTab, true, '设置窗口缺少模型管理入口');
   const settingsScreenshot = await capture(settings, 'settings-diagnostics.png');
   await closeClient(settings);

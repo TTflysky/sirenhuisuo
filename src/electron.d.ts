@@ -569,7 +569,7 @@ declare global {
     fsWriteData: (filePath: string, dataUrl: string) => Promise<FsWriteResult>;
     fsRead: (filePath: string) => Promise<FsReadResult>;
     fsMkdir: (dirPath: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
-    fsInitWorkspace: (workspaceId: string, metadata: { kind: 'assistant' | 'dm' | 'team'; label: string; taskId?: string; workspaceId?: string; createdAt?: string }) => Promise<{ ok: boolean; path?: string; error?: string }>;
+    fsInitWorkspace: (workspaceId: string, metadata: { kind: 'assistant' | 'dm' | 'team' | 'project'; label: string; taskId?: string; projectId?: string; conversationId?: string; workspaceId?: string; createdAt?: string }) => Promise<{ ok: boolean; path?: string; error?: string }>;
     fsCopyIntoWorkspace: (sourceScope: string, targetWorkspaceId: string, entries: Array<{ sourcePath: string; targetPath?: string }>) => Promise<{ ok: boolean; copied?: number; errors?: string[]; error?: string }>;
     fsList: (dirPath?: string, recursive?: boolean) => Promise<FsListResult>;
     fsExportZip: () => Promise<FsZipResult>;
@@ -587,6 +587,7 @@ declare global {
 
     // 自动更新
     checkUpdate: () => Promise<{ ok: boolean; error?: string }>;
+    getUpdateStatus: () => Promise<UpdateStatus>;
     installUpdate: (snapshot?: unknown) => Promise<{ ok: boolean; error?: string }>;
     getUpgradeStatus: () => Promise<{ ok: boolean; currentVersion?: string; journal?: UpgradeJournal | null; error?: string }>;
     recordUpgradeValidation: (validation: { ok: boolean; employees: number; teams: number; models: number; taskRuns: number; workspaceReady: boolean }) => Promise<{ ok: boolean; recorded?: boolean; error?: string }>;

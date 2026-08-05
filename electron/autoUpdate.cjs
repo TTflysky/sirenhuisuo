@@ -17,7 +17,7 @@
  * 5. 已安装的客户端启动后自动检测更新
  */
 const { autoUpdater } = require('electron-updater');
-const { app, ipcMain, safeStorage, net } = require('electron');
+const { app, BrowserWindow, ipcMain, safeStorage, net } = require('electron');
 const fsp = require('fs/promises');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -36,8 +36,8 @@ autoUpdater.autoInstallOnAppQuit = false; // 必须先完成本机备份，再�
 autoUpdater.allowDowngrade = false;
 autoUpdater.allowPrerelease = false;
 
-let updateWindow;
 let checkTimeout;
+let lastUpdateStatus = { status: 'idle', message: '点击检查更新' };
 
 function clearCheckTimeout() {
   if (checkTimeout) clearTimeout(checkTimeout);
@@ -45,8 +45,10 @@ function clearCheckTimeout() {
 }
 
 function publishUpdateStatus(status) {
-  if (!updateWindow || updateWindow.isDestroyed()) return;
-  updateWindow.webContents.send('update:status', status);
+  lastUpdateStatus = status;
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.webContents.send('update:status', status);
+  }
 }
 
 function startCheckTimeout() {
@@ -77,6 +79,8 @@ ipcMain.handle('update:check', async () => {
     return { ok: false, error: e.message };
   }
 });
+
+ipcMain.handle('update:status', async () => lastUpdateStatus);
 
 // ---- IPC：供 renderer 调用立即重启安装 ----
 let downloadedVersion = '';
@@ -222,7 +226,10 @@ ipcMain.handle('upgrade:rollback', async () => {
 
 // ---- 对外暴露启动函数（main.cjs 中调用） ----
 function initAutoUpdater(mainWindow, options = {}) {
-  updateWindow = mainWindow;
+  // Keep the argument for compatibility with the existing startup contract.
+  // Status events are broadcast to every renderer so the Settings diagnostics
+  // window remains the single visible update control surface.
+  void mainWindow;
   runtimeHealthProvider = typeof options.runtimeHealthProvider === 'function' ? options.runtimeHealthProvider : runtimeHealthProvider;
   // 事件 → IPC 转发给 renderer
   autoUpdater.on('checking-for-update', () => {

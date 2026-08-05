@@ -8,7 +8,7 @@ import { legacyConversationId, messageBelongsToConversation } from '../data/chat
 import { classifyTaskInput } from './taskContextRouter.mjs';
 import { resolveMentionedEmployees } from './teamMembership';
 import type { AppStateAction } from '../store/appStateReducer';
-import type { AppState, Employee, TaskRun, TaskRunStep, Team } from '../types';
+import type { AppState, Employee, TaskRun, TaskRunStep, Team, TeamAssistantPresenceState } from '../types';
 
 function unfinishedSteps(run?: TaskRun): TaskRunStep[] {
   return run?.steps.filter((step) => !['completed', 'stopped'].includes(step.status)) ?? [];
@@ -56,16 +56,21 @@ interface TeamSupervisorOptions {
   busy: Set<string>;
   queued: Map<string, string>;
   employeeModelSummary: (employee: Employee) => string;
+  setPresence?: (presence: { teamId: string; conversationId: string; state: TeamAssistantPresenceState; message?: string }) => void;
 }
 
 export function createTeamSupervisorResponder(options: TeamSupervisorOptions) {
   const respond = async (team: Team, content: string, conversationId: string): Promise<{ reply: string; messageId: string } | undefined> => {
     const busyKey = `${team.id}:${conversationId}`;
+    const setPresence = (state: TeamAssistantPresenceState, message?: string) => options.setPresence?.({ teamId: team.id, conversationId, state, message });
     if (options.busy.has(busyKey)) {
       options.queued.set(busyKey, content);
+      setPresence('queued', '已有一条请求正在处理，这条消息会在当前回复后继续。');
       return undefined;
     }
     options.busy.add(busyKey);
+    setPresence('thinking', '正在读取当前团队、项目和任务状态。');
+    let failed = false;
     const sanitizeReply = (reply: string) => reply.replace(/^(?:收到|好的|明白)[，,。！!：:\s]*/u, '').trim() || reply.trim();
     const appendMessage = (reply: string, tokens?: number) => {
       const state = options.getState();
@@ -125,6 +130,7 @@ export function createTeamSupervisorResponder(options: TeamSupervisorOptions) {
         { role: 'user', content: `老板@你说：${content}` },
       ];
       if (!client.resolveApiBase(assistantModel)) return appendMessage('⚠️ 章北海助理没有可用模型配置，无法进行真实对话或调度。请在设置中激活全局模型，或为助理选择模型后重试。');
+      setPresence('answering', '正在整理判断并生成团队回复。');
       const result = await client.chatCompletion(turns, 'assistant-team', `章北海/${team.name}`, undefined, assistantModel);
       const rawReply = result.content?.trim().replace(/@Hermes(?:\s+助理)?|@章北海(?:\s+助理)?|@驴狗蛋(?:\s+助手)?/gu, '章北海助理');
       const reply = rawReply ? enforceSupervisorWorkspaceTruth(rawReply, currentRun, state.employees) : rawReply;
@@ -135,12 +141,20 @@ export function createTeamSupervisorResponder(options: TeamSupervisorOptions) {
     } catch (error) {
       console.warn('[supervisor] reply failed:', error);
       const reason = error instanceof Error ? error.message : String(error);
+      failed = true;
+      setPresence('error', `本次回复失败：${reason.slice(0, 160)}`);
       return appendMessage(`⚠️ 章北海助理本次模型调用失败：${reason.slice(0, 180)}。任务没有被伪装为已执行；请检查模型连接后重试。`);
     } finally {
       options.busy.delete(busyKey);
       const queued = options.queued.get(busyKey);
       options.queued.delete(busyKey);
-      if (queued && queued !== content) setTimeout(() => { void respond(team, queued, conversationId); }, 0);
+      if (queued && queued !== content) {
+        setPresence('queued', '当前回复结束，正在接续处理排队消息。');
+        setTimeout(() => { void respond(team, queued, conversationId); }, 0);
+      } else if (!failed) {
+        // Keep errors visible until the next request; successful replies return to idle.
+        setPresence('idle');
+      }
     }
   };
   return respond;
