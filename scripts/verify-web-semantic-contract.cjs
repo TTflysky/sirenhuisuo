@@ -21,7 +21,13 @@ function html(swapped) {
   return `<!doctype html>
 <html><head><meta charset="utf-8"><style>
 *{box-sizing:border-box}body{margin:40px;font:18px sans-serif}.shell{width:360px}.nav{display:flex;gap:12px;margin-bottom:20px}.grid{display:grid;grid-template-columns:repeat(3,80px);gap:12px}.key{height:56px;order:var(--order)}#save{margin-top:20px;width:100px;height:44px}#status{margin-left:12px}
-</style></head><body><main class="shell" data-testid="shell"><nav class="nav" data-testid="nav"><button data-testid="nav-home">Home</button><button data-testid="nav-work">Work</button></nav><section class="grid" data-testid="grid">${keys.map(([key, order]) => `<button class="key" style="--order:${order}" data-key="${key}">${key}</button>`).join('')}</section><button id="save">Save</button><span id="status">Idle</span></main><script>document.querySelector('#save').addEventListener('click',()=>{document.querySelector('#status').textContent='Saved'})</script></body></html>`;
+  </style></head><body><main class="shell" data-testid="shell"><nav class="nav" data-testid="nav"><button data-testid="nav-home">Home</button><button data-testid="nav-work">Work</button></nav><section class="grid" data-testid="grid">${keys.map(([key, order]) => `<button class="key" style="--order:${order}" data-key="${key}">${key}</button>`).join('')}</section><button id="save">Save</button><span id="status">Idle</span></main><script>document.querySelector('#save').addEventListener('click',()=>{document.querySelector('#status').textContent='Saved'})</script></body></html>`;
+}
+
+function canvasHtml(filled) {
+  return `<!doctype html><html><body><canvas id="game-canvas" width="240" height="160" style="width:240px;height:160px"></canvas><script>${filled
+    ? "const c=document.querySelector('#game-canvas').getContext('2d'); c.fillStyle='#111'; c.fillRect(20,20,40,40);"
+    : ''}</script></body></html>`;
 }
 
 const semanticChecks = [
@@ -54,7 +60,16 @@ async function main() {
       failed: 0,
       results: corrected.viewports[0].semantic.results,
     });
-    console.log(JSON.stringify({ passed: true, wrongRejected: true, correctedAccepted: true, semanticTypes: semanticChecks.map((item) => item.type) }, null, 2));
+    const coreSemanticChecks = [{ id: 'game-canvas', type: 'canvas_nonblank', selector: '#game-canvas', minPixels: 1 }];
+    await fs.writeFile(artifactPath, canvasHtml(false), 'utf8');
+    const emptyCanvas = await verify({ workspaceId, path: 'artifact.html', viewports: [{ width: 900, height: 700, label: 'desktop' }], semanticChecks: coreSemanticChecks });
+    assert.equal(emptyCanvas.ok, false, 'An empty canvas must fail the core-content contract');
+    assert.equal(emptyCanvas.viewports[0].semantic.results.find((item) => item.id === 'game-canvas')?.ok, false);
+
+    await fs.writeFile(artifactPath, canvasHtml(true), 'utf8');
+    const filledCanvas = await verify({ workspaceId, path: 'artifact.html', viewports: [{ width: 900, height: 700, label: 'desktop' }], semanticChecks: coreSemanticChecks });
+    assert.equal(filledCanvas.ok, true, JSON.stringify(filledCanvas, null, 2));
+    console.log(JSON.stringify({ passed: true, wrongRejected: true, correctedAccepted: true, emptyCanvasRejected: true, filledCanvasAccepted: true, semanticTypes: [...semanticChecks, ...coreSemanticChecks].map((item) => item.type) }, null, 2));
   } finally {
     await fs.rm(root, { recursive: true, force: true }).catch(() => {});
     app.quit();

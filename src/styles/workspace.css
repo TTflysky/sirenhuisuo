@@ -1518,6 +1518,7 @@
 .team-hall-eyebrow { display: flex; align-items: center; gap: 7px; color: var(--apple-accent); font-size: 12px; font-weight: 700; }
 .team-hall-header h1 { margin: 7px 0 4px; color: var(--text); font-size: 28px; line-height: 1.2; }
 .team-hall-header p { max-width: 680px; margin: 0; color: var(--text-muted); font-size: 13px; line-height: 1.6; }
+.team-hall-header-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
 .team-hall-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; max-width: 1180px; margin: 0 auto; }
 .team-hall-card { display: flex; min-height: 290px; flex-direction: column; gap: 14px; padding: 18px; border: 1px solid var(--border-light); border-radius: 14px; background: var(--surface); box-shadow: 0 10px 26px rgba(30, 41, 59, .10); transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
 .team-hall-card:hover { border-color: var(--apple-accent); box-shadow: 0 14px 34px rgba(30, 41, 59, .16); transform: translateY(-2px); }

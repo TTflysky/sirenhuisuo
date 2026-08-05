@@ -36,6 +36,14 @@ const ARTIFACT_DEFINITIONS = [
   { id: 'raster_image', goal: /(?:图片|图像|照片).{0,12}(?:png|jpe?g)|(?:png|jpe?g)(?:图片|图像|文件)?/iu, extensions: ['.png', '.jpg', '.jpeg'], label: '交付格式：位图图片' },
 ];
 
+const INTERACTIVE_WEB_GOAL = /(?:网页游戏|网页小游戏|小游戏|贪吃蛇|snake|canvas|交互(?:式)?(?:网页|应用)|web\s*app|web\s*game|interactive\s*(?:web|app)|game)/iu;
+
+function isInteractiveWebGoal(text) {
+  // Keep English aliases because model/tool traces are not guaranteed to
+  // preserve the user's language or Unicode normalization.
+  return INTERACTIVE_WEB_GOAL.test(String(text || ''));
+}
+
 function clean(value, maxLength = 4000) {
   return String(value ?? '').trim().replace(/\s+/g, ' ').slice(0, maxLength);
 }
@@ -108,6 +116,14 @@ export function extractTaskRequirements(goal) {
   for (const artifact of ARTIFACT_DEFINITIONS) {
     if (artifact.goal.test(text)) requirements.push({ id: artifact.id, kind: 'artifact', label: artifact.label, terms: artifact.extensions });
   }
+  if (isInteractiveWebGoal(text)) {
+    requirements.push({
+      id: 'web_interactive',
+      kind: 'web_interactive',
+      label: '网页交互产物必须具备可见且可验证的核心内容',
+      terms: ['.html', '.htm'],
+    });
+  }
   const quoted = [...text.matchAll(/[“"']([^”"']{2,80})[”"']/gu)].map((match) => match[1].trim());
   quoted.slice(0, 4).forEach((value, index) => requirements.push({ id: `quoted-${index}`, kind: 'entity', label: `指定对象：${value}`, terms: [value] }));
   return requirements;
@@ -120,6 +136,59 @@ export function taskRequirementLabels(goal) {
 function containsAny(text, terms) {
   const normalized = clean(text).toLowerCase();
   return terms.some((term) => term && normalized.includes(String(term).toLowerCase()));
+}
+
+function parseJsonObjectFromText(value) {
+  const text = String(value || '');
+  const starts = [...text.matchAll(/\{\s*["']ok["']\s*:/giu)]
+    .map((match) => match.index ?? -1)
+    .filter((index) => index >= 0);
+  for (const start of starts) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < text.length; index += 1) {
+      const char = text[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === '\\') escaped = true;
+        else if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') inString = true;
+      else if (char === '{') depth += 1;
+      else if (char === '}' && --depth === 0) {
+        try { return JSON.parse(text.slice(start, index + 1)); } catch { break; }
+      }
+    }
+  }
+  return undefined;
+}
+
+function getWebVerificationEvidence(call) {
+  if (!call || call.name !== 'verify_web_artifact' || !call.success) return undefined;
+  const parsed = parseJsonObjectFromText(call.result);
+  if (parsed && parsed.ok === true) return parsed;
+  if (/(?:"ok"\s*:\s*true|网页真实验收通过)/iu.test(String(call.result || ''))) return parsed ?? { ok: true };
+  return undefined;
+}
+
+function hasDesktopAndNarrowCoverage(call, evidence) {
+  const args = (() => { try { return JSON.parse(call.args || '{}'); } catch { return {}; } })();
+  const requested = Array.isArray(args.viewports) ? args.viewports : [];
+  const observed = Array.isArray(evidence?.viewports) ? evidence.viewports : [];
+  const viewports = requested.length > 0 ? requested : observed;
+  if (viewports.length === 0) return /"checked"\s*:\s*[2-9]\d*/iu.test(String(call.result || ''));
+  return viewports.some((item) => Number(item?.width) >= 1024)
+    && viewports.some((item) => Number(item?.width) <= 480);
+}
+
+function hasSuccessfulCoreSemanticEvidence(evidence) {
+  const viewports = Array.isArray(evidence?.viewports) ? evidence.viewports : [];
+  return viewports.length > 0 && viewports.every((viewport) =>
+    (Array.isArray(viewport?.semantic?.results) ? viewport.semantic.results : [])
+      .some((item) => ['canvas_nonblank', 'visible', 'count'].includes(item?.type) && item?.ok === true)
+  );
 }
 
 export function validateSearchQueryAgainstGoal(goal, query) {
@@ -176,25 +245,21 @@ export function assessTaskCompletion(goal, finalContent, callLog = []) {
   const requirements = extractTaskRequirements(goal);
   const combinedEvidence = callLog.map((call) => `${call.name}\n${call.args}\n${call.result}`).join('\n\n');
   const issues = [];
+  const interactiveWebRequirement = requirements.some((item) => item.kind === 'web_interactive');
   const webArtifactTouched = callLog.some((call) => /\.html?(?:["'\s,)}]|$)/iu.test(`${call.args}\n${call.result}`)
     && ['write_file', 'read_file', 'verify_web_artifact'].includes(call.name));
-  if (webArtifactTouched) {
-    const verified = callLog.some((call) => call.name === 'verify_web_artifact'
-      && call.success
-      && /网页真实验收通过|"ok"\s*:\s*true/iu.test(call.result)
-      && (() => {
-        try {
-          const args = JSON.parse(call.args || '{}');
-          const viewports = Array.isArray(args.viewports) ? args.viewports : [];
-          if (viewports.length === 0) return /"checked"\s*:\s*[2-9]\d*/iu.test(call.result);
-          return viewports.some((item) => Number(item?.width) >= 1024)
-            && viewports.some((item) => Number(item?.width) <= 480)
-            && /"checked"\s*:\s*[2-9]\d*/iu.test(call.result);
-        } catch {
-          return false;
-        }
-      })());
-    if (!verified) issues.push('网页产出物还没有通过内置 verify_web_artifact 的桌面与窄屏真实验收');
+  if (interactiveWebRequirement && !webArtifactTouched) {
+    issues.push('网页交互产物尚未生成或写入 HTML 文件，不能进入完成状态。');
+  }
+  if (webArtifactTouched || interactiveWebRequirement) {
+    const verification = callLog
+      .map((call) => ({ call, evidence: getWebVerificationEvidence(call) }))
+      .find((item) => item.evidence && hasDesktopAndNarrowCoverage(item.call, item.evidence));
+    if (!verification) {
+      issues.push('网页产出物还没有通过内置 verify_web_artifact 的桌面与窄屏真实验收。');
+    } else if (interactiveWebRequirement && !hasSuccessfulCoreSemanticEvidence(verification.evidence)) {
+      issues.push('网页交互任务缺少核心内容证据：必须用 visible/count 或 canvas_nonblank 证明初始核心对象可见，不能只验收外壳布局。');
+    }
   }
   const skillInstall = resolveSkillInstallRequest(goal);
   if (skillInstall?.sourceUrl) {

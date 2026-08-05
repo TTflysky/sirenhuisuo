@@ -153,10 +153,12 @@ export function resolveActionableUserGoal(message, previousUserMessage) {
   const introducesNewTarget = /(?:\u672c\u5730|\u5f53\u524d|\u6570\u91cf|\u591a\u5c11|\u6e05\u5355|\u76ee\u5f55|\u6587\u4ef6|\u8fde\u63a5\u5668|\u6a21\u578b|\u5458\u5de5|\u56e2\u961f|\u5de5\u4f5c\u533a|\u6280\u80fd\u5e93|\u4ea7\u51fa\u7269|\u72b6\u6001)/u.test(current);
   const capabilityCorrection = isActionableCapabilityCorrection(current);
   const correctiveFraming = /(?:不对|不要|别(?:只|再|用)|应该|应当|而不是|难道|为什么|怎么(?:不|还)|没有|没(?:有|做|查|用)|只读)/u.test(current);
+  const acceptanceFailure = /(?:没有|未|缺少|看不到|不存在|只有).{0,48}(?:通过|完成|显示|可见|框架|外壳|标题|按钮|内容|结果|产物|功能)|(?:框架|外壳).{0,24}(?:没有|缺少|看不到)/u.test(current);
   // A route correction often names the failed route (for example "本地" or
   // "连接器").  That is not a new task target, so decide correction status
   // before applying the self-contained-request isolation rule.
-  if (!refersToPreviousWork && introducesNewTarget && (!capabilityCorrection || !correctiveFraming)) return current;
+  if (!refersToPreviousWork && introducesNewTarget && (!capabilityCorrection || !correctiveFraming) && !acceptanceFailure) return current;
+  if (acceptanceFailure && previous && !isConversationOnlyMessage(previous)) return `${previous}\n验收反馈：${current}`;
   if (!capabilityCorrection || !previous || isConversationOnlyMessage(previous)) return current;
   const addsHardConstraint = /(?:我)?(?:需要|要求|必须|只能|务必|改用|换成|不能|不要).{0,48}(?:工具|方式|格式|文件|模型|路线)|而不是/u.test(current);
   return addsHardConstraint ? `${previous}\n新增约束：${current}` : previous;
@@ -286,6 +288,7 @@ export function isConversationOnlyMessage(message) {
   const text = String(message ?? '').trim();
   if (!text) return false;
   if (isExplicitResumeSteering([text]) || isExplicitNewWork(text) || requiresFreshWebResearch(text)) return false;
+  if (/(?:没有|未|缺少|看不到|不存在|只有).{0,48}(?:通过|完成|显示|可见|框架|外壳|标题|按钮|内容|结果|产物|功能|蛇|果子)|(?:框架|外壳).{0,24}(?:没有|缺少|看不到)/u.test(text)) return false;
   const executionControl = isExplicitPauseSteering([text]) || isExplicitStopSteering([text]);
   const statusQuestion = /(?:做到哪|进行到哪|什么状态|现在怎样|卡在哪里|需要帮助吗|为什么还在|怎么还在|到底在做什么)/u.test(text);
   const feedbackSubject = /(?:你|助手|员工|团队|刚才|这次|当前任务|这个任务|执行过程|操作|回答|内核|逻辑)/u.test(text);

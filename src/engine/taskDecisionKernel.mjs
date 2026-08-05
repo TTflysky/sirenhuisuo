@@ -115,9 +115,14 @@ function hasExplicitIndependentGoal(message) {
     || /^(?:查看|查询|检查|安装|创建|生成|编写|搜索|查找|配置|测试|分析|整理|删除|导出)/u.test(value);
 }
 
+function isAcceptanceFailureFeedback(message) {
+  return /(?:没有|未|缺少|看不到|不存在|只有).{0,48}(?:通过|完成|显示|可见|框架|外壳|标题|按钮|内容|结果|产物|功能|蛇|果子)|(?:框架|外壳).{0,24}(?:没有|缺少|看不到)/u.test(clean(message, 1200));
+}
+
 function isTaskCorrection(message) {
   return isActionableCapabilityCorrection(message)
-    || /(?:不对|不满意|有问题|错了|不是这个|不是.{0,24}(?:而是|我是让你|是让你|要你|让你)|理解错|偏题|没有意义|别再重复|重新理解|重新看(?:一下)?需求|重新选人|胡说)/u.test(clean(message, 1200));
+    || /(?:不对|不满意|有问题|错了|不是这个|不是.{0,24}(?:而是|我是让你|是让你|要你|让你)|理解错|偏题|没有意义|别再重复|重新理解|重新看(?:一下)?需求|重新选人|胡说)/u.test(clean(message, 1200))
+    || isAcceptanceFailureFeedback(message);
 }
 
 function isTaskStatusQuestion(message) {
@@ -134,7 +139,7 @@ function fallbackTurnRelation(input = {}) {
   if (!activeTaskGoal) return 'new_task';
   if (isTaskCorrection(latestMessage)) return 'correction';
   if (isTaskStatusQuestion(latestMessage)) return 'question';
-  const turnIntent = classifyTaskTurnIntent(latestMessage);
+  const turnIntent = classifyTaskTurnIntent(latestMessage, activeTaskGoal);
   if (turnIntent === 'follow_up_question' || turnIntent === 'answer') return 'question';
   if (hasExplicitIndependentGoal(latestMessage)) return 'new_task';
   return 'continuation';
@@ -146,7 +151,7 @@ function fallbackTurnRelation(input = {}) {
  * has already happened.  The latter must never inherit tool authority from
  * the previous task.
  */
-export function classifyTaskTurnIntent(message) {
+export function classifyTaskTurnIntent(message, activeTaskGoal = '') {
   const text = clean(message, 4000);
   if (!text) return 'conversation';
   const control = getDirectExecutionControl(text);
@@ -157,6 +162,7 @@ export function classifyTaskTurnIntent(message) {
   // A question about the meaning, scope, or correctness of the current
   // exchange is an answer turn even when it repeats verbs from the old task.
   if (asksQuestion && refersToConversation) return 'follow_up_question';
+  if (isAcceptanceFailureFeedback(text) || (clean(activeTaskGoal) && isTaskCorrection(text) && requiresObservableExecutionEvidence(text))) return 'execute_request';
   if (refersToConversation && /(?:不满意|不对|不好|有问题|不行|偏题|错误)/u.test(text)) return 'feedback_or_correction';
 
   if (isActionableCapabilityCorrection(text)) return 'execute_request';
@@ -239,7 +245,7 @@ export function createFallbackTaskDecision(input = {}) {
   const latestMessage = clean(input.latestMessage);
   const previousUserMessage = clean(input.previousUserMessage);
   const control = getDirectExecutionControl(latestMessage);
-  const turnIntent = classifyTaskTurnIntent(latestMessage);
+  const turnIntent = classifyTaskTurnIntent(latestMessage, input.activeTaskGoal);
   const capabilityCorrection = isActionableCapabilityCorrection(latestMessage);
   const goal = clean(resolveActionableUserGoal(latestMessage, previousUserMessage)) || latestMessage;
   const feedbackOnly = shouldHoldTaskForFeedback(latestMessage) && isConversationOnlyMessage(latestMessage);
@@ -310,11 +316,15 @@ export function normalizeTaskDecision(candidate, input = {}) {
   if (!candidate || typeof candidate !== 'object') return fallback;
   const latestMessage = clean(input.latestMessage);
   const control = getDirectExecutionControl(latestMessage);
-  const turnIntent = classifyTaskTurnIntent(latestMessage);
+  const turnIntent = classifyTaskTurnIntent(latestMessage, input.activeTaskGoal);
   const capabilityCorrection = isActionableCapabilityCorrection(latestMessage);
   const taskCorrection = isTaskCorrection(latestMessage);
   const fallbackRelation = fallback.turnRelation;
-  const hardExecute = capabilityCorrection || Boolean(createExplicitResourceContract(fallback.goal)) || requiresFreshWebResearch(fallback.goal) || requiresObservableExecutionEvidence(fallback.goal);
+  const hardExecute = turnIntent === 'execute_request' && (isAcceptanceFailureFeedback(latestMessage) || capabilityCorrection || requiresObservableExecutionEvidence(fallback.goal))
+    || capabilityCorrection
+    || Boolean(createExplicitResourceContract(fallback.goal))
+    || requiresFreshWebResearch(fallback.goal)
+    || requiresObservableExecutionEvidence(fallback.goal);
   const hardAnswer = turnIntent === 'follow_up_question';
   const hardHold = turnIntent === 'feedback_or_correction'
     || control === 'stop' || control === 'pause'

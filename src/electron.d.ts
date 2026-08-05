@@ -20,9 +20,10 @@ export interface WebArtifactViewportResult {
   semantic?: WebArtifactSemanticSummary;
 }
 export interface WebArtifactSemanticCheck {
-  id?: string; label?: string; type: 'group' | 'order' | 'adjacent' | 'grid' | 'interaction'; viewports?: string[];
+  id?: string; label?: string; type: 'group' | 'order' | 'adjacent' | 'grid' | 'interaction' | 'visible' | 'count' | 'canvas_nonblank'; viewports?: string[];
   container?: string; members?: string[]; selectors?: string[]; axis?: 'dom' | 'horizontal' | 'vertical' | 'reading';
   first?: string; second?: string; direction?: 'left' | 'right' | 'above' | 'below'; maxGap?: number; tolerance?: number;
+  selector?: string; minCount?: number; maxCount?: number; minPixels?: number; minCoverage?: number;
   cells?: Array<{ selector: string; row: number; column: number }>; rowTolerance?: number; columnTolerance?: number;
   steps?: Array<{ action: 'click' | 'input' | 'select' | 'check'; selector: string; value?: string; waitMs?: number }>;
   assertions?: Array<{ selector: string; property: 'text' | 'value' | 'visible' | 'hidden' | 'checked' | 'attribute'; equals?: string; includes?: string; attribute?: string }>;

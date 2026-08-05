@@ -24,6 +24,7 @@ import {
   EXECUTION_SELF_REVIEW_GUIDE,
   SKILL_RECOVERY_GUIDE,
   WEB_ARTIFACT_ACCEPTANCE_GUIDE,
+  WEB_INTERACTIVE_ACCEPTANCE_GUIDE,
   buildContinuationGuide,
   getToolStage,
   humanizeExecutionError,
@@ -42,7 +43,7 @@ import {
   type ExecutionControllerSnapshot,
 } from '../engine/executionController.mjs';
 import { buildTaskContract, type TaskDecision } from '../engine/taskDecisionKernel.mjs';
-import { assessTaskCompletion } from '../engine/taskFidelity.mjs';
+import { assessTaskCompletion, extractTaskRequirements } from '../engine/taskFidelity.mjs';
 import {
   assessExplicitResourceCompletion,
   buildExplicitResourceGuidance,
@@ -164,6 +165,7 @@ export function createRunAgentLoop(deps: AgentLoopDependencies) {
   latestContextUsage = compiled.contextUsage;
   finalModel = compiled.model ?? '';
   const originalUserText = taskDecision.goal;
+  const interactiveWebTask = extractTaskRequirements(originalUserText).some((item) => item.kind === 'web_interactive');
   const installOnlyTask = isSkillInstallOnlyRequest(originalUserText);
   const explicitSkillInstallRequest = resolveSkillInstallRequest(originalUserText);
   const resumedFromCapabilityCorrection = taskDecision.mode === 'execute'
@@ -214,7 +216,7 @@ export function createRunAgentLoop(deps: AgentLoopDependencies) {
     ? [{ role: 'system', content: `${taskContract}\n\n当前消息不需要工具执行。直接结合最近上下文回应，不得自动恢复、重放或继续上一项任务。只有用户明确提出新的执行目标或明确要求继续时，才能重新开始执行。` }, ...currentTurns]
     : [{
       role: 'system',
-      content: `${taskContract}\n\n${buildTurnGuidance(turnRuntime)}\n\n${AUTONOMOUS_EXECUTION_GUIDE}\n\n${CAPABILITY_ROUTING_GUIDE}\n\n${WEB_ARTIFACT_ACCEPTANCE_GUIDE}\n\n${SKILL_RECOVERY_GUIDE}${pinnedSkillInstruction}${explicitResourceInstruction ? `\n\n${explicitResourceInstruction}` : ''}${resumedFromCapabilityCorrection
+        content: `${taskContract}\n\n${buildTurnGuidance(turnRuntime)}\n\n${AUTONOMOUS_EXECUTION_GUIDE}\n\n${CAPABILITY_ROUTING_GUIDE}\n\n${WEB_ARTIFACT_ACCEPTANCE_GUIDE}\n\n${WEB_INTERACTIVE_ACCEPTANCE_GUIDE}\n\n${SKILL_RECOVERY_GUIDE}${pinnedSkillInstruction}${explicitResourceInstruction ? `\n\n${explicitResourceInstruction}` : ''}${resumedFromCapabilityCorrection
         ? `\n\n用户最新消息是在纠正上一轮没有行动的问题。当前仍未完成的目标是：\n${originalUserText.slice(0, 2000)}\n必须立即按纠正后的能力路线执行，不要再次道歉、解释能力或要求用户重复目标。`
         : ''}`,
     }, ...currentTurns];
@@ -633,10 +635,18 @@ export function createRunAgentLoop(deps: AgentLoopDependencies) {
         const resourceLimitReached = Boolean(resourceKey) && resourceReadCount >= resourceLimit;
         const explicitResourceGate = validateExplicitResourceToolCall(explicitResourceContract, tc.name, effectiveArguments, callLog);
         const webArtifactGate = webArtifactAcceptanceGate(webArtifactAcceptanceCycle, tc.name);
+        const suppliedSemanticChecks = Array.isArray(lifecycleArgs.semanticChecks) ? lifecycleArgs.semanticChecks : [];
+        const interactiveWebSemanticGate = interactiveWebTask
+          && tc.name === 'verify_web_artifact'
+          && !suppliedSemanticChecks.some((check: any) => ['visible', 'count', 'canvas_nonblank'].includes(String(check?.type || '').toLowerCase()))
+          ? '这是网页游戏或交互网页任务。验收调用必须包含 visible、count 或 canvas_nonblank 语义检查，先证明核心对象真实存在，再进行桌面与窄屏验收。'
+          : '';
         const blockedReason = !effectiveCallOk
           ? effectiveCallError ?? '工具参数无效，模型需要修正后再调用。'
           : !explicitResourceGate.allowed
           ? explicitResourceGate.reason
+          : interactiveWebSemanticGate
+          ? interactiveWebSemanticGate
           : webArtifactGate
           ? webArtifactGate
           : pinnedSkillSource && (tc.name === 'search_skills' || tc.name === 'web_search')

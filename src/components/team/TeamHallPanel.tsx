@@ -6,6 +6,7 @@ import {
   FolderOpenOutlined,
   InboxOutlined,
   MoreOutlined,
+  PlusOutlined,
   RollbackOutlined,
   TeamOutlined,
 } from '@ant-design/icons';
@@ -13,6 +14,7 @@ import type { MenuProps } from 'antd';
 import type { Team } from '../../types';
 import { useStore } from '../../storeContext';
 import AgentAvatar from '../office/AgentAvatar';
+import CreateTeamModal from '../sidebar/CreateTeamModal';
 import RenameTeamModal from '../sidebar/RenameTeamModal';
 
 type HallFilter = 'active' | 'archived' | 'all';
@@ -21,7 +23,17 @@ export default function TeamHallPanel() {
   const { state, dispatch, openTeamChat } = useStore();
   const { message } = App.useApp();
   const [filter, setFilter] = useState<HallFilter>('active');
+  const [showCreateTeam, setShowCreateTeam] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
+
+  const openCreateTeam = async () => {
+    if (!window.electronAPI?.openTool) {
+      setShowCreateTeam(true);
+      return;
+    }
+    const result = await window.electronAPI.openTool({ type: 'create-team' });
+    if (!result.ok) setShowCreateTeam(true);
+  };
 
   const teams = useMemo(() => {
     const source = filter === 'all'
@@ -61,6 +73,10 @@ export default function TeamHallPanel() {
           <h1>团队大厅</h1>
           <p>已创建的团队集中在这里，授权和组建流程由章北海助理直接在聊天窗口完成。</p>
         </div>
+        <div className="team-hall-header-actions">
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => void openCreateTeam()}>
+          新建团队
+          </Button>
         <Segmented
           value={filter}
           onChange={(value) => setFilter(value as HallFilter)}
@@ -69,12 +85,16 @@ export default function TeamHallPanel() {
             { label: '已归档', value: 'archived' },
             { label: '全部', value: 'all' },
           ]}
-        />
+          />
+        </div>
       </header>
 
       {teams.length === 0 ? (
         <section className="team-hall-empty">
           <TeamOutlined />
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => void openCreateTeam()}>
+            新建团队
+          </Button>
           <strong>{filter === 'archived' ? '暂无归档团队' : '暂无已创建团队'}</strong>
           <span>在助理聊天中提出任务，确认团队方案后，团队会出现在这里。</span>
         </section>
@@ -133,6 +153,7 @@ export default function TeamHallPanel() {
           onClose={() => setRenamingId(null)}
         />
       )}
+      {showCreateTeam && <CreateTeamModal onClose={() => setShowCreateTeam(false)} />}
     </main>
   );
 }

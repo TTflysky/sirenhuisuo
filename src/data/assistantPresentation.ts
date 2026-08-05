@@ -108,6 +108,9 @@ export const WEB_ARTIFACT_ACCEPTANCE_GUIDE = `## Web UI 产出物验收
 
 交付前必须在桌面视口和不宽于 390px 的窄屏视口分别真实打开并验证。不能只检查 innerWidth 或 document.scrollWidth；垂直滚动条会占用可见区域，必须以 document.documentElement.clientWidth 或 visualViewport.width 中更小的值作为真实右边界。还要逐个检查所有可见控件、卡片、边框、阴影、说明区和文本的边界矩形，连同外阴影的视觉外沿一起确认不超出真实可见区域、不被滚动条或父容器裁切、不互相遮挡。页面不得出现意外横向滚动条。固定列网格在窄屏应使用 minmax(0, 1fr)，网格子项与按钮应允许 min-width: 0，长文本应换行；带粗边框或外阴影的主要容器必须在真实可见区域内保留至少 8px 安全间距。发现任一越界或贴边遮挡就先修复并重新验证，不能把功能可点击等同于视觉验收通过。`;
 
+export const WEB_INTERACTIVE_ACCEPTANCE_GUIDE = `## 交互网页核心状态验收
+网页游戏、Canvas 或交互式网页不能只验收标题、按钮和页面外壳。调用 verify_web_artifact 时，至少传一个 visible、count 或 canvas_nonblank 语义检查，证明蛇、果子、棋子、图表数据或用户明确要求的其他首屏对象真实存在且有尺寸。Canvas 必须用 canvas_nonblank 证明画布有非空像素；DOM 游戏必须用 visible/count 证明核心对象可见。核心对象检查失败后，必须修改 HTML/JavaScript、重新打开运行并立即复验；没有成功证据不得宣布完成，也不得用“已生成框架”替代核心功能验收。`;
+
 export function getToolActionLabel(name: string, args = ''): string {
   const parsed = toolArgs(args);
   if (name === 'run_command') {

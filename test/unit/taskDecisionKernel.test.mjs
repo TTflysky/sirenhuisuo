@@ -88,6 +88,19 @@ describe('task decision kernel safeguards', () => {
     expect(question.turnRelation).toBe('question');
   });
 
+  it('turns concrete acceptance failures into a repair execution while preserving the original goal', () => {
+    const latestMessage = '我已经看到产物了，但是没有通过核查，只有一个框架，里面没有活动的蛇也没有蛇吃的果子';
+    expect(classifyTaskTurnIntent(latestMessage)).toBe('execute_request');
+    const decision = createFallbackTaskDecision({
+      latestMessage,
+      previousUserMessage: '拉一个测试群，做一个小贪吃蛇的网页游戏',
+      availableTools: tools,
+    });
+    expect(decision.mode).toBe('execute');
+    expect(decision.goal).toContain('小贪吃蛇的网页游戏');
+    expect(decision.goal).toContain('验收反馈');
+  });
+
   it('accepts only genuine user-owned missing conditions', () => {
     const input = { latestMessage: '配置并测试邮件连接器', availableTools: tools };
     const genuine = normalizeTaskDecision(candidate({ needsUser: true, missingUserCondition: '需要用户提供 API Key', primaryRoute: 'inspect_connectors' }), input);

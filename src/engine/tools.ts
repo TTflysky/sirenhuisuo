@@ -47,11 +47,12 @@ const SEMANTIC_CHECKS_SCHEMA = {
     type: 'object',
     properties: {
       id: { type: 'string' }, label: { type: 'string' },
-      type: { type: 'string', enum: ['group', 'order', 'adjacent', 'grid', 'interaction'] },
+      type: { type: 'string', enum: ['group', 'order', 'adjacent', 'grid', 'interaction', 'visible', 'count', 'canvas_nonblank'] },
       viewports: { type: 'array', items: { type: 'string' } },
       container: { type: 'string' }, members: { type: 'array', items: { type: 'string' } },
       selectors: { type: 'array', items: { type: 'string' } }, axis: { type: 'string', enum: ['dom', 'horizontal', 'vertical', 'reading'] },
       first: { type: 'string' }, second: { type: 'string' }, direction: { type: 'string', enum: ['left', 'right', 'above', 'below'] }, maxGap: { type: 'number' },
+      selector: { type: 'string' }, minCount: { type: 'number' }, maxCount: { type: 'number' }, minPixels: { type: 'number' }, minCoverage: { type: 'number' },
       cells: { type: 'array', items: { type: 'object', properties: { selector: { type: 'string' }, row: { type: 'number' }, column: { type: 'number' } }, required: ['selector', 'row', 'column'] } },
       steps: { type: 'array', items: { type: 'object', properties: { action: { type: 'string', enum: ['click', 'input', 'select', 'check'] }, selector: { type: 'string' }, value: { type: 'string' }, waitMs: { type: 'number' } }, required: ['action', 'selector'] } },
       assertions: { type: 'array', items: { type: 'object', properties: { selector: { type: 'string' }, property: { type: 'string', enum: ['text', 'value', 'visible', 'hidden', 'checked', 'attribute'] }, equals: { type: 'string' }, includes: { type: 'string' }, attribute: { type: 'string' } }, required: ['selector', 'property'] } },

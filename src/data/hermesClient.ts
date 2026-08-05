@@ -1058,7 +1058,7 @@ export async function compileTaskDecision(
   const latestMessage = userTurns.at(-1) ?? '';
   const previousUserMessage = userTurns.at(-2) ?? '';
   const availableTools = tools.map((tool) => String(tool?.function?.name ?? '')).filter(Boolean);
-  const fallback = createFallbackTaskDecision({ latestMessage, previousUserMessage, availableTools });
+  const fallback = createFallbackTaskDecision({ latestMessage, previousUserMessage, activeTaskGoal: decisionContext.activeTaskGoal, availableTools });
   const relevantTaskExperience = buildTaskLearningContext(fallback.goal);
   const recentHistory = turns.filter((turn) => turn.role === 'user' || turn.role === 'assistant').slice(-24).map((turn) => ({
     role: turn.role,

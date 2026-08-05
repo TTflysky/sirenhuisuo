@@ -6,7 +6,9 @@ const DEFAULT_VIEWPORTS = [
   { width: 375, height: 844, label: 'narrow' },
 ];
 
-const SEMANTIC_CHECK_TYPES = new Set(['group', 'order', 'adjacent', 'grid', 'interaction']);
+// Semantic checks are deliberately generic.  They describe observable product
+// contracts rather than naming one particular game or framework.
+const SEMANTIC_CHECK_TYPES = new Set(['group', 'order', 'adjacent', 'grid', 'interaction', 'visible', 'count', 'canvas_nonblank']);
 
 function inside(root, target) {
   const relative = path.relative(root, target);
@@ -79,6 +81,16 @@ function normalizeSemanticChecks(input) {
         includes: assertion?.includes === undefined ? undefined : String(assertion.includes).slice(0, 2000),
         attribute: String(assertion?.attribute || '').trim().slice(0, 120),
       })).filter((assertion) => assertion.selector) : [];
+    } else if (type === 'visible') {
+      check.selector = String(raw?.selector || '').trim().slice(0, 500);
+    } else if (type === 'count') {
+      check.selector = String(raw?.selector || '').trim().slice(0, 500);
+      check.minCount = Math.max(0, Math.min(10000, Number(raw?.minCount) || 1));
+      check.maxCount = raw?.maxCount === undefined ? undefined : Math.max(check.minCount, Math.min(10000, Number(raw.maxCount) || 0));
+    } else if (type === 'canvas_nonblank') {
+      check.selector = String(raw?.selector || 'canvas').trim().slice(0, 500);
+      check.minPixels = Math.max(1, Math.min(1000000, Number(raw?.minPixels) || 1));
+      check.minCoverage = Math.max(0, Math.min(1, Number(raw?.minCoverage) || 0));
     }
     return [check];
   });
@@ -326,6 +338,55 @@ async function probeSemantics(checks, viewportLabel) {
         }
         evidence.steps = check.steps.length;
         evidence.assertions = check.assertions.length;
+      } else if (check.type === 'visible') {
+        const element = select(check.selector);
+        if (!element || !visible(element)) failures.push(`元素不可见或尺寸为零: ${check.selector}`);
+        evidence.element = describe(element);
+      } else if (check.type === 'count') {
+        let elements = [];
+        try { elements = [...document.querySelectorAll(check.selector)].filter(visible); } catch (error) { throw new Error(`无效选择器 ${check.selector}: ${error.message}`); }
+        if (elements.length < check.minCount) failures.push(`${check.selector} 可见元素数量 ${elements.length} 小于最小值 ${check.minCount}`);
+        if (check.maxCount !== undefined && elements.length > check.maxCount) failures.push(`${check.selector} 可见元素数量 ${elements.length} 大于最大值 ${check.maxCount}`);
+        evidence.count = elements.length;
+        evidence.elements = elements.slice(0, 40).map(describe);
+      } else if (check.type === 'canvas_nonblank') {
+        const canvas = select(check.selector || 'canvas');
+        if (!canvas || !visible(canvas)) {
+          failures.push(`找不到可见画布 ${check.selector || 'canvas'}`);
+        } else if (!(canvas instanceof HTMLCanvasElement)) {
+          failures.push(`${check.selector || 'canvas'} 不是 canvas 元素`);
+        } else if (!canvas.width || !canvas.height) {
+          failures.push(`${check.selector || 'canvas'} 的画布尺寸为零`);
+        } else {
+          const context = canvas.getContext('2d', { willReadFrequently: true });
+          if (!context) {
+            failures.push(`${check.selector || 'canvas'} 无法创建 2D 上下文`);
+          } else {
+            const maxSamples = 250000;
+            const totalPixels = canvas.width * canvas.height;
+            const stride = Math.max(1, Math.ceil(Math.sqrt(totalPixels / maxSamples)));
+            const sampledWidth = Math.ceil(canvas.width / stride);
+            const sampledHeight = Math.ceil(canvas.height / stride);
+            const image = context.getImageData(0, 0, canvas.width, canvas.height).data;
+            let nonBlankPixels = 0;
+            for (let y = 0; y < canvas.height; y += stride) {
+              for (let x = 0; x < canvas.width; x += stride) {
+                const offset = (y * canvas.width + x) * 4;
+                if (image[offset] > 0 || image[offset + 1] > 0 || image[offset + 2] > 0 || image[offset + 3] > 0) nonBlankPixels += 1;
+              }
+            }
+            const coverage = sampledWidth * sampledHeight > 0 ? nonBlankPixels / (sampledWidth * sampledHeight) : 0;
+            if (nonBlankPixels < check.minPixels || coverage < check.minCoverage) {
+              failures.push(`${check.selector || 'canvas'} 的画布内容为空，非空像素 ${nonBlankPixels}，覆盖率 ${coverage.toFixed(4)}`);
+            }
+            evidence.canvas = describe(canvas);
+            evidence.canvasWidth = canvas.width;
+            evidence.canvasHeight = canvas.height;
+            evidence.sampleStride = stride;
+            evidence.nonBlankPixels = nonBlankPixels;
+            evidence.coverage = coverage;
+          }
+        }
       }
     } catch (error) {
       failures.push(error?.message || String(error));
