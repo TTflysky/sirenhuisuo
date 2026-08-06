@@ -5,8 +5,8 @@
   "version": "5.5.1",
   "commit": "abc742ea8f7bbafbedeb3e2c6c771a6465725b7b",
   "branch": "main",
-  "sourceFileCount": 1295,
-  "sourceFileListDigest": "6163018bb0bac39ada0bfd598bc1ebe3b6a672b97e91f9638a9fc3c427d0faed",
+  "sourceFileCount": 1297,
+  "sourceFileListDigest": "538880fd8fadcfcb7ec380b46d892900cbee3174d4dd9976f212a3f0020d1706",
   "generatedAt": "2026-08-06T21:26:41+08:00",
   "build": {
     "platform": "win32",
