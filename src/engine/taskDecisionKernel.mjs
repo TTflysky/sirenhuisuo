@@ -119,7 +119,18 @@ function isAcceptanceFailureFeedback(message) {
   return /(?:没有|未|缺少|看不到|不存在|只有).{0,48}(?:通过|完成|显示|可见|框架|外壳|标题|按钮|内容|结果|产物|功能|蛇|果子)|(?:框架|外壳).{0,24}(?:没有|缺少|看不到)/u.test(clean(message, 1200));
 }
 
+function isStatusQuestionOnly(message) {
+  const value = clean(message, 1200);
+  if (!/[？?]/u.test(value)) return false;
+  if (!/(?:现在|当前|目前|进度|做到哪|哪一步|为什么|怎么回事|卡住|还在做|完成)/u.test(value)) return false;
+  // A question that also contains an explicit repair command is actionable
+  // feedback, not a passive status request.
+  if (/(?:重新|修复|修改|改成|补上|补做|继续执行|开始做|处理一下|请做|帮我做)/u.test(value)) return false;
+  return !/(?:不对|不满意|有问题|错了|偏题|没有意义|胡说)/u.test(value);
+}
+
 function isTaskCorrection(message) {
+  if (isStatusQuestionOnly(message)) return false;
   return isActionableCapabilityCorrection(message)
     || /(?:不对|不满意|有问题|错了|不是这个|不是.{0,24}(?:而是|我是让你|是让你|要你|让你)|理解错|偏题|没有意义|别再重复|重新理解|重新看(?:一下)?需求|重新选人|胡说)/u.test(clean(message, 1200))
     || isAcceptanceFailureFeedback(message);
@@ -159,6 +170,7 @@ export function classifyTaskTurnIntent(message, activeTaskGoal = '') {
 
   const asksQuestion = /[？?]|(?:为什么|为何|怎么|怎样|是不是|对不对|能不能|可以吗|什么意思|理解了吗|看懂了吗|判断一下)/u.test(text);
   const refersToConversation = /(?:这句话|这次的话|我的意思|这个(?:回答|回复|结果|方案)|(?:你)?刚才(?:那)?(?:句|的回答|的回复|的结果)|上一句|上面(?:的)?(?:回答|回复|结果)|之前(?:的)?(?:回答|回复|结果)|基于(?:上面|之前|刚才)|针对(?:上面|之前|刚才)|你(?:到底)?理解|你自己判断|你说的|你的(?:回答|回复|判断))/u.test(text);
+  if (isStatusQuestionOnly(text)) return 'follow_up_question';
   // A question about the meaning, scope, or correctness of the current
   // exchange is an answer turn even when it repeats verbs from the old task.
   if (asksQuestion && refersToConversation) return 'follow_up_question';

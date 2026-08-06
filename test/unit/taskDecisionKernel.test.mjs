@@ -88,6 +88,17 @@ describe('task decision kernel safeguards', () => {
     expect(question.turnRelation).toBe('question');
   });
 
+  it('keeps a completion-status question from becoming an acceptance repair', () => {
+    const decision = createFallbackTaskDecision({
+      latestMessage: '现在做到哪一步了，为什么还没有完成？',
+      activeTaskGoal: '制作一个可运行的项目',
+      availableTools: tools,
+    });
+    expect(decision.mode).toBe('answer');
+    expect(decision.turnRelation).toBe('question');
+    expect(decision.primaryRoute).toBe('direct_answer');
+  });
+
   it('turns concrete acceptance failures into a repair execution while preserving the original goal', () => {
     const latestMessage = '我已经看到产物了，但是没有通过核查，只有一个框架，里面没有活动的蛇也没有蛇吃的果子';
     expect(classifyTaskTurnIntent(latestMessage)).toBe('execute_request');
