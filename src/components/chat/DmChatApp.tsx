@@ -63,6 +63,7 @@ interface DmRetryJob {
   goal?: string;
   request?: string;
   parentTaskId?: string;
+  projectId?: string;
   attachments: Attachment[];
   skillContext: string;
   skillRefs: SkillReference[];
@@ -385,6 +386,7 @@ export default function DmChatApp({ empId }: Props) {
       goal: continuation?.goal ?? content,
       request: content,
       parentTaskId: continuation?.taskId,
+      projectId: continuation?.projectId,
       attachments: atts,
       skillContext,
       skillRefs: refs,
@@ -427,6 +429,7 @@ export default function DmChatApp({ empId }: Props) {
       request: job.request || job.userText,
       workspaceId: job.workspaceId,
       parentTaskId: job.parentTaskId,
+      projectId: job.projectId,
       idempotencyKey: `dm-chat:${empId}:${job.id}`,
       conversationId: job.conversationId,
       references: job.skillRefs.map((skill) => ({ kind: 'skill', id: skill.id, label: skill.name, state: 'local' })),

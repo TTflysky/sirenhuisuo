@@ -15,6 +15,8 @@ function createTaskServiceContextQueries(store) {
     return {
       ok: true,
       taskId,
+      projectId: task.projectId,
+      workspaceId: task.workspaceId || task.workspace?.workspaceId,
       goal: task.goal,
       acceptanceCriteria: clone(task.acceptanceCriteria || []),
       parentTaskId: task.parentTaskId,

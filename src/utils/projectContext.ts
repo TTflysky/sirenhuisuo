@@ -15,6 +15,19 @@ export function projectDocumentPath(projectId: string): string {
   return `${projectWorkspaceId(projectId)}/project.md`;
 }
 
+export function projectTaskDocumentPath(projectId: string, taskId: string): string {
+  return `${projectWorkspaceId(projectId)}/tasks/${safePart(taskId)}.md`;
+}
+
+export function projectTaskWorkspaceId(projectId: string, kind: string, ownerId = 'default'): string {
+  const token = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  return `${projectWorkspaceId(projectId)}/tasks/${safePart(kind)}/${safePart(ownerId)}/run-${token}`;
+}
+
+function projectManifestPath(projectId: string): string {
+  return `${projectWorkspaceId(projectId)}/project.json`;
+}
+
 export function conversationProjectId(conversationId: string): string {
   try {
     const raw = JSON.parse(localStorage.getItem(CONVERSATION_PROJECTS_KEY) ?? '{}') as Record<string, string>;
@@ -29,7 +42,7 @@ export function conversationProjectId(conversationId: string): string {
   return id;
 }
 
-function projectMarkdown(input: Pick<Project, 'id' | 'title' | 'request' | 'conversationId' | 'workspaceId' | 'createdAt' | 'members' | 'expectedOutputs' | 'requiredCapabilities'>): string {
+function projectMarkdown(input: Pick<Project, 'id' | 'title' | 'request' | 'conversationId' | 'workspaceId' | 'createdAt' | 'members' | 'expectedOutputs' | 'requiredCapabilities'> & { status?: string }): string {
   const memberLines = input.members.map((member) => `- ${member.employeeId}：${member.reason}`);
   return [
     `# ${input.title || '未命名项目'}`,
@@ -38,6 +51,7 @@ function projectMarkdown(input: Pick<Project, 'id' | 'title' | 'request' | 'conv
     `- 会话 ID：${input.conversationId || '未绑定'}`,
     `- 工作区：${input.workspaceId || projectWorkspaceId(input.id)}`,
     `- 创建时间：${new Date(input.createdAt).toISOString()}`,
+    `- 当前状态：${input.status || 'running'}`,
     '',
     '## 目标',
     input.request || '未记录',
@@ -79,14 +93,33 @@ export async function initializeProjectContext(project: Project): Promise<{ ok: 
     const result = await api.fsMkdir(`${workspaceId}/${directory}`);
     if (!result.ok) return result;
   }
-  const document = await api.fsWrite(project.documentPath || projectDocumentPath(project.id), projectMarkdown({ ...project, workspaceId }));
-  if (!document.ok) return document;
-  const manifest = await api.fsWrite(`${workspaceId}/project.json`, JSON.stringify({
+  let existing: Partial<Project> = {};
+  const existingManifest = await api.fsRead(projectManifestPath(project.id));
+  if (existingManifest.ok && typeof existingManifest.content === 'string') {
+    try {
+      const parsed = JSON.parse(existingManifest.content) as Partial<Project>;
+      if (parsed && typeof parsed === 'object') existing = parsed;
+    } catch {}
+  }
+  const merged = {
+    ...existing,
     ...project,
-    workspaceId,
-    documentPath: project.documentPath || projectDocumentPath(project.id),
-    updatedAt: project.updatedAt || Date.now(),
-  }, null, 2));
+    id: project.id,
+    title: project.title || existing.title || '未命名项目',
+    request: project.request || existing.request || '',
+    conversationId: project.conversationId || existing.conversationId,
+    workspaceId: existing.workspaceId || project.workspaceId || workspaceId,
+    documentPath: existing.documentPath || project.documentPath || projectDocumentPath(project.id),
+    createdAt: existing.createdAt || project.createdAt,
+    updatedAt: Date.now(),
+    members: Array.isArray(existing.members) && existing.members.length ? existing.members : (project.members || []),
+    expectedOutputs: Array.isArray(existing.expectedOutputs) && existing.expectedOutputs.length ? existing.expectedOutputs : (project.expectedOutputs || []),
+    requiredCapabilities: Array.isArray(existing.requiredCapabilities) && existing.requiredCapabilities.length ? existing.requiredCapabilities : (project.requiredCapabilities || []),
+    status: project.status || existing.status || 'running',
+  } as Project;
+  const document = await api.fsWrite(merged.documentPath || projectDocumentPath(project.id), projectMarkdown(merged));
+  if (!document.ok) return document;
+  const manifest = await api.fsWrite(projectManifestPath(project.id), JSON.stringify(merged, null, 2));
   return manifest.ok ? { ok: true, path: document.path } : manifest;
 }
 
@@ -107,4 +140,57 @@ export async function appendProjectEvent(projectId: string, event: Record<string
   } finally {
     if (projectEventQueues.get(path) === nextQueue) projectEventQueues.delete(path);
   }
+}
+
+export async function initializeProjectTaskRecord(input: {
+  projectId: string;
+  taskId: string;
+  title: string;
+  goal: string;
+  conversationId?: string;
+  workspaceId?: string;
+  acceptanceCriteria?: string[];
+  parentTaskId?: string;
+  status?: string;
+  phase?: string;
+  nextAction?: string;
+  artifacts?: Array<{ path: string; category?: string; verified?: boolean }>;
+}): Promise<{ ok: boolean; path?: string; error?: string }> {
+  if (typeof window === 'undefined') return { ok: false, error: '当前环境没有桌面工作区' };
+  const api = window.electronAPI;
+  if (!api?.fsMkdir || !api.fsWrite) return { ok: false, error: '当前环境没有项目文件接口' };
+  const workspaceId = projectWorkspaceId(input.projectId);
+  const directory = `${workspaceId}/tasks`;
+  const directoryResult = await api.fsMkdir(directory);
+  if (!directoryResult.ok) return directoryResult;
+  const path = projectTaskDocumentPath(input.projectId, input.taskId);
+  const content = [
+    `# ${input.title || '任务'}`,
+    '',
+    `- 任务 ID：${input.taskId}`,
+    `- 项目 ID：${input.projectId}`,
+    `- 会话 ID：${input.conversationId || '未绑定'}`,
+    `- 工作区：${input.workspaceId || '未分配'}`,
+    `- 父任务：${input.parentTaskId || '无'}`,
+    `- 状态：${input.status || 'queued'}`,
+    `- 阶段：${input.phase || 'preflight'}`,
+    `- 更新时间：${new Date().toISOString()}`,
+    '',
+    '## 目标',
+    input.goal || '未记录',
+    '',
+    '## 验收标准',
+    ...(input.acceptanceCriteria?.length ? input.acceptanceCriteria.map((item) => `- ${item}`) : ['- 必须有真实证据支持完成']),
+    '',
+    '## 产物',
+    ...(input.artifacts?.length ? input.artifacts.map((item) => `- ${item.path}${item.category ? `（${item.category}）` : ''}${item.verified ? ' [已验证]' : ''}`) : ['- 尚未登记']),
+    '',
+    '## 下一步',
+    input.nextAction || '由 TaskService 根据当前证据决定下一步。',
+    '',
+    '## 追踪',
+    '- TaskService 负责执行状态、工具尝试、产物和验证证据；项目事件账本记录完整回放。',
+  ].join('\n');
+  const result = await api.fsWrite(path, content);
+  return result.ok ? { ok: true, path: result.path || path } : result;
 }

@@ -282,6 +282,8 @@ export interface TaskStoreReadResult {
 export interface TaskStoreQueryOptions {
   taskId?: string;
   teamId?: string;
+  projectId?: string;
+  conversationId?: string;
   status?: string;
   statuses?: string[];
   query?: string;
@@ -347,6 +349,7 @@ export interface TaskServiceTask {
   teamId: string;
   ownerId: string;
   parentTaskId?: string;
+  projectId?: string;
   conversationId?: string;
   workspaceId?: string;
   workspace?: { mode?: string; status?: string; workspaceId?: string; sourceRepo?: string };

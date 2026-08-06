@@ -5,7 +5,7 @@ import process from 'node:process';
 const root = process.cwd();
 const read = (relative) => fs.readFileSync(path.join(root, relative), 'utf8');
 const checks = [
-  ['package version is v5', /"version"\s*:\s*"5\.0\.0"/u.test(read('package.json'))],
+  ['package version is v5', /"version"\s*:\s*"5\.\d+\.\d+"/u.test(read('package.json'))],
   ['roadmap locks the autonomous-agent boundary', /不是.*固定工作流|自主智能体/u.test(read('docs/TAIJI_V5_AUTONOMOUS_AGENT_ROADMAP.md'))],
   ['project types carry stable workspace and proposal history', /workspaceId\?/.test(read('src/types.ts')) && /proposalHistory\?/.test(read('src/types.ts'))],
   ['new chats initialize an independent project context', /createChatSession[\s\S]*initializeProjectContext/u.test(read('src/data/chatSessions.ts'))],

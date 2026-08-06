@@ -8,11 +8,12 @@ const { createTaskServiceApprovalCommands } = require('./taskServiceApprovalComm
 const { createTaskServiceLifecycleCommands } = require('./taskServiceLifecycleCommands.cjs');
 const { createTaskServiceRecoveryCommands } = require('./taskServiceRecoveryCommands.cjs');
 
-const TASK_SERVICE_VERSION = 4;
+const TASK_SERVICE_VERSION = 5;
 const TASK_TYPES = new Set(['assistant', 'dm', 'team', 'child', 'coding']);
 const DELIVERABLE_TYPES = new Set(['answer', 'file', 'connection', 'operation', 'decision', 'mixed']);
 let adaptivePlanPromise;
 let factLedgerPromise;
+const teamBindingLocks = new Map();
 
 function loadAdaptivePlan() {
   if (!adaptivePlanPromise) adaptivePlanPromise = import(pathToFileURL(path.join(__dirname, '../src/engine/adaptivePlanGraph.mjs')).href);
@@ -75,6 +76,8 @@ function normalizeStep(input, index) {
     acceptanceCriteria: list(input?.acceptanceCriteria, []),
     maxRetries: Number.isInteger(input?.maxRetries) ? Math.max(0, Math.min(10, input.maxRetries)) : undefined,
     deliverableType: normalizeDeliverableType(input?.deliverableType),
+    responsibilityTaskId: text(input?.responsibilityTaskId, 180) || undefined,
+    executionBinding: input?.executionBinding && typeof input.executionBinding === 'object' ? clone(input.executionBinding) : undefined,
     status,
     attempts: Math.max(0, Number(input?.attempts) || 0),
     startedAt: Number(input?.startedAt) || undefined,
@@ -418,6 +421,172 @@ function createTaskService(store, options = {}) {
     return result;
   }
 
+  async function ensureTeamExecutionBinding(input = {}) {
+    const rootTaskId = text(input.taskId || input.rootTaskId || input.run?.id, 180);
+    if (!rootTaskId) throw new Error('TaskService: team taskId is required for execution binding');
+    const previous = teamBindingLocks.get(rootTaskId) || Promise.resolve();
+    const operation = previous.catch(() => undefined).then(async () => {
+      let snapshot = await store.read({ taskId: rootTaskId });
+      let root = snapshot.ok ? snapshot.runs?.[0] : undefined;
+      const sourceRun = input.run && typeof input.run === 'object' ? input.run : undefined;
+      if (!root && sourceRun) {
+        await create({
+          id: rootTaskId,
+          taskType: 'team',
+          teamId: sourceRun.teamId,
+          conversationId: sourceRun.conversationId,
+          projectId: sourceRun.projectId || input.projectId,
+          ownerId: 'assistant',
+          title: sourceRun.title,
+          request: sourceRun.request,
+          goal: sourceRun.goal || sourceRun.request,
+          workspaceId: sourceRun.workspaceId,
+          acceptanceCriteria: sourceRun.acceptanceCriteria,
+          taskDecision: sourceRun.contract?.decision,
+          deliverableType: sourceRun.contract?.deliverableType,
+          memberSnapshot: sourceRun.memberSnapshot,
+          steps: (sourceRun.steps || []).map((step) => ({
+            ...step,
+            id: step.id,
+            employeeId: step.employeeId,
+            title: step.title,
+            assignment: step.assignment,
+            dependsOnStepIds: step.dependsOnStepIds,
+            acceptanceCriteria: step.acceptanceCriteria,
+            deliverableType: step.deliverableType,
+          })),
+          idempotencyKey: `team-root:${rootTaskId}`,
+        });
+        snapshot = await store.read({ taskId: rootTaskId });
+        root = snapshot.ok ? snapshot.runs?.[0] : undefined;
+      }
+      if (!root) throw new Error(`TaskService: team task ${rootTaskId} is missing from the durable task store`);
+
+      const sanitizeMember = (member) => {
+        const safe = clone(member || {});
+        if (safe && typeof safe === 'object') {
+          delete safe.modelConfig;
+          delete safe.apiKey;
+          delete safe.token;
+          delete safe.secret;
+          delete safe.credentials;
+        }
+        return safe;
+      };
+      const members = (Array.isArray(input.members) ? input.members : (root.memberSnapshot || [])).map(sanitizeMember);
+      const memberById = new Map(members.filter((member) => member && member.id).map((member) => [String(member.id), member]));
+      await update(rootTaskId, (task) => {
+        task.taskType = task.taskType || 'team';
+        task.hostEntrypoint = task.hostEntrypoint || 'team';
+        task.teamId = task.teamId || text(input.teamId || sourceRun?.teamId, 180) || `scope:team`;
+        task.projectId = task.projectId || text(input.projectId || sourceRun?.projectId, 180) || undefined;
+        task.conversationId = task.conversationId || text(input.conversationId || sourceRun?.conversationId, 180) || undefined;
+        task.memberSnapshot = Array.isArray(task.memberSnapshot) && task.memberSnapshot.length ? task.memberSnapshot : clone(members);
+        task.executionBinding = {
+          kind: 'team-root', rootTaskId, protocolVersion: 1,
+          adapter: text(input.adapter || 'native-execution-adapter', 120), boundAt: Number(task.executionBinding?.boundAt) || Date.now(),
+        };
+        appendServiceEvent(task, 'team_execution_bound', 'Team root is bound to TaskService execution evidence', {
+          rootTaskId, memberCount: task.memberSnapshot.length, stepCount: (task.steps || []).length,
+        });
+      }, 'Bind team root to TaskService execution evidence');
+
+      const refreshed = await store.read({ taskId: rootTaskId });
+      root = refreshed.ok ? refreshed.runs?.[0] : undefined;
+      if (!root) throw new Error(`TaskService: team task ${rootTaskId} disappeared after binding`);
+      const bindings = [];
+      for (const step of root.steps || []) {
+        if (step.compensationOnly === true) continue;
+        let childId = text(step.responsibilityTaskId, 180);
+        let child = childId ? (await store.read({ taskId: childId })).runs?.[0] : undefined;
+        const member = memberById.get(String(step.employeeId)) || (root.memberSnapshot || []).find((item) => String(item.id) === String(step.employeeId));
+        if (!child || child.parentTaskId !== rootTaskId) {
+          const created = await createChild(rootTaskId, {
+            employeeId: step.employeeId,
+            title: step.title,
+            assignment: step.assignment,
+            goal: step.assignment || step.title,
+            teamId: root.teamId,
+            projectId: root.projectId,
+            conversationId: root.conversationId,
+            memberSnapshot: member ? [member] : root.memberSnapshot,
+            acceptanceCriteria: step.acceptanceCriteria || root.acceptanceCriteria,
+            deliverableType: step.deliverableType || root.deliverableType,
+            idempotencyKey: `team-step:${rootTaskId}:${step.id}`,
+          });
+          childId = created.task?.id;
+          child = childId ? (await store.read({ taskId: childId })).runs?.[0] : undefined;
+        }
+        if (!childId || !child) throw new Error(`TaskService: unable to bind team step ${step.id}`);
+        const desiredStatus = step.status === 'completed' ? 'completed'
+          : step.status === 'failed' ? 'failed'
+            : step.status === 'paused' ? 'paused'
+              : step.status === 'stopped' ? 'stopped' : 'queued';
+        await update(childId, (task) => {
+          task.executionBinding = {
+            kind: 'team-step', rootTaskId, sourceStepId: step.id, protocolVersion: 1,
+            employeeId: step.employeeId, boundAt: Number(task.executionBinding?.boundAt) || Date.now(),
+          };
+          task.externalExecution = true;
+          task.rootTaskId = rootTaskId;
+          task.ownerId = text(step.employeeId, 180) || task.ownerId;
+          if (task.memberSnapshot?.length === 0 && member) task.memberSnapshot = [clone(member)];
+          task.status = desiredStatus;
+          task.phase = desiredStatus === 'completed' ? 'completed' : desiredStatus === 'failed' || desiredStatus === 'stopped' || desiredStatus === 'paused' ? 'blocked' : task.phase || 'preflight';
+          const childStep = task.steps?.[0];
+          if (childStep) {
+            childStep.status = desiredStatus;
+            childStep.startedAt = step.startedAt;
+            childStep.completedAt = step.completedAt;
+            childStep.lastError = step.lastError;
+            childStep.output = clone(step.output);
+          }
+          appendServiceEvent(task, 'team_step_bound', `Bound to team step ${step.id}`, { rootTaskId, stepId: step.id, employeeId: step.employeeId });
+        }, 'Bind fixed team member responsibility');
+        await update(rootTaskId, (task) => {
+          const current = (task.steps || []).find((item) => item.id === step.id);
+          if (!current) return;
+          current.responsibilityTaskId = childId;
+          current.executionBinding = { kind: 'team-step', rootTaskId, sourceStepId: step.id, childTaskId: childId, employeeId: step.employeeId };
+        }, `Link team step ${step.id} to responsibility task`);
+        bindings.push({ stepId: step.id, employeeId: step.employeeId, responsibilityTaskId: childId });
+      }
+      const final = await store.read({ taskId: rootTaskId });
+      return { ok: true, task: final.runs?.[0], bindings, bound: true };
+    });
+    teamBindingLocks.set(rootTaskId, operation);
+    try { return await operation; }
+    finally { if (teamBindingLocks.get(rootTaskId) === operation) teamBindingLocks.delete(rootTaskId); }
+  }
+
+  async function recordExecutionEvent(taskId, input = {}) {
+    const eventType = text(input.type || 'team_execution_event', 120);
+    const detail = text(input.detail || input.summary || eventType, 1200);
+    return update(taskId, (task) => {
+      appendServiceEvent(task, eventType, detail, {
+        stepId: text(input.stepId, 180) || undefined,
+        employeeId: text(input.employeeId, 180) || undefined,
+        status: text(input.status, 80) || undefined,
+        payload: clone(input.payload || {}),
+      });
+    }, `Record team execution event: ${eventType}`);
+  }
+
+  async function recordSteering(taskId, input = {}) {
+    return update(taskId, (task) => {
+      task.steeringHistory = Array.isArray(task.steeringHistory) ? task.steeringHistory : [];
+      task.steeringHistory.push({
+        id: id('steer'), source: text(input.source || 'user', 80), message: text(input.message, 2000),
+        route: clone(input.route || {}), affectedStepIds: list(input.affectedStepIds),
+        before: clone(input.before || {}), after: clone(input.after || {}), createdAt: Date.now(),
+      });
+      task.steeringHistory = task.steeringHistory.slice(-60);
+      appendServiceEvent(task, 'steering_applied', 'User steering was recorded with affected steps and route', {
+        affectedStepIds: list(input.affectedStepIds), route: clone(input.route || {}),
+      });
+    }, 'Record user steering and affected team steps');
+  }
+
   async function repairDelegationCollisions(parentTaskId) {
     const snapshot = await store.read({ taskId: parentTaskId });
     const parent = snapshot.ok ? snapshot.runs?.[0] : undefined;
@@ -509,7 +678,7 @@ function createTaskService(store, options = {}) {
     }, `记录步骤完成：${stepId}`);
   }
 
-  return { version: TASK_SERVICE_VERSION, read, create, update, recordToolAttempt, addArtifact, addReference, createChild, repairDelegationCollisions, resolveFactConflict, context, recordLifecycle, readySteps, completeStep, recordReviewDecision, failStep, reviseAdaptivePlan, reassignAdaptiveNode, requestApproval, decideApproval, recordUsage, metrics, tree, recoveryPlan, heartbeat, recordCheckpoint, recordVerification, validateCompletion, setStatus };
+  return { version: TASK_SERVICE_VERSION, read, create, update, recordToolAttempt, addArtifact, addReference, createChild, ensureTeamExecutionBinding, recordExecutionEvent, recordSteering, repairDelegationCollisions, resolveFactConflict, context, recordLifecycle, readySteps, completeStep, recordReviewDecision, failStep, reviseAdaptivePlan, reassignAdaptiveNode, requestApproval, decideApproval, recordUsage, metrics, tree, recoveryPlan, heartbeat, recordCheckpoint, recordVerification, validateCompletion, setStatus };
 }
 
 module.exports = { TASK_SERVICE_VERSION, createTaskService };

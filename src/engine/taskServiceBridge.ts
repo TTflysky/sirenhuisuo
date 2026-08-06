@@ -6,6 +6,8 @@ import type { TurnRuntimeState } from './turnRuntime.mjs';
 import { validateAutonomousToolExecution } from './autonomousExecutionGate.mjs';
 import { loadExternalCapabilityMatrix } from '../data/externalCapabilityMatrix';
 import { validateUnifiedHostAction } from './unifiedHost.mjs';
+import type { Project } from '../types';
+import { appendProjectEvent, conversationProjectId, initializeProjectContext, initializeProjectTaskRecord } from '../utils/projectContext';
 
 type Reference = { kind?: string; id?: string; label?: string; sourceUrl?: string; state?: string };
 type Usage = { promptTokens?: number; completionTokens?: number; totalTokens?: number };
@@ -21,7 +23,7 @@ function failureClass(value: string): string {
 export function createChatTaskBridge(input: {
   taskType: 'assistant' | 'dm'; ownerId: string; title: string; goal: string; request?: string; workspaceId: string;
   parentTaskId?: string;
-  idempotencyKey: string; conversationId?: string; references?: Reference[];
+  idempotencyKey: string; conversationId?: string; projectId?: string; references?: Reference[];
 }) {
   let taskId: string | undefined;
   let workerLeaseId: string | undefined;
@@ -33,8 +35,30 @@ export function createChatTaskBridge(input: {
   let planRevision = 1;
   let decisionSequence = 0;
   const attempts = new Map<string, string>();
+  const registeredArtifacts: Array<{ path: string; category?: string; verified?: boolean }> = [];
   const pendingWrites: Array<Promise<unknown>> = [];
   const stepId = 'execution';
+  const projectId = input.projectId
+    || (input.conversationId ? conversationProjectId(input.conversationId) : `runtime-project-${input.idempotencyKey.replace(/[^a-zA-Z0-9_-]+/gu, '-').slice(0, 80)}`);
+  let taskRecordGoal = input.goal;
+  let taskRecordAcceptance: string[] | undefined;
+  const writeProjectTaskRecord = async (currentTaskId: string, values: { status?: string; phase?: string; nextAction?: string } = {}) => {
+    const result = await initializeProjectTaskRecord({
+      projectId,
+      taskId: currentTaskId,
+      title: input.title,
+      goal: taskRecordGoal,
+      conversationId: input.conversationId,
+      workspaceId: input.workspaceId,
+      acceptanceCriteria: taskRecordAcceptance,
+      parentTaskId: input.parentTaskId,
+      status: values.status,
+      phase: values.phase,
+      nextAction: values.nextAction,
+      artifacts: registeredArtifacts,
+    });
+    if (!result.ok) throw new Error(result.error || '项目任务记录更新失败');
+  };
   const api = () => window.electronAPI;
   const schedule = (operation: Promise<unknown>) => {
     pendingWrites.push(operation.catch(() => undefined));
@@ -174,10 +198,28 @@ export function createChatTaskBridge(input: {
     async prepare(decision: TaskDecision) {
       const electron = api();
       if (decision.mode !== 'execute' || !electron?.taskServiceCreate) return;
+      const now = Date.now();
+      taskRecordGoal = decision.goal || input.goal;
+      taskRecordAcceptance = decision.acceptanceCriteria;
+      const project: Project = {
+        id: projectId,
+        title: input.title || input.goal.slice(0, 120),
+        request: input.request || input.goal,
+        conversationId: input.conversationId,
+        steps: [decision.goal || input.goal],
+        expectedOutputs: decision.acceptanceCriteria || [],
+        members: [],
+        status: 'running',
+        createdAt: now,
+        updatedAt: now,
+      };
+      const projectContext = await initializeProjectContext(project);
+      if (!projectContext.ok) throw new Error(projectContext.error || '项目上下文初始化失败');
       const created = await electron.taskServiceCreate({
         taskType: input.taskType, ownerId: input.ownerId, title: input.title,
         goal: input.parentTaskId ? input.goal : decision.goal || input.goal, request: input.request || input.goal,
         parentTaskId: input.parentTaskId,
+        projectId,
         acceptanceCriteria: decision.acceptanceCriteria, constraints: decision.requiredConstraints,
         taskDecision: decision,
         requiredCapabilities: decision.requiredCapabilities,
@@ -194,6 +236,21 @@ export function createChatTaskBridge(input: {
       planRevision = Number(createdTask.task?.adaptivePlanGraph?.revision) || 1;
       const currentTaskId = taskId;
       if (!currentTaskId) return;
+      const taskRecord = await initializeProjectTaskRecord({
+        projectId,
+        taskId: currentTaskId,
+        title: input.title,
+        goal: decision.goal || input.goal,
+        conversationId: input.conversationId,
+        workspaceId: input.workspaceId,
+        acceptanceCriteria: decision.acceptanceCriteria,
+        parentTaskId: input.parentTaskId,
+        status: 'running',
+        phase: 'execute',
+        nextAction: '等待模型产生真实工具证据或返回可验证结果。',
+      });
+      if (!taskRecord.ok) throw new Error(taskRecord.error || '项目任务记录初始化失败');
+      await appendProjectEvent(projectId, { type: 'task_created', projectId, taskId: currentTaskId, conversationId: input.conversationId, workspaceId: input.workspaceId, goal: decision.goal || input.goal });
       await electron.taskServiceStatus({ taskId: currentTaskId, status: 'running', detail: 'Chat execution started' });
       const claimed = await electron.taskWorkerCommand({
         taskId: currentTaskId,
@@ -254,6 +311,11 @@ export function createChatTaskBridge(input: {
           verified: artifact.verified === true,
           source: 'tool-evidence',
         }));
+        const existing = registeredArtifacts.find((item) => item.path === path);
+        if (existing) Object.assign(existing, { category: artifact.category, verified: artifact.verified === true });
+        else registeredArtifacts.push({ path, category: artifact.category, verified: artifact.verified === true });
+        schedule(appendProjectEvent(projectId, { type: 'artifact_registered', projectId, taskId: currentTaskId, path, category: artifact.category, verified: artifact.verified === true }));
+        schedule(writeProjectTaskRecord(currentTaskId, { status: 'running', phase: 'evidence', nextAction: '已登记产物，等待验证证据或继续处理未完成目标。' }));
       }
     },
     lifecycle(snapshot: TurnLifecycleState) {
@@ -290,6 +352,20 @@ export function createChatTaskBridge(input: {
         });
       }
       const finalStatus = String(result.turnFinalization?.status || result.lifecycle?.status || result.executionState.status);
+      await writeProjectTaskRecord(currentTaskId, {
+        status: finalStatus,
+        phase: finalStatus === 'completed' ? 'verification' : 'recovery',
+        nextAction: finalStatus === 'completed'
+          ? '等待 TaskService 完成证据门禁。'
+          : finalStatus === 'waiting_user'
+            ? '等待用户提供缺失条件。'
+            : finalStatus === 'paused' || finalStatus === 'checkpointed'
+              ? '等待用户明确继续。'
+              : finalStatus === 'stopped'
+                ? '任务已安全停止，保留当前成果和阻塞。'
+                : '等待失败分类与责任步骤重新规划。',
+      });
+      await appendProjectEvent(projectId, { type: 'task_finished', projectId, taskId: currentTaskId, status: finalStatus, output: result.output.slice(0, 1200) });
       if (finalStatus === 'completed' && result.executionState.status === 'completed') {
         await electron.taskServiceCompleteStep({ taskId: currentTaskId, stepId, summary: result.output.slice(0, 1000), output: { model: result.model, summary: result.output.slice(0, 3000) } });
         await recordDecision({ kind: 'verify_completion', summary: '对照原目标、成功条件和真实证据执行最终验收。' }, '执行步骤已经完成，必须由证据门禁决定任务能否关闭。');
@@ -339,6 +415,7 @@ export function createChatTaskBridge(input: {
       if (!currentTaskId || !electron) return;
       try {
         const message = error instanceof Error ? error.message : String(error);
+        await writeProjectTaskRecord(currentTaskId, { status: 'failed', phase: 'recovery', nextAction: '等待失败分类和重新规划。' });
         await electron.taskServiceFailStep({ taskId: currentTaskId, stepId, error: message, errorClass: failureClass(message) });
       } finally {
         await releaseWorkerLease();

@@ -551,6 +551,8 @@ function createTaskRuntimeStore(rootDir, options = {}) {
       await initialize();
       const taskId = String(options.taskId || '');
       const teamId = String(options.teamId || '');
+      const projectId = String(options.projectId || '');
+      const conversationId = String(options.conversationId || '');
       const query = String(options.query || '').trim().toLocaleLowerCase();
       const statuses = new Set((Array.isArray(options.statuses) ? options.statuses : options.status ? [options.status] : []).map(String));
       const updatedAfter = Number(options.updatedAfter) || 0;
@@ -560,12 +562,16 @@ function createTaskRuntimeStore(rootDir, options = {}) {
       const allRuns = [...projected.values()].sort((left, right) => (Number(right.updatedAt) || 0) - (Number(left.updatedAt) || 0));
       const filteredRuns = allRuns.filter((run) => (!taskId || run.id === taskId)
         && (!teamId || run.teamId === teamId)
+        && (!projectId || run.projectId === projectId)
+        && (!conversationId || run.conversationId === conversationId)
         && (statuses.size === 0 || statuses.has(run.status))
         && (Number(run.updatedAt) || 0) >= updatedAfter
         && (Number(run.updatedAt) || 0) <= updatedBefore
         && (!query || searchableRun(run).includes(query)));
       const selectedEvents = events.filter((event) => (!taskId || event.taskId === taskId)
         && (!teamId || event.teamId === teamId)
+        && (!projectId || projected.get(event.taskId)?.projectId === projectId)
+        && (!conversationId || projected.get(event.taskId)?.conversationId === conversationId)
         && (!options.afterSequence || event.sequence > Number(options.afterSequence))
         && (!options.beforeSequence || event.sequence < Number(options.beforeSequence))).slice(-limit);
       return {

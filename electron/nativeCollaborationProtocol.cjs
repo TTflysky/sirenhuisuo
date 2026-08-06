@@ -79,22 +79,29 @@ function createNativeCollaborationProtocol(options) {
     const evidence = evidenceFromTool(safeResult, member, name);
     job.toolCalls += 1;
     if (taskService) {
-      await taskService.recordToolAttempt(job.taskId, {
-        id: `attempt-${job.taskId}-${step.id}-${job.toolCalls}`, stepId: step.id, toolName: name,
-        status: result.success === true ? 'succeeded' : 'failed',
-        errorClass: result.success === true ? undefined : (result.errorCategory || result.error?.category || 'unknown'),
-        inputSummary: JSON.stringify(safeArgs), outputSummary: safeResult.output,
-        evidenceIds: evidence.map((item) => item.artifact?.path || item.summary).slice(0, 12),
-        startedAt: result.startedAt, finishedAt: result.completedAt,
-      }).catch(() => {});
-      for (const artifact of safeResult.structuredEvidence?.artifacts || []) {
-        if (!artifact.path && !artifact.diskPath) continue;
-        await taskService.addArtifact(job.taskId, {
-          id: `${job.taskId}:${artifact.path || artifact.diskPath}`,
-          name: artifact.filename || artifact.path || artifact.diskPath,
-          path: artifact.path || artifact.diskPath, category: artifact.category,
-          verified: artifact.verified === true, source: name,
+      const taskRecords = [
+        { taskId: job.taskId, stepId: step.id, suffix: 'root' },
+        ...(step.responsibilityTaskId ? [{ taskId: step.responsibilityTaskId, stepId: 'step-1', suffix: 'responsibility' }] : []),
+      ];
+      for (const record of taskRecords) {
+        await taskService.recordToolAttempt(record.taskId, {
+          id: `attempt-${job.taskId}-${step.id}-${job.toolCalls}-${record.suffix}`, stepId: record.stepId, toolName: name,
+          status: result.success === true ? 'succeeded' : 'failed',
+          errorClass: result.success === true ? undefined : (result.errorCategory || result.error?.category || 'unknown'),
+          inputSummary: JSON.stringify(safeArgs), outputSummary: safeResult.output,
+          evidenceIds: evidence.map((item) => item.artifact?.path || item.summary).slice(0, 12),
+          startedAt: result.startedAt, finishedAt: result.completedAt,
         }).catch(() => {});
+        for (const artifact of safeResult.structuredEvidence?.artifacts || []) {
+          if (!artifact.path && !artifact.diskPath) continue;
+          await taskService.addArtifact(record.taskId, {
+            id: `${record.taskId}:${artifact.path || artifact.diskPath}`,
+            name: artifact.filename || artifact.path || artifact.diskPath,
+            path: artifact.path || artifact.diskPath, diskPath: artifact.diskPath,
+            workspaceId: artifact.workspaceId || run.workspaceId, category: artifact.category,
+            verified: artifact.verified === true, source: name,
+          }).catch(() => {});
+        }
       }
     }
     await updateRun(job.taskId, (next) => {

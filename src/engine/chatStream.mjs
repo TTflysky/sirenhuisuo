@@ -1,3 +1,5 @@
+import { createStreamingContentFilter, normalizeModelMessage } from './modelOutputGateway.mjs';
+
 function mergeToolCall(target, delta, fallbackIndex) {
   const index = Number.isInteger(delta?.index) ? delta.index : fallbackIndex;
   const current = target.get(index) ?? { id: '', name: '', arguments: '' };
@@ -38,6 +40,7 @@ export async function consumeOpenAIChatStream(response, options = {}) {
   if (!response?.body?.getReader) throw new Error('当前接口没有返回可读取的流式响应');
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
+  const filter = createStreamingContentFilter(options.onTextDelta);
   const state = { content: '', reasoningContent: '', reasoningSeen: false, model: '', usage: undefined, toolCalls: new Map() };
   let buffer = '';
   let doneEvent = false;
@@ -47,26 +50,37 @@ export async function consumeOpenAIChatStream(response, options = {}) {
     const events = buffer.split(/\r?\n\r?\n/u);
     buffer = events.pop() ?? '';
     for (const event of events) {
-      if (parseEvent(event, state, options.onTextDelta)) {
+      if (parseEvent(event, state, (delta) => filter.push(delta))) {
         doneEvent = true;
         break;
       }
     }
     if (done) break;
   }
-  if (buffer.trim()) parseEvent(buffer, state, options.onTextDelta);
-  return {
-    content: state.content.trim() || null,
-    reasoningContent: state.reasoningSeen ? state.reasoningContent : undefined,
-    model: state.model,
-    usage: state.usage,
-    toolCalls: [...state.toolCalls.entries()]
+  if (buffer.trim()) parseEvent(buffer, state, (delta) => filter.push(delta));
+  filter.finish();
+  const normalized = normalizeModelMessage({
+    content: state.content,
+    reasoning_content: state.reasoningContent,
+    tool_calls: [...state.toolCalls.entries()]
       .sort(([left], [right]) => left - right)
       .map(([, call], index) => ({
         id: call.id || `tc-stream-${Date.now()}-${index}`,
-        name: call.name,
-        arguments: call.arguments || '{}',
+        type: 'function',
+        function: { name: call.name, arguments: call.arguments || '{}' },
       }))
-      .filter((call) => call.name),
+      .filter((call) => call.function.name),
+  }, { toolsEnabled: true });
+  return {
+    content: normalized.content,
+    reasoningContent: state.reasoningSeen ? state.reasoningContent : undefined,
+    model: state.model,
+    usage: state.usage,
+    toolCalls: normalized.toolCalls.map((call) => ({
+      id: call.id,
+      name: call.function.name,
+      arguments: call.function.arguments,
+    })),
+    outputDiagnostics: normalized.diagnostics,
   };
 }

@@ -4,6 +4,7 @@ export type ContinuationRelation = 'new_task' | 'continuation' | 'correction' | 
 
 export interface ChatTaskContinuation {
   taskId: string;
+  projectId?: string;
   workspaceId: string;
   goal: string;
   request: string;
@@ -69,6 +70,7 @@ export function selectChatTaskContinuation(input: {
     if (!workspaceId || !goal || isContinuationOnlyGoal(goal)) continue;
     return {
       taskId: candidate.id,
+      projectId: task.projectId,
       workspaceId,
       goal,
       request: normalized(task.request || goal),

@@ -262,6 +262,43 @@ function createNativeExecutionAdapter(options) {
     return stored;
   }
 
+  async function bindTeamExecution(input = {}) {
+    if (!options.taskService || !input.run?.teamId || typeof options.taskService.ensureTeamExecutionBinding !== 'function') {
+      return input.run;
+    }
+    const result = await options.taskService.ensureTeamExecutionBinding({
+      taskId: input.taskId,
+      run: input.run,
+      members: input.members,
+      adapter: input.adapter,
+    });
+    if (!result?.ok || !result.task) throw new Error(result?.error || 'TaskService team execution binding failed');
+    return result.task;
+  }
+
+  async function mirrorTeamStepStatus(job, step, member, status, detail, output) {
+    if (!options.taskService) return;
+    const taskIds = [job.taskId, step?.responsibilityTaskId].filter(Boolean);
+    await Promise.allSettled(taskIds.map((taskId) => options.taskService.recordExecutionEvent?.(taskId, {
+      type: `team_step_${status}`,
+      stepId: taskId === job.taskId ? step.id : 'step-1',
+      employeeId: member?.id,
+      status,
+      detail,
+      payload: { output: output ? text(output, 1200) : undefined },
+    })));
+    if (!step?.responsibilityTaskId) return;
+    if (status === 'running') {
+      await options.taskService.setStatus(step.responsibilityTaskId, 'running', detail).catch(() => {});
+    } else if (status === 'completed') {
+      await options.taskService.completeStep(step.responsibilityTaskId, { stepId: 'step-1', summary: detail, output: { summary: text(output, 1200) } }).catch(() => {});
+      await options.taskService.setStatus(step.responsibilityTaskId, 'completed', detail).catch(() => {});
+    } else if (status === 'failed') {
+      await options.taskService.failStep(step.responsibilityTaskId, { stepId: 'step-1', error: detail, retryable: false }).catch(() => {});
+      await options.taskService.setStatus(step.responsibilityTaskId, 'failed', detail).catch(() => {});
+    }
+  }
+
   async function readRun(taskId) {
     const snapshot = await options.store.read();
     if (!snapshot.ok) throw new Error(snapshot.error || '无法读取任务');
@@ -490,6 +527,14 @@ function createNativeExecutionAdapter(options) {
         nextAction: run.turnLifecycle.recovery?.nextAction,
       });
     }, `原生 Adapter 保存 ${status} 生命周期`).catch(() => {});
+  }
+
+  async function mirrorControlledTeamSteps(job, status, reason) {
+    if (!options.taskService || !['paused', 'waiting_user', 'stopped', 'failed'].includes(status)) return;
+    const run = await readRun(job.taskId).catch(() => undefined);
+    const childStatus = status === 'waiting_user' ? 'awaiting_user' : status;
+    await Promise.allSettled((run?.steps || []).filter((step) => step.responsibilityTaskId && step.status !== 'completed')
+      .map((step) => options.taskService.setStatus(step.responsibilityTaskId, childStatus, reason)));
   }
 
   async function consultStepAdvisors(job, run, step, actingMember, moaRuntime, currentEvidence) {
@@ -759,6 +804,7 @@ function createNativeExecutionAdapter(options) {
     }, `原生 Adapter 开始步骤 ${step.id}`);
     const delegated = run.delegations?.find((item) => item.id === step.delegationId);
     if (delegated?.childTaskId && options.taskService) await options.taskService.setStatus(delegated.childTaskId, 'running', `${member.name} 已领取员工子任务`).catch(() => {});
+    await mirrorTeamStepStatus(job, step, member, 'running', `${member.name} started ${step.title}`);
     emit(job, 'step_started', { stepId: step.id, member: publicMember(member), title: step.title });
   }
 
@@ -821,6 +867,7 @@ function createNativeExecutionAdapter(options) {
       await options.taskService.completeStep(delegated.childTaskId, { stepId: 'step-1', summary: result.content.slice(0, 1200), output: { summary: result.content.slice(0, 1200) } }).catch(() => {});
       await options.taskService.setStatus(delegated.childTaskId, 'completed', `${member.name} 已提交子任务结果`).catch(() => {});
     }
+    await mirrorTeamStepStatus(job, step, member, 'completed', `${member.name} completed ${step.title}`, result.content);
     await appendStageSummary(job, run, step, member, result);
     emit(job, 'step_completed', { stepId: step.id, member: publicMember(member), summary: result.content.slice(0, 700) });
   }
@@ -933,6 +980,7 @@ function createNativeExecutionAdapter(options) {
     }, `原生 Adapter 步骤失败 ${step.id}`);
     const delegated = failedRun?.delegations?.find((item) => item.id === step.delegationId);
     if (delegated?.childTaskId && options.taskService) await options.taskService.failStep(delegated.childTaskId, { stepId: 'step-1', error: reason, retryable: false }).catch(() => {});
+    await mirrorTeamStepStatus(job, step, member, 'failed', reason);
     emit(job, 'step_failed', { stepId: step.id, member: publicMember(member), error: reason });
     return { action: recoveryAction, reason };
   }
@@ -1416,7 +1464,10 @@ function createNativeExecutionAdapter(options) {
           await runCompensations(job, `${controlKind}: ${error.message}`).catch(() => {});
           compensationHandled = true;
         }
-        if (lifecycleStatus) await persistControlledLifecycle(job, lifecycleStatus, error.message);
+        if (lifecycleStatus) {
+          await persistControlledLifecycle(job, lifecycleStatus, error.message);
+          await mirrorControlledTeamSteps(job, lifecycleStatus, error.message);
+        }
         if (job.control === 'stop' && controlKind !== 'stop') {
           controlKind = 'stop';
           await runCompensations(job, `stop: ${error.message}`).catch(() => {});
@@ -1466,6 +1517,7 @@ function createNativeExecutionAdapter(options) {
     enqueueCompensation,
     emit,
     ensureRun,
+    bindTeamExecution,
     readRun,
     updateRun,
     runCompensations,

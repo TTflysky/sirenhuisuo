@@ -3,6 +3,7 @@ import { createChatTaskBridge } from '../../src/engine/taskServiceBridge';
 
 function makeApi(options: { accepted?: boolean } = {}) {
   const order: string[] = [];
+  const files = new Map<string, string>();
   const api = {
     taskServiceCreate: vi.fn(async () => ({
       ok: true,
@@ -39,8 +40,12 @@ function makeApi(options: { accepted?: boolean } = {}) {
     taskServiceValidateCompletion: vi.fn(async () => ({ ok: true, passed: true })),
     taskServiceFailStep: vi.fn(async () => ({ ok: true })),
     taskServiceCheckpoint: vi.fn(async () => ({ ok: true })),
+    fsInitWorkspace: vi.fn(async (workspaceId: string) => ({ ok: true, path: workspaceId })),
+    fsMkdir: vi.fn(async () => ({ ok: true })),
+    fsRead: vi.fn(async (path: string) => files.has(path) ? { ok: true, content: files.get(path) } : { ok: false, error: 'not found' }),
+    fsWrite: vi.fn(async (path: string, content: string) => { files.set(path, content); return { ok: true, path }; }),
   };
-  return { api, order };
+  return { api, order, files };
 }
 
 function makeBridge() {
@@ -66,6 +71,8 @@ describe('chat task bridge autonomous decision authority', () => {
       source: 'model', goalId: 'goal-one', planRevision: 3,
       selectedAction: { kind: 'use_tool', stepId: 'execution', employeeId: 'assistant', toolName: 'write_file' },
     });
+    expect(api.taskServiceCreate.mock.calls[0][0].projectId).toBe('conversation-project-conversation-one');
+    expect([...api.fsWrite.mock.calls.map((call) => call[0])]).toContain('projects/conversation-project-conversation-one/tasks/task-one.md');
   });
 
   it('blocks the tool attempt when the current goal or plan rejects the proposal', async () => {

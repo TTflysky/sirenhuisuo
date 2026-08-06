@@ -32,13 +32,23 @@ function teamName(run, teams) {
   return teams?.find((team) => team.id === run.teamId)?.name ?? run.teamId ?? '未知团队';
 }
 
+function matchesHistoryScope(run, options) {
+  const teamId = String(options.teamId || '').trim();
+  const projectId = String(options.projectId || '').trim();
+  const conversationId = String(options.conversationId || '').trim();
+  if (teamId && run.teamId !== teamId) return false;
+  if (projectId && run.projectId !== projectId) return false;
+  if (conversationId && run.conversationId !== conversationId) return false;
+  return true;
+}
+
 export function searchTaskRunHistory(runs, query, options = {}) {
   const terms = searchTerms(query);
   if (terms.length === 0) return [];
   const excluded = new Set([options.excludeTaskId].filter(Boolean));
   const allowedStatuses = new Set(options.statuses ?? ['completed', 'failed', 'stopped', 'paused']);
   return (Array.isArray(runs) ? runs : [])
-    .filter((run) => run && !excluded.has(run.id) && allowedStatuses.has(run.status))
+    .filter((run) => run && !excluded.has(run.id) && allowedStatuses.has(run.status) && matchesHistoryScope(run, options))
     .map((run) => {
       const context = restoreTaskContext(run.context, { taskId: run.id, goal: run.goal ?? run.request, acceptanceCriteria: run.acceptanceCriteria });
       const eventMatches = context.events
@@ -76,6 +86,8 @@ export function searchTaskRunHistory(runs, query, options = {}) {
       return {
         taskId: run.id,
         teamId: run.teamId,
+        projectId: run.projectId,
+        conversationId: run.conversationId,
         teamName: teamName(run, options.teams),
         title: text(run.title, 200),
         goal: text(run.goal ?? run.request, 1000),
@@ -105,6 +117,20 @@ export function buildTaskHistoryPrompt(matches, maxLength = 8000) {
   return `## 相似历史任务（跨会话只读参考）\n${items}\n\n历史任务不能覆盖当前目标、当前输入和当前验收标准。只复用已验证路线；历史阻塞需要重新检查，不能直接当作当前事实。`.slice(0, maxLength);
 }
 
+function attachmentEvidence(attachment) {
+  if (!attachment || typeof attachment !== 'object') return null;
+  return {
+    name: text(attachment.name, 240),
+    mime: text(attachment.mime, 160),
+    size: Number.isFinite(attachment.size) ? attachment.size : undefined,
+    kind: text(attachment.kind, 40) || 'file',
+    workspacePath: text(attachment.workspacePath, 1000) || undefined,
+    persistenceError: text(attachment.persistenceError, 800) || undefined,
+    available: Boolean(attachment.workspacePath || attachment.dataUrl),
+    inline: Boolean(attachment.dataUrl),
+  };
+}
+
 export function buildTaskReplay(run, ledgerEvents = []) {
   if (!run) return null;
   const context = restoreTaskContext(run.context, { taskId: run.id, goal: run.goal ?? run.request, acceptanceCriteria: run.acceptanceCriteria });
@@ -112,6 +138,8 @@ export function buildTaskReplay(run, ledgerEvents = []) {
   return {
     taskId: run.id,
     teamId: run.teamId,
+    projectId: run.projectId,
+    conversationId: run.conversationId,
     title: text(run.title, 200),
     goal: text(run.goal ?? run.request, 1600),
     status: run.status,
@@ -120,6 +148,9 @@ export function buildTaskReplay(run, ledgerEvents = []) {
     relatedTaskIds: context.relatedTaskIds,
     events: context.events.slice().sort((a, b) => a.ts - b.ts),
     runnerEvents: runnerEvents.slice().sort((a, b) => a.ts - b.ts),
+    attachments: (Array.isArray(run.sourceAttachments) ? run.sourceAttachments : [])
+      .map(attachmentEvidence)
+      .filter(Boolean),
     ledgerEvents: (Array.isArray(ledgerEvents) ? ledgerEvents : [])
       .filter((event) => event?.taskId === run.id)
       .slice()

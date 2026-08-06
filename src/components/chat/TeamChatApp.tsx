@@ -178,8 +178,13 @@ export default function TeamChatApp({ teamId }: Props) {
   const waitingRun = !currentRunningRun && !queuedRun ? taskRuns.find((run) => run.status === 'awaiting_user' || run.status === 'paused' || run.status === 'failed') : undefined;
   const confirmationRun = waitingRun ?? queuedRun;
   const historyMatches = useMemo(() => taskHistoryQuery.trim()
-    ? searchTaskRunHistory(state.taskRuns, taskHistoryQuery, { teams: state.teams, limit: 12 })
-    : [], [taskHistoryQuery, state.taskRuns, state.teams]);
+    ? searchTaskRunHistory(state.taskRuns, taskHistoryQuery, {
+      teams: state.teams,
+      teamId,
+      projectId: teamProject?.id ?? team?.projectId,
+      limit: 12,
+    })
+    : [], [taskHistoryQuery, state.taskRuns, state.teams, teamId, teamProject?.id, team?.projectId]);
   const replayRun = replayTaskId ? state.taskRuns.find((run) => run.id === replayTaskId) : undefined;
   const loadTaskAudit = async (taskId: string) => {
     const api = window.electronAPI;
@@ -201,6 +206,9 @@ export default function TeamChatApp({ teamId }: Props) {
       `- 创建时间：${new Date(replay.createdAt).toLocaleString('zh-CN')}`, `- 更新时间：${new Date(replay.updatedAt).toLocaleString('zh-CN')}`,
       '', '## 任务目标', replay.goal || '未记录', '', '## 阶段与负责人',
       ...(run.steps ?? []).map((step) => `- ${step.order}. ${state.employees.find((employee) => employee.id === step.employeeId)?.name ?? step.title}：${step.assignment}｜${stepStatusLabel(step.status)}｜尝试 ${step.attempts} 次`),
+      '', '## 附件证据', ...(replay.attachments.length
+        ? replay.attachments.map((attachment) => `- ${attachment.name}（${attachment.kind}，${attachment.size ?? '大小未知'} bytes）${attachment.workspacePath ? ` -> ${attachment.workspacePath}` : ''}${attachment.persistenceError ? `；保存失败：${attachment.persistenceError}` : ''}`)
+        : ['- 无']),
       '', '## Worker 状态', run.worker ? `- ${run.worker.state}：${run.worker.activity ?? '无活动说明'}` : '- 未记录 Worker 状态',
       '', '## 验收证据', ...(run.verification ?? []).map((item) => `- ${item.status}: ${item.label} - ${item.detail ?? ''}`),
       '', '## 自适应计划', run.adaptivePlanGraph ? `- 当前版本：第 ${run.adaptivePlanGraph.revision} 版\n- 最近修订：${run.adaptivePlanGraph.revisionHistory.at(-1)?.reason ?? '初始计划'}\n- 影响节点：${run.adaptivePlanGraph.revisionHistory.at(-1)?.affectedNodeIds?.join('、') || '无'}` : '- 尚未建立自适应计划',
@@ -221,6 +229,9 @@ export default function TeamChatApp({ teamId }: Props) {
         `- 时间：${new Date(replay.createdAt).toLocaleString('zh-CN')} - ${new Date(replay.updatedAt).toLocaleString('zh-CN')}`,
         '', '### 目标', replay.goal || '未记录', '', '### 阶段与负责人',
         ...(run.steps ?? []).map((step) => `- ${step.order}. ${state.employees.find((employee) => employee.id === step.employeeId)?.name ?? step.title}｜${stepStatusLabel(step.status)}｜${step.assignment}｜尝试 ${step.attempts} 次`),
+        '', '### 附件证据', ...(replay.attachments.length
+          ? replay.attachments.map((attachment) => `- ${attachment.name}（${attachment.kind}，${attachment.size ?? '大小未知'} bytes）${attachment.workspacePath ? ` -> ${attachment.workspacePath}` : ''}${attachment.persistenceError ? `；保存失败：${attachment.persistenceError}` : ''}`)
+          : ['- 无']),
         '', '### Worker', run.worker ? `- ${run.worker.state}：${run.worker.activity ?? '无活动说明'}` : '- 未记录',
         '', '### 验收证据', ...(run.verification ?? []).map((item) => `- ${item.status}｜${item.label}｜${item.detail ?? ''}`),
         '', '### 自适应计划', run.adaptivePlanGraph ? `- 第 ${run.adaptivePlanGraph.revision} 版｜${run.adaptivePlanGraph.revisionHistory.at(-1)?.reason ?? '初始计划'}\n- 影响：${run.adaptivePlanGraph.revisionHistory.at(-1)?.affectedNodeIds?.join('、') || '无'}\n- 保留完成项：${run.adaptivePlanGraph.revisionHistory.at(-1)?.preservedCompletedNodeIds?.join('、') || '无'}` : '- 尚未建立',

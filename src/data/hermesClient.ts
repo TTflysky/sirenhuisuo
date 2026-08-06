@@ -23,6 +23,7 @@ import {
 import { parseGeneratedAvatarPayload } from './generatedAvatar';
 import { buildImageEditFormData, selectEditableImage } from '../engine/imageRequest.mjs';
 import { consumeOpenAIChatStream } from '../engine/chatStream.mjs';
+import { normalizeModelMessage } from '../engine/modelOutputGateway.mjs';
 import { prepareChatRequestTurns } from '../engine/chatRequestContext.mjs';
 import { createCompatibilityReport } from '../engine/modelCompatibility.mjs';
 import { runReliableModelRequest } from './modelReliability';
@@ -837,6 +838,15 @@ export interface ChatResult {
   contextUsage: ContextUsage;
   model: string;
   toolCalls?: ToolCallResult[];  // function-calling 返回的工具调用
+  outputDiagnostics?: {
+    gatewayVersion: number;
+    protocol: string;
+    controlDetected: boolean;
+    parseStatus: string;
+    fatal: boolean;
+    toolCallCount: number;
+    errors: string[];
+  };
   reliability?: { key: string; latencyMs: number; firstTokenMs?: number; outcome: 'success' | 'failure' };
 }
 
@@ -943,8 +953,20 @@ export async function chatCompletion(
       : undefined;
     const data = streamed ? undefined : await res.json();
     const msg = data?.choices?.[0]?.message ?? {};
-    const content: string | null = streamed?.content
-      ?? (typeof msg.content === 'string' && msg.content.trim() ? msg.content.trim() : null);
+    const normalized = normalizeModelMessage(streamed ? {
+      content: streamed.content,
+      reasoning_content: streamed.reasoningContent,
+      tool_calls: (streamed.toolCalls ?? []).map((call: ToolCallResult) => ({
+        id: call.id,
+        type: 'function',
+        function: { name: call.name, arguments: call.arguments },
+      })),
+    } : msg, { toolsEnabled: Boolean(tools?.length) });
+    if (normalized.diagnostics.fatal) {
+      const error = Object.assign(new Error('模型输出包含无法解析的工具协议，已阻止其进入聊天'), { modelOutputDiagnostics: normalized.diagnostics, retryable: true });
+      throw error;
+    }
+    const content: string | null = normalized.content;
     const reasoningContent = streamed?.reasoningContent
       ?? (typeof msg.reasoning_content === 'string' ? msg.reasoning_content : undefined);
     const u = streamed?.usage ?? data?.usage ?? {};
@@ -963,16 +985,11 @@ export async function chatCompletion(
     };
     // 记账（简化：单行 append 以避免匹配问题）
     appendTokenLog({ ts: Date.now(), model, promptTokens: usage.promptTokens, completionTokens: usage.completionTokens, totalTokens: usage.totalTokens, scene, label });
-    let toolCalls: ToolCallResult[] | undefined = streamed?.toolCalls.length ? streamed.toolCalls : undefined;
-    if (!streamed && msg.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
-      toolCalls = msg.tool_calls.map((tc: any) => ({
-        id: tc.id ?? `tc-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        name: tc.function?.name ?? '',
-        arguments: tc.function?.arguments ?? '{}',
-      }));
-    }
+    const toolCalls: ToolCallResult[] | undefined = normalized.toolCalls.length
+      ? normalized.toolCalls.map((call) => ({ id: call.id, name: call.function.name, arguments: call.function.arguments }))
+      : undefined;
     if (!content && !toolCalls) throw new Error('模型返回为空');
-    return { value: { content, reasoningContent, usage, contextUsage, model: streamed?.model || model, toolCalls }, status: res.status };
+    return { value: { content, reasoningContent, usage, contextUsage, model: streamed?.model || model, toolCalls, outputDiagnostics: normalized.diagnostics }, status: res.status };
   });
   return { ...reliable.value, reliability: reliable.reliability };
 }

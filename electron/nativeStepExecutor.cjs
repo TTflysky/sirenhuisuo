@@ -212,6 +212,7 @@ function createNativeStepExecutor(deps) {
         if (terminalStatus === 'waiting_user') throw new ExecutionControlSignal('awaiting_user', finalContent);
         throw error;
       }
+      if (response.outputDiagnostics) emit(job, 'model_output_normalized', response.outputDiagnostics);
       const message = response.message;
       const toolCalls = Array.isArray(message.tool_calls) ? message.tool_calls : [];
       const observedDecision = turnRuntime.observeModelDecision(runtime, {

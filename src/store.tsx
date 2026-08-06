@@ -665,7 +665,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
     }
     if (codingProject) run.codingProject = codingProject;
-    const historyMatches = searchTaskRunHistory(current.taskRuns, request, { teams: current.teams, limit: 4 });
+    const historyMatches = searchTaskRunHistory(current.taskRuns, request, {
+      teams: current.teams,
+      teamId: team.id,
+      projectId: continuationRun?.projectId ?? team.projectId,
+      conversationId,
+      limit: 4,
+    });
     const historyContext = buildTaskHistoryPrompt(historyMatches);
     const layeredMemoryContext = await buildLayeredMemoryContext({ query: request, teamId, limit: 18 });
     run.skillEvidence = skillBundle.evidence;

@@ -1,3 +1,15 @@
+const path = require('path');
+const { pathToFileURL } = require('url');
+
+let outputGatewayPromise;
+
+function loadOutputGateway() {
+  if (!outputGatewayPromise) {
+    outputGatewayPromise = import(pathToFileURL(path.join(__dirname, '../src/engine/modelOutputGateway.mjs')).href);
+  }
+  return outputGatewayPromise;
+}
+
 async function callNativeModel(input) {
   const {
     job, member, messages, tools, timeoutMs, fetchImpl, retryDelays, turnRuntime,
@@ -39,7 +51,20 @@ async function callNativeModel(input) {
         try { data = JSON.parse(raw); } catch { throw new Error('模型返回了无效 JSON'); }
         const message = data?.choices?.[0]?.message;
         if (!message) throw new Error('模型没有返回可用消息');
-        return { message, usage: data.usage || {}, model: data.model || modelName(config) };
+        const gateway = await loadOutputGateway();
+        const normalized = gateway.normalizeModelMessage(message, { toolsEnabled: Array.isArray(tools) && tools.length > 0 });
+        if (normalized.diagnostics.fatal) {
+          const error = new Error('模型输出包含无法解析的工具协议，已阻止执行');
+          error.retryable = true;
+          error.modelOutputDiagnostics = normalized.diagnostics;
+          throw error;
+        }
+        return {
+          message: normalized.message,
+          outputDiagnostics: normalized.diagnostics,
+          usage: data.usage || {},
+          model: data.model || modelName(config),
+        };
       })();
       const result = await Promise.race([operation, deadline.promise]);
       await reportActivity(job, 'model_response_received', `${member.name} 已收到模型回复，正在检查下一步动作`, {

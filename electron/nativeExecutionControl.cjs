@@ -17,6 +17,7 @@ function createNativeExecutionControl(deps) {
     enqueueCompensation,
     emit,
     ensureRun,
+    bindTeamExecution,
     readRun,
     updateRun,
     runCompensations,
@@ -31,7 +32,12 @@ function createNativeExecutionControl(deps) {
     const existing = jobs.get(taskId);
     if (existing && ACTIVE_JOB_STATES.has(existing.state)) return { ok: true, idempotencyHit: true, job: safeJob(existing) };
     let storedRun;
-    try { storedRun = await ensureRun({ ...input, taskId }); }
+    try {
+      storedRun = await ensureRun({ ...input, taskId });
+      if (bindTeamExecution && storedRun?.teamId) {
+        storedRun = await bindTeamExecution({ taskId, run: storedRun, members: input.members, adapter: 'native-execution-adapter' });
+      }
+    }
     catch (error) { return { ok: false, error: error?.message || String(error) }; }
     if (storedRun?.worktree && options.worktreeManager) {
       const recovered = await options.worktreeManager.recover(taskId);
@@ -218,6 +224,14 @@ function createNativeExecutionControl(deps) {
         );
         next.lifecycleRecovery = turnLifecycle.createLifecycleRecoveryCapsule(next.turnLifecycle);
       }, `上下文路由：${routed.route.kind} -> ${routed.route.action}`);
+    }
+    if (routed.run && options.taskService?.recordSteering) {
+      await options.taskService.recordSteering(job.taskId, {
+        source: 'user', message: value, route: routed.route,
+        affectedStepIds: (current?.steps || []).filter((step) => ['running', 'queued', 'paused', 'failed'].includes(step.status)).map((step) => step.id),
+        before: { status: current?.status, phase: current?.phase, planRevision: current?.adaptivePlanGraph?.revision },
+        after: { action: routed.route.action, shouldPreempt: routed.route.shouldPreempt === true },
+      }).catch(() => {});
     }
     if (routed.route.action === 'pause') {
       job.control = 'pause';

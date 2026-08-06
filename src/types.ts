@@ -441,6 +441,18 @@ export interface TaskRunStep {
   compensationOnly?: boolean;
   /** 由运行中动态委派创建的子任务记录。 */
   delegationId?: string;
+  /** TaskService responsibility record for a fixed team member step. */
+  responsibilityTaskId?: string;
+  /** Durable binding metadata for the fixed member responsibility. */
+  executionBinding?: {
+    kind: 'team-step';
+    rootTaskId: string;
+    sourceStepId: string;
+    childTaskId: string;
+    employeeId: string;
+  };
+  /** A responsibility record is observed by the parent adapter, not started as a second job. */
+  externalExecution?: boolean;
   reviewDecision?: 'pass' | 'reject';
   reviewReason?: string;
   responsibleEmployeeId?: string;

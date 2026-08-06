@@ -71,7 +71,9 @@ async function waitForPageReady(port, timeoutMs = 30000) {
       ? []
       : ['--disable-gpu', '--disable-gpu-compositing', '--in-process-gpu', '--disable-direct-composition', '--disable-gpu-sandbox', '--use-gl=swiftshader', '--disable-features=CalculateNativeWinOcclusion,Vulkan'];
     console.log(`[electron-e2e] gpu mode: ${gpuMode}`);
-    electron = spawn(electronPath, ['.', ...gpuArgs], {
+    // Chromium switches must appear before the app path; arguments after "."
+    // are forwarded to the renderer and do not disable the GPU process.
+    electron = spawn(electronPath, ['--remote-allow-origins=*', '--no-sandbox', ...gpuArgs, '.'], {
       cwd: path.resolve(__dirname, '..'), env, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
     });
     electron.stdout.on('data', (chunk) => { electronLog = `${electronLog}${chunk}`.slice(-16000); });

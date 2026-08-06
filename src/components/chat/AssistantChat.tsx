@@ -715,6 +715,7 @@ export default function AssistantChat() {
       request: enriched,
       workspaceId,
       parentTaskId: continuation?.taskId,
+      projectId: continuation?.projectId,
       idempotencyKey: continuation
         ? `assistant-chat:${continuation.taskId}:continuation:${Date.now()}`
         : `assistant-chat:${workspaceId}`,
