@@ -3,9 +3,11 @@ const fs = require('fs');
 
 const limits = {
   'electron/nativeExecutionAdapter.cjs': 1500,
+  'electron/nativeExecutionPrompting.cjs': 150,
   'electron/nativeExecutionControl.cjs': 450,
   'electron/nativeStepExecutor.cjs': 520,
   'electron/taskService.cjs': 520,
+  'electron/taskServiceTeamExecution.cjs': 240,
   'electron/taskServiceQueries.cjs': 190,
   'electron/taskServiceContextQueries.cjs': 90,
   'electron/taskServiceEvidenceCommands.cjs': 190,
@@ -49,17 +51,23 @@ assert.match(adapter, /require\('\.\/nativeExecutionProjection\.cjs'\)/u, 'nativ
 assert.match(adapter, /require\('\.\/adaptiveExecutionRecovery\.cjs'\)/u, 'adaptive failure recovery must remain extracted');
 assert.match(adapter, /require\('\.\/nativeExecutionControl\.cjs'\)/u, 'native execution control must remain extracted');
 assert.match(adapter, /require\('\.\/nativeStepExecutor\.cjs'\)/u, 'native step execution must remain extracted');
+assert.match(adapter, /require\('\.\/nativeExecutionPrompting\.cjs'\)/u, 'native execution prompting must remain extracted');
 assert.doesNotMatch(adapter, /semanticState:\s*projectExecutionState/u, 'native job projection must not move back into the adapter');
 assert.doesNotMatch(adapter, /function inferStepDeliverableType/u, 'deliverable policy must not move back into the adapter');
 assert.doesNotMatch(adapter, /function compensationNeedsApproval/u, 'compensation policy must not move back into the adapter');
 assert.doesNotMatch(adapter, /function applyAdaptiveStepFailure/u, 'adaptive failure recovery must not move back into the adapter');
 assert.doesNotMatch(adapter, /async function start\(input\)/u, 'native execution control must not move back into the adapter');
 assert.doesNotMatch(adapter, /async function executeStep\(/u, 'native step execution must not move back into the adapter');
+assert.doesNotMatch(adapter, /function buildSystem\(/u, 'native execution prompting must not move back into the adapter');
+assert.doesNotMatch(adapter, /function sanitizedRuntime\(/u, 'native execution redaction must not move back into the adapter');
 const nativeControl = fs.readFileSync('electron/nativeExecutionControl.cjs', 'utf8');
 assert.match(nativeControl, /function createNativeExecutionControl/u, 'native control module must expose a focused factory');
 const nativeStepExecutor = fs.readFileSync('electron/nativeStepExecutor.cjs', 'utf8');
 assert.match(nativeStepExecutor, /function createNativeStepExecutor/u, 'native step executor must expose a focused factory');
+const nativeExecutionPrompting = fs.readFileSync('electron/nativeExecutionPrompting.cjs', 'utf8');
+assert.match(nativeExecutionPrompting, /function createNativeExecutionPrompting/u, 'native execution prompting must expose a focused factory');
 const taskService = fs.readFileSync('electron/taskService.cjs', 'utf8');
+const taskServiceTeamExecution = fs.readFileSync('electron/taskServiceTeamExecution.cjs', 'utf8');
 const taskContextQueries = fs.readFileSync('electron/taskServiceContextQueries.cjs', 'utf8');
 const taskEvidenceCommands = fs.readFileSync('electron/taskServiceEvidenceCommands.cjs', 'utf8');
 const taskApprovalCommands = fs.readFileSync('electron/taskServiceApprovalCommands.cjs', 'utf8');
@@ -73,17 +81,23 @@ assert.match(taskService, /createTaskServiceEvidenceCommands\(update\)/u, 'task 
 assert.match(taskService, /createTaskServiceApprovalCommands\(update\)/u, 'task approval commands must remain extracted');
 assert.match(taskService, /createTaskServiceLifecycleCommands\(update\)/u, 'task lifecycle commands must remain extracted');
 assert.match(taskService, /createTaskServiceRecoveryCommands\(update/u, 'task recovery commands must remain extracted');
+assert.match(taskService, /createTaskServiceTeamExecution\(/u, 'team execution commands must remain extracted');
 assert.doesNotMatch(taskService, /async function context\(/u, 'task context query must not move back into the service');
 assert.doesNotMatch(taskService, /async function recordToolAttempt\(/u, 'task evidence commands must not move back into the service');
 assert.doesNotMatch(taskService, /async function requestApproval\(/u, 'task approval commands must not move back into the service');
 assert.doesNotMatch(taskService, /async function recordLifecycle\(/u, 'task lifecycle commands must not move back into the service');
 assert.doesNotMatch(taskService, /async function failStep\(/u, 'task recovery commands must not move back into the service');
 assert.doesNotMatch(taskService, /async function recordReviewDecision\(/u, 'review recovery must not move back into the service');
+assert.doesNotMatch(taskService, /async function ensureTeamExecutionBinding\(/u, 'team execution binding must not move back into the service');
+assert.doesNotMatch(taskService, /async function recordExecutionEvent\(/u, 'team execution event recording must not move back into the service');
+assert.doesNotMatch(taskService, /async function recordSteering\(/u, 'team steering recording must not move back into the service');
+assert.doesNotMatch(taskService, /async function repairDelegationCollisions\(/u, 'delegation collision repair must not move back into the service');
 assert.match(taskContextQueries, /function createTaskServiceContextQueries/u, 'task context module must expose a focused factory');
 assert.match(taskEvidenceCommands, /function createTaskServiceEvidenceCommands/u, 'task evidence module must expose a focused factory');
 assert.match(taskApprovalCommands, /function createTaskServiceApprovalCommands/u, 'task approval module must expose a focused factory');
 assert.match(taskLifecycleCommands, /function createTaskServiceLifecycleCommands/u, 'task lifecycle module must expose a focused factory');
 assert.match(taskRecoveryCommands, /function createTaskServiceRecoveryCommands/u, 'task recovery module must expose a focused factory');
+assert.match(taskServiceTeamExecution, /function createTaskServiceTeamExecution/u, 'team execution module must expose a focused factory');
 assert.match(taskServiceIpc, /function registerTaskServiceIpc/u, 'TaskService IPC must remain centrally registered');
 assert.match(windowIpc, /function registerWindowIpc/u, 'window IPC must remain extracted from main');
 assert.match(windowRegistry, /function createWindowRegistry/u, 'window registry must expose a focused factory');
