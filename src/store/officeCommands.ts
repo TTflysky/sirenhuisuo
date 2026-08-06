@@ -10,13 +10,11 @@ import * as client from '../data/hermesClient';
 import type { AppStateAction } from './appStateReducer';
 import { appendProjectEvent, conversationProjectId, initializeProjectContext, projectDocumentPath, projectWorkspaceId } from '../utils/projectContext';
 import { ensureActiveChatSession } from '../data/chatSessions';
-
 interface OfficeCommandDependencies {
   getState: () => AppState;
   dispatch: (action: AppStateAction) => void;
   startTaskRun: (...args: any[]) => Promise<void>;
 }
-
 export function createOfficeCommands({ getState, dispatch, startTaskRun }: OfficeCommandDependencies) {
   const newProposalId = () => `proposal-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const proposalSnapshot = (id: string, revision: number, status: ProjectProposalSnapshot['status'], members: ProjectMember[], reason?: string, supersededByProposalId?: string): ProjectProposalSnapshot => ({
@@ -82,7 +80,6 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
     console.log('[addEmployee] 新员工:', newEmp, '当前员工数:', getState().employees.length);
     dispatch({ type: 'ADD_EMPLOYEE', emp: newEmp });
   };
-
   const addCatalogExperts = (expertIds: string[]): Employee[] => {
     const current = getState();
     const existing = new Map(current.employees.map((employee) => [employee.id, employee]));
@@ -102,7 +99,6 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
     }
     return added;
   };
-
   const createTeam = (name: string, icon: string, memberIds: string[], description = '') => {
     const now = Date.now();
     const team: Team = {
@@ -127,13 +123,11 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
       tasks: [],
     };
     dispatch({ type: 'ADD_TEAM', team });
-
     // 更新成员的 currentTeamId
     for (const mid of memberIds) {
       dispatch({ type: 'UPDATE_EMPLOYEE', id: mid, partial: { currentTeamId: team.id } });
     }
   };
-
   const addTeamMembers = (teamId: string, memberIds: string[]): Employee[] => {
     const current = getState();
     const team = current.teams.find((item) => item.id === teamId);
@@ -147,11 +141,9 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
       return expert ? expertToEmployee(expert, current.employees.length + index) : undefined;
     }).filter((employee): employee is Employee => !!employee && !existingIds.has(employee.id));
     if (!added.length) return [];
-
     for (const employee of added) {
       if (!knownEmployees.has(employee.id)) dispatch({ type: 'ADD_EMPLOYEE', emp: employee });
     }
-
     const nextMemberIds = [...new Set([...team.memberIds, ...added.map((employee) => employee.id)])];
     dispatch({ type: 'UPDATE_TEAM', id: teamId, partial: { memberIds: nextMemberIds } });
     added.forEach((employee) => dispatch({ type: 'UPDATE_EMPLOYEE', id: employee.id, partial: { currentTeamId: teamId } }));
@@ -188,7 +180,6 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
     if (team.projectId) void appendProjectEvent(team.projectId, { type: 'members_added', projectId: team.projectId, teamId, memberIds: added.map((employee) => employee.id), reason: '老板授权后追加团队成员' });
     return added;
   };
-
   const setTeamMembers = (teamId: string, memberIds: string[]): { added: Employee[]; removed: Employee[] } => {
     const current = getState();
     const team = current.teams.find((item) => item.id === teamId);
@@ -239,7 +230,6 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
     if (team.projectId) void appendProjectEvent(team.projectId, { type: 'members_reconciled', projectId: team.projectId, teamId, added: newlyAssigned.map((employee) => employee.id), removed: removed.map((employee) => employee.id), reason: '老板调整团队成员名单' });
     return { added: newlyAssigned, removed };
   };
-
   const removeTeamMembers = (teamId: string, memberIds: string[]): Employee[] => {
     const current = getState();
     const team = current.teams.find((item) => item.id === teamId);
@@ -271,7 +261,6 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
     if (team.projectId) void appendProjectEvent(team.projectId, { type: 'members_removed', projectId: team.projectId, teamId, memberIds: removed.map((employee) => employee.id), reason: '老板授权后移除团队成员' });
     return removed;
   };
-
   const setProjectMembers = (projectId: string, memberIds: string[]): ProjectMember[] => {
     const current = getState();
     const project = current.projects.find((item) => item.id === projectId);
@@ -295,7 +284,6 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
     void appendProjectEvent(project.id, { type: 'proposal_superseded', projectId, previousProposalId: project.proposalId, proposalId: proposal.proposalId, proposalRevision: proposal.proposalRevision, reason: '老板修订了团队成员' });
     return members;
   };
-
   const createProjectDraft = (input: { title: string; request: string; conversationId?: string; steps?: string[]; expectedOutputs?: string[]; requiredCapabilities?: string[]; decisionReason?: string }) => {
     const now = Date.now();
     const latestEmployees = employeePlanningPool(client.fetchInitial().employees);
@@ -326,7 +314,6 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
     void initializeProjectContext(project);
     void appendProjectEvent(project.id, { type: 'project_created', projectId: project.id, conversationId: project.conversationId, proposalId, proposalRevision: 1, request: project.request });
   };
-
   const approveProject = (projectId: string, override?: { memberIds?: string[]; requiredCapabilities?: string[]; decisionReason?: string; proposalRevision?: number }): ProjectMember[] => {
     const project = getState().projects.find((item) => item.id === projectId);
     const rejectedDraft = project?.status === 'archived' && Boolean(project.rejectionReason) && Boolean(override?.memberIds?.length);
@@ -388,7 +375,6 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
     memberIds.forEach((id) => dispatch({ type: 'UPDATE_EMPLOYEE', id, partial: { currentTeamId: team.id } }));
     return effectiveMembers;
   };
-
   const startProjectExecution = (projectId: string, clarificationResponse: string) => {
     const prepared = prepareProjectExecution(getState(), projectId, clarificationResponse);
     if (!prepared) return;
@@ -402,7 +388,6 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
     }] });
     setTimeout(() => { void startTaskRun(prepared.team.id, prepared.effectiveRequest, prepared.memberIds, undefined, undefined, [], undefined, undefined, prepared.brief); }, 0);
   };
-
   const archiveProject = (projectId: string) => {
     const project = getState().projects.find((item) => item.id === projectId);
     if (!project) return;
@@ -410,7 +395,6 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
     void appendProjectEvent(projectId, { type: 'project_archived', projectId });
     if (project.teamId) dispatch({ type: 'UPDATE_TEAM', id: project.teamId, partial: { archived: true } });
   };
-
   const rejectProject = (projectId: string, reason = '用户驳回团队方案') => {
     const project = getState().projects.find((item) => item.id === projectId);
     if (!project || project.status !== 'awaiting_approval') return;
@@ -418,8 +402,6 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
     dispatch({ type: 'UPDATE_PROJECT', id: projectId, partial: { status: 'archived', rejectionReason: reason, proposalStatus: 'cancelled', proposalHistory: history } });
     void appendProjectEvent(projectId, { type: 'proposal_cancelled', projectId, proposalId: project.proposalId, proposalRevision: project.proposalRevision, reason });
   };
-
-
   return {
     addEmployee,
     addCatalogExperts,
