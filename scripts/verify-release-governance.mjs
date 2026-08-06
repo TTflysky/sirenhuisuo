@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 const root = process.cwd();
 const pkg = JSON.parse(await fs.readFile(path.join(root, 'package.json'), 'utf8'));
 const lock = JSON.parse(await fs.readFile(path.join(root, 'package-lock.json'), 'utf8'));
-const required = ['scripts/generate-sbom.mjs', 'scripts/generate-release-provenance.mjs', 'scripts/verify-release-governance.mjs', 'electron/updateTransaction.cjs', 'electron/credentialVault.cjs', 'electron/skillRuntime.cjs', 'src/engine/modelCompatibility.mjs'];
+const required = ['scripts/generate-sbom.mjs', 'scripts/generate-release-provenance.mjs', 'scripts/verify-release-governance.mjs', 'electron/updateTransaction.cjs', 'electron/upgradeBackup.cjs', 'electron/credentialVault.cjs', 'electron/skillRuntime.cjs', 'src/engine/modelCompatibility.mjs'];
 const errors = [];
 for (const file of required) { try { await fs.access(path.join(root, file)); } catch { errors.push(`缺少发布治理文件：${file}`); } }
 if (lock.version !== pkg.version) errors.push(`package-lock 版本 ${lock.version} 与 package.json ${pkg.version} 不一致`);

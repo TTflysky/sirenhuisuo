@@ -24,6 +24,13 @@ const { spawn } = require('child_process');
 const { version: APP_VERSION } = require('../package.json');
 const { downloadGitHubReleaseInstaller } = require('./releaseDownload.cjs');
 const { createUpdateTransaction } = require('./updateTransaction.cjs');
+const {
+  BACKUP_FORMAT,
+  BACKUP_PART_BYTES,
+  serializeUpgradeSnapshot,
+  splitBackupPayload,
+  restoreUpgradeSnapshot,
+} = require('./upgradeBackup.cjs');
 const log = require('electron-log');
 
 // ---- 日志 ----
@@ -101,24 +108,37 @@ async function writeJournal(value) {
 }
 async function saveEncryptedBackup(snapshot, toVersion) {
   if (!safeStorage.isEncryptionAvailable()) throw new Error('Windows 系统加密当前不可用，已停止更新以避免明文备份配置');
-  const raw = JSON.stringify(snapshot ?? {});
-  if (Buffer.byteLength(raw, 'utf8') > 24 * 1024 * 1024) throw new Error('本地配置超过 24MB，无法自动备份；请先在设置中导出工作区');
-  const backupPath = path.join(upgradeDir(), `pre-${APP_VERSION}-to-${toVersion || 'unknown'}-${Date.now()}.bin`);
+  const serialized = serializeUpgradeSnapshot(snapshot);
+  const parts = splitBackupPayload(serialized.payload, BACKUP_PART_BYTES);
+  const backupBase = path.join(upgradeDir(), `pre-${APP_VERSION}-to-${toVersion || 'unknown'}-${Date.now()}`);
+  const backupParts = [];
   const transaction = createUpdateTransaction({ root: upgradeDir() });
   await transaction.begin({ fromVersion: APP_VERSION, toVersion: toVersion || downloadedVersion || 'unknown' });
-  await fsp.mkdir(upgradeDir(), { recursive: true });
-  await fsp.writeFile(backupPath, safeStorage.encryptString(raw));
-  const values = snapshot?.localStorage || {};
-  const arrayCount = (key) => { try { const value = JSON.parse(values[key] || '[]'); return Array.isArray(value) ? value.length : 0; } catch { return 0; } };
-  const modelCount = (() => { try { const value = JSON.parse(values.hermes_office_settings || '{}'); return Array.isArray(value.modelLibrary) ? value.modelLibrary.length : value.model || value.apiHost ? 1 : 0; } catch { return 0; } })();
-  const journal = {
-    schema: 1, fromVersion: APP_VERSION, toVersion: toVersion || downloadedVersion || 'unknown',
-    backupPath, backupCreatedAt: new Date().toISOString(), status: 'ready-to-install', validation: null,
-    backupSummary: { employees: arrayCount('hermes_office_employees'), teams: arrayCount('hermes_office_teams'), models: modelCount, taskRuns: arrayCount('hermes_office_task_runs_v1') },
-  };
-  await writeJournal(journal);
-  await transaction.transition('backup', { detail: `已加密备份 ${Object.keys(values).length} 个本地数据域` });
-  return journal;
+  try {
+    await fsp.mkdir(upgradeDir(), { recursive: true });
+    for (const [index, part] of parts.entries()) {
+      const partPath = `${backupBase}.part-${String(index + 1).padStart(4, '0')}.bin`;
+      const encoded = part.toString('base64');
+      await fsp.writeFile(partPath, safeStorage.encryptString(encoded));
+      backupParts.push({ path: partPath, index, bytes: part.length });
+    }
+    const values = snapshot?.localStorage || {};
+    const arrayCount = (key) => { try { const value = JSON.parse(values[key] || '[]'); return Array.isArray(value) ? value.length : 0; } catch { return 0; } };
+    const modelCount = (() => { try { const value = JSON.parse(values.hermes_office_settings || '{}'); return Array.isArray(value.modelLibrary) ? value.modelLibrary.length : value.model || value.apiHost ? 1 : 0; } catch { return 0; } })();
+    const journal = {
+      schema: 2, fromVersion: APP_VERSION, toVersion: toVersion || downloadedVersion || 'unknown',
+      backupPath: backupParts[0].path, backupParts, backupFormat: BACKUP_FORMAT,
+      backupCreatedAt: new Date().toISOString(), status: 'ready-to-install', validation: null,
+      backupBytes: serialized.compressedBytes, backupRawBytes: serialized.rawBytes, backupDigest: serialized.digest,
+      backupSummary: { employees: arrayCount('hermes_office_employees'), teams: arrayCount('hermes_office_teams'), models: modelCount, taskRuns: arrayCount('hermes_office_task_runs_v1') },
+    };
+    await writeJournal(journal);
+    await transaction.transition('backup', { detail: `已压缩并分片加密备份 ${Object.keys(values).length} 个本地数据域，共 ${backupParts.length} 片` });
+    return journal;
+  } catch (error) {
+    await Promise.all(backupParts.map((part) => fsp.rm(part.path, { force: true }).catch(() => {})));
+    throw error;
+  }
 }
 
 ipcMain.handle('update:install', async (_event, snapshot) => {
@@ -163,9 +183,18 @@ ipcMain.handle('upgrade:recordValidation', async (_event, validation) => {
 ipcMain.handle('upgrade:readBackup', async () => {
   try {
     const journal = await readJournal();
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('Windows 系统加密当前不可用，无法读取备份');
+    if (Array.isArray(journal?.backupParts) && journal.backupParts.length > 0) {
+      const encryptedParts = await Promise.all(journal.backupParts
+        .sort((left, right) => left.index - right.index)
+        .map(async (part) => safeStorage.decryptString(await fsp.readFile(part.path))));
+      const payload = Buffer.concat(encryptedParts.map((part) => Buffer.from(part, 'base64')));
+      const digest = require('crypto').createHash('sha256').update(payload).digest('hex');
+      if (journal.backupDigest && digest !== journal.backupDigest) throw new Error('更新备份校验失败，未恢复本地数据');
+      return { ok: true, snapshot: restoreUpgradeSnapshot(payload, journal.backupFormat), fromVersion: journal.fromVersion };
+    }
     if (!journal?.backupPath) throw new Error('没有找到可用的更新前备份');
     const encrypted = await fsp.readFile(journal.backupPath);
-    if (!safeStorage.isEncryptionAvailable()) throw new Error('Windows 系统加密当前不可用，无法读取备份');
     return { ok: true, snapshot: JSON.parse(safeStorage.decryptString(encrypted)), fromVersion: journal.fromVersion };
   } catch (e) { return { ok: false, error: String(e?.message ?? e) }; }
 });

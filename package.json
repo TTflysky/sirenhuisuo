@@ -43,6 +43,7 @@
     "verify:skill-directory-contract": "node scripts/verify-skill-directory-contract.cjs",
     "verify:skill-install-e2e": "node scripts/verify-skill-install-e2e.cjs",
     "verify:update-download": "node scripts/verify-update-download.cjs",
+    "verify:upgrade-backup": "vitest run test/unit/upgradeBackup.test.mjs",
     "verify:web-search": "node scripts/verify-web-search.cjs",
     "verify:steering-e2e": "node scripts/verify-steering-e2e.mjs",
     "verify:tool-window": "node scripts/verify-tool-window.mjs",
