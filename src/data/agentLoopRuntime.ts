@@ -42,7 +42,7 @@ import {
   restoreExecutionController,
   type ExecutionControllerSnapshot,
 } from '../engine/executionController.mjs';
-import { buildTaskContract, type TaskDecision } from '../engine/taskDecisionKernel.mjs';
+import { buildTaskContract, createDeterministicSkillInstallDecision, type TaskDecision } from '../engine/taskDecisionKernel.mjs';
 import { assessTaskCompletion, extractTaskRequirements } from '../engine/taskFidelity.mjs';
 import {
   assessExplicitResourceCompletion,
@@ -157,7 +157,22 @@ export function createRunAgentLoop(deps: AgentLoopDependencies) {
     ? turn.content
     : (turn.content ?? []).filter((part): part is ContentPart => part.type === 'text').map((part) => part.text).join('\n'));
   const latestUserText = userTexts.at(-1) ?? '';
-  const compiled = taskDecisionCompilation ?? await compileTaskDecision(turns, tools, modelConfig, getModelRequestSignal?.());
+  const availableToolNames = tools.map((tool) => String(tool?.function?.name ?? '')).filter(Boolean);
+  const deterministicSkillInstall = createDeterministicSkillInstallDecision({
+    latestMessage: latestUserText,
+    previousUserMessage: userTexts.at(-2) ?? '',
+    availableTools: availableToolNames,
+    userMessages: userTexts,
+  });
+  const compiled = deterministicSkillInstall
+    ? {
+      ...(taskDecisionCompilation ?? {}),
+      decision: deterministicSkillInstall,
+      usage: taskDecisionCompilation?.usage ?? { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      contextUsage: taskDecisionCompilation?.contextUsage,
+      model: taskDecisionCompilation?.model,
+    }
+    : taskDecisionCompilation ?? await compileTaskDecision(turns, tools, modelConfig, getModelRequestSignal?.());
   totalUsage.promptTokens += compiled.usage.promptTokens;
   totalUsage.completionTokens += compiled.usage.completionTokens;
   totalUsage.totalTokens += compiled.usage.totalTokens;

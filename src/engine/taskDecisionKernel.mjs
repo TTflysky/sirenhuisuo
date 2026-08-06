@@ -11,7 +11,7 @@ import {
   shouldHoldTaskForFeedback,
 } from './agentGuardrails.mjs';
 import { taskRequirementLabels } from './taskFidelity.mjs';
-import { isExplicitSkillInstallOperation, resolveSkillInstallRequest } from './skillInstallRouting.mjs';
+import { isExplicitSkillInstallOperation, resolveSkillInstallContinuation, resolveSkillInstallRequest } from './skillInstallRouting.mjs';
 import { isSkillDiscoveryRequest } from './skillHubSearch.mjs';
 import { inferCapabilityIds } from './capabilityGraph.mjs';
 import { createExplicitResourceContract } from './explicitResourceContract.mjs';
@@ -311,6 +311,45 @@ export function createFallbackTaskDecision(input = {}) {
     requiredConstraints,
     requiresEvidence: false, needsUser: false, missingUserCondition: '', searchQuery: '',
     decisionReason: '当前消息没有明确要求执行外部操作。', confidence: 0.72, source: 'rules',
+  };
+}
+
+/**
+ * A fully specified Skill install is an operational contract, not a question
+ * for the planning model. The continuation resolver only inherits a source
+ * after an install-oriented follow-up, so unrelated new turns stay isolated.
+ */
+export function createDeterministicSkillInstallDecision(input = {}) {
+  const availableTools = Array.isArray(input.availableTools) ? input.availableTools : [];
+  if (!availableTools.includes('install_skill')) return undefined;
+  const request = resolveSkillInstallContinuation(input.userMessages, {
+    latestMessage: input.latestMessage,
+    activeTaskGoal: input.activeTaskGoal,
+  });
+  if (!request?.sourceUrl || !request.requestText) return undefined;
+  const fallback = createFallbackTaskDecision({
+    ...input,
+    latestMessage: request.requestText,
+    previousUserMessage: input.previousUserMessage,
+  });
+  return {
+    ...fallback,
+    mode: 'execute',
+    turnRelation: request.resumed ? 'continuation' : fallback.turnRelation,
+    goal: request.requestText,
+    primaryRoute: 'install_skill',
+    deliverableType: 'operation',
+    acceptanceCriteria: defaultAcceptance('install_skill', request.requestText),
+    deliverables: normalizedDeliverables(undefined, 'install_skill', 'operation'),
+    requiresEvidence: true,
+    needsUser: false,
+    missingUserCondition: '',
+    searchQuery: '',
+    decisionReason: request.resumed
+      ? '用户正在继续此前已明确来源的 Skill 安装，直接复用同一来源执行原生安装器。'
+      : '用户已提供明确的 Skill 安装来源，直接执行原生安装器并回读验证。',
+    confidence: 1,
+    source: 'rules',
   };
 }
 

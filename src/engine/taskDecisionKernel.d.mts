@@ -53,10 +53,12 @@ export interface TaskDecisionInput {
   relevantUserContext?: string;
   relevantTaskExperience?: string;
   attachments?: Array<{ name?: string; kind?: string; size?: number }>;
+  userMessages?: string[];
 }
 export const TASK_DECISION_TOOL_NAME: 'compile_task_decision';
 export const TASK_DECISION_TOOL: Record<string, unknown>;
 export function createFallbackTaskDecision(input?: TaskDecisionInput): TaskDecision;
+export function createDeterministicSkillInstallDecision(input?: TaskDecisionInput): TaskDecision | undefined;
 export function parseTaskDecisionToolCall(toolCalls?: Array<{ name?: string; arguments?: string }>): Record<string, unknown> | undefined;
 export function normalizeTaskDecision(candidate: unknown, input?: TaskDecisionInput): TaskDecision;
 export function classifyTaskTurnIntent(message: string, activeTaskGoal?: string): 'conversation' | 'answer' | 'execute_request' | 'resume_control' | 'follow_up_question' | 'feedback_or_correction';

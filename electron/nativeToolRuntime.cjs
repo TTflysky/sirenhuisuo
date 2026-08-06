@@ -489,8 +489,20 @@ function createNativeToolRuntime(options) {
         const installedSummary = installedSkills.length > 1
           ? `已安装 ${installedSkills.length} 个 Skill：${installedSkills.slice(0, 12).map((skill) => skill.name || skill.id).filter(Boolean).join('、')}${installedSkills.length > 12 ? ' 等' : ''}\n`
           : '';
+        const healthSummary = result.verification?.healthSummary;
+        const healthText = healthSummary
+          ? [
+            healthSummary.ready?.length ? `${healthSummary.ready.length} 个可直接使用` : '',
+            healthSummary.setup?.length ? `${healthSummary.setup.length} 个需配置${healthSummary.setup.length <= 4 ? `：${healthSummary.setup.map((item) => `${item.name}${item.message ? `（${item.message.replace(/^使用前需要：/u, '')}）` : ''}`).join('、')}` : ''}` : '',
+            healthSummary.limited?.length ? `${healthSummary.limited.length} 个受限` : '',
+            healthSummary.broken?.length ? `${healthSummary.broken.length} 个异常` : '',
+          ].filter(Boolean).join('；')
+          : (result.verification?.health || result.skill?.health || 'ready');
+        const collisionText = Array.isArray(result.verification?.nameCollisions) && result.verification.nameCollisions.length
+          ? `\n同名提醒：${[...new Set(result.verification.nameCollisions.map((item) => item.name))].join('、')} 已存在其他来源版本；后续调用请使用技能列表中的完整 LOCAL ID。`
+          : '';
         return result.ok
-          ? succeeded(name, `Skill 已安装并完成完整包回读验证。\n${installedSummary}ID: ${result.skill?.id || ''}\n名称: ${result.skill?.name || resolved.name || resolved.slug}\n来源: ${result.resolvedUrl || resolved.sourceUrl}\n健康状态: ${result.verification?.health || result.skill?.health || 'ready'}\n已核验源文件: ${result.verification?.sourceFileCount ?? 0}\n已回读规则文档: ${result.verification?.documentCount ?? 0}\n包校验哈希: ${result.verification?.bundleHash || ''}`, {
+          ? succeeded(name, `Skill 已安装并完成完整包回读验证。\n${installedSummary}ID: ${result.skill?.id || ''}\n名称: ${result.skill?.name || resolved.name || resolved.slug}\n来源: ${result.resolvedUrl || resolved.sourceUrl}\n健康状态: ${healthText}\n已核验源文件: ${result.verification?.sourceFileCount ?? 0}\n已回读规则文档: ${result.verification?.documentCount ?? 0}\n包校验哈希: ${result.verification?.bundleHash || ''}${collisionText}`, {
             skill: {
               id: result.skill?.id,
               name: result.skill?.name || resolved.name,

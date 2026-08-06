@@ -31,6 +31,7 @@ import { useStore } from '../../storeContext';
 import { BUS_CHANNELS, onBus, sendBus } from '../../ipcBus';
 import { getDirectExecutionControl, isExplicitPauseSteering, isExplicitResumeSteering, shouldHoldTaskForFeedback } from '../../engine/agentGuardrails.mjs';
 import { executionControllerStatus } from '../../engine/executionController.mjs';
+import type { TaskDecision } from '../../engine/taskDecisionKernel.mjs';
 import {
   applyProjectRosterMutation,
   isProjectApprovalIntent,
@@ -56,6 +57,7 @@ import {
   humanizeExecutionError,
   isToolResultSuccessful,
   simplifyLegacyAssistantContent,
+  summarizeToolResult,
 } from '../../data/assistantPresentation';
 import { buildLayeredMemoryContext } from '../../data/layeredMemory';
 import { referenceClarification, referencesFromToolResult, resolveConversationReferences } from '../../engine/conversationReferences.mjs';
@@ -155,6 +157,55 @@ function saveHistory(msgs: ChatMessage[]): void {
 const EXPLICIT_TEAM_DISPATCH_RE = /(?:拉(?:个|起|一个)?团队|拉群|组建团队|组队|召集.{0,12}(?:员工|成员|团队)|叫.{0,12}(?:员工|成员).{0,12}(?:来|去|做|负责)|安排.{0,12}(?:员工|成员|人|人手|专员|同事).{0,12}(?:帮|做|负责|开发|设计))/u;
 function shouldExplicitlyDispatchTeam(content: string): boolean {
   return EXPLICIT_TEAM_DISPATCH_RE.test(content);
+}
+
+const ROUTE_LABELS: Record<string, string> = {
+  direct_answer: '直接整理并回答',
+  web_search: '检索并核对公开资料',
+  inspect_connectors: '检查已接入的连接器',
+  read_file: '读取当前工作区文件',
+  list_files: '检查当前工作区结构',
+  search_skills: '查找适用的 Skill',
+  install_skill: '使用原生安装器安装并回读 Skill',
+  write_file: '写入工作区并回读验证',
+  run_command: '执行受控命令并核对结果',
+  team_dispatch: '建立可修改的团队方案',
+  general_tools: '选择最合适的已授权工具',
+};
+
+function publicText(value: unknown, limit = 280) {
+  return String(value ?? '').replace(/\s+/gu, ' ').trim().slice(0, limit);
+}
+
+function buildPublicDecisionSteps(decision: TaskDecision, timestamp: number): ThoughtChainStep[] {
+  const route = ROUTE_LABELS[decision.primaryRoute] ?? '选择合适的执行路线';
+  const acceptance = (decision.acceptanceCriteria ?? []).map((item) => publicText(item, 130)).filter(Boolean).slice(0, 4);
+  return [
+    {
+      id: `decision-goal-${timestamp}`,
+      phase: 'understanding',
+      title: '理解当前目标',
+      summary: `已识别本轮要完成的是：${publicText(decision.goal, 180) || '处理当前请求'}。`,
+      toolName: 'task_understanding',
+      args: '',
+      result: `目标：${publicText(decision.goal, 800) || '处理当前请求'}\n本轮关系：${decision.turnRelation === 'continuation' ? '继续现有任务' : decision.turnRelation === 'correction' ? '根据新要求修正' : '独立任务'}\n交付类型：${decision.deliverableType}`,
+      success: true,
+      state: 'completed',
+      timestamp,
+    },
+    {
+      id: `decision-plan-${timestamp}`,
+      phase: 'plan',
+      title: '制定执行路线',
+      summary: `先${route}；每一步完成后会依据真实结果决定是否继续、调整或说明阻塞。`,
+      toolName: 'task_plan',
+      args: '',
+      result: `首选路线：${route}\n公开判断依据：${publicText(decision.decisionReason, 500) || '根据当前目标选择最直接的可验证路线。'}\n验收标准：${acceptance.length ? acceptance.map((item, index) => `${index + 1}. ${item}`).join('\n') : '完成用户目标并留下可核对的结果。'}`,
+      success: true,
+      state: 'completed',
+      timestamp: timestamp + 1,
+    },
+  ];
 }
 
 export default function AssistantChat() {
@@ -757,6 +808,21 @@ export default function AssistantChat() {
     let lastStage = '连接 AI 模型';
     let showCoT = false;
     const cotSteps: ThoughtChainStep[] = [];
+    const activeTraceSteps = new Map<string, string>();
+    let traceSequence = 0;
+    const appendTraceStep = (step: ThoughtChainStep) => {
+      if (!showCoT) return;
+      cotSteps.push(step);
+      setLiveExecutionSteps([...cotSteps].slice(-50));
+    };
+    const updateTraceStep = (id: string, patch: Partial<ThoughtChainStep>) => {
+      const index = cotSteps.findIndex((step) => step.id === id);
+      if (index < 0) return false;
+      cotSteps[index] = { ...cotSteps[index], ...patch };
+      setLiveExecutionSteps([...cotSteps].slice(-50));
+      return true;
+    };
+    const nextTraceId = (prefix: string) => `${prefix}-${Date.now()}-${++traceSequence}`;
     try {
       // 构建上下文（最近 40 条实质对话，过滤掉工具调用中间消息）
       const dialogMsgs = msgs.filter(isDialogMessage);
@@ -804,7 +870,12 @@ ${employeeDirectory}
         waitIfPaused: executionControl.waitIfPaused,
         consumeSteeringMessages: () => steeringMessagesRef.current.splice(0),
         getModelRequestSignal: executionControl.getModelRequestSignal,
-        onTaskPrepared: (decision) => taskBridge.prepare(decision),
+        async onTaskPrepared(decision) {
+          await taskBridge.prepare(decision);
+          const timestamp = Date.now();
+          for (const step of buildPublicDecisionSteps(decision, timestamp)) appendTraceStep(step);
+          setStatus(`已理解目标，准备${ROUTE_LABELS[decision.primaryRoute] ?? '执行下一步'}…`);
+        },
         onExecutionState(state) {
           taskBridge.heartbeat(state);
           setStatus(executionControllerStatus(state));
@@ -814,6 +885,18 @@ ${employeeDirectory}
         },
         onSteeringReply(content, usage, contextUsage) {
           setLiveText('');
+          appendTraceStep({
+            id: nextTraceId('steering'),
+            phase: 'adjustment',
+            title: '结合新要求重新判断',
+            summary: '已接收你的插话，正在以最新要求重新检查当前目标与下一步。',
+            toolName: 'task_adjustment',
+            args: '',
+            result: '运行中的任务已收到新的用户要求。系统会先重新判断当前目标、已完成证据和下一步，而不是继续沿用过时动作。',
+            success: true,
+            state: 'completed',
+            timestamp: Date.now(),
+          });
           push({
             id: `h-${Date.now()}-steering`, authorId: 'assistant', roleId: 'custom',
             content: simplifyLegacyAssistantContent(content), mentions: [], timestamp: Date.now(), kind: 'text',
@@ -832,6 +915,20 @@ ${employeeDirectory}
           setStatus(getToolActivity(name, args));
           const matchKey = `${name}:${args}`;
           setLiveActivities([{ id: `${Date.now()}`, matchKey, label: getToolReport(name, args), args: args ?? '', state: 'active' }]);
+          const traceId = nextTraceId('action');
+          activeTraceSteps.set(matchKey, traceId);
+          appendTraceStep({
+            id: traceId,
+            phase: 'action',
+            title: `正在执行：${getToolReport(name, args)}`,
+            summary: `正在${getToolActivity(name, args).replace(/^执行中 · /u, '')}；完成后会根据真实结果决定下一步。`,
+            toolName: name,
+            args: args ?? '',
+            result: '这一步正在执行，尚未产生可确认的结果。',
+            success: true,
+            state: 'active',
+            timestamp: Date.now(),
+          });
         },
         onToolResult(name, args, result, success, _protocolEvidence, structuredEvidence) {
           const matchKey = `${name}:${args}`;
@@ -879,16 +976,35 @@ ${employeeDirectory}
               ? { ...item, state: 'error' }
               : item);
           });
-          if (showCoT) {
-            const step: ThoughtChainStep = {
+          const resultText = result.slice(0, name === 'web_search' ? 12000 : 2000);
+          const actionTitle = getToolReport(name, args);
+          const resultSummary = resultSuccess
+            ? `已完成：${actionTitle}。${summarizeToolResult(name, resultText, true)}`
+            : `这一步没有完成：${actionTitle}。${humanizeExecutionError(resultText)} 系统会基于该结果调整路线，避免无意义重复。`;
+          const activeTraceId = activeTraceSteps.get(matchKey);
+          if (activeTraceId && updateTraceStep(activeTraceId, {
+            phase: resultSuccess ? 'observation' : 'adjustment',
+            title: resultSuccess ? `完成：${actionTitle}` : `需要调整：${actionTitle}`,
+            summary: resultSummary,
+            result: resultText,
+            success: resultSuccess,
+            state: resultSuccess ? 'completed' : 'failed',
+            timestamp: Date.now(),
+          })) {
+            activeTraceSteps.delete(matchKey);
+          } else {
+            appendTraceStep({
+              id: nextTraceId('observation'),
+              phase: resultSuccess ? 'observation' : 'adjustment',
+              title: resultSuccess ? `完成：${actionTitle}` : `需要调整：${actionTitle}`,
+              summary: resultSummary,
               toolName: name,
               args: args ?? '',
-              result: result.slice(0, name === 'web_search' ? 12000 : 2000),
+              result: resultText,
               success: resultSuccess,
+              state: resultSuccess ? 'completed' : 'failed',
               timestamp: Date.now(),
-            };
-            cotSteps.push(step);
-            setLiveExecutionSteps((current) => [...current, step].slice(-50));
+            });
           }
         },
         onModelRetry(attempt, maxAttempts, error, nextDelayMs) {
@@ -896,12 +1012,20 @@ ${employeeDirectory}
           setStatus(nextDelayMs > 0
             ? `整理结果暂时失败，${Math.round(nextDelayMs / 1000)} 秒后进行第 ${attempt + 1}/${maxAttempts} 次尝试…`
             : '整理模型暂时不可用，正在直接生成可读结果…');
-          if (!showCoT) return;
-          const step: ThoughtChainStep = {
-            toolName: 'model_summary', args: '', result: error.slice(0, 2000), success: false, timestamp: Date.now(),
-          };
-          cotSteps.push(step);
-          setLiveExecutionSteps((current) => [...current, step].slice(-50));
+          appendTraceStep({
+            id: nextTraceId('retry'),
+            phase: 'adjustment',
+            title: '调整模型请求',
+            summary: nextDelayMs > 0
+              ? `当前请求暂未返回可用结果，${Math.round(nextDelayMs / 1000)} 秒后将以同一目标进行第 ${attempt + 1}/${maxAttempts} 次尝试。`
+              : '当前请求暂未返回可用结果，正在切换到可读结果整理路径。',
+            toolName: 'task_adjustment',
+            args: '',
+            result: error.slice(0, 2000),
+            success: false,
+            state: 'failed',
+            timestamp: Date.now(),
+          });
         },
       });
 
@@ -916,6 +1040,22 @@ ${employeeDirectory}
         lifecycle: r.turnLifecycle,
       });
       const completed = r.turnFinalization?.status === 'completed';
+      appendTraceStep({
+        id: nextTraceId('acceptance'),
+        phase: completed ? 'acceptance' : 'blocked',
+        title: completed ? '完成最终验收' : '最终验收尚未通过',
+        summary: completed
+          ? '已根据任务合同和真实执行结果完成本轮验收。'
+          : '本轮保留已完成的步骤，但当前证据还不足以宣布整个目标完成。',
+        toolName: completed ? 'task_acceptance' : 'task_blocked',
+        args: '',
+        result: completed
+          ? '任务最终状态：已完成。系统已将本轮目标、执行记录和验收结果一并保留。'
+          : `任务最终状态：${String(r.turnFinalization?.status ?? r.executionState.status ?? '未完成')}。请查看上方未完成步骤和最终回复中的具体缺口。`,
+        success: completed,
+        state: completed ? 'completed' : 'blocked',
+        timestamp: Date.now(),
+      });
       const invokedSkills = [...new Map(skillEvidence.filter((item) => item.action === 'called' && item.verified).map((item) => [item.skillId || item.skillName, item])).values()];
       for (const item of invokedSkills) {
         skillEvidence.push({ ts: Date.now(), skillId: item.skillId, skillName: item.skillName, action: 'produced', reason: 'Skill 调用后生成了本轮结果', detail: r.content.slice(0, 240), verified: Boolean(r.content.trim()), stage: 'output', source: 'assistant' });
@@ -945,6 +1085,18 @@ ${employeeDirectory}
       }
     } catch (e: any) {
       await taskBridge.fail(e);
+      appendTraceStep({
+        id: nextTraceId('blocked'),
+        phase: 'blocked',
+        title: `当前阻塞：${lastStage}`,
+        summary: `任务暂时停在“${lastStage}”。已保留前面的有效结果，后续会从此处继续，而不是重新开始。`,
+        toolName: 'task_blocked',
+        args: '',
+        result: String(e?.message ?? '未知错误').slice(0, 2000),
+        success: false,
+        state: 'blocked',
+        timestamp: Date.now(),
+      });
       push({
         id: `h-${Date.now()}-err`, authorId: 'assistant', roleId: 'custom',
         content: `还没有处理好。卡在“${lastStage}”这一步。${humanizeExecutionError(e?.message ?? '')}`,

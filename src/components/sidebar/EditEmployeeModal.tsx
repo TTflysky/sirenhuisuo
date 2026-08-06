@@ -219,7 +219,7 @@ export default function EditEmployeeModal({ employee, onClose }: Props) {
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-        <span style={{ fontSize: 12, fontWeight: 500 }}>🧠 显示思维链</span>
+        <span style={{ fontSize: 12, fontWeight: 500 }}>🧠 显示执行思路</span>
         <Switch
           checked={showThoughtChain}
           onChange={(c) => setShowThoughtChain(c)}

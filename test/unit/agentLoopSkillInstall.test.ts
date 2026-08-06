@@ -57,6 +57,49 @@ describe('agent loop Skill installation route', () => {
     expect(result.content).toContain('已经安装好了');
   });
 
+  it('resumes an explicit Skill installation from its original source without re-planning', async () => {
+    const command = 'npx skills add mattpocock/skills';
+    const chatCompletion = vi.fn(async () => {
+      throw new Error('a resumed native install must not return to the planning model');
+    });
+    executeAgentTool.mockResolvedValue({
+      toolCallId: 'native-resumed-install',
+      name: 'install_skill',
+      success: true,
+      output: 'Skill 已安装并完成完整包回读验证。\n已安装 35 个 Skill。\n已核验源文件: 120\n已回读规则文档: 35',
+    });
+    const runAgentLoop = createRunAgentLoop({
+      chatCompletion,
+      isUsefulToolOutcome: (_name, success) => success,
+      isConnectorTask: () => false,
+      isConnectorSetupRequest: () => false,
+      compileTaskDecision: vi.fn(async () => {
+        throw new Error('the continuation source should be resolved before task planning');
+      }) as any,
+    });
+
+    const result = await runAgentLoop({
+      turns: [
+        { role: 'user', content: command },
+        { role: 'assistant', content: '上一次连接暂时失败，安装尚未开始。' },
+        { role: 'user', content: '现在继续安装。' },
+      ],
+      tools,
+      scene: 'assistant',
+      label: '章北海助理',
+    });
+
+    expect(chatCompletion).not.toHaveBeenCalled();
+    expect(executeAgentTool).toHaveBeenCalledTimes(1);
+    expect(executeAgentTool.mock.calls[0][0]).toMatchObject({
+      name: 'install_skill',
+      args: { sourceUrl: 'https://github.com/mattpocock/skills', installAll: true },
+    });
+    expect(result.taskDecision.goal).toBe(command);
+    expect(result.taskDecision.turnRelation).toBe('continuation');
+    expect(result.executionState.status).toBe('completed');
+  });
+
   it('uses a bound candidate source for “安装它” but does not reinterpret a question as an install', async () => {
     const installDecision = createFallbackTaskDecision({ latestMessage: '安装它', availableTools: ['install_skill'] });
     const questionDecision = createFallbackTaskDecision({ latestMessage: '为什么它没有安装好？', availableTools: ['install_skill'] });

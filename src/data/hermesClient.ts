@@ -38,6 +38,7 @@ import {
   TASK_DECISION_TOOL,
   TASK_DECISION_TOOL_NAME,
   buildTaskDecisionMessages,
+  createDeterministicSkillInstallDecision,
   createFallbackTaskDecision,
   normalizeTaskDecision,
   parseTaskDecisionToolCall,
@@ -1076,7 +1077,15 @@ export async function compileTaskDecision(
   const previousUserMessage = userTurns.at(-2) ?? '';
   const availableTools = tools.map((tool) => String(tool?.function?.name ?? '')).filter(Boolean);
   const fallback = createFallbackTaskDecision({ latestMessage, previousUserMessage, activeTaskGoal: decisionContext.activeTaskGoal, availableTools });
-  const relevantTaskExperience = buildTaskLearningContext(fallback.goal);
+  const deterministicSkillInstall = createDeterministicSkillInstallDecision({
+    latestMessage,
+    previousUserMessage,
+    activeTaskGoal: decisionContext.activeTaskGoal,
+    availableTools,
+    userMessages: userTurns,
+  });
+  const selectedFallback = deterministicSkillInstall ?? fallback;
+  const relevantTaskExperience = buildTaskLearningContext(selectedFallback.goal);
   const recentHistory = turns.filter((turn) => turn.role === 'user' || turn.role === 'assistant').slice(-24).map((turn) => ({
     role: turn.role,
     content: typeof turn.content === 'string'
@@ -1089,9 +1098,20 @@ export async function compileTaskDecision(
     activeTaskGoal: decisionContext.activeTaskGoal,
     availableTools,
     recentHistory,
-    relevantUserContext: buildUserContext(fallback.goal),
+    relevantUserContext: buildUserContext(selectedFallback.goal),
     relevantTaskExperience,
   };
+  if (deterministicSkillInstall) {
+    const decisionAudit = buildTaskDecisionAudit(input, deterministicSkillInstall, {
+      fallback: deterministicSkillInstall,
+      modelAttempted: false,
+    });
+    return {
+      decision: { ...deterministicSkillInstall, decisionAudit },
+      decisionAudit,
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    };
+  }
   try {
     const response = await chatCompletion(
       buildTaskDecisionMessages(input) as ChatTurn[],

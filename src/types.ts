@@ -287,6 +287,16 @@ export interface ChatMessage {
 
 /** 思维链单步——记录 AI 工具调用的完整推理过程 */
 export interface ThoughtChainStep {
+  /** Stable UI key. Older persisted records do not have one. */
+  id?: string;
+  /** Public execution phase, never raw model reasoning. */
+  phase?: 'understanding' | 'plan' | 'action' | 'observation' | 'adjustment' | 'acceptance' | 'blocked';
+  /** Human-readable title for public execution records. */
+  title?: string;
+  /** Human-readable summary for public execution records. */
+  summary?: string;
+  /** Live actions are updated in place when the tool returns. */
+  state?: 'active' | 'completed' | 'failed' | 'blocked';
   toolName: string;
   args: string;
   result: string;

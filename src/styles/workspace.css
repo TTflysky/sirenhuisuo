@@ -1427,7 +1427,13 @@
 .cot-step-index { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; }
 .cot-step-icon { display: inline-flex; color: #2b9a66; font-size: 13px; }
 .cot-step.cot-err .cot-step-icon { color: #d64045; }
-.cot-step-title { overflow: hidden; color: var(--text); font-size: var(--content-font-size, 13px); text-overflow: ellipsis; white-space: nowrap; }
+.cot-step.cot-active .cot-step-icon { color: var(--apple-accent); }
+.cot-step.cot-blocked .cot-step-icon { color: #c27b16; }
+.cot-step-main { min-width: 0; display: flex; align-items: center; gap: 7px; }
+.cot-step-title { min-width: 0; overflow: hidden; color: var(--text); font-size: var(--content-font-size, 13px); text-overflow: ellipsis; white-space: nowrap; }
+.cot-step-phase { flex: 0 0 auto; padding: 1px 5px; border-radius: 8px; background: color-mix(in srgb, var(--bg-deep) 82%, var(--surface)); color: var(--text-muted); font-size: 10px; font-weight: 600; line-height: 1.3; }
+.cot-step.cot-active .cot-step-phase { background: color-mix(in srgb, var(--apple-accent) 12%, var(--surface)); color: var(--apple-accent); }
+.cot-step.cot-blocked .cot-step-phase { background: color-mix(in srgb, #c27b16 12%, var(--surface)); color: #a26200; }
 .cot-step-head time { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .cot-step-summary { margin: 0 0 9px 54px; color: var(--text-secondary); font-size: var(--content-font-size, 13px); line-height: var(--content-line-height, 1.5); }
 .cot-step-details { margin: 7px 0 10px 54px; color: var(--text-muted); }
@@ -1458,6 +1464,7 @@
 .cot-detail-nav > button:hover { background: var(--surface); }
 .cot-detail-nav > button.is-selected { border-color: color-mix(in srgb, var(--apple-accent) 35%, var(--hairline)); background: var(--surface); color: var(--text); box-shadow: var(--elevation-1); }
 .cot-detail-nav i { display: inline-flex; align-items: center; justify-content: center; color: #2b9a66; font-size: 14px; font-style: normal; }
+.cot-detail-nav i.is-active { color: var(--apple-accent); }
 .cot-detail-nav i.is-error { color: #d64045; }
 .cot-detail-nav button > span { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .cot-detail-nav strong { overflow: hidden; color: inherit; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }

@@ -99,6 +99,16 @@ const TOOL_ACTIONS: Record<string, { active: string; stage: string }> = {
   test_connector: { active: '正在测试连接器…', stage: '测试连接器' },
 };
 
+// These entries are public execution summaries. They describe what the agent
+// is doing without exposing provider reasoning tokens or hidden deliberation.
+const PUBLIC_EXECUTION_ACTIONS: Record<string, string> = {
+  task_understanding: '理解当前目标',
+  task_plan: '制定执行路线',
+  task_adjustment: '根据新结果调整路线',
+  task_acceptance: '核对交付与验收',
+  task_blocked: '说明当前阻塞',
+};
+
 function toolArgs(args: string): Record<string, string> {
   try { return JSON.parse(args) as Record<string, string>; } catch { return {}; }
 }
@@ -112,6 +122,7 @@ export const WEB_INTERACTIVE_ACCEPTANCE_GUIDE = `## 交互网页核心状态验�
 网页游戏、Canvas 或交互式网页不能只验收标题、按钮和页面外壳。调用 verify_web_artifact 时，至少传一个 visible、count 或 canvas_nonblank 语义检查，证明蛇、果子、棋子、图表数据或用户明确要求的其他首屏对象真实存在且有尺寸。Canvas 必须用 canvas_nonblank 证明画布有非空像素；DOM 游戏必须用 visible/count 证明核心对象可见。核心对象检查失败后，必须修改 HTML/JavaScript、重新打开运行并立即复验；没有成功证据不得宣布完成，也不得用“已生成框架”替代核心功能验收。`;
 
 export function getToolActionLabel(name: string, args = ''): string {
+  if (PUBLIC_EXECUTION_ACTIONS[name]) return PUBLIC_EXECUTION_ACTIONS[name];
   const parsed = toolArgs(args);
   if (name === 'run_command') {
     if (String(parsed.verification).toLowerCase() === 'true' && parsed.connector) return '验证外部服务是否可用';
@@ -143,6 +154,7 @@ export function getToolActionLabel(name: string, args = ''): string {
 
 export function getToolReport(name: string, args = ''): string {
   const action = getToolActionLabel(name, args);
+  if (PUBLIC_EXECUTION_ACTIONS[name]) return `执行说明 · ${action}`;
   if (name === 'search_skills' || name === 'read_skill') return `技能库 · ${action}`;
   if (name === 'read_file' || name === 'write_file' || name === 'list_files') return `文件工具 · ${action}`;
   if (name === 'run_command') return `终端工具 · ${action}`;
@@ -179,6 +191,7 @@ export function humanizeExecutionError(raw: string): string {
 }
 
 export function summarizeToolResult(name: string, result: string, success: boolean): string {
+  if (PUBLIC_EXECUTION_ACTIONS[name]) return result || (success ? '这一步已经完成。' : '这一步还没有完成。');
   if (!success) return humanizeExecutionError(result);
   if (name === 'search_skills') return '已找到候选技能，正在继续筛选。';
   if (name === 'read_skill') return '技能说明已读取。';

@@ -46,7 +46,7 @@ async function connect(target) {
   };
   const evaluate = async (expression) => {
     const result = await command('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
-    if (result.exceptionDetails) throw new Error(result.exceptionDetails.text || '页面脚本执行失败');
+    if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text || '页面脚本执行失败');
     return result.result.value;
   };
   await command('Runtime.enable');
@@ -58,14 +58,23 @@ let main;
 let assistant;
 let previousHistory;
 let previousAppearance;
+let previousSessions;
 try {
   const mainTarget = await waitFor(async () => (await listTargets()).find((target) => !target.url.includes('#chat') && !target.url.includes('#tool')), '没有找到主办公室窗口');
   main = await connect(mainTarget);
+  await waitFor(async () => main.evaluate(`(() => {
+    try {
+      localStorage.getItem('hermes_office_assistant_chat');
+      return document.readyState === 'complete' && Boolean(window.electronAPI);
+    } catch { return false; }
+  })()`), '主窗口尚未完成 preload 和本地存储初始化');
   const prepared = await main.evaluate(`(() => {
     const historyKey = 'hermes_office_assistant_chat';
     const appearanceKey = 'hermes_office_appearance';
+    const sessionsKey = 'taiji_chat_sessions_v1';
     const previousHistory = localStorage.getItem(historyKey);
     const previousAppearance = localStorage.getItem(appearanceKey);
+    const previousSessions = localStorage.getItem(sessionsKey);
     const now = Date.now();
     const longResult = [
       '# SkillHub 安装与完整配置',
@@ -85,36 +94,69 @@ try {
     localStorage.setItem(appearanceKey, JSON.stringify({ font: 'youyuan', fontSize: 'extra-large' }));
     localStorage.setItem(historyKey, JSON.stringify([{
       id: 'execution-detail-visual-test', authorId: 'assistant', roleId: 'custom', mentions: [], timestamp: now,
+      conversationId: 'conversation-legacy-assistant',
       content: '执行记录已经整理好，详细参数和原始结果可以在下方查看。',
       thoughtChain: [
+        { id: 'execution-goal', phase: 'understanding', title: '理解当前目标', summary: '已识别本轮目标：安装并验证指定 Skill。', toolName: 'task_understanding', args: '', result: '目标：安装并验证指定 Skill；本轮关系：独立任务。', success: true, state: 'completed', timestamp: now - 5000 },
+        { id: 'execution-plan', phase: 'plan', title: '制定执行路线', summary: '先使用原生安装器，再回读规则与健康状态。', toolName: 'task_plan', args: '', result: '首选路线：使用原生安装器安装并回读 Skill；验收标准：安装目录和规则文档均可读取。', success: true, state: 'completed', timestamp: now - 4000 },
         { toolName: 'read_skill', args: JSON.stringify({ id: 'skillhub-installation-guide', includeReferences: true, workspace: 'L:/AI办公室/太极/技能安装验证工作区' }), result: longResult, success: true, timestamp: now - 3000 },
         { toolName: 'run_command', args: JSON.stringify({ cmd: 'npm.cmd run verify:execution-detail-ui -- --full-output --preserve-raw-log', cwd: 'L:/AI办公室/太极/这是一个用于验证横向滚动的很长目录名称' }), result: codeResult, success: true, timestamp: now - 2000 },
         { toolName: 'test_connector', args: JSON.stringify({ connectorId: 'ima-knowledge' }), result: '连接验证失败：当前电脑还没有完成 IMA 登录授权。请打开连接器设置完成授权后重试。', success: false, timestamp: now - 1000 },
       ],
     }]));
-    return { previousHistory, previousAppearance };
+    localStorage.setItem(sessionsKey, JSON.stringify({
+      version: 1,
+      activeByScope: { assistant: 'conversation-legacy-assistant' },
+      sessions: [{ id: 'conversation-legacy-assistant', scope: 'assistant', title: '执行详情验证', createdAt: now, updatedAt: now }],
+    }));
+    return { previousHistory, previousAppearance, previousSessions };
   })()`);
   previousHistory = prepared.previousHistory;
   previousAppearance = prepared.previousAppearance;
+  previousSessions = prepared.previousSessions;
+
+  // Let Chromium commit the fixture before reloading the pre-created
+  // companion window below.
+  await delay(180);
 
   const opened = await main.evaluate(`window.electronAPI.openChat({ type: 'assistant-chat', refId: '' })`);
   assert.equal(opened.ok, true, opened.error || '助手窗口打开失败');
   const assistantTarget = await waitFor(async () => (await listTargets()).find((target) => target.url.includes('#chat') && target.url.includes('assistant-chat')), '没有找到助手聊天窗口');
   assistant = await connect(assistantTarget);
+  // The companion window is created with the main window. Reload it after the
+  // fixture is written so the test covers its actual startup recovery path.
+  await assistant.command('Page.reload', { ignoreCache: true });
+  await waitFor(async () => assistant.evaluate(`document.readyState === 'complete' && Boolean(window.electronAPI)`), 'assistant window did not reload after fixture setup');
   await assistant.evaluate('window.resizeTo(1000, 850)');
 
-  await waitFor(async () => assistant.evaluate(`Boolean(document.querySelector('.cot-toggle'))`), '执行过程没有显示');
+  try {
+    await waitFor(async () => assistant.evaluate(`Boolean(document.querySelector('.cot-toggle'))`), '执行过程没有显示');
+  } catch (error) {
+    const diagnostics = await assistant.evaluate(`(() => ({
+      url: location.href,
+      messages: document.querySelectorAll('.msg').length,
+      toggles: document.querySelectorAll('.cot-toggle').length,
+      history: localStorage.getItem('hermes_office_assistant_chat')?.slice(0, 800) || '',
+      sessions: localStorage.getItem('taiji_chat_sessions_v1')?.slice(0, 800) || '',
+      text: document.body.innerText.slice(0, 1200),
+    }))()`);
+    throw new Error(`${error instanceof Error ? error.message : String(error)}\n${JSON.stringify(diagnostics)}`);
+  }
   await assistant.evaluate(`document.querySelector('.cot-toggle')?.click()`);
   await delay(250);
   const expandedMetrics = await assistant.evaluate(`(() => {
-    document.querySelector('.cot-step-head')?.click();
-    document.querySelector('.cot-step-details > summary')?.click();
+    const steps = [...document.querySelectorAll('.cot-step')];
     const title = document.querySelector('.cot-step-title');
     const summary = document.querySelector('.cot-step-summary');
-    const result = document.querySelector('.cot-step-result pre');
+    const longStep = steps[2];
+    longStep?.querySelector('.cot-step-head')?.click();
+    longStep?.querySelector('.cot-step-details > summary')?.click();
+    const result = longStep?.querySelector('.cot-step-result pre');
     const expand = document.querySelector('.cot-open-detail');
     return {
-      steps: document.querySelectorAll('.cot-step').length,
+      steps: steps.length,
+      firstTitle: title?.textContent?.trim(),
+      firstState: document.querySelector('.cot-step-phase')?.textContent?.trim(),
       titleFont: parseFloat(getComputedStyle(title).fontSize),
       summaryFont: parseFloat(getComputedStyle(summary).fontSize),
       resultFont: parseFloat(getComputedStyle(result).fontSize),
@@ -123,7 +165,9 @@ try {
       horizontalOverflow: document.documentElement.scrollWidth > document.documentElement.clientWidth + 2,
     };
   })()`);
-  assert.equal(expandedMetrics.steps, 3, '执行步骤数量不正确');
+  assert.equal(expandedMetrics.steps, 5, '执行步骤数量不正确');
+  assert.equal(expandedMetrics.firstTitle, '理解当前目标', '公开的目标理解步骤没有展示');
+  assert.equal(expandedMetrics.firstState, '已完成', '公开执行步骤没有展示状态');
   assert.ok(expandedMetrics.titleFont >= 15, `步骤标题没有跟随特大字号：${expandedMetrics.titleFont}px`);
   assert.ok(expandedMetrics.summaryFont >= 15, `通俗摘要没有跟随特大字号：${expandedMetrics.summaryFont}px`);
   assert.ok(expandedMetrics.resultFont >= 15, `技术详情没有跟随特大字号：${expandedMetrics.resultFont}px`);
@@ -153,7 +197,7 @@ try {
     };
   })()`), '宽版执行详情没有打开');
   assert.ok(modalMetrics.width >= 850, `宽版详情宽度不足：${modalMetrics.width}px`);
-  assert.equal(modalMetrics.navSteps, 3, '宽版详情没有列出全部步骤');
+  assert.equal(modalMetrics.navSteps, 5, '宽版详情没有列出全部步骤');
   assert.ok(modalMetrics.resultFont >= 15, `宽版原始结果没有跟随特大字号：${modalMetrics.resultFont}px`);
   assert.equal(modalMetrics.resultSelectable, 'text', '宽版详情文字不可选择');
   assert.equal(modalMetrics.fitsViewport, true, '宽版详情超出助手窗口');
@@ -170,8 +214,10 @@ try {
       await main.evaluate(`(() => {
         const history = ${history};
         const appearance = ${appearance};
+        const sessions = ${JSON.stringify(previousSessions ?? null)};
         if (history === null) localStorage.removeItem('hermes_office_assistant_chat'); else localStorage.setItem('hermes_office_assistant_chat', history);
         if (appearance === null) localStorage.removeItem('hermes_office_appearance'); else localStorage.setItem('hermes_office_appearance', appearance);
+        if (sessions === null) localStorage.removeItem('taiji_chat_sessions_v1'); else localStorage.setItem('taiji_chat_sessions_v1', sessions);
       })()`);
     } catch {}
   }

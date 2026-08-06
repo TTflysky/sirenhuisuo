@@ -9,6 +9,10 @@ export interface ResolvedSkillInstallRequest {
   installAll?: boolean;
   command?: 'skills add';
   error?: string;
+  /** Original explicit request retained for a safe continuation. */
+  requestText?: string;
+  /** True when a later continuation inherited a previously explicit source. */
+  resumed?: boolean;
 }
 export interface SkillInstallInput {
   sourceUrl?: string;
@@ -28,5 +32,6 @@ export function isSkillInstallAction(text: string, options?: { allowBoundReferen
 export function skillHubSlugFromRequest(text: string): string;
 export function resolveSkillInstallInput(input?: SkillInstallInput, requestText?: string): ResolvedSkillInstallRequest;
 export function resolveSkillInstallRequest(text: string): ResolvedSkillInstallRequest | undefined;
+export function resolveSkillInstallContinuation(messages?: string[], options?: { latestMessage?: string; activeTaskGoal?: string }): ResolvedSkillInstallRequest | undefined;
 export function isSkillInstallOnlyRequest(text: string, options?: { allowBoundReference?: boolean }): boolean;
 export function isSkillInstallOnlyRequest(text: string): boolean;

@@ -45,6 +45,21 @@ export function prepareAgentSkillInstallation(input: AgentSkillInstallPreparatio
   }
   const originalUserText = taskDecision.goal;
   const explicitSkillInstallRequest = resolveSkillInstallRequest(originalUserText);
+  if (explicitSkillInstallRequest?.sourceUrl && hasNativeSkillInstaller && taskDecision.mode === 'execute') {
+    taskDecision = {
+      ...taskDecision,
+      primaryRoute: 'install_skill',
+      deliverableType: 'operation',
+      acceptanceCriteria: ['通过客户端原生安装器写入正确的技能目录', '重新读取已安装 Skill 并确认规则完整'],
+      deliverables: [{ label: '已安装并完成回读验证的 Skill', format: 'operation', type: 'operation', category: 'final', required: true }],
+      requiresEvidence: true,
+      needsUser: false,
+      missingUserCondition: '',
+      searchQuery: '',
+      decisionReason: '当前任务已有明确 Skill 来源，直接使用原生安装器完成安装和回读验证。',
+      confidence: 1,
+    };
+  }
   const installOnlyTask = isSkillInstallOnlyRequest(originalUserText, { allowBoundReference: boundSkillInstallIntent })
     || (boundSkillInstallIntent && isSkillInstallOnlyRequest(input.latestUserText, { allowBoundReference: true }));
   const isInstallationTask = /安装|装好|装上|安装包|部署/u.test(originalUserText);

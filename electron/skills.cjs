@@ -832,6 +832,48 @@ async function stageGithubRepositorySkill(skillsRoot, discovery, skill, requeste
   }
 }
 
+async function canonicalFilesystemPath(value) {
+  const resolved = path.resolve(value);
+  try { return await fs.realpath(resolved); } catch { return resolved; }
+}
+
+function sameFilesystemPath(left, right) {
+  const normalize = (value) => process.platform === 'win32' ? String(value).toLocaleLowerCase() : String(value);
+  return normalize(left) === normalize(right);
+}
+
+async function findScannedSkillByManifestPath(scanned, manifestPath) {
+  const expected = await canonicalFilesystemPath(manifestPath);
+  return scanned.find((candidate) => sameFilesystemPath(candidate?._path, expected));
+}
+
+function summarizeInstalledSkillHealth(skills) {
+  const groups = { ready: [], setup: [], limited: [], broken: [] };
+  for (const skill of skills) {
+    const health = Object.prototype.hasOwnProperty.call(groups, skill?.health) ? skill.health : 'limited';
+    groups[health].push({ name: skill?.name || '未命名 Skill', message: skill?.healthMessage || '' });
+  }
+  return groups;
+}
+
+async function findSkillNameCollisions(selected, scanned, skillsRoot) {
+  const collisions = [];
+  for (const skill of selected) {
+    const expectedPath = await canonicalFilesystemPath(path.join(skillsRoot, skill.slug, 'SKILL.md'));
+    for (const candidate of scanned) {
+      if (sameFilesystemPath(candidate?._path, expectedPath)) continue;
+      if (String(candidate?.name || '').toLocaleLowerCase() !== String(skill.name || '').toLocaleLowerCase()) continue;
+      collisions.push({
+        name: skill.name,
+        existingId: candidate.id,
+        scope: candidate.scope,
+        sourceUrl: candidate.sourceUrl || '',
+      });
+    }
+  }
+  return collisions;
+}
+
 async function installGithubRepositorySkills(projectRoot, input, fetchImpl = globalThis.fetch) {
   const discovery = await discoverGithubRepositorySkills(input.sourceUrl, fetchImpl);
   if (!discovery) throw new Error('Skill 来源不是可识别的 GitHub 仓库');
@@ -842,6 +884,8 @@ async function installGithubRepositorySkills(projectRoot, input, fetchImpl = glo
   const userProfile = process.env.USERPROFILE || process.env.HOME || '';
   if (!userProfile) throw new Error('无法定位当前用户目录');
   const skillsRoot = path.resolve(userProfile, '.workbuddy', 'skills');
+  const beforeInstall = await scanSkills(projectRoot);
+  const nameCollisions = await findSkillNameCollisions(selected, beforeInstall, skillsRoot);
   const staged = [];
   try {
     for (const skill of selected) staged.push(await stageGithubRepositorySkill(skillsRoot, discovery, skill, input.sourceUrl, fetchImpl));
@@ -853,7 +897,7 @@ async function installGithubRepositorySkills(projectRoot, input, fetchImpl = glo
   const scanned = await scanSkills(projectRoot);
   const verified = [];
   for (const item of staged) {
-    const installed = scanned.find((candidate) => candidate._path === path.join(item.targetDir, 'SKILL.md'));
+    const installed = await findScannedSkillByManifestPath(scanned, path.join(item.targetDir, 'SKILL.md'));
     if (!installed) throw new Error(`Skill 已写入但扫描不到：${item.skill.name}`);
     verified.push(await verifyInstalledSkill(projectRoot, {
       ok: true,
@@ -864,6 +908,11 @@ async function installGithubRepositorySkills(projectRoot, input, fetchImpl = glo
   const skills = verified.map((item) => item.skill);
   const fileCount = verified.reduce((total, item) => total + Number(item.verification?.sourceFileCount || 0), 0);
   const documentCount = verified.reduce((total, item) => total + Number(item.verification?.documentCount || 0), 0);
+  const healthSummary = summarizeInstalledSkillHealth(skills);
+  const health = healthSummary.broken.length > 0 ? 'broken'
+    : healthSummary.limited.length > 0 ? 'limited'
+      : healthSummary.setup.length > 0 ? 'setup'
+        : 'ready';
   return {
     ok: true,
     skill: skills[0],
@@ -875,7 +924,9 @@ async function installGithubRepositorySkills(projectRoot, input, fetchImpl = glo
       verified: true,
       manifestReadable: true,
       skillId: skills[0]?.id || '',
-      health: skills.every((skill) => skill.health !== 'broken') ? 'ready' : 'limited',
+      health,
+      healthSummary,
+      nameCollisions,
       documentCount,
       sourceFileCount: fileCount,
       bundleHash: sha256(JSON.stringify(verified.map((item) => item.verification?.bundleHash || ''))),
@@ -936,7 +987,7 @@ async function installZipSkill(projectRoot, sourceUrl, requestedName, fetchImpl 
       try { await fs.rm(stageDir, { recursive: true, force: true }); } catch {}
       throw error;
     }
-    const installed = (await scanSkills(projectRoot)).find((item) => item._path === path.join(targetDir, 'SKILL.md'));
+    const installed = await findScannedSkillByManifestPath(await scanSkills(projectRoot), path.join(targetDir, 'SKILL.md'));
     return { ok: true, skill: installed ? (({ _path, ...item }) => item)(installed) : { name, source: slug }, resolvedUrl: response.url || sourceUrl };
   } finally {
     await fs.rm(tempRoot, { recursive: true, force: true });
@@ -990,7 +1041,7 @@ async function installSkill(projectRoot, input, options = {}) {
     try { await fs.rm(stageDir, { recursive: true, force: true }); } catch {}
     throw error;
   }
-  const installed = (await scanSkills(projectRoot)).find((item) => item._path === path.join(targetDir, 'SKILL.md'));
+  const installed = await findScannedSkillByManifestPath(await scanSkills(projectRoot), path.join(targetDir, 'SKILL.md'));
   return verifyInstalledSkill(projectRoot, {
     ok: true,
     skill: installed ? (({ _path, ...item }) => item)(installed) : { name, source: slug },

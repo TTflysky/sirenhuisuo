@@ -285,9 +285,9 @@ export default function AssistantSettingsModal({ onClose, onSaved }: Props) {
         {/* 思维链开关 */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div>
-            <div style={{ fontWeight: 600, fontSize: 13 }}>🧠 显示思维链</div>
+            <div style={{ fontWeight: 600, fontSize: 13 }}>🧠 显示执行思路</div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-              开启后，助手调用工具时会展示详细的推理步骤
+              展示目标理解、行动计划、工具结果、路线调整与验收；不显示模型内部推理内容
             </div>
           </div>
           <Switch

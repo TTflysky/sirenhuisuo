@@ -120,6 +120,41 @@ export function isSkillInstallAction(text, options = {}) {
   return refersToBoundObject && imperative;
 }
 
+function isSkillInstallContinuationMessage(text) {
+  const source = clean(text, 12000);
+  if (!source) return false;
+  if (isExplicitSkillInstallOperation(source)) return true;
+  if (/[?？]|(?:什么(?:意思|命令)?|怎么用|如何用|为什么|能否|可以吗|是否|解释|介绍)/u.test(source)) return false;
+  return /(?:继续|重试|重新|接着|开始|直接|立即|现在|代理|网络).{0,36}(?:安装|执行|尝试|完成|处理|继续)|(?:安装|装上|装好|部署).{0,28}(?:继续|重试|重新|开始|执行)/iu.test(source);
+}
+
+/**
+ * Recover an explicit installation source without asking a planning model to
+ * reconstruct it from prose. This is deliberately narrow: only an explicit
+ * install command/source or an install-oriented continuation may inherit the
+ * nearest earlier source.
+ */
+export function resolveSkillInstallContinuation(messages = [], options = {}) {
+  const history = (Array.isArray(messages) ? messages : [])
+    .map((item) => clean(item, 12000))
+    .filter(Boolean)
+    .slice(-12);
+  const latest = clean(options.latestMessage || history.at(-1), 12000);
+  const direct = isSkillInstallAction(latest) ? resolveSkillInstallRequest(latest) : undefined;
+  if (direct?.sourceUrl) return { ...direct, requestText: latest, resumed: false };
+  if (!isSkillInstallContinuationMessage(latest)) return undefined;
+
+  const active = resolveSkillInstallRequest(clean(options.activeTaskGoal, 12000));
+  if (active?.sourceUrl) return { ...active, requestText: clean(options.activeTaskGoal, 12000), resumed: true };
+
+  for (let index = history.length - 2; index >= 0; index -= 1) {
+    const requestText = history[index];
+    const candidate = resolveSkillInstallRequest(requestText);
+    if (candidate?.sourceUrl) return { ...candidate, requestText, resumed: true };
+  }
+  return undefined;
+}
+
 function githubRepositoryDetails(value) {
   try {
     const parsed = new URL(clean(value));
