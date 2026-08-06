@@ -285,7 +285,7 @@ for (const argumentsText of repeatedSkillCalls) {
 assert.equal(executableReads, 1, '118 repeated Skill reads must collapse to one real read');
 
 const mainSource = await fs.readFile(new URL('../electron/main.cjs', import.meta.url), 'utf8');
-const clientSource = `${await fs.readFile(new URL('../src/data/hermesClient.ts', import.meta.url), 'utf8')}\n${await fs.readFile(new URL('../src/data/agentLoopRuntime.ts', import.meta.url), 'utf8')}\n${await fs.readFile(new URL('../src/data/agentLoopFinalization.ts', import.meta.url), 'utf8')}\n${await fs.readFile(new URL('../src/data/agentLoopPolicy.ts', import.meta.url), 'utf8')}`;
+const clientSource = `${await fs.readFile(new URL('../src/data/hermesClient.ts', import.meta.url), 'utf8')}\n${await fs.readFile(new URL('../src/data/agentLoopRuntime.ts', import.meta.url), 'utf8')}\n${await fs.readFile(new URL('../src/data/agentLoopSkillInstall.ts', import.meta.url), 'utf8')}\n${await fs.readFile(new URL('../src/data/agentLoopFinalization.ts', import.meta.url), 'utf8')}\n${await fs.readFile(new URL('../src/data/agentLoopPolicy.ts', import.meta.url), 'utf8')}`;
 const assistantChatSource = await fs.readFile(new URL('../src/components/chat/AssistantChat.tsx', import.meta.url), 'utf8');
 const dmChatSource = await fs.readFile(new URL('../src/components/chat/DmChatApp.tsx', import.meta.url), 'utf8');
 const teamDiscussionSource = await fs.readFile(new URL('../src/engine/teamDiscussion.ts', import.meta.url), 'utf8');
@@ -327,7 +327,8 @@ const skillsSource = await fs.readFile(new URL('../electron/skills.cjs', import.
 const nativeToolSource = await fs.readFile(new URL('../electron/nativeToolRuntime.cjs', import.meta.url), 'utf8');
 assert.match(skillsSource, /referencedPaths/u);
 assert.match(skillsSource, /isSkillHubDownloadUrl/u);
-assert.match(nativeToolSource, /SkillHub CLI 路线已停用/u);
+assert.match(nativeToolSource, /技能 CLI 安装路线已停用/u);
+assert.match(nativeToolSource, /isSkillsCliInstallCommand/u);
 assert.match(skillsSource, /documents\.push\(\{ path:/u);
 assert.match(toolsSource, /skillInstructionText/u);
 assert.match(clientSource, /respondToSteering/u);
@@ -348,6 +349,7 @@ assert.match(clientSource, /指定 Skill 来源合同/u);
 assert.match(clientSource, /不得改读市场页、聚合页或替代来源/u);
 assert.match(clientSource, /const modelArgs = pinnedSkillSource/u);
 assert.match(clientSource, /安装前必须先读取用户指定来源中的 SKILL\.md/u);
+assert.match(clientSource, /native-skill-install-/u);
 assert.doesNotMatch(clientSource, /pinnedSkillInstallAttempted/u);
 assert.doesNotMatch(clientSource, /buildRecoveryGuide\(/u);
 assert.match(assistantChatSource, /onExecutionState\(state\)/u);
@@ -367,7 +369,7 @@ assert.match(settingsSource, /任务经验/u);
 assert.match(settingsSource, /导出同步配置/u);
 assert.doesNotMatch(storeSource, /step\.status = \/\^⚠️\|无法响应\|执行失败/u);
 assert.ok(
-  clientSource.indexOf('await waitIfPaused?.();', clientSource.indexOf('for (let iter = 0; iter < maxIter; iter++)'))
+  clientSource.indexOf('await waitIfPaused?.();', clientSource.indexOf('for (let iter = 0; !directInstallHandled && iter < maxIter; iter++)'))
     < clientSource.indexOf('const atTurnStartGuidance = consumeSteeringMessages?.() ?? [];'),
   'A paused loop must process steering before resuming the old model plan',
 );

@@ -483,9 +483,23 @@ function createNativeToolRuntime(options) {
           });
         }
         const result = await options.installSkill(projectRoot, resolved);
+        const installedSkills = Array.isArray(result.skills) && result.skills.length
+          ? result.skills
+          : (result.skill ? [result.skill] : []);
+        const installedSummary = installedSkills.length > 1
+          ? `已安装 ${installedSkills.length} 个 Skill：${installedSkills.slice(0, 12).map((skill) => skill.name || skill.id).filter(Boolean).join('、')}${installedSkills.length > 12 ? ' 等' : ''}\n`
+          : '';
         return result.ok
-          ? succeeded(name, `Skill 已安装并完成完整包回读验证。\nID: ${result.skill?.id || ''}\n名称: ${result.skill?.name || resolved.name || resolved.slug}\n来源: ${result.resolvedUrl || resolved.sourceUrl}\n健康状态: ${result.verification?.health || result.skill?.health || 'ready'}\n已核验源文件: ${result.verification?.sourceFileCount ?? 0}\n已回读规则文档: ${result.verification?.documentCount ?? 0}\n包校验哈希: ${result.verification?.bundleHash || ''}`, {
-            skill: { id: result.skill?.id, name: result.skill?.name || resolved.name, slug: result.slug || resolved.slug, sourceUrl: result.resolvedUrl || resolved.sourceUrl, verified: result.verification?.verified === true },
+          ? succeeded(name, `Skill 已安装并完成完整包回读验证。\n${installedSummary}ID: ${result.skill?.id || ''}\n名称: ${result.skill?.name || resolved.name || resolved.slug}\n来源: ${result.resolvedUrl || resolved.sourceUrl}\n健康状态: ${result.verification?.health || result.skill?.health || 'ready'}\n已核验源文件: ${result.verification?.sourceFileCount ?? 0}\n已回读规则文档: ${result.verification?.documentCount ?? 0}\n包校验哈希: ${result.verification?.bundleHash || ''}`, {
+            skill: {
+              id: result.skill?.id,
+              name: result.skill?.name || resolved.name,
+              slug: result.slug || resolved.slug,
+              sourceUrl: result.resolvedUrl || resolved.sourceUrl,
+              verified: result.verification?.verified === true,
+              installedCount: installedSkills.length,
+              installedSkillIds: installedSkills.map((skill) => skill.id).filter(Boolean),
+            },
           })
           : failed(name, result.error || 'Skill 安装失败');
       }
@@ -557,7 +571,7 @@ function createNativeToolRuntime(options) {
       if (name === 'run_command') {
         const command = String(args.cmd || '').trim();
         if (!command) return failed(name, '命令不能为空');
-        if (isSkillHubCliCommand(command)) return failed(name, 'SkillHub CLI 路线已停用：Windows 的 skillhub.bat 可能依赖不可用的 python3。请直接调用客户端原生 install_skill，安装不依赖终端命令。');
+        if (isSkillHubCliCommand(command) || isSkillsCliInstallCommand(command)) return failed(name, '技能 CLI 安装路线已停用：交互式命令无法在后台可靠完成，也不会写入太极的受管 Skill 目录。请直接调用客户端原生 install_skill，安装器会完整落盘并回读校验。');
         if (containsSensitiveLiteral(command)) return failed(name, '命令中包含疑似明文密钥、Token 或密码，已拒绝执行。请改用连接器凭据或受限环境变量。');
         const policy = context.executionPolicy || {};
         if (context.approvalGranted !== true && (policy.approvalMode === 'ask' || (policy.approvalMode !== 'full' && !isRoutineCommand(command)))) {
@@ -625,7 +639,8 @@ function commandApprovalRequest(command, goal) {
   };
 }
 function isSkillHubCliCommand(command) { return /(?:^|[;&|]\s*)skillhub(?:\.bat)?\s+(?:install|update)\b/iu.test(String(command || '').trim()); }
+function isSkillsCliInstallCommand(command) { return /(?:^|[;&|]\s*)(?:npx\s+)?skills(?:\.cmd|\.exe)?\s+add\b/iu.test(String(command || '').trim()); }
 function succeeded(name, output, structuredEvidence) { return { name, success: true, output: String(output || ''), structuredEvidence }; }
 function failed(name, output, metadata) { return { name, success: false, output: String(output || ''), ...metadata }; }
 
-module.exports = { NATIVE_TOOL_DEFINITIONS, createNativeToolRuntime, redact, isRoutineCommand, containsSensitiveLiteral, isSkillHubCliCommand };
+module.exports = { NATIVE_TOOL_DEFINITIONS, createNativeToolRuntime, redact, isRoutineCommand, containsSensitiveLiteral, isSkillHubCliCommand, isSkillsCliInstallCommand };

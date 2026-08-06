@@ -69,6 +69,23 @@ describe('task decision kernel safeguards', () => {
     expect(decision.deliverables[0].label).toContain('Skill');
   });
 
+  it('treats skills CLI input and an explicit resume as the same native Skill installation', () => {
+    const command = 'npx skills add vercel-labs/agent-skills';
+    const direct = createFallbackTaskDecision({ latestMessage: command, availableTools: tools });
+    expect(direct.mode).toBe('execute');
+    expect(direct.primaryRoute).toBe('install_skill');
+    expect(direct.deliverableType).toBe('operation');
+
+    const resumed = createFallbackTaskDecision({ latestMessage: '继续安装。', previousUserMessage: command, availableTools: tools });
+    expect(resumed.mode).toBe('execute');
+    expect(resumed.goal).toBe(command);
+    expect(resumed.primaryRoute).toBe('install_skill');
+
+    const question = createFallbackTaskDecision({ latestMessage: `${command} 是什么命令？`, availableTools: tools });
+    expect(question.mode).toBe('answer');
+    expect(question.primaryRoute).toBe('direct_answer');
+  });
+
   it('keeps knowledge directory reads local instead of turning them into setup', () => {
     const input = { latestMessage: '查看 Obsidian 知识库目录有多少笔记', availableTools: tools };
     expect(isKnowledgeDirectoryReadRequest(input.latestMessage)).toBe(true);

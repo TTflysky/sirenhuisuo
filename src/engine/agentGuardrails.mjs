@@ -147,6 +147,7 @@ export function isActionableCapabilityCorrection(message) {
 export function resolveActionableUserGoal(message, previousUserMessage) {
   const current = String(message ?? '').trim();
   const previous = String(previousUserMessage ?? '').trim();
+  const directControl = getDirectExecutionControl(current);
   // A correction only inherits a previous goal when it actually refers back to
   // that goal. A complete new request must start from fresh observations.
   const refersToPreviousWork = /(?:\u4e0a\u6b21|\u4e0a\u9762|\u4e4b\u524d|\u521a\u624d|\u7ee7\u7eed|\u539f\u4efb\u52a1|\u8fd9\u4e2a\u4efb\u52a1|\u6309\u521a\u624d|\u5b83|\u8be5\u4efb\u52a1)|\b(?:continue|resume|previous|above|prior|same task)\b/iu.test(current);
@@ -157,6 +158,7 @@ export function resolveActionableUserGoal(message, previousUserMessage) {
   // A route correction often names the failed route (for example "本地" or
   // "连接器").  That is not a new task target, so decide correction status
   // before applying the self-contained-request isolation rule.
+  if (directControl === 'resume' && previous) return previous;
   if (!refersToPreviousWork && introducesNewTarget && (!capabilityCorrection || !correctiveFraming) && !acceptanceFailure) return current;
   if (acceptanceFailure && previous && !isConversationOnlyMessage(previous)) return `${previous}\n验收反馈：${current}`;
   if (!capabilityCorrection || !previous || isConversationOnlyMessage(previous)) return current;

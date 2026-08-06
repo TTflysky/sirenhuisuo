@@ -442,6 +442,98 @@ function githubDirectoryCandidate(inputUrl) {
   return githubDirectoryDescriptor(inputUrl)?.rootUrl || null;
 }
 
+function githubRepositoryDescriptor(inputUrl) {
+  let parsed;
+  try { parsed = new URL(inputUrl); } catch { return null; }
+  const host = parsed.hostname.toLocaleLowerCase();
+  let owner = '';
+  let repo = '';
+  if (host === 'github.com') {
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    if (parts.length !== 2) return null;
+    [owner, repo] = parts;
+  } else if (host === 'api.github.com') {
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    if (parts.length !== 3 || parts[0] !== 'repos') return null;
+    [, owner, repo] = parts;
+  } else {
+    return null;
+  }
+  repo = repo.replace(/\.git$/iu, '');
+  if (!owner || !repo) return null;
+  return {
+    type: 'github-repository',
+    owner,
+    repo,
+    canonicalUrl: `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+  };
+}
+
+function githubRawUrl(source, ref, relativePath) {
+  const encodedPath = String(relativePath || '').split('/').map(encodeURIComponent).join('/');
+  return `https://raw.githubusercontent.com/${encodeURIComponent(source.owner)}/${encodeURIComponent(source.repo)}/${encodeURIComponent(ref)}/${encodedPath}`;
+}
+
+async function fetchGithubRepositoryTree(sourceUrl, fetchImpl = globalThis.fetch) {
+  const source = githubRepositoryDescriptor(sourceUrl);
+  if (!source) return null;
+  const headers = { 'User-Agent': 'Taiji-Skill-Installer/1.0', Accept: 'application/vnd.github+json' };
+  let ref = 'main';
+  let response = await fetchImpl(`https://api.github.com/repos/${encodeURIComponent(source.owner)}/${encodeURIComponent(source.repo)}/git/trees/${encodeURIComponent(ref)}?recursive=1`, {
+    headers,
+    signal: AbortSignal.timeout(SKILL_DOWNLOAD_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    const metadataResponse = await fetchImpl(`https://api.github.com/repos/${encodeURIComponent(source.owner)}/${encodeURIComponent(source.repo)}`, {
+      headers,
+      signal: AbortSignal.timeout(SKILL_DOWNLOAD_TIMEOUT_MS),
+    });
+    if (!metadataResponse.ok) throw new Error(`无法读取 GitHub 仓库：HTTP ${metadataResponse.status}`);
+    const metadata = await metadataResponse.json();
+    ref = String(metadata?.default_branch || '').trim();
+    if (!ref) throw new Error('GitHub 仓库没有可用的默认分支');
+    response = await fetchImpl(`https://api.github.com/repos/${encodeURIComponent(source.owner)}/${encodeURIComponent(source.repo)}/git/trees/${encodeURIComponent(ref)}?recursive=1`, {
+      headers,
+      signal: AbortSignal.timeout(SKILL_DOWNLOAD_TIMEOUT_MS),
+    });
+  }
+  if (!response.ok) throw new Error(`无法读取 GitHub 仓库文件树：HTTP ${response.status}`);
+  const payload = await response.json();
+  if (payload?.truncated) throw new Error('GitHub 仓库文件树过大，无法安全完整安装');
+  const tree = Array.isArray(payload?.tree) ? payload.tree : [];
+  if (!tree.length) throw new Error('GitHub 仓库文件树为空');
+  return { source, ref, tree };
+}
+
+async function discoverGithubRepositorySkills(sourceUrl, fetchImpl = globalThis.fetch) {
+  const repository = await fetchGithubRepositoryTree(sourceUrl, fetchImpl);
+  if (!repository) return null;
+  const manifests = repository.tree
+    .filter((entry) => entry?.type === 'blob' && /(?:^|\/)SKILL\.md$/iu.test(String(entry.path || '')))
+    .map((entry) => String(entry.path))
+    .sort((a, b) => a.localeCompare(b));
+  const childManifests = manifests.filter((manifest) => path.posix.dirname(manifest) !== '.');
+  const candidates = (childManifests.length ? childManifests : manifests).slice(0, 120);
+  if (!candidates.length) throw new Error('GitHub 仓库中没有找到 SKILL.md');
+  const skills = [];
+  for (const manifestPath of candidates) {
+    const response = await fetchImpl(githubRawUrl(repository.source, repository.ref, manifestPath), {
+      headers: { 'User-Agent': 'Taiji-Skill-Installer/1.0', Accept: 'text/markdown,text/plain,*/*' },
+      signal: AbortSignal.timeout(SKILL_DOWNLOAD_TIMEOUT_MS),
+    });
+    if (!response.ok) throw new Error(`无法读取 Skill 规则：${manifestPath}`);
+    const content = await response.text();
+    if (!content.trim() || Buffer.byteLength(content, 'utf8') > MAX_BODY_BYTES) throw new Error(`Skill 规则无效或超出大小限制：${manifestPath}`);
+    const rootPath = path.posix.dirname(manifestPath);
+    const frontmatter = parseFrontmatter(content);
+    const name = frontmatter.name || path.posix.basename(rootPath === '.' ? manifestPath : rootPath);
+    const slug = skillDirectoryName(name);
+    if (!slug) throw new Error(`无法生成安全的 Skill 名称：${name}`);
+    skills.push({ manifestPath, rootPath, name, slug, content, frontmatter });
+  }
+  return { ...repository, skills };
+}
+
 async function downloadSkillDirectory(sourceUrl, targetDir, fetchImpl = globalThis.fetch) {
   const source = githubDirectoryDescriptor(sourceUrl);
   if (!source) return { installMode: 'single-file', files: 1, source: { type: 'single-file', requestedUrl: sourceUrl } };
@@ -659,6 +751,140 @@ async function createSkillStage(skillsRoot, slug) {
   return fs.mkdtemp(path.join(skillsRoot, `.install-${slug}-`));
 }
 
+function selectGithubRepositorySkills(discovery, input = {}) {
+  const requested = [...new Set((Array.isArray(input.skillNames) ? input.skillNames : [])
+    .map((item) => String(item || '').trim().toLocaleLowerCase()).filter(Boolean))];
+  if (!requested.length) {
+    if (input.installAll === false) throw new Error('GitHub 仓库包含多个 Skill，请指定要安装的 Skill 名称或明确选择全部安装');
+    return discovery.skills;
+  }
+  const selected = [];
+  const missing = [];
+  for (const name of requested) {
+    const matched = discovery.skills.find((skill) => (
+      skill.slug.toLocaleLowerCase() === name
+      || skill.name.toLocaleLowerCase() === name
+      || skill.manifestPath.toLocaleLowerCase().includes(`/${name}/`)
+      || skill.manifestPath.toLocaleLowerCase().startsWith(`${name}/`)
+    ));
+    if (!matched) missing.push(name);
+    else if (!selected.some((skill) => skill.manifestPath === matched.manifestPath)) selected.push(matched);
+  }
+  if (missing.length) throw new Error(`仓库中没有找到指定 Skill：${missing.join('、')}`);
+  return selected;
+}
+
+function filesForGithubRepositorySkill(discovery, skill) {
+  const prefix = skill.rootPath === '.' ? '' : `${skill.rootPath}/`;
+  const files = discovery.tree.filter((entry) => entry?.type === 'blob' && typeof entry.path === 'string'
+    && (skill.rootPath === '.' || entry.path === skill.manifestPath || entry.path.startsWith(prefix)));
+  if (!files.some((entry) => entry.path === skill.manifestPath)) throw new Error(`仓库 Skill 缺少规则文件：${skill.manifestPath}`);
+  if (files.length > MAX_SKILL_BUNDLE_FILES) throw new Error(`Skill 文件过多，超过 ${MAX_SKILL_BUNDLE_FILES} 个：${skill.name}`);
+  return files;
+}
+
+async function stageGithubRepositorySkill(skillsRoot, discovery, skill, requestedSourceUrl, fetchImpl) {
+  const stageDir = await createSkillStage(skillsRoot, skill.slug);
+  try {
+    const files = filesForGithubRepositorySkill(discovery, skill);
+    const prefix = skill.rootPath === '.' ? '' : `${skill.rootPath}/`;
+    let totalBytes = 0;
+    for (const file of files) {
+      const relative = skill.rootPath === '.' ? file.path : file.path.slice(prefix.length);
+      const { target } = safeBundlePath(path.resolve(stageDir), relative);
+      let content;
+      if (file.path === skill.manifestPath) {
+        content = Buffer.from(skill.content, 'utf8');
+      } else {
+        const response = await fetchImpl(githubRawUrl(discovery.source, discovery.ref, file.path), {
+          headers: { 'User-Agent': 'Taiji-Skill-Installer/1.0', Accept: 'application/octet-stream,*/*' },
+          signal: AbortSignal.timeout(SKILL_DOWNLOAD_TIMEOUT_MS),
+        });
+        if (!response.ok) throw new Error(`无法下载 Skill 文件：${file.path}`);
+        content = Buffer.from(await response.arrayBuffer());
+      }
+      totalBytes += content.length;
+      if (totalBytes > MAX_SKILL_BUNDLE_BYTES) throw new Error(`Skill 目录超过 ${Math.round(MAX_SKILL_BUNDLE_BYTES / 1024 / 1024)}MB：${skill.name}`);
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      await fs.writeFile(target, content);
+    }
+    await writeInstallMetadata(stageDir, {
+      installMode: 'directory',
+      sourceUrl: discovery.source.canonicalUrl,
+      requestedSourceUrl,
+      source: {
+        type: 'github-repository',
+        owner: discovery.source.owner,
+        repo: discovery.source.repo,
+        ref: discovery.ref,
+        subdirectory: skill.rootPath === '.' ? '' : skill.rootPath,
+      },
+    });
+    await validateStagedSkill(stageDir);
+    return {
+      stageDir,
+      skill,
+      targetDir: path.resolve(skillsRoot, skill.slug),
+    };
+  } catch (error) {
+    await fs.rm(stageDir, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+async function installGithubRepositorySkills(projectRoot, input, fetchImpl = globalThis.fetch) {
+  const discovery = await discoverGithubRepositorySkills(input.sourceUrl, fetchImpl);
+  if (!discovery) throw new Error('Skill 来源不是可识别的 GitHub 仓库');
+  const selected = selectGithubRepositorySkills(discovery, input);
+  if (!selected.length) throw new Error('GitHub 仓库中没有可安装的 Skill');
+  const duplicates = selected.map((skill) => skill.slug).filter((slug, index, values) => values.indexOf(slug) !== index);
+  if (duplicates.length) throw new Error(`仓库中存在同名 Skill，无法安全安装：${[...new Set(duplicates)].join('、')}`);
+  const userProfile = process.env.USERPROFILE || process.env.HOME || '';
+  if (!userProfile) throw new Error('无法定位当前用户目录');
+  const skillsRoot = path.resolve(userProfile, '.workbuddy', 'skills');
+  const staged = [];
+  try {
+    for (const skill of selected) staged.push(await stageGithubRepositorySkill(skillsRoot, discovery, skill, input.sourceUrl, fetchImpl));
+    for (const item of staged) await replaceSkillDirectoryAtomically(item.targetDir, item.stageDir);
+  } catch (error) {
+    await Promise.allSettled(staged.map((item) => fs.rm(item.stageDir, { recursive: true, force: true })));
+    throw error;
+  }
+  const scanned = await scanSkills(projectRoot);
+  const verified = [];
+  for (const item of staged) {
+    const installed = scanned.find((candidate) => candidate._path === path.join(item.targetDir, 'SKILL.md'));
+    if (!installed) throw new Error(`Skill 已写入但扫描不到：${item.skill.name}`);
+    verified.push(await verifyInstalledSkill(projectRoot, {
+      ok: true,
+      skill: (({ _path, ...skill }) => skill)(installed),
+      resolvedUrl: discovery.source.canonicalUrl,
+    }, { ...input, name: item.skill.name, slug: item.skill.slug }));
+  }
+  const skills = verified.map((item) => item.skill);
+  const fileCount = verified.reduce((total, item) => total + Number(item.verification?.sourceFileCount || 0), 0);
+  const documentCount = verified.reduce((total, item) => total + Number(item.verification?.documentCount || 0), 0);
+  return {
+    ok: true,
+    skill: skills[0],
+    skills,
+    slug: selected.length === 1 ? selected[0].slug : undefined,
+    resolvedUrl: discovery.source.canonicalUrl,
+    requestedSourceUrl: input.sourceUrl,
+    verification: {
+      verified: true,
+      manifestReadable: true,
+      skillId: skills[0]?.id || '',
+      health: skills.every((skill) => skill.health !== 'broken') ? 'ready' : 'limited',
+      documentCount,
+      sourceFileCount: fileCount,
+      bundleHash: sha256(JSON.stringify(verified.map((item) => item.verification?.bundleHash || ''))),
+      checkedAt: new Date().toISOString(),
+      skillCount: skills.length,
+    },
+  };
+}
+
 async function installZipSkill(projectRoot, sourceUrl, requestedName, fetchImpl = globalThis.fetch) {
   const response = await fetchImpl(sourceUrl, {
     headers: { 'User-Agent': 'Taiji-Skill-Installer/1.0', Accept: 'application/zip,application/octet-stream,*/*' },
@@ -729,6 +955,9 @@ async function installSkill(projectRoot, input, options = {}) {
   if (parsedSource.protocol !== 'https:') throw new Error('技能地址必须使用 HTTPS');
   const fetchImpl = options.fetchImpl || globalThis.fetch;
   if (typeof fetchImpl !== 'function') throw new Error('当前环境没有可用的技能下载运行时');
+  if (githubRepositoryDescriptor(sourceUrl)) {
+    return installGithubRepositorySkills(projectRoot, normalized, fetchImpl);
+  }
   if (/\.zip$/i.test(parsedSource.pathname) || isSkillHubDownloadUrl(parsedSource.toString())) {
     const installed = await installZipSkill(projectRoot, parsedSource.toString(), requestedName, fetchImpl);
     return verifyInstalledSkill(projectRoot, installed, normalized);

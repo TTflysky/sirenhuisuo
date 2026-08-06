@@ -51,6 +51,87 @@ export function isSkillHubDownloadUrl(value) {
   }
 }
 
+function githubRepositoryUrl(value) {
+  const candidate = clean(value, 512).replace(/^@/u, '');
+  if (/^[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,99}$/iu.test(candidate)) {
+    return `https://github.com/${candidate.replace(/\.git$/iu, '')}`;
+  }
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol !== 'https:' || parsed.hostname.toLocaleLowerCase() !== 'github.com') return '';
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    if (parts.length !== 2 || !parts[0] || !parts[1]) return '';
+    return `https://github.com/${parts[0]}/${parts[1].replace(/\.git$/iu, '')}`;
+  } catch {
+    return '';
+  }
+}
+
+/** Parse skills CLI input without starting its interactive installer. */
+export function parseSkillCliInstall(value) {
+  const source = clean(value, 12000);
+  const match = source.match(/(?:^|\s)(?:npx\s+)?skills\s+add\s+([^\s`'"<>]+)/iu);
+  if (!match) return undefined;
+  const repositoryUrl = githubRepositoryUrl(match[1].replace(/[),.;!?]+$/gu, ''));
+  if (!repositoryUrl) return { error: 'skills add 只支持 GitHub 仓库地址或 owner/repo 格式。' };
+  const skillNames = [...source.matchAll(/(?:--skill|--skills?)\s*(?:=|\s)\s*([^\s,]+(?:\s*,\s*[^\s,]+)*)/giu)]
+    .flatMap((item) => String(item[1] || '').split(','))
+    .map((item) => item.trim().replace(/^['"`]|['"`]$/gu, ''))
+    .filter(Boolean)
+    .slice(0, 40);
+  return {
+    sourceUrl: repositoryUrl,
+    repositoryUrl,
+    skillNames,
+    installAll: skillNames.length === 0 || /(?:^|\s)--all(?:\s|$)/iu.test(source),
+    command: 'skills add',
+  };
+}
+
+export function isExplicitSkillInstallOperation(text) {
+  const source = clean(text, 12000);
+  const cli = parseSkillCliInstall(source);
+  if (cli) {
+    if (/[?？]|(?:什么(?:意思|命令)?|怎么用|如何用|为什么|能否|可以吗|是否|解释|介绍)/u.test(source)) return false;
+    if (/^\s*(?:`{1,3}\s*)?(?:npx\s+)?skills\s+add\s+[^\s`'"<>]+(?:\s+--?[^\s`'"<>]+(?:\s+[^\s`'"<>]+)?)?\s*`{0,3}\s*[。！!]?\s*$/iu.test(source)) return true;
+    return /(?:请|帮我|替我|直接|现在|继续).{0,24}(?:执行|运行|安装|装上|装好)/u.test(source);
+  }
+  return Boolean(resolveSkillInstallRequest(source)?.sourceUrl);
+}
+
+/**
+ * Detect a real install request independently from whether the source lives in
+ * the current text. The latter is important for a follow-up such as “安装它”:
+ * the source is carried by the conversation-reference contract, not guessed
+ * from the model's prose.
+ */
+export function isSkillInstallAction(text, options = {}) {
+  const source = clean(text, 12000);
+  if (!source) return false;
+  if (isExplicitSkillInstallOperation(source)) return true;
+  if (/[?？]|(?:什么(?:意思|命令)?|怎么用|如何用|为什么|能否|可以吗|是否|解释|介绍)/u.test(source)) return false;
+  if (!/(?:安装|装上|装好|部署|install)/iu.test(source)) return false;
+  if (/(?:没有|未|无法|不能|失败).{0,16}(?:安装|装上|装好|部署|install)/iu.test(source)
+      && !/(?:请|帮我|给我|替我|现在|直接|立即|重新|继续|接着)/u.test(source)) return false;
+  if (/(?:skill|技能|插件)/iu.test(source)) return true;
+  if (options.allowBoundReference !== true) return false;
+  const refersToBoundObject = /(?:它|这个(?:技能|插件)?|该(?:技能|插件)?|上面那个(?:技能|插件)?|刚才那个(?:技能|插件)?|前面那个(?:技能|插件)?)/u.test(source);
+  const imperative = /(?:^|[，,。；;]\s*)(?:请(?:你)?|帮我|给我|替我|现在|直接|立即|重新|继续|接着|把|安装|装上|装好|部署|install)/iu.test(source);
+  return refersToBoundObject && imperative;
+}
+
+function githubRepositoryDetails(value) {
+  try {
+    const parsed = new URL(clean(value));
+    if (parsed.protocol !== 'https:' || parsed.hostname.toLocaleLowerCase() !== 'github.com') return undefined;
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    if (parts.length !== 2 || parts[1].toLocaleLowerCase() === 'tree') return undefined;
+    return { owner: parts[0], repo: parts[1].replace(/\.git$/iu, '') };
+  } catch {
+    return undefined;
+  }
+}
+
 export function skillHubSlugFromRequest(text) {
   const source = clean(text, 12000);
   const patterns = [
@@ -74,13 +155,15 @@ export function skillHubSlugFromRequest(text) {
  * final download URL.
  */
 export function resolveSkillInstallInput(input = {}, requestText = '') {
+  const cli = requestText ? parseSkillCliInstall(requestText) : undefined;
+  if (cli?.error) return { error: cli.error };
   const rawSource = clean(input?.sourceUrl ?? input?.url, 2048);
   const request = requestText ? resolveSkillInstallRequest(requestText) : undefined;
   let slug = normalizeSkillHubSlug(input?.slug)
     || skillHubSlugFromUrl(rawSource)
     || (!rawSource ? normalizeSkillHubSlug(input?.name) : '')
     || normalizeSkillHubSlug(request?.slug);
-  let sourceUrl = rawSource || clean(request?.sourceUrl, 2048);
+  let sourceUrl = rawSource || clean(cli?.sourceUrl, 2048) || clean(request?.sourceUrl, 2048);
   const name = clean(input?.name, 160) || clean(request?.name, 160) || slug;
 
   if (sourceUrl && !/^https:\/\//iu.test(sourceUrl)) {
@@ -118,10 +201,19 @@ export function resolveSkillInstallInput(input = {}, requestText = '') {
     name: name || slug || undefined,
     slug: slug || undefined,
     provider: slug ? 'skillhub' : 'direct',
+    ...(githubRepositoryDetails(sourceUrl) ? {
+      repository: { type: 'github-repository', ...githubRepositoryDetails(sourceUrl) },
+      skillNames: (Array.isArray(input?.skillNames) ? input.skillNames : (cli?.skillNames || []))
+        .map((item) => clean(item, 120)).filter(Boolean).slice(0, 40),
+      installAll: input?.installAll ?? cli?.installAll ?? true,
+    } : {}),
   };
 }
 
 export function resolveSkillInstallRequest(text) {
+  const cli = parseSkillCliInstall(text);
+  if (cli?.error) return cli;
+  if (cli) return resolveSkillInstallInput(cli);
   const source = clean(text, 12000);
   if (!/(?:安装|装上|装好|install|部署)/iu.test(source) || !/(?:skill|技能|插件)/iu.test(source)) return undefined;
   const urls = httpsUrls(source);
@@ -166,12 +258,12 @@ export function resolveSkillInstallRequest(text) {
   return resolveSkillInstallInput({ sourceUrl: directUrl, slug, name: slug || undefined });
 }
 
-export function isSkillInstallOnlyRequest(text) {
+export function isSkillInstallOnlyRequest(text, options = {}) {
   const source = clean(text, 12000)
     .replace(/https:\/\/\S+/giu, ' ')
     .replace(/[`'"“”]/gu, '')
     .replace(/\s+/gu, ' ')
     .trim();
-  if (!resolveSkillInstallRequest(text)) return false;
+  if (!isSkillInstallAction(text, options)) return false;
   return !/(?:并|然后|之后|安装后|装好后).{0,24}(?:使用|运行|执行|创建|生成|写|搜索|查询|验证业务|完成任务)/iu.test(source);
 }

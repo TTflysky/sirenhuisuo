@@ -1,5 +1,35 @@
 # 当前 V5.5.0 交接（2026-08-06）
 
+## Skill 安装长期失败根因与内核修复（2026-08-06，v5.5.0 后续源码热修复）
+
+### 本轮目标与边界
+- 目标：定位并修复从项目早期持续存在的 Skill 安装失败，不为某个技能名称增加特例；明确命令、GitHub 仓库、SkillHub 来源和已绑定候选必须进入同一套原生安装闭环。
+- 非目标：不运行交互式第三方 CLI，不把本地确定性回归冒充为已经覆盖安装客户端后的真实联网验收，也不在本轮改版本号或发布安装包。
+
+### 根因
+- 裸命令 `npx skills add owner/repo` 过去可能被任务决策当成“让模型解释命令”，没有被保护为必须执行的安装操作；用户随后说“继续安装”时，旧目标也可能丢失。
+- `skills add` 是面向 Codex/Claude/Cursor 等 harness 的交互式安装器，后台无 TTY 时会停在目标选择，而且即使执行也不保证写入太极扫描的 `%USERPROFILE%\.workbuddy\skills`。
+- 太极原生安装器此前支持 SkillHub ZIP、单个 `SKILL.md` 和 GitHub 具体目录，但不支持只给 `https://github.com/owner/repo` 的多 Skill 仓库；`vercel-labs/agent-skills` 正是这种仓库根地址。
+- 明确来源和“安装它”过去仍会回到通用模型循环，模型可以反复读网页、搜索或改路线；普通任务预算允许最多约 48 万 token，因此确定性安装错误被放大成数分钟空转。
+
+### 真实故障现场
+- 客户端任务 `task-1786007789021-42915921` 把目标保存成了“继续安装。”，没有继承上一条 `npx skills add vercel-labs/agent-skills`；决策模型不可用时，旧规则把主路线错误降级为 `run_command`。
+- 首次命令真实超时在 `Select skills to install` 交互菜单；第二次追加 `--yes` 后成功下载 9 个 Skill，但落在任务隔离工作区 `.agents/skills`，只产生该工作区的 `skills-lock.json`，不属于太极受管技能库。
+- 后续运行时又执行了多次搜索、读取和目录检查；原生 `install_skill` 对 GitHub 仓库根地址返回 `HTTP 404`，改走 GitHub ZIP 又遇到连接重置，最终任务暂停并耗尽约 48 万 token。
+
+### 已完成
+- `skillInstallRouting` 能解析 `npx skills add owner/repo`，区分“执行命令”和“这是什么命令”，并把“继续安装”恢复到上一条真实安装目标。
+- GitHub 仓库根地址由原生安装器读取仓库树，发现一个或多个 `SKILL.md`，按完整目录下载、限制文件数/大小、写包清单、原子替换并逐个回读验证；支持安装全部或指定 Skill。
+- 明确安装目标不再调用规划模型：运行时直接执行一次 `install_skill`，写入真实技能目录并根据回读证据结束；已绑定候选后的“安装它”复用同一来源合同。
+- `run_command` 明确阻止 `npx skills add` 和 `skillhub install` 进入交互式/错误目录路线，并给出统一原生安装器反馈。
+- 将 Skill 安装准备与直接执行拆到 `src/data/agentLoopSkillInstall.ts`；核心循环保持 896 行，最长函数 759 行，模块和函数边界均通过。
+
+### 验证证据与未决
+- `verify:skill-install-e2e` 通过：覆盖 SkillHub ZIP、GitHub 多 Skill 仓库、完整包回读和 CLI 路线阻断。
+- 新增 Agent Loop 回归：明确命令的规划模型调用次数为 0、原生安装调用次数为 1；“安装它”使用绑定来源，疑问句不会误触发安装。
+- `verify:v2-core-gate` 全部通过：52 个测试文件、179 项测试、400 条任务语义样例、构建、Skill 专项、模块/函数边界与性能门禁均通过。
+- 本轮不改版本号、不重打安装包，仅同步源码热修复；家里同步 `main` 后即可继续构建/覆盖客户端。下一次客户端验收应直接发送 `npx skills add vercel-labs/agent-skills`，预期不再先解释命令，也不再进入模型循环；安装完成后核对技能页数量和完整包回读摘要。
+
 ## V5.5.0 发布门禁修复（2026-08-06）
 
 ### 本轮目标与边界

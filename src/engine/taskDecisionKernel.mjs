@@ -11,7 +11,7 @@ import {
   shouldHoldTaskForFeedback,
 } from './agentGuardrails.mjs';
 import { taskRequirementLabels } from './taskFidelity.mjs';
-import { resolveSkillInstallRequest } from './skillInstallRouting.mjs';
+import { isExplicitSkillInstallOperation, resolveSkillInstallRequest } from './skillInstallRouting.mjs';
 import { isSkillDiscoveryRequest } from './skillHubSearch.mjs';
 import { inferCapabilityIds } from './capabilityGraph.mjs';
 import { createExplicitResourceContract } from './explicitResourceContract.mjs';
@@ -259,12 +259,14 @@ export function createFallbackTaskDecision(input = {}) {
   const control = getDirectExecutionControl(latestMessage);
   const turnIntent = classifyTaskTurnIntent(latestMessage, input.activeTaskGoal);
   const capabilityCorrection = isActionableCapabilityCorrection(latestMessage);
-  const goal = clean(resolveActionableUserGoal(latestMessage, previousUserMessage)) || latestMessage;
+  const resumeReference = control === 'resume' ? clean(input.activeTaskGoal) || previousUserMessage : previousUserMessage;
+  const goal = clean(resolveActionableUserGoal(latestMessage, resumeReference)) || latestMessage;
   const feedbackOnly = shouldHoldTaskForFeedback(latestMessage) && isConversationOnlyMessage(latestMessage);
   const requiredConstraints = taskRequirementLabels(goal);
   const turnRelation = fallbackTurnRelation(input);
   const explicitResourceRequest = Boolean(createExplicitResourceContract(goal));
-  const mustExecute = explicitResourceRequest || turnIntent === 'execute_request' && (capabilityCorrection
+  const explicitSkillInstall = isExplicitSkillInstallOperation(goal);
+  const mustExecute = explicitResourceRequest || explicitSkillInstall || turnIntent === 'execute_request' && (capabilityCorrection
     || requiresFreshWebResearch(goal)
     || requiresObservableExecutionEvidence(goal)
     || !isConversationOnlyMessage(latestMessage));
@@ -331,10 +333,12 @@ export function normalizeTaskDecision(candidate, input = {}) {
   const turnIntent = classifyTaskTurnIntent(latestMessage, input.activeTaskGoal);
   const capabilityCorrection = isActionableCapabilityCorrection(latestMessage);
   const taskCorrection = isTaskCorrection(latestMessage);
+  const hasExplicitSkillInstall = isExplicitSkillInstallOperation(fallback.goal);
   const fallbackRelation = fallback.turnRelation;
   const hardExecute = turnIntent === 'execute_request' && (isAcceptanceFailureFeedback(latestMessage) || capabilityCorrection || requiresObservableExecutionEvidence(fallback.goal))
     || capabilityCorrection
     || Boolean(createExplicitResourceContract(fallback.goal))
+    || hasExplicitSkillInstall
     || requiresFreshWebResearch(fallback.goal)
     || requiresObservableExecutionEvidence(fallback.goal);
   const hardAnswer = turnIntent === 'follow_up_question';

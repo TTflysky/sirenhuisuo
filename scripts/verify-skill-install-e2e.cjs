@@ -11,6 +11,14 @@ const DIAGRAM_BUILDER_ZIP = Buffer.from(
   'base64',
 );
 
+const REPOSITORY_SKILL_FILES = {
+  'skills/skill-alpha/SKILL.md': '---\nname: skill-alpha\ndescription: Alpha workflow\n---\n\nRead [the guide](references/guide.md).\n',
+  'skills/skill-alpha/references/guide.md': '# Alpha Guide\n\nUse the alpha workflow.\n',
+  'skills/skill-beta/SKILL.md': '---\nname: skill-beta\ndescription: Beta workflow\n---\n\nRun the beta workflow.\n',
+};
+
+const REPOSITORY_TREE = Object.keys(REPOSITORY_SKILL_FILES).map((file) => ({ path: file, type: 'blob' }));
+
 async function main() {
   const projectRoot = path.resolve(__dirname, '..');
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'taiji-skill-e2e-'));
@@ -27,6 +35,16 @@ async function main() {
     }
     if (href === 'https://api.skillhub.cn/api/v1/download?slug=diagram-builder') {
       return new Response(DIAGRAM_BUILDER_ZIP, { status: 200, headers: { 'content-type': 'application/zip', 'content-length': String(DIAGRAM_BUILDER_ZIP.length) } });
+    }
+    if (href === 'https://api.github.com/repos/vercel-labs/agent-skills/git/trees/main?recursive=1') {
+      return new Response(JSON.stringify({ tree: REPOSITORY_TREE, truncated: false }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }
+    const repositoryPrefix = 'https://raw.githubusercontent.com/vercel-labs/agent-skills/main/';
+    if (href.startsWith(repositoryPrefix)) {
+      const relativePath = href.slice(repositoryPrefix.length);
+      return Object.hasOwn(REPOSITORY_SKILL_FILES, relativePath)
+        ? new Response(REPOSITORY_SKILL_FILES[relativePath], { status: 200 })
+        : new Response('missing', { status: 404 });
     }
     throw new Error(`unexpected fetch: ${href}`);
   };
@@ -49,6 +67,34 @@ async function main() {
     assert.equal(decision.primaryRoute, 'install_skill');
     assert.equal(decision.deliverableType, 'operation');
     assert.equal(decision.deliverables[0].type, 'operation');
+
+    const cliCommand = 'npx skills add vercel-labs/agent-skills';
+    const cliSource = routing.resolveSkillInstallRequest(cliCommand);
+    assert.equal(cliSource.sourceUrl, 'https://github.com/vercel-labs/agent-skills');
+    assert.equal(cliSource.installAll, true);
+    assert.equal(routing.isExplicitSkillInstallOperation(cliCommand), true);
+    assert.equal(routing.isExplicitSkillInstallOperation(`${cliCommand} 是什么命令？`), false);
+    assert.equal(routing.isSkillInstallAction('安装它', { allowBoundReference: true }), true);
+    assert.equal(routing.isSkillInstallAction('安装它'), false);
+    assert.equal(routing.isSkillInstallAction('为什么它没有安装好？', { allowBoundReference: true }), false);
+    const cliDecision = decisionKernel.createFallbackTaskDecision({ latestMessage: cliCommand, availableTools: ['install_skill', 'run_command'] });
+    assert.equal(cliDecision.mode, 'execute');
+    assert.equal(cliDecision.primaryRoute, 'install_skill');
+    const resumedCliDecision = decisionKernel.createFallbackTaskDecision({
+      latestMessage: '继续安装。', previousUserMessage: cliCommand, availableTools: ['install_skill', 'run_command'],
+    });
+    assert.equal(resumedCliDecision.goal, cliCommand);
+    assert.equal(resumedCliDecision.primaryRoute, 'install_skill');
+
+    const repositoryInstall = await installSkill(projectRoot, { sourceUrl: cliSource.sourceUrl, requestText: cliCommand }, { fetchImpl });
+    assert.equal(repositoryInstall.ok, true);
+    assert.equal(repositoryInstall.skills.length, 2);
+    assert.deepEqual(repositoryInstall.skills.map((skill) => skill.name), ['skill-alpha', 'skill-beta']);
+    assert.equal(repositoryInstall.verification.skillCount, 2);
+    await assert.rejects(
+      () => installSkill(projectRoot, { sourceUrl: cliSource.sourceUrl, installAll: false }, { fetchImpl }),
+      /请指定要安装的 Skill 名称/u,
+    );
 
     const direct = await installSkill(projectRoot, { sourceUrl: 'https://skillhub.cn/skills/diagram-builder' }, { fetchImpl });
     assert.equal(direct.ok, true);
@@ -86,6 +132,13 @@ async function main() {
     assert.match(installed.output, /完整包回读验证/u);
     assert.match(installed.output, /已核验源文件/u);
     assert.match(installed.output, /健康状态/u);
+
+    const blockedCli = await runtime.execute('run_command', { cmd: cliCommand }, {
+      goal: cliCommand,
+      executionPolicy: { approvalMode: 'full' },
+    });
+    assert.equal(blockedCli.success, false);
+    assert.match(blockedCli.output, /install_skill/u);
 
     const acceptance = fidelity.assessTaskCompletion(prompt, 'diagram-builder 已安装并验证。', [{
       name: 'install_skill', args: JSON.stringify({ slug: 'diagram-builder' }), result: installed.output, success: true,

@@ -50,7 +50,7 @@ import {
   createExplicitResourceContract,
   validateExplicitResourceToolCall,
 } from '../engine/explicitResourceContract.mjs';
-import { isSkillInstallOnlyRequest, resolveSkillInstallInput, resolveSkillInstallRequest } from '../engine/skillInstallRouting.mjs';
+import { resolveSkillInstallInput } from '../engine/skillInstallRouting.mjs';
 import { buildTaskLearningContext } from '../engine/taskLearningMemory';
 import {
   applySteering as applyTurnSteering,
@@ -82,7 +82,7 @@ import {
   pinnedSkillSourcePath,
 } from './agentLoopPolicy';
 import { finalizeAgentLoopResult, type AgentLoopCallLogEntry } from './agentLoopFinalization';
-
+import { executePinnedSkillInstall, prepareAgentSkillInstallation } from './agentLoopSkillInstall';
 type CompileTaskDecisionFunction = typeof import('./hermesClient').compileTaskDecision;
 
 export interface AgentLoopOpts {
@@ -158,29 +158,22 @@ export function createRunAgentLoop(deps: AgentLoopDependencies) {
     : (turn.content ?? []).filter((part): part is ContentPart => part.type === 'text').map((part) => part.text).join('\n'));
   const latestUserText = userTexts.at(-1) ?? '';
   const compiled = taskDecisionCompilation ?? await compileTaskDecision(turns, tools, modelConfig, getModelRequestSignal?.());
-  const taskDecision = compiled.decision;
   totalUsage.promptTokens += compiled.usage.promptTokens;
   totalUsage.completionTokens += compiled.usage.completionTokens;
   totalUsage.totalTokens += compiled.usage.totalTokens;
   latestContextUsage = compiled.contextUsage;
   finalModel = compiled.model ?? '';
-  const originalUserText = taskDecision.goal;
+  const skillInstallPreparation = prepareAgentSkillInstallation({
+    taskDecision: compiled.decision, latestUserText, tools, referenceSourceUrl: opts.referenceSourceUrl,
+    isConnectorTask, isConnectorSetupRequest,
+  });
+  const { taskDecision, originalUserText, installOnlyTask, explicitSkillInstallRequest,
+    isInstallationTask, connectorTask, connectorSetupTask, isSkillInstallation,
+    conversationOnly, pinnedSkillInstall, pinnedSkillSource } = skillInstallPreparation;
   const interactiveWebTask = extractTaskRequirements(originalUserText).some((item) => item.kind === 'web_interactive');
-  const installOnlyTask = isSkillInstallOnlyRequest(originalUserText);
-  const explicitSkillInstallRequest = resolveSkillInstallRequest(originalUserText);
   const resumedFromCapabilityCorrection = taskDecision.mode === 'execute'
     && originalUserText !== latestUserText
     && isActionableCapabilityCorrection(latestUserText);
-  const isInstallationTask = /安装|装好|装上|安装包|部署/u.test(originalUserText);
-  const connectorTask = isConnectorTask(originalUserText) || taskDecision.primaryRoute === 'inspect_connectors';
-  const connectorSetupTask = isConnectorSetupRequest(originalUserText) || taskDecision.primaryRoute === 'inspect_connectors';
-  const isSkillInstallation = isInstallationTask && !connectorTask
-    && (/skill|技能|插件/iu.test(originalUserText) || Boolean(opts.referenceSourceUrl));
-  const conversationOnly = taskDecision.mode !== 'execute';
-  const pinnedSkillInstall = !conversationOnly && installOnlyTask && isSkillInstallation
-    ? resolveSkillInstallInput({ sourceUrl: explicitSkillInstallRequest?.sourceUrl || opts.referenceSourceUrl }, originalUserText)
-    : undefined;
-  const pinnedSkillSource = !pinnedSkillInstall?.error ? pinnedSkillInstall?.sourceUrl || '' : '';
   const skillDiscoveryNeedsSelection = !explicitSkillInstallRequest?.sourceUrl
     && /(?:找|搜索|搜寻|检索|推荐|find|search)/iu.test(originalUserText)
     && /(?:skill|技能|插件)/iu.test(originalUserText);
@@ -311,6 +304,34 @@ export function createRunAgentLoop(deps: AgentLoopDependencies) {
   };
   onExecutionState?.(executionState);
 
+  let directInstallHandled = false;
+  if (installOnlyTask && pinnedSkillSource && taskDecision.primaryRoute === 'install_skill') {
+    directInstallHandled = true;
+    const installed = await executePinnedSkillInstall({
+      sourceUrl: pinnedSkillSource,
+      skillNames: Array.isArray((pinnedSkillInstall as any)?.skillNames) ? (pinnedSkillInstall as any).skillNames : undefined,
+      installAll: (pinnedSkillInstall as any)?.installAll,
+      scope,
+      workspaceId: opts.workspaceId,
+      goal: originalUserText,
+      turnRuntime,
+      turnLifecycle,
+      executionState,
+      callLog,
+      isUsefulToolOutcome,
+      assessCompletion: assessCurrentTaskCompletion,
+      executionRouteKey,
+      onExecutionState,
+      onTurnLifecycle,
+      onToolCall,
+      onToolResult,
+    });
+    turnRuntime = installed.turnRuntime;
+    turnLifecycle = installed.turnLifecycle;
+    executionState = installed.executionState;
+    finalContent = installed.content;
+  }
+
   const respondToSteering = async (initialMessages: string[]): Promise<{ stopped: boolean }> => {
     const pendingMessages = [...initialMessages];
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -371,9 +392,8 @@ export function createRunAgentLoop(deps: AgentLoopDependencies) {
     return { stopped: isExplicitStopSteering(pendingMessages) };
   };
 
-  for (let iter = 0; iter < maxIter; iter++) {
-    // 暂停中的插话会临时唤醒等待者。唤醒后必须先消费最新消息，
-    // 不能先让旧计划多跑一次模型或工具调用。
+  for (let iter = 0; !directInstallHandled && iter < maxIter; iter++) {
+    // 暂停唤醒后先消费最新消息，不能让旧计划先多跑一次。
     await waitIfPaused?.();
     if (shouldStop?.()) { stopped = true; break; }
     const atTurnStartGuidance = consumeSteeringMessages?.() ?? [];

@@ -23,7 +23,7 @@ import { createFileArtifactEvidence, createReviewSubmissionEvidence, createToolE
 import type { FileArtifactEvidence, ReviewSubmissionEvidence, ToolExecutionEvidence } from './executionEvidence.mjs';
 import { buildToolRegistry, discoverTools, preflightToolCall } from './toolRegistry.mjs';
 import { formatSkillHubResults, searchSkillHub } from './skillHubSearch.mjs';
-import { resolveSkillInstallInput } from './skillInstallRouting.mjs';
+import { parseSkillCliInstall, resolveSkillInstallInput } from './skillInstallRouting.mjs';
 import * as connectorData from '../data/connectors';
 import * as skillData from '../data/skills';
 import * as connectorToolRuntime from './connectorTools';
@@ -847,7 +847,15 @@ async function executeToolInternal(call: ToolCall): Promise<ToolResult> {
         const api = getFsApi();
         if (!api?.skillsInstall) return { toolCallId: id, name, success: false, output: '当前环境不支持安装 Skill，请使用桌面客户端。' };
         const result = await api.skillsInstall(resolved);
-        if (result?.ok && result.skill) sendBus(BUS_CHANNELS.SKILLS_CHANGED, { action: 'installed', skillId: result.skill.id });
+        const installedSkills = Array.isArray((result as any)?.skills) && (result as any).skills.length
+          ? (result as any).skills
+          : (result?.skill ? [result.skill] : []);
+        const installedSummary = installedSkills.length > 1
+          ? `已安装 ${installedSkills.length} 个 Skill：${installedSkills.slice(0, 12).map((skill: any) => skill.name || skill.id).filter(Boolean).join('、')}${installedSkills.length > 12 ? ' 等' : ''}\n`
+          : '';
+        if (result?.ok && installedSkills.length) {
+          installedSkills.forEach((skill: any) => sendBus(BUS_CHANNELS.SKILLS_CHANGED, { action: 'installed', skillId: skill.id }));
+        }
         if (!result?.ok || !result.skill) return { toolCallId: id, name, success: false, output: `Skill 安装失败：${result?.error ?? '安装器没有返回有效结果'}` };
         if (args.connector?.trim()) {
           const query = args.connector.trim().toLocaleLowerCase();
@@ -857,7 +865,7 @@ async function executeToolInternal(call: ToolCall): Promise<ToolResult> {
             sendBus(BUS_CHANNELS.CONNECTORS_CHANGED, { connectorId: connector.id, reason: 'skill-installed' });
           }
         }
-        return { toolCallId: id, name, success: true, output: `Skill 已安装并完成完整包回读验证。\nID: ${result.skill.id}\n名称: ${result.skill.name}\nSlug: ${result.slug ?? resolved.slug ?? ''}\n来源: ${result.resolvedUrl ?? resolved.sourceUrl}\n健康状态: ${result.verification?.health ?? result.skill.health ?? 'ready'}\n已核验源文件: ${result.verification?.sourceFileCount ?? 0}\n已回读规则文档: ${result.verification?.documentCount ?? 0}\n包校验哈希: ${result.verification?.bundleHash ?? ''}\n\n如果该 Skill 还依赖账号、外部软件或连接器，再按说明配置并做实际调用验证；纯安装任务到这里已经完成。` };
+        return { toolCallId: id, name, success: true, output: `Skill 已安装并完成完整包回读验证。\n${installedSummary}ID: ${result.skill.id}\n名称: ${result.skill.name}\nSlug: ${result.slug ?? resolved.slug ?? ''}\n来源: ${result.resolvedUrl ?? resolved.sourceUrl}\n健康状态: ${result.verification?.health ?? result.skill.health ?? 'ready'}\n已核验源文件: ${result.verification?.sourceFileCount ?? 0}\n已回读规则文档: ${result.verification?.documentCount ?? 0}\n包校验哈希: ${result.verification?.bundleHash ?? ''}\n\n如果该 Skill 还依赖账号、外部软件或连接器，再按说明配置并做实际调用验证；纯安装任务到这里已经完成。` };
       }
 
       case 'inspect_connectors': {
@@ -1089,8 +1097,8 @@ async function executeToolInternal(call: ToolCall): Promise<ToolResult> {
       case 'run_command': {
         const cmd = (args.cmd ?? '').trim();
         if (!cmd) return { toolCallId: id, name, success: false, output: '命令不能为空' };
-        if (/(?:^|[;&|]\s*)skillhub(?:\.bat)?\s+(?:install|update)\b/iu.test(cmd)) {
-          return { toolCallId: id, name, success: false, output: 'SkillHub CLI 路线已停用：当前 Windows 包装脚本可能依赖不可用的 python3。请直接调用客户端原生 install_skill；不要要求用户修改命令权限。' };
+        if (/(?:^|[;&|]\s*)skillhub(?:\.bat)?\s+(?:install|update)\b/iu.test(cmd) || parseSkillCliInstall(cmd)) {
+          return { toolCallId: id, name, success: false, output: '技能 CLI 安装路线已停用：交互式命令无法在后台可靠完成，也不会写入太极的受管 Skill 目录。请直接调用客户端原生 install_skill，安装器会完整落盘并回读校验。' };
         }
         if (containsInlineSecret(cmd)) {
           return { toolCallId: id, name, success: false, output: '命令中包含疑似明文密钥、Token 或密码，已阻止执行。请把凭据保存到连接器配置，再通过 connector 参数以临时环境变量注入；密钥不会进入聊天和日志。' };
