@@ -1,4 +1,4 @@
-# 太极 AI 办公会所 v5.5.0
+# 太极 AI 办公会所 v5.5.1
 
 [![Release](https://img.shields.io/github/v/release/TTflysky/sirenhuisuo?label=release)](https://github.com/TTflysky/sirenhuisuo/releases/latest)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D4)](https://github.com/TTflysky/sirenhuisuo/releases/latest)
@@ -42,10 +42,10 @@
 
 ## 项目状态
 
-- 当前源码版本：`5.0.0`
-- 当前可安装验收版本：`5.0.0`（GitHub Release 发布后可下载安装）
+- 当前源码版本：`5.5.1`
+- 当前可安装验收版本：`5.5.1`（GitHub Release 发布后可下载安装）
 - 发布分支：`main`
-- GitHub Release：`v5.0.0`；未配置代码签名，Windows 可能显示 SmartScreen warning。
+- GitHub Release：`v5.5.1`；未配置代码签名，Windows 可能显示 SmartScreen warning。
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 43、React 19、TypeScript 6、Ant Design 6、Vite 8
 - 模型接口：OpenAI 兼容的 `/chat/completions` API
