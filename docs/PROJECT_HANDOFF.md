@@ -7,7 +7,7 @@
 
 ## v5.0.0 发布与真实陪跑交接（2026-08-06）
 
-- V5 源码、构建和 `verify:v5` 已完成，Windows 安装包由发布脚本生成并上传到 GitHub Release。
+- V5 源码、构建和 `verify:v5` 已完成，Windows 安装包已上传到 [GitHub Release v5.0.0](https://github.com/TTflysky/sirenhuisuo/releases/tag/v5.0.0)；发布提交为 `74a5cbab6ae6f63ffee61f4e828c8e383d1b8a2e`。
 - 真实陪跑没有通过最终自主团队验收：科学计算器出现“口头完成、无文件/证据”，风险看板出现 DeepSeek DSML 工具调用未解析。完整证据、根因和修复门禁见 [TAIJI_V5_LIVE_RUN_REPORT.md](./TAIJI_V5_LIVE_RUN_REPORT.md)。
 - 下一轮必须先修复统一模型输出网关，再把普通助理入口强制接入 `TaskService`/`ProjectContext`，随后重跑两项通用陪跑；不得添加项目关键词特例，也不得把静态门禁通过写成真实完成。
 

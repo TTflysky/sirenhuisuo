@@ -34,7 +34,8 @@ V5 的静态门禁和工作区隔离代码已存在，但真实客户端仍有�
 
 ## 当前交接动作
 
-- 本次只覆盖安装本地客户端，没有创建 `v5.0.0` GitHub Release 或上传安装包。
+- `v5.0.0` GitHub Release 已发布：<https://github.com/TTflysky/sirenhuisuo/releases/tag/v5.0.0>。
+- 发布提交：`74a5cbab6ae6f63ffee61f4e828c8e383d1b8a2e`；Windows 安装器已上传并完成远端大小/SHA-256 核对，当前本地安装器 SHA-256 为 `8C26D873173F98D1F2812BF89272B1EAFEE044C7CCFE17834569C3D85137328D`。
 - 安装过程中仓库 `package.json` 曾被外部运行过程改回旧 `2.3.0` 内容，已核对并恢复为 `5.0.0`，未把该异常带入提交。
 - 下次开始前先读本节、`AGENTS.md` 和 `docs/TAIJI_V5_AUTONOMOUS_AGENT_ROADMAP.md`，再从“统一工具调用解析 -> 任务/项目登记 -> 真实文件证据”顺序修复。
 
