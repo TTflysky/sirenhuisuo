@@ -13,9 +13,11 @@
 - `npm.cmd run verify:native-execution`：通过；审批补偿、工具执行和最终状态均完成。
 - `npm.cmd run verify:v2-core-gate`：通过；51 个测试文件、176 项测试、构建、模块边界和 V5.5 核心门禁均通过。
 
-### 未决与下一步
-- 运行正式 `publish:release`，推送 `main`、创建/更新 `v5.5.0` Release 并上传 Windows 安装包、blockmap 和 `latest.yml`。
-- 发布后覆盖本地客户端；真实 Electron 窗口项目验收仍需在客户端启动后继续，不在发布动作中冒充通过。
+### 发布结果与下一步
+- 已于 2026-08-06 发布 GitHub Release：`https://github.com/TTflysky/sirenhuisuo/releases/tag/v5.5.0`。
+- `main` 和标签均指向 `25460e054df294abcb464f48bbfe6aa7e037f6f1`；Windows 安装包 `release/taiji-office-setup-5.5.0.exe` 已上传并完成远端大小与 SHA-256 校验。
+- 安装包 SHA-256：`A2542D6BDFDCDA3744BF5432CB74AEDF908EAF958B39507F51D9C254B867FC8E`。
+- 真实 Electron 窗口项目验收仍需在客户端启动后继续，不在发布动作中冒充通过。
 
 ## 项目与全局开发技能补充（2026-08-06）
 
