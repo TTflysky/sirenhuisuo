@@ -30,6 +30,9 @@ downloads/
 .electron-builder-cache
 .config-export-profile/
 config/private/
+# Local development-agent Skills are not client runtime dependencies.
+.agents/
+skills-lock.json
 outputs
 !src/components/outputs/
 !src/components/outputs/**
