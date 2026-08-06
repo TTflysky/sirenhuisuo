@@ -4,9 +4,9 @@
 
 ## 本次 V5 安装与真实陪跑
 
-- 源码提交：`90e2633 feat: complete taiji v5 autonomous agent core`，`package.json` 为 `5.0.0`，构建树已恢复干净。
+- V5 发布源码提交：`74a5cba build: refresh v5 release evidence`，`package.json` 为 `5.0.0`，构建树已恢复干净；主分支随后补充了发布交接文档提交 `81054f2`。
 - 已构建并覆盖本机旧客户端：`E:\AI办公会所\hermes-office-pro\太极 AI 办公会所.exe`，文件版本和产品版本均为 `5.0.0`。用户数据目录 `%APPDATA%\taiji-office` 保留。
-- 构建验证：`npm.cmd run build`、`npm.cmd run lint`、`npm.cmd run test:run -- --reporter=dot`（48 个测试文件、166 个测试通过）、`npm.cmd run verify:v5` 均通过。
+- 构建验证：`npm.cmd run build`、`npm.cmd run lint`、`npm.cmd run test:run -- --reporter=dot`（48 个测试文件、167 个测试通过）、`npm.cmd run verify:v5` 均通过；发布前完整 `verify:v2-core-gate` 也已通过。
 - 本机陪跑使用禁用 GPU 的客户端调试端口 `9336`，已确认 User-Agent 为 `taiji-office/5.0.0`。
 
 ### 陪跑项目一：科学计算器
