@@ -45,7 +45,7 @@
 - `verify:skill-install-e2e` 通过：覆盖 SkillHub ZIP、GitHub 多 Skill 仓库、完整包回读和 CLI 路线阻断。
 - 新增 Agent Loop 回归：明确命令的规划模型调用次数为 0、原生安装调用次数为 1；“安装它”使用绑定来源，疑问句不会误触发安装。
 - `verify:v2-core-gate` 全部通过：52 个测试文件、179 项测试、400 条任务语义样例、构建、Skill 专项、模块/函数边界与性能门禁均通过。
-- 本版将源码修复、客户端安装包和自动更新清单统一发布为 `v5.5.1`；保留 `v5.5.0` 标签不变。客户端验收应直接发送 `npx skills add vercel-labs/agent-skills`，预期不再先解释命令，也不再进入模型循环；安装完成后核对技能页数量和完整包回读摘要。
+- 本版已将源码修复、客户端安装包和自动更新清单统一发布为 `v5.5.1`；`v5.5.0` 标签保持不变。Release：`https://github.com/TTflysky/sirenhuisuo/releases/tag/v5.5.1`；发布提交：`3f670cb64aeccaddf00427e8d64ebb0353a73ff0`；安装包：`release/taiji-office-setup-5.5.1.exe`；SHA-256：`EED17DB0625FE48CA696FF53320B458EDCB0414075FF4234037DC8DD3E3F7BBA`。客户端验收应直接发送 `npx skills add vercel-labs/agent-skills`，预期不再先解释命令，也不再进入模型循环；安装完成后核对技能页数量和完整包回读摘要。
 
 ## V5.5.0 发布门禁修复（2026-08-06）
 
