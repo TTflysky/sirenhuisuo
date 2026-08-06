@@ -1,4 +1,4 @@
-# 太极 AI 办公会所 v4.0.0
+# 太极 AI 办公会所 v5.0.0
 
 [![Release](https://img.shields.io/github/v/release/TTflysky/sirenhuisuo?label=release)](https://github.com/TTflysky/sirenhuisuo/releases/latest)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D4)](https://github.com/TTflysky/sirenhuisuo/releases/latest)
@@ -8,6 +8,8 @@
 > 面向 Windows 的多模型 AI 虚拟办公室。创建员工、组建团队，让不同模型按照职责协作完成真实任务。
 
 > 接手开发请先阅读：[项目交接手册](./docs/PROJECT_HANDOFF.md)。其中记录了当前架构、不可破坏规则、数据边界、发布流程和后续优先级。
+
+> V5 真实陪跑报告：[TAIJI_V5_LIVE_RUN_REPORT.md](./docs/TAIJI_V5_LIVE_RUN_REPORT.md)。静态门禁已通过，但真实陪跑暴露了模型工具适配和普通助理任务登记两个 P0 运行时缺口，修复前不宣称自主团队已完成验收。
 
 ## 30 秒了解太极
 
@@ -40,10 +42,10 @@
 
 ## 项目状态
 
-- 当前源码版本：`4.0.0`
-- 当前可安装验收版本：尚未创建 v4.0.0 Release
+- 当前源码版本：`5.0.0`
+- 当前可安装验收版本：`5.0.0`（GitHub Release 发布后可下载安装）
 - 发布分支：`main`
-- GitHub Release：尚未创建 `v4.0.0`；源码发布门禁已通过，正式发布前需补齐签名策略。
+- GitHub Release：`v5.0.0`；未配置代码签名，Windows 可能显示 SmartScreen warning。
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 43、React 19、TypeScript 6、Ant Design 6、Vite 8
 - 模型接口：OpenAI 兼容的 `/chat/completions` API
