@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "product": "太极 AI 办公会所",
+  "package": "taiji-office",
+  "version": "5.5.1",
+  "commit": "abc742ea8f7bbafbedeb3e2c6c771a6465725b7b",
+  "branch": "main",
+  "sourceFileCount": 1295,
+  "sourceFileListDigest": "6163018bb0bac39ada0bfd598bc1ebe3b6a672b97e91f9638a9fc3c427d0faed",
+  "generatedAt": "2026-08-06T21:26:41+08:00",
+  "build": {
+    "platform": "win32",
+    "node": "v24.16.0",
+    "electron": "43.2.0"
+  },
+  "releaseInputs": [
+    "package.json",
+    "package-lock.json",
+    "docs/sbom-v5.5.1.json",
+    "scripts/verify-release-governance.mjs"
+  ]
+}
