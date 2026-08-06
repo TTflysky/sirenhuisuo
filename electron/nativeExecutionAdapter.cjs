@@ -1419,7 +1419,10 @@ function createNativeExecutionAdapter(options) {
           await persistControlledLifecycle(job, 'stopped', error.message);
         }
         const controlledJobState = controlKind === 'stop' || controlKind === 'close' ? 'stopped' : controlKind === 'awaiting_user' ? 'awaiting_user' : 'paused';
-        if (controlKind !== 'steer' && controlKind !== 'adaptive_replan' && controlKind !== 'delegate_wait') job.state = controlledJobState;
+        const compensationWasResumed = job.compensationQueued === true && job.state === 'compensating_queue';
+        if (controlKind !== 'steer' && controlKind !== 'adaptive_replan' && controlKind !== 'delegate_wait' && !compensationWasResumed) {
+          job.state = controlledJobState;
+        }
         emit(job, 'job_controlled', { control: controlKind, error: error.message });
       } else {
         job.lastError = text(error?.message || error, 1200);

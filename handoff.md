@@ -1,5 +1,22 @@
 # 当前 V5.5.0 交接（2026-08-06）
 
+## V5.5.0 发布门禁修复（2026-08-06）
+
+### 本轮目标与边界
+- 目标：修复停止任务在人工批准补偿后的状态竞态，并让原生执行器验证失败时立即退出，避免发布脚本表现为无期限卡住。
+- 非目标：不绕过原生执行器门禁，不把确定性回归通过写成真实 Electron 窗口验收已经完成。
+
+### 已完成与证据
+- `electron/nativeExecutionControl.cjs`：批准后只进入补偿恢复路径，不再同时走普通 resume；补偿队列状态不会被旧的 stop 收尾覆盖。
+- `electron/nativeExecutionAdapter.cjs`：旧执行回收时识别已排队的补偿，保留 `compensating_queue`，随后由队列真实执行补偿步骤。
+- `scripts/verify-native-execution-adapter.cjs`：失败出口立即返回，避免测试 Worker 和定时器把发布门禁拖到外层超时。
+- `npm.cmd run verify:native-execution`：通过；审批补偿、工具执行和最终状态均完成。
+- `npm.cmd run verify:v2-core-gate`：通过；51 个测试文件、176 项测试、构建、模块边界和 V5.5 核心门禁均通过。
+
+### 未决与下一步
+- 运行正式 `publish:release`，推送 `main`、创建/更新 `v5.5.0` Release 并上传 Windows 安装包、blockmap 和 `latest.yml`。
+- 发布后覆盖本地客户端；真实 Electron 窗口项目验收仍需在客户端启动后继续，不在发布动作中冒充通过。
+
 ## 项目与全局开发技能补充（2026-08-06）
 
 ### 本轮目标与边界

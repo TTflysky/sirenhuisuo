@@ -162,12 +162,28 @@ function createNativeExecutionControl(deps) {
     if (!['pause', 'resume', 'stop', 'close'].includes(type)) return;
     const job = jobs.get(taskId);
     if (type === 'resume' && job?.state === 'stopped') {
-      void readRun(taskId).then((run) => {
-        if ((run?.compensation || []).some((item) => item.status === 'awaiting_approval')) {
+      try {
+        const run = await readRun(taskId);
+        const approvedCompensationStepIds = new Set((run?.approvals || [])
+          .filter((approval) => approval.scope === 'compensation' && approval.status === 'approved')
+          .map((approval) => approval.stepId)
+          .filter(Boolean));
+        const hasApprovedBlockedCompensation = (run?.compensation || []).some((item) => (
+          item.status === 'awaiting_approval'
+          && approvedCompensationStepIds.has(item.compensateStepId)
+        ));
+        if (hasApprovedBlockedCompensation) {
+          // A stopped active job can still be unwinding its original stop
+          // signal. Keep this resume on the compensation-only path so that
+          // normal queue recovery cannot overwrite the compensation state.
           job.control = undefined;
           enqueueCompensation(job, 'User approved a previously blocked compensation');
+          emit(job, 'approved_compensation_resumed', { taskId });
+          return;
         }
-      }).catch(() => {});
+      } catch (error) {
+        emit(job, 'approved_compensation_resume_failed', { error: text(error?.message || error, 600) });
+      }
     }
     if (type === 'resume') {
       // Resume descendants first. Otherwise the parent can re-enter execute(),
