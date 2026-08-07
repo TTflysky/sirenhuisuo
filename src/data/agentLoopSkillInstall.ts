@@ -5,13 +5,43 @@ import { observeToolResult, type TurnRuntimeState } from '../engine/turnRuntime.
 import { recordLifecycleToolFinished, recordLifecycleToolStarted, type TurnLifecycleState } from '../engine/turnLifecycle.mjs';
 import type { OutputScope } from './outputs';
 import { humanizeExecutionError } from './assistantPresentation';
-import type { TaskDecision } from '../engine/taskDecisionKernel.mjs';
+import { createDeterministicSkillInstallDecision, type TaskDecision } from '../engine/taskDecisionKernel.mjs';
 import {
   isSkillInstallAction,
   isSkillInstallOnlyRequest,
   resolveSkillInstallInput,
   resolveSkillInstallRequest,
 } from '../engine/skillInstallRouting.mjs';
+
+type CompileTaskDecisionFunction = typeof import('./hermesClient').compileTaskDecision;
+
+interface AgentTaskDecisionCompilationInput {
+  turns: Parameters<CompileTaskDecisionFunction>[0];
+  tools: Parameters<CompileTaskDecisionFunction>[1];
+  modelConfig?: Parameters<CompileTaskDecisionFunction>[2];
+  signal?: Parameters<CompileTaskDecisionFunction>[3];
+  userTexts: string[];
+  current?: Awaited<ReturnType<CompileTaskDecisionFunction>>;
+  compile: CompileTaskDecisionFunction;
+}
+
+export async function resolveAgentTaskDecisionCompilation(input: AgentTaskDecisionCompilationInput) {
+  const latestMessage = input.userTexts.at(-1) ?? '';
+  const decision = createDeterministicSkillInstallDecision({
+    latestMessage,
+    previousUserMessage: input.userTexts.at(-2) ?? '',
+    availableTools: input.tools.map((tool) => String(tool?.function?.name ?? '')).filter(Boolean),
+    userMessages: input.userTexts,
+  });
+  if (!decision) return input.current ?? input.compile(input.turns, input.tools, input.modelConfig, input.signal);
+  return {
+    ...(input.current ?? {}),
+    decision,
+    usage: input.current?.usage ?? { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    contextUsage: input.current?.contextUsage,
+    model: input.current?.model,
+  };
+}
 
 interface AgentSkillInstallPreparationInput {
   taskDecision: TaskDecision;
