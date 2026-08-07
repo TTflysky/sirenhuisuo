@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button, Select, Spin, Tag } from 'antd';
-import { CheckCircleOutlined, CloseCircleOutlined, DownloadOutlined, ReloadOutlined, RobotOutlined, ThunderboltOutlined, WarningOutlined } from '@ant-design/icons';
-import type { OperationDiagnosticEntry } from '../../electron';
+import { CheckCircleOutlined, CloseCircleOutlined, DownloadOutlined, ExperimentOutlined, PlayCircleOutlined, ReloadOutlined, RobotOutlined, StopOutlined, ThunderboltOutlined, WarningOutlined } from '@ant-design/icons';
+import type { AutonomyEvaluationMetric, AutonomyEvaluationSummary, OperationDiagnosticEntry } from '../../electron';
 import { runSystemDiagnostics, type SystemDiagnosticItem, type SystemDiagnosticReport } from '../../diagnostics/systemDiagnostics';
 import { optimizeSystemDiagnostics, type DiagnosticOptimizationResult } from '../../diagnostics/diagnosticOptimizer';
 import { getModelCapabilities, loadSettings, saveSettings } from '../../data/hermesClient';
@@ -21,6 +21,25 @@ const capabilityStateLabels: Record<string, { label: string; color: string }> = 
   rate_limited: { label: '被限流', color: 'orange' }, protocol_error: { label: '协议错误', color: 'red' },
   invalid_content: { label: '内容无效', color: 'red' }, unavailable: { label: '不可用', color: 'red' },
 };
+const autonomyMetricLabels: Array<{ key: string; label: string; inverse?: boolean }> = [
+  { key: 'completionRate', label: '完成率' },
+  { key: 'misexecutionRate', label: '误执行率', inverse: true },
+  { key: 'recoveryRate', label: '恢复率' },
+  { key: 'memoryHitCorrectness', label: '记忆命中正确率' },
+  { key: 'crossProjectContaminationRate', label: '跨项目污染率', inverse: true },
+  { key: 'skillReuseSuccessRate', label: 'Skill 复用成功率' },
+  { key: 'unnecessaryToolCalls', label: '无必要工具调用' },
+];
+const autonomyStatus = (status?: string) => status === 'passed' ? { label: '通过', color: 'green' }
+  : status === 'failed' ? { label: '失败', color: 'red' }
+    : status === 'blocked' ? { label: '阻塞', color: 'gold' } : { label: '待观察', color: 'default' };
+const formatAutonomyMetric = (metric?: AutonomyEvaluationMetric, inverse = false) => {
+  if (!metric) return '样本不足';
+  if (typeof metric.total === 'number') return metric.toolCalls ? `${metric.total} 次 · 每百次 ${metric.perHundredCalls ?? 0}` : `${metric.total} 次`;
+  if (!metric.denominator) return '样本不足';
+  const value = typeof metric.percent === 'number' ? `${metric.percent}%` : '样本不足';
+  return `${value} · ${metric.numerator ?? 0}/${metric.denominator}${inverse ? '' : ''}`;
+};
 
 export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: TargetTab) => void }) {
   const [report, setReport] = useState<SystemDiagnosticReport>();
@@ -30,6 +49,8 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
   const [settings, setSettings] = useState(() => loadSettings());
   const [error, setError] = useState('');
   const [operationSummary, setOperationSummary] = useState<{ total: number; errors: number; recoverable: number; latest: OperationDiagnosticEntry[] }>();
+  const [autonomySummary, setAutonomySummary] = useState<AutonomyEvaluationSummary>();
+  const [autonomyBusy, setAutonomyBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ status: 'idle', message: '点击检查更新' });
 
@@ -37,12 +58,14 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
     setRunning(true);
     setError('');
     try {
-      const [systemReport, diagnostics] = await Promise.all([
+      const [systemReport, diagnostics, autonomy] = await Promise.all([
         runSystemDiagnostics(),
         window.electronAPI?.diagnosticsSummary?.() ?? Promise.resolve(undefined),
+        window.electronAPI?.autonomyEvaluationSummary?.() ?? Promise.resolve(undefined),
       ]);
       setReport(systemReport);
       if (diagnostics?.ok) setOperationSummary(diagnostics);
+      if (autonomy?.ok) setAutonomySummary(autonomy);
     }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setRunning(false); }
@@ -54,6 +77,43 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
       if (result && !result.ok) setError(result.error || '导出失败');
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setExporting(false); }
+  };
+  const refreshAutonomy = async () => {
+    setAutonomyBusy(true);
+    try {
+      const result = await window.electronAPI?.autonomyEvaluationSummary?.();
+      if (!result?.ok) setError(result?.error || '读取陪跑评测失败');
+      else setAutonomySummary(result);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setAutonomyBusy(false); }
+  };
+  const startAutonomy = async () => {
+    setAutonomyBusy(true);
+    try {
+      const result = await window.electronAPI?.autonomyEvaluationStart?.({ label: `V5.8 陪跑 ${new Date().toLocaleString('zh-CN')}`, targetMinutes: 480 });
+      const summary = result?.summary ?? result;
+      if (!summary?.ok) setError(summary?.error || '启动陪跑失败');
+      else setAutonomySummary(summary);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setAutonomyBusy(false); }
+  };
+  const completeAutonomy = async () => {
+    setAutonomyBusy(true);
+    try {
+      const result = await window.electronAPI?.autonomyEvaluationComplete?.({ sessionId: autonomySummary?.activeSession?.sessionId });
+      const summary = result?.summary ?? result;
+      if (!summary?.ok) setError(summary?.error || '结束陪跑失败');
+      else setAutonomySummary(summary);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setAutonomyBusy(false); }
+  };
+  const exportAutonomy = async () => {
+    setAutonomyBusy(true);
+    try {
+      const result = await window.electronAPI?.autonomyEvaluationExport?.();
+      if (result && !result.ok) setError(result.error || '导出陪跑报告失败');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setAutonomyBusy(false); }
   };
   const selectDiagnosticModel = (modelId: string) => {
     const next = loadSettings();
@@ -159,6 +219,33 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
       <span>已记录 {operationSummary.total} 条，错误 {operationSummary.errors} 条，可恢复 {operationSummary.recoverable} 条</span>
       <small>所有窗口共用；导出后可直接发送给排查人员。</small>
       {operationSummary.latest.slice(0, 2).map((entry) => <div key={entry.id} className="diagnostic-log-preview"><Tag color={entry.recoverable ? 'gold' : 'red'}>{entry.failureClass}</Tag><span>{entry.operation}: {entry.message}</span></div>)}
+    </section>}
+    {autonomySummary && <section className="autonomy-evaluation-panel">
+      <header>
+        <div><strong><ExperimentOutlined /> 自治陪跑评测</strong><span>{autonomySummary.activeSession ? `进行中 · 已运行 ${Math.max(0, Math.round((Date.now() - autonomySummary.activeSession.startedAt) / 60000))} 分钟` : autonomySummary.latestSession ? `最近一轮已结束 · ${autonomySummary.coverage?.observed ?? 0}/${autonomySummary.coverage?.total ?? 24} 场景已观察` : '尚未开始'}</span></div>
+        <div className="autonomy-evaluation-actions">
+          <Button size="small" icon={<ReloadOutlined />} onClick={() => void refreshAutonomy()} loading={autonomyBusy}>刷新</Button>
+          {autonomySummary.activeSession
+            ? <Button size="small" icon={<StopOutlined />} onClick={() => void completeAutonomy()} loading={autonomyBusy}>完成本轮</Button>
+            : <Button size="small" type="primary" icon={<PlayCircleOutlined />} onClick={() => void startAutonomy()} loading={autonomyBusy}>开始陪跑</Button>}
+          <Button size="small" icon={<DownloadOutlined />} onClick={() => void exportAutonomy()} loading={autonomyBusy}>导出</Button>
+        </div>
+      </header>
+      <div className="autonomy-metrics">
+        {autonomyMetricLabels.map((item) => <article key={item.key}><span>{item.label}</span><strong>{formatAutonomyMetric(autonomySummary.metrics?.[item.key], item.inverse)}</strong></article>)}
+      </div>
+      <div className="autonomy-coverage">
+        <div><strong>场景覆盖</strong><span>{autonomySummary.coverage?.observed ?? 0}/{autonomySummary.coverage?.total ?? 24} · 通过 {autonomySummary.coverage?.passed ?? 0} · 失败 {autonomySummary.coverage?.failed ?? 0} · 阻塞 {autonomySummary.coverage?.blocked ?? 0}</span></div>
+        <div className="autonomy-scenario-grid">
+          {autonomySummary.coverage?.scenarios.map((scenario) => {
+            const state = autonomyStatus(scenario.latest?.status);
+            return <article key={scenario.id} title={scenario.title}><Tag color={state.color}>{state.label}</Tag><span>{scenario.title}</span></article>;
+          })}
+        </div>
+      </div>
+      {autonomySummary.latestObservations?.length ? <div className="autonomy-observations">
+        {autonomySummary.latestObservations.slice(0, 3).map((observation) => <div key={observation.observationId}><Tag color={autonomyStatus(observation.status).color}>{autonomyStatus(observation.status).label}</Tag><span>{observation.note || observation.scenarioId}</span></div>)}
+      </div> : null}
     </section>}
     {report && <>
       <div className={`diagnostics-summary ${report.blocked ? 'blocked' : report.warning ? 'warning' : 'ready'}`}>

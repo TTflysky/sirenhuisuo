@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { DeleteOutlined, DownloadOutlined, ExportOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
+import { DeleteOutlined, DownloadOutlined, ExportOutlined, ReloadOutlined, RollbackOutlined, SearchOutlined } from '@ant-design/icons';
 import type { Skill } from '../../types';
 import { deleteSkill, inspectSkillSource, installSkill, listSkills, readSkill, repairSkill } from '../../data/skills';
-import type { SkillDraft, SkillSourceInspection } from '../../electron';
+import type { SkillCandidate, SkillDraft, SkillRollout, SkillSourceInspection } from '../../electron';
 
 type SkillTab = 'built-in' | 'mine' | 'drafts' | 'market';
 
@@ -59,15 +59,23 @@ export default function SkillLibraryView() {
   const [inspection, setInspection] = useState<SkillSourceInspection | null>(null);
   const [repairing, setRepairing] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<SkillDraft[]>([]);
+  const [candidates, setCandidates] = useState<SkillCandidate[]>([]);
+  const [rollouts, setRollouts] = useState<SkillRollout[]>([]);
   const [reviewingDraft, setReviewingDraft] = useState<string | null>(null);
+  const [expandedDraft, setExpandedDraft] = useState<string | null>(null);
+  const [rollingBack, setRollingBack] = useState<string | null>(null);
 
   const refresh = async () => {
     setLoading(true);
     setError('');
     try {
-      const [installed, draftResult] = await Promise.all([listSkills(), window.electronAPI?.skillDrafts?.()]);
+      const [installed, draftResult, lifecycleResult] = await Promise.all([listSkills(), window.electronAPI?.skillDrafts?.(), window.electronAPI?.skillLifecycle?.()]);
       setSkills(installed);
       if (draftResult?.ok) setDrafts(draftResult.drafts ?? []);
+      if (lifecycleResult?.ok) {
+        setCandidates(lifecycleResult.candidates ?? []);
+        setRollouts(lifecycleResult.rollouts ?? []);
+      }
     }
     catch (e) { setError(e instanceof Error ? e.message : '技能扫描失败'); }
     finally { setLoading(false); }
@@ -154,6 +162,22 @@ export default function SkillLibraryView() {
     finally { setReviewingDraft(null); }
   };
 
+  const rollbackSkill = async (skill: Skill) => {
+    setRollingBack(skill.id);
+    setError('');
+    try {
+      const result = await window.electronAPI?.rollbackAutoSkill?.({ skillId: skill.id });
+      if (!result?.ok) throw new Error(result?.error || '自动 Skill 回滚失败');
+      setNotice(`${skill.name} 已回滚到上一份通过审批的版本`);
+      await refresh();
+    } catch (reason) { setError(reason instanceof Error ? reason.message : '自动 Skill 回滚失败'); }
+    finally { setRollingBack(null); }
+  };
+
+  const rolloutFor = (skill: Skill) => rollouts.find((item) => item.skillName.toLocaleLowerCase() === skill.name.toLocaleLowerCase());
+  const pendingDrafts = drafts.filter((draft) => draft.status === 'pending');
+  const collectingCandidates = candidates.filter((candidate) => ['collecting', 'eligible', 'validation_failed'].includes(candidate.status));
+
   return (
     <div className="skill-library-view">
       <header className="skill-library-page-head">
@@ -169,7 +193,7 @@ export default function SkillLibraryView() {
       <nav className="skill-library-tabs" aria-label="技能分类">
         <button className={tab === 'built-in' ? 'active' : ''} onClick={() => setTab('built-in')}>内置 Skill <span>{builtInCount}</span></button>
         <button className={tab === 'mine' ? 'active' : ''} onClick={() => setTab('mine')}>我的 Skill <span>{mineCount}</span></button>
-        <button className={tab === 'drafts' ? 'active' : ''} onClick={() => setTab('drafts')}>复盘草案 <span>{drafts.filter((draft) => draft.status === 'pending').length}</span></button>
+        <button className={tab === 'drafts' ? 'active' : ''} onClick={() => setTab('drafts')}>学习与审批 <span>{pendingDrafts.length + collectingCandidates.length}</span></button>
         <button className={tab === 'market' ? 'active' : ''} onClick={() => setTab('market')}>Skill 商城</button>
       </nav>
 
@@ -206,17 +230,35 @@ export default function SkillLibraryView() {
           ))}
         </div>
       ) : tab === 'drafts' ? (
-        <div className="skill-grid">
-          {drafts.filter((draft) => draft.status === 'pending').length === 0 && <div className="skill-library-empty">暂无待审核草案。太极只会在任务复盘发现稳定、可复用流程时创建草案。</div>}
-          {drafts.filter((draft) => draft.status === 'pending').map((draft) => <article className="skill-grid-card skill-grid-card--open" key={draft.id}>
-            <div className="skill-grid-card-main">
-              <div className="skill-grid-card-icon">A</div>
-              <div className="skill-grid-card-name">{draft.name}</div>
-              <div className="skill-grid-card-desc">{draft.reason || draft.description || '任务复盘生成的待审核 Skill'}</div>
-              <div className="skill-grid-card-meta">{draft.action === 'create' ? '新建草案' : `精确更新 ${draft.targetSkillName}`} · {draft.taskId || '任务复盘'}</div>
-              <div style={{ display: 'flex', gap: 8, marginTop: 10 }}><button className="btn btn-sm btn-primary" disabled={reviewingDraft === draft.id} onClick={() => void reviewDraft(draft, 'approve')}>批准并校验</button><button className="btn btn-sm" disabled={reviewingDraft === draft.id} onClick={() => void reviewDraft(draft, 'reject')}>拒绝</button></div>
-            </div>
-          </article>)}
+        <div className="skill-learning-view">
+          {pendingDrafts.length === 0 && collectingCandidates.length === 0 && <div className="skill-library-empty">暂无候选或待审核草案。单次任务不会直接生成 Skill；至少两个独立任务通过真实验收后才会进入审批。</div>}
+          {pendingDrafts.map((draft) => {
+            const open = expandedDraft === draft.id;
+            return <article className={`skill-review-card${open ? ' is-open' : ''}`} key={draft.id}>
+              <button className="skill-review-card-head" onClick={() => setExpandedDraft(open ? null : draft.id)}>
+                <span className={`skill-risk-badge is-${draft.risk ?? 'low'}`}>{draft.risk === 'high' ? '高风险' : draft.risk === 'medium' ? '中风险' : '低风险'}</span>
+                <span><strong>{draft.name}</strong><small>{draft.reason || draft.description || '跨任务复盘生成的待审核 Skill'}</small></span>
+                <span className="skill-review-card-count">{draft.taskIds?.length ?? 0} 个来源任务</span>
+              </button>
+              {open && <div className="skill-review-detail">
+                <dl className="skill-review-facts">
+                  <div><dt>动作</dt><dd>{draft.action === 'create' ? '新建自动 Skill' : draft.action === 'replace' ? `替换 ${draft.targetSkillName}` : `精确更新 ${draft.targetSkillName}`}</dd></div>
+                  <div><dt>工具路线</dt><dd>{draft.route?.join(' → ') || '未记录'}</dd></div>
+                  <div><dt>权限</dt><dd>{draft.permissions?.join('、') || '无需额外权限'}</dd></div>
+                  <div><dt>灰度</dt><dd>前 {draft.rollout?.targetInvocations ?? 5} 次调用，失败 {draft.rollout?.failureLimit ?? 2} 次自动停用</dd></div>
+                </dl>
+                <section><h4>来源任务与证据</h4><p>{draft.taskIds?.join('、') || '无任务 ID'}</p><p>{draft.evidenceIds?.join('、') || '没有独立证据 ID'}</p></section>
+                <section><h4>验证报告</h4><div className="skill-validation-list">{draft.validation?.checks.map((check) => <span className={check.status === 'passed' ? 'passed' : 'failed'} key={check.id}><b>{check.status === 'passed' ? '通过' : '失败'}</b>{check.label}<small>{check.message}</small></span>)}</div></section>
+                <section><h4>Skill 正文</h4><pre>{draft.content || '没有正文'}</pre></section>
+                <section><h4>变更 Diff</h4><pre>{draft.diff || '没有 Diff'}</pre></section>
+                <div className="skill-review-actions"><button className="btn btn-sm btn-primary" disabled={reviewingDraft === draft.id || draft.validation?.passed === false} onClick={() => void reviewDraft(draft, 'approve')}>批准并灰度启用</button><button className="btn btn-sm" disabled={reviewingDraft === draft.id} onClick={() => void reviewDraft(draft, 'reject')}>拒绝</button></div>
+              </div>}
+            </article>;
+          })}
+          {collectingCandidates.length > 0 && <section className="skill-candidate-section"><h3>仍在积累证据</h3>{collectingCandidates.map((candidate) => <div className="skill-candidate-row" key={candidate.candidateId}>
+            <span><strong>{candidate.name}</strong><small>{candidate.status === 'validation_failed' ? '编译验证未通过' : candidate.eligibility?.reasons.join('；') || '等待更多独立任务'}</small></span>
+            <span>{candidate.independentTaskCount}/{2} 个任务</span><span>成功率 {Math.round(candidate.successRate * 100)}%</span><span>路线相似度 {Math.round(candidate.routeSimilarity * 100)}%</span>
+          </div>)}</section>}
         </div>
       ) : (
         <>
@@ -230,6 +272,7 @@ export default function SkillLibraryView() {
               <React.Fragment key={skill.id}>
                 <div className={`skill-grid-card ${expanded === skill.id ? 'skill-grid-card--open' : ''}`}>
                   {skill.scope === 'mine' && <div className="skill-grid-card-actions">
+                    {skill.origin === 'auto' && <button onClick={() => void rollbackSkill(skill)} title="回滚自动 Skill" disabled={rollingBack === skill.id}><RollbackOutlined />{rollingBack === skill.id && <span>回滚中</span>}</button>}
                     {(skill.health === 'broken' || skill.health === 'limited') && <button onClick={() => void handleRepair(skill)} title="从原来源重新安装" disabled={repairing === skill.id}><ReloadOutlined />{repairing === skill.id && <span>修复中</span>}</button>}
                     <button onClick={() => void confirmDelete(skill)} title={deleting === skill.id ? '再次点击确认删除' : '删除技能'}><DeleteOutlined />{deleting === skill.id && <span>确认</span>}</button>
                   </div>}
@@ -238,6 +281,7 @@ export default function SkillLibraryView() {
                     <div className="skill-grid-card-name">{skill.name}</div>
                     <div className="skill-grid-card-desc">{skill.description || '暂无说明'}</div>
                     <div className="skill-grid-card-meta">{skill.source}{skill.version ? ` · v${skill.version}` : ''}</div>
+                    {skill.origin === 'auto' && <div className={`skill-grid-card-warning health-${rolloutFor(skill)?.status === 'disabled' ? 'broken' : 'setup'}`}>{rolloutFor(skill)?.status === 'canary' ? `灰度 ${rolloutFor(skill)?.successes ?? 0}/${rolloutFor(skill)?.targetInvocations ?? 5}` : rolloutFor(skill)?.status === 'disabled' ? '灰度失败已停用' : rolloutFor(skill)?.status === 'active' ? '灰度通过' : '自动 Skill'}</div>}
                     {skill.health && skill.health !== 'ready' && <div className={`skill-grid-card-warning health-${skill.health}`} title={skill.healthMessage}>{skill.health === 'broken' ? '已隔离' : skill.health === 'limited' ? '不完整' : '需配置'}</div>}
                   </button>
                 </div>

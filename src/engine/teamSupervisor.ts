@@ -89,8 +89,6 @@ export function createTeamSupervisorResponder(options: TeamSupervisorOptions) {
       const state = options.getState();
       const assistantModel = client.getAssistantModel();
       const configuredPrompt = localStorage.getItem('hermes_office_assistant_system_prompt')?.trim();
-      const layeredMemoryContext = await buildLayeredMemoryContext({ query: content, teamId: team.id, limit: 16 });
-      const userContext = [client.buildUserContext(), layeredMemoryContext].filter(Boolean).join('\n\n');
       const availableSkills = await listSkills().catch(() => []);
       const skillRoster = availableSkills.slice(0, 80).map((skill) => `${skill.name}${skill.description ? `：${skill.description.slice(0, 80)}` : ''}`).join('\n');
       const teamRoster = team.memberIds.map((id) => state.employees.find((employee) => employee.id === id))
@@ -100,6 +98,8 @@ export function createTeamSupervisorResponder(options: TeamSupervisorOptions) {
       const project = state.projects.find((item) => item.teamId === team.id);
       const currentRun = resolveSupervisorRun(state.taskRuns
         .filter((run) => run.teamId === team.id && (run.conversationId === conversationId || (!run.conversationId && conversationId === legacyConversationId(`team:${team.id}`)))));
+      const layeredMemoryContext = await buildLayeredMemoryContext({ query: content, projectId: currentRun?.projectId ?? project?.id, taskId: currentRun?.id, conversationId, teamId: team.id, limit: 16 });
+      const userContext = layeredMemoryContext;
       const activeStep = currentRun?.steps.find((step) => step.status === 'running')
         ?? currentRun?.steps.find((step) => step.status === 'paused' || step.status === 'failed')
         ?? currentRun?.steps.find((step) => step.status === 'queued');

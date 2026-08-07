@@ -189,6 +189,7 @@ export interface Skill {
   sourceUrl?: string;
   /** system=随客户端内置，manual=用户安装，auto=经复盘草案批准后生成。 */
   origin?: 'system' | 'manual' | 'auto';
+  lifecycleStatus?: 'canary' | 'active' | 'disabled';
 }
 export interface SkillReference { id: string; name: string; }
 /** A concrete object mentioned in a chat turn. It keeps follow-up requests bound to

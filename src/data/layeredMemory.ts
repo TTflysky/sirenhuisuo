@@ -1,4 +1,4 @@
-import type { LayeredMemoryEntry, MemoryProposal } from '../electron';
+import type { LayeredMemoryEntry, LayeredMemoryResult, MemoryProposal } from '../electron';
 import { loadUserMemory, loadUserProfile } from './userMemory';
 import { loadTaskLearnings } from '../engine/taskLearningMemory';
 
@@ -25,16 +25,26 @@ export function syncLegacyMemory(): Promise<void> {
   return legacySyncPromise;
 }
 
-export async function buildLayeredMemoryContext(input: { query?: string; teamId?: string; employeeId?: string; memoryKind?: LayeredMemoryEntry['memoryKind']; memoryKinds?: LayeredMemoryEntry['memoryKind'][]; limit?: number } = {}): Promise<string> {
+export type LayeredMemoryContextInput = {
+  query?: string; projectId?: string; taskId?: string; conversationId?: string; teamId?: string; employeeId?: string;
+  memoryKind?: LayeredMemoryEntry['memoryKind']; memoryKinds?: LayeredMemoryEntry['memoryKind'][]; limit?: number;
+};
+
+export async function retrieveLayeredMemoryContext(input: LayeredMemoryContextInput = {}): Promise<LayeredMemoryResult> {
   await syncLegacyMemory();
-  const result = await window.electronAPI?.memoryContext?.(input);
-  return result?.ok ? result.context ?? '' : '';
+  return window.electronAPI?.memoryContext?.(input) ?? { ok: false, error: '记忆账本当前不可用' };
 }
 
-export async function loadLayeredMemorySnapshot(): Promise<{ entries: LayeredMemoryEntry[]; proposals: MemoryProposal[]; usage: Record<string, { current: number; max: number; percent: number }> }> {
+export async function buildLayeredMemoryContext(input: LayeredMemoryContextInput = {}): Promise<string> {
+  const result = await retrieveLayeredMemoryContext(input);
+  return result.ok ? result.context ?? '' : '';
+}
+
+export async function loadLayeredMemorySnapshot(): Promise<{ entries: LayeredMemoryEntry[]; history: LayeredMemoryEntry[]; proposals: MemoryProposal[]; retrievals: Array<Record<string, unknown>>; usage: Record<string, { current: number; max: number; percent: number }> }> {
   await syncLegacyMemory();
-  const result = await window.electronAPI?.memoryList?.({ includeAudit: true });
-  const entries = result?.ok ? result.entries ?? [] : [];
-  try { localStorage.setItem('hermes_office_layered_memory_v1', JSON.stringify(entries)); } catch {}
-  return { entries, proposals: result?.ok ? result.proposals ?? [] : [], usage: result?.ok ? result.usage ?? {} : {} };
+  const result = await window.electronAPI?.memoryList?.({ includeAudit: true, includeHistory: true, includeRetrievals: true });
+  const allEntries = result?.ok ? result.entries ?? [] : [];
+  const entries = allEntries.filter((entry) => entry.status === undefined || entry.status === 'active');
+  const history = allEntries.filter((entry) => entry.status && entry.status !== 'active');
+  return { entries, history, proposals: result?.ok ? result.proposals ?? [] : [], retrievals: result?.ok ? result.retrievals ?? [] : [], usage: result?.ok ? result.usage ?? {} : {} };
 }

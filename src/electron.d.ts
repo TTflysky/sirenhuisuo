@@ -416,15 +416,69 @@ export interface SkillSourceInspection {
 }
 export interface SkillInspectResult { ok: boolean; inspection?: SkillSourceInspection; error?: string; }
 export interface SkillDraft {
-  id: string; status: 'pending' | 'approved' | 'rejected'; action: 'create' | 'patch'; name: string;
-  description?: string; targetSkillName?: string; reason?: string; taskId?: string; createdAt: number; updatedAt: number;
+  id: string; status: 'pending' | 'approved' | 'rejected'; action: 'create' | 'replace' | 'patch'; name: string;
+  description?: string; targetSkillName?: string; reason?: string; taskId?: string; candidateId?: string; projectId?: string;
+  taskIds?: string[]; evidenceIds?: string[]; routeFingerprint?: string; route?: string[]; permissions?: string[]; risk?: 'low' | 'medium' | 'high';
+  content?: string; previousContent?: string; diff?: string; bundlePaths?: string[];
+  validation?: { passed: boolean; checkedAt: number; checks: Array<{ id: string; label: string; status: 'passed' | 'failed'; message: string }> };
+  rollout?: { mode: 'canary'; targetInvocations: number; failureLimit: number };
+  createdAt: number; updatedAt: number;
+}
+
+export interface AutonomyEvaluationMetric {
+  numerator?: number;
+  denominator?: number;
+  percent?: number;
+  total?: number;
+  toolCalls?: number;
+  perHundredCalls?: number;
+  minutes?: number;
+  maxWindows?: number;
+  maxEmployees?: number;
+}
+export interface AutonomyEvaluationObservation {
+  observationId: string;
+  sessionId: string;
+  scenarioId: string;
+  status: 'passed' | 'failed' | 'blocked' | 'skipped';
+  source: string;
+  sourceRef?: string;
+  taskId?: string;
+  projectId?: string;
+  note?: string;
+  observedAt: number;
+}
+export interface AutonomyEvaluationSummary {
+  ok: boolean;
+  version?: string;
+  error?: string;
+  activeSession?: { sessionId: string; label: string; mode: 'live' | 'automated'; status: string; startedAt: number; targetMinutes: number };
+  latestSession?: { sessionId: string; label: string; mode: 'live' | 'automated'; status: string; startedAt: number; completedAt?: number; targetMinutes: number };
+  coverage?: { total: number; observed: number; passed: number; failed: number; blocked: number; percent: number; scenarios: Array<{ id: string; category: string; title: string; observed: number; passed: number; failed: number; blocked: number; latest?: AutonomyEvaluationObservation }> };
+  metrics?: Record<string, AutonomyEvaluationMetric>;
+  latestObservations?: AutonomyEvaluationObservation[];
+}
+export interface SkillCandidate {
+  candidateId: string; projectId?: string; name: string; description?: string; reason?: string;
+  status: 'collecting' | 'eligible' | 'compiling' | 'validation_failed' | 'pending_approval' | 'canary' | 'active' | 'disabled' | 'rejected' | 'rolled_back';
+  taskIds: string[]; evidenceIds: string[]; independentTaskCount: number; successes: number; failures: number;
+  successRate: number; failureRate: number; route: string[]; routeFingerprint?: string; routeSimilarity: number;
+  permissions: string[]; risk: 'low' | 'medium' | 'high'; failureModes: string[]; draftId?: string;
+  eligibility?: { eligible: boolean; reasons: string[] }; validation?: SkillDraft['validation']; createdAt: number; updatedAt: number;
+}
+export interface SkillRollout {
+  rolloutId: string; candidateId: string; draftId: string; skillName: string;
+  status: 'canary' | 'active' | 'disabled' | 'rolled_back'; targetInvocations: number; failureLimit: number;
+  successes: number; failures: number; successRate: number; failureTypes?: Record<string, number>; disableReason?: string;
+  invocations: Array<{ invocationId: string; skillId?: string; taskId?: string; status: 'succeeded' | 'failed'; failureClass?: string; evidence?: string; occurredAt: number }>;
+  createdAt: number; updatedAt: number;
 }
 export interface LayeredMemoryEntry {
-  id: string; scope: 'organization' | 'team' | 'employee' | 'user'; scopeId: string;
+  id: string; memoryId?: string; scope: 'organization' | 'project' | 'team' | 'employee' | 'user'; scopeId: string; projectId?: string;
   category: 'identity' | 'preference' | 'constraint' | 'workflow' | 'decision' | 'project' | 'lesson';
   memoryKind: 'episodic' | 'semantic' | 'procedural' | 'preference';
-  content: string; source: string; sourceType: 'manual' | 'legacy' | 'task-review' | 'review-model'; taskId?: string; employeeId?: string;
-  evidence: string[]; acceptanceVerified?: boolean; importance: number; confidence: number; createdAt: number; updatedAt: number;
+  content: string; source: string; sourceType: 'manual' | 'legacy' | 'task-review' | 'review-model' | 'rollback'; taskId?: string; sourceTaskId?: string; employeeId?: string;
+  evidence: string[]; evidenceIds?: string[]; acceptanceVerified?: boolean; importance: number; confidence: number; status?: 'active' | 'superseded' | 'archived' | 'legacy'; supersedes?: string; reviewAfter?: number; createdAt: number; updatedAt: number;
 }
 export interface MemoryProposal {
   id: string; status: 'pending' | 'approved' | 'rejected'; taskId?: string; summary: string;
@@ -434,12 +488,14 @@ export interface LayeredMemoryResult {
   ok: boolean; entries?: LayeredMemoryEntry[]; proposals?: MemoryProposal[]; context?: string;
   audit?: Array<Record<string, unknown>>; limits?: Record<string, number>;
   usage?: Record<string, { current: number; max: number; percent: number }>;
+  references?: Array<{ memoryId: string; scope: LayeredMemoryEntry['scope']; scopeId: string; score: number; reason: string }>; retrievalId?: string;
+  retrievals?: Array<Record<string, unknown>>;
   action?: string; error?: string;
 }
 export interface LearningReviewItem {
   id: string; taskId: string; teamId: string; status: 'queued' | 'processing' | 'waiting_model' | 'completed' | 'failed';
   attempts: number; lastError?: string; createdAt: number; updatedAt: number;
-  result?: { verifiedMemories: number; memoryProposalIds: string[]; skillDraftIds: string[] };
+  result?: { verifiedMemories: number; memoryProposalIds: string[]; skillCandidateIds: string[]; skillDraftIds: string[] };
 }
 
 export interface UpdateStatus {
@@ -504,6 +560,10 @@ declare global {
     diagnosticsQuery: (options?: { taskId?: string; teamId?: string; failureClass?: string; level?: OperationDiagnosticEntry['level']; limit?: number }) => Promise<{ ok: boolean; entries: OperationDiagnosticEntry[]; total: number; filePath?: string }>;
     diagnosticsSummary: (options?: { taskId?: string; teamId?: string }) => Promise<{ ok: boolean; total: number; errors: number; recoverable: number; byFailureClass: Record<string, number>; latest: OperationDiagnosticEntry[] }>;
     diagnosticsExport: (options?: { taskId?: string; teamId?: string }) => Promise<{ ok: boolean; canceled?: boolean; path?: string; count?: number; error?: string }>;
+    autonomyEvaluationSummary: () => Promise<AutonomyEvaluationSummary>;
+    autonomyEvaluationStart: (input?: { label?: string; mode?: 'live' | 'automated'; operator?: string; targetMinutes?: number }) => Promise<AutonomyEvaluationSummary & { reused?: boolean; session?: Record<string, unknown>; summary?: AutonomyEvaluationSummary }>;
+    autonomyEvaluationComplete: (input?: { sessionId?: string }) => Promise<AutonomyEvaluationSummary & { session?: Record<string, unknown>; summary?: AutonomyEvaluationSummary }>;
+    autonomyEvaluationExport: () => Promise<{ ok: boolean; canceled?: boolean; path?: string; count?: number; error?: string }>;
     taskExecutionSteer: (input: { taskId: string; message: string }) => Promise<NativeExecutionResult>;
     taskExecutionSyncMembers: (input: {
       taskId: string;
@@ -553,11 +613,15 @@ declare global {
     skillsRuntimeInstall: (input: { sourceUrl?: string; slug?: string; name?: string; requestText?: string }) => Promise<SkillInstallResult & { runtime?: unknown }>;
     skillsRuntimeRepair: (id: string) => Promise<SkillInstallResult & { runtime?: unknown }>;
     skillDrafts: () => Promise<{ ok: boolean; drafts?: SkillDraft[]; error?: string }>;
+    skillLifecycle: (input?: { projectId?: string; includeAudit?: boolean }) => Promise<{ ok: boolean; candidates?: SkillCandidate[]; rollouts?: SkillRollout[]; error?: string }>;
+    rollbackAutoSkill: (input: { skillName?: string; skillId?: string }) => Promise<{ ok: boolean; skillName?: string; versionId?: string; error?: string }>;
     reviewSkillDraft: (input: { draftId: string; decision: 'approve' | 'reject'; note?: string }) => Promise<{ ok: boolean; action?: string; draft?: SkillDraft; error?: string }>;
-    memoryList: (input?: { scope?: LayeredMemoryEntry['scope']; scopeId?: string; memoryKind?: LayeredMemoryEntry['memoryKind']; memoryKinds?: LayeredMemoryEntry['memoryKind'][]; category?: LayeredMemoryEntry['category']; proposalStatus?: MemoryProposal['status']; includeAudit?: boolean }) => Promise<LayeredMemoryResult>;
-    memoryContext: (input?: { query?: string; teamId?: string; employeeId?: string; memoryKind?: LayeredMemoryEntry['memoryKind']; memoryKinds?: LayeredMemoryEntry['memoryKind'][]; limit?: number }) => Promise<LayeredMemoryResult>;
+    memoryList: (input?: { scope?: LayeredMemoryEntry['scope']; scopeId?: string; projectId?: string; memoryKind?: LayeredMemoryEntry['memoryKind']; memoryKinds?: LayeredMemoryEntry['memoryKind'][]; category?: LayeredMemoryEntry['category']; status?: LayeredMemoryEntry['status']; proposalStatus?: MemoryProposal['status']; includeAudit?: boolean; includeHistory?: boolean; includeRetrievals?: boolean }) => Promise<LayeredMemoryResult>;
+    memoryContext: (input?: { query?: string; projectId?: string; taskId?: string; conversationId?: string; teamId?: string; employeeId?: string; memoryKind?: LayeredMemoryEntry['memoryKind']; memoryKinds?: LayeredMemoryEntry['memoryKind'][]; limit?: number }) => Promise<LayeredMemoryResult>;
     memoryUpsert: (input: Partial<LayeredMemoryEntry> & { content: string; replaceExact?: string }) => Promise<LayeredMemoryResult>;
+    memoryPropose: (input: { taskId?: string; summary?: string; source?: string; warnings?: string[]; update: Partial<LayeredMemoryEntry> & { content: string; replaceExact?: string } }) => Promise<LayeredMemoryResult>;
     memoryRemove: (input: { entryId: string; reason?: string }) => Promise<LayeredMemoryResult>;
+    memoryRollback: (input: { entryId: string; reason?: string }) => Promise<LayeredMemoryResult>;
     memoryReviewProposal: (input: { proposalId: string; decision: 'approve' | 'reject'; note?: string }) => Promise<LayeredMemoryResult>;
     memoryImportLegacy: (input: { importId?: string; userProfile?: string; userMemory?: unknown[]; taskLearnings?: unknown[]; layeredMemory?: LayeredMemoryEntry[] }) => Promise<{ ok: boolean; imported?: number; unchanged?: boolean; error?: string }>;
     learningReviewStatus: (input?: { taskId?: string }) => Promise<{ ok: boolean; processing?: boolean; items?: LearningReviewItem[]; counts?: Record<string, number>; error?: string }>;

@@ -45,7 +45,6 @@ import {
   type TaskDecision,
 } from '../engine/taskDecisionKernel.mjs';
 import { buildTaskDecisionAudit } from '../engine/taskDecisionPipeline.mjs';
-import { buildTaskLearningContext } from '../engine/taskLearningMemory';
 import {
   buildTaskSummaryMaterial,
   restoreTaskContext,
@@ -54,12 +53,10 @@ import {
 } from '../engine/taskContext.mjs';
 import {
   USER_MEMORY_CATEGORY_LABELS,
-  buildUserContext,
   clampMemoryValue,
   inferMemoryCategory,
   loadUserMemory,
   loadUserProfile,
-  upsertUserMemory,
 } from './userMemory';
 import { createRunAgentLoop } from './agentLoopRuntime';
 
@@ -509,20 +506,26 @@ export async function extractUserInsights(conversation: string, source: string):
     const data = JSON.parse(jsonMatch[0]);
 
     if (Array.isArray(data.memories) && data.memories.length > 0) {
-      const now = Date.now();
       for (const memory of data.memories.slice(0, 6)) {
         if (!memory || typeof memory.content !== 'string' || memory.action === 'ignore') continue;
         const confidence = clampMemoryValue(Number(memory.confidence) || 0, 0, 1);
         if (confidence < 0.65) continue;
-        upsertUserMemory({
-          ts: now,
-          content: memory.content,
-          source,
-          category: Object.hasOwn(USER_MEMORY_CATEGORY_LABELS, memory.category) ? memory.category : inferMemoryCategory(memory.content),
-          importance: clampMemoryValue(Math.round(Number(memory.importance) || 3), 1, 5),
-          confidence,
-          updatedAt: now,
-        }, memory.action === 'update' && typeof memory.replaces === 'string' ? memory.replaces : undefined);
+        await window.electronAPI?.memoryPropose?.({
+          source: '用户洞察提炼',
+          summary: '对话提炼出一条待确认的用户长期记忆',
+          update: {
+            scope: 'user',
+            scopeId: 'default',
+            content: memory.content,
+            source,
+            sourceType: 'review-model',
+            category: Object.hasOwn(USER_MEMORY_CATEGORY_LABELS, memory.category) ? memory.category : inferMemoryCategory(memory.content),
+            memoryKind: memory.category === 'preference' ? 'preference' : 'semantic',
+            importance: clampMemoryValue(Math.round(Number(memory.importance) || 3), 1, 5),
+            confidence,
+            replaceExact: memory.action === 'update' && typeof memory.replaces === 'string' ? memory.replaces : undefined,
+          },
+        });
       }
     }
   } catch {
@@ -917,13 +920,9 @@ export async function chatCompletion(
   const reliabilityConfig: ModelConfig = { provider: merged.provider, apiHost: merged.apiHost, apiKey: merged.apiKey, model,
     contextWindowTokens: merged.contextWindowTokens, refModelId: modelConfig?.refModelId };
 
-  // 注入与当前问题相关的长期记忆和画像；内核调用可显式关闭，避免重复污染分类输入。
-  const latestUserQuery = [...turns].reverse().find((turn) => turn.role === 'user');
-  const latestUserQueryText = typeof latestUserQuery?.content === 'string'
-    ? latestUserQuery.content
-    : (latestUserQuery?.content ?? []).filter((part): part is ContentPart => part.type === 'text').map((part) => part.text ?? '').join('\n');
-  const userCtx = requestOptions.injectUserContext === false ? '' : buildUserContext(latestUserQueryText);
-  const finalTurns = prepareChatRequestTurns(turns, { userContext: userCtx, extraSystemContext, attachments });
+  // Long-term memory is retrieved by the main-process ledger before each scene
+  // starts. Browser localStorage must not become a second, unaudited fact source.
+  const finalTurns = prepareChatRequestTurns(turns, { userContext: '', extraSystemContext, attachments });
   const alternatives = (loadSettings().modelLibrary ?? [])
     .filter((entry) => entry.id !== reliabilityConfig.refModelId && getModelCapabilities(entry).includes('chat'))
     .map((entry) => ({ provider: entry.provider, apiHost: entry.apiHost, model: entry.model, refModelId: entry.id }));
@@ -1084,8 +1083,6 @@ export async function compileTaskDecision(
     availableTools,
     userMessages: userTurns,
   });
-  const selectedFallback = deterministicSkillInstall ?? fallback;
-  const relevantTaskExperience = buildTaskLearningContext(selectedFallback.goal);
   const recentHistory = turns.filter((turn) => turn.role === 'user' || turn.role === 'assistant').slice(-24).map((turn) => ({
     role: turn.role,
     content: typeof turn.content === 'string'
@@ -1098,8 +1095,8 @@ export async function compileTaskDecision(
     activeTaskGoal: decisionContext.activeTaskGoal,
     availableTools,
     recentHistory,
-    relevantUserContext: buildUserContext(selectedFallback.goal),
-    relevantTaskExperience,
+    relevantUserContext: '',
+    relevantTaskExperience: '',
   };
   if (deterministicSkillInstall) {
     const decisionAudit = buildTaskDecisionAudit(input, deterministicSkillInstall, {

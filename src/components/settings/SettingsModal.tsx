@@ -23,7 +23,7 @@ import type { ModelConfig } from '../../types';
 import type { LayeredMemoryEntry, MemoryProposal, LearningReviewItem } from '../../electron';
 import { useStore } from '../../storeContext';
 import { KnowledgeConnectorManager } from '../sidebar/ConnectorPanel';
-import { DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX_V26 } from './AssistantSettingsModal';
+import { DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX_V29 } from './AssistantSettingsModal';
 import { getAssistantPrompt, saveAssistantPrompt } from '../../data/assistantPrompt';
 import { applySyncProfile, createSyncProfile, restoreUpgradeSnapshot } from '../../utils/configSync';
 import {
@@ -166,7 +166,7 @@ function WorkspaceTab() {
 }
 
 function PersonaTab() {
-  const [prompt, setPrompt] = useState(() => getAssistantPrompt(DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX_V26));
+  const [prompt, setPrompt] = useState(() => getAssistantPrompt(DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX_V29));
   const [saved, setSaved] = useState(false);
   const save = () => { saveAssistantPrompt(prompt, DEFAULT_PROMPT_VERSION); setSaved(true); setTimeout(() => setSaved(false), 1500); };
   return <div className="settings-content-page"><header><h2>助理人格</h2><span>与章北海助理窗口共用同一份角色、工具和调度规则</span></header><Input.TextArea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={16} /><div className="settings-page-actions"><Button onClick={() => setPrompt(DEFAULT_ASSISTANT_PROMPT)}>应用新版默认人格</Button><Button type="primary" onClick={save}>{saved ? '已保存' : '保存人格'}</Button></div></div>;
@@ -702,8 +702,20 @@ function ProfileTab() {
   const [text, setText] = useState(() => loadUserProfile());
   const [saved, setSaved] = useState(false);
 
-  const handleSave = () => {
-    saveUserProfile(text.trim());
+  const handleSave = async () => {
+    const content = text.trim();
+    saveUserProfile(content);
+    const existing = await window.electronAPI?.memoryList?.({ scope: 'user', category: 'identity', includeHistory: true });
+    const profileEntry = existing?.entries?.find((entry) => entry.source === '用户画像设置' || entry.source === '旧版用户画像');
+    if (content) {
+      await window.electronAPI?.memoryUpsert?.({
+        scope: 'user', scopeId: 'default', category: 'identity', memoryKind: 'semantic',
+        content: `用户画像：${content}`, source: '用户画像设置', sourceType: 'manual', importance: 5, confidence: 1,
+        replaceExact: profileEntry?.content,
+      });
+    } else if (profileEntry) {
+      await window.electronAPI?.memoryRemove?.({ entryId: profileEntry.id, reason: '用户清空画像' });
+    }
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -728,7 +740,7 @@ function ProfileTab() {
         style={{ fontFamily: 'inherit', fontSize: 13 }}
       />
       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
-        <Button type="primary" onClick={handleSave}>
+        <Button type="primary" onClick={() => void handleSave()}>
           {saved ? '✅ 已保存' : '保存画像'}
         </Button>
       </div>
@@ -744,6 +756,8 @@ function MemoryTab() {
   const [taskLearnings, setTaskLearnings] = useState<TaskLearning[]>(() => loadTaskLearnings());
   const [newText, setNewText] = useState('');
   const [layeredEntries, setLayeredEntries] = useState<LayeredMemoryEntry[]>([]);
+  const [layeredHistory, setLayeredHistory] = useState<LayeredMemoryEntry[]>([]);
+  const [memoryRetrievals, setMemoryRetrievals] = useState<Array<Record<string, unknown>>>([]);
   const [memoryProposals, setMemoryProposals] = useState<MemoryProposal[]>([]);
   const [layeredUsage, setLayeredUsage] = useState<Record<string, { current: number; max: number; percent: number }>>({});
   const [learningReviews, setLearningReviews] = useState<LearningReviewItem[]>([]);
@@ -762,6 +776,8 @@ function MemoryTab() {
         window.electronAPI?.learningReviewStatus?.(),
       ]);
       setLayeredEntries(snapshot.entries);
+      setLayeredHistory(snapshot.history);
+      setMemoryRetrievals(snapshot.retrievals);
       setMemoryProposals(snapshot.proposals);
       setLayeredUsage(snapshot.usage);
       setLearningReviews(reviews?.ok ? reviews.items ?? [] : []);
@@ -773,9 +789,10 @@ function MemoryTab() {
   useEffect(() => {
     if (layeredScope === 'team' && !state.teams.some((team) => team.id === layeredScopeId)) setLayeredScopeId(state.teams[0]?.id ?? 'default');
     if (layeredScope === 'employee' && !state.employees.some((employee) => employee.id === layeredScopeId)) setLayeredScopeId(state.employees[0]?.id ?? 'default');
+    if (layeredScope === 'project' && !state.projects.some((project) => project.id === layeredScopeId)) setLayeredScopeId(state.projects[0]?.id ?? 'default');
     if (layeredScope === 'organization' || layeredScope === 'user') setLayeredScopeId('default');
     if (layeredScope === 'user') setLayeredMemoryKind('preference');
-  }, [layeredScope, layeredScopeId, state.employees, state.teams]);
+  }, [layeredScope, layeredScopeId, state.employees, state.projects, state.teams]);
 
   const visibleLayeredEntries = layeredEntries.filter((entry) => entry.scope === layeredScope
     && ((layeredScope === 'organization' || layeredScope === 'user') || entry.scopeId === layeredScopeId)
@@ -783,12 +800,16 @@ function MemoryTab() {
   const pendingProposals = memoryProposals.filter((proposal) => proposal.status === 'pending');
   const selectedUsage = layeredUsage[`${layeredScope}:${layeredScopeId}`] ?? { current: 0, max: 0, percent: 0 };
   const legacyMemoryQuality = memoryQualitySummary(items);
+  const legacyReadOnly = true;
+
+  const visibleHistory = layeredHistory.filter((entry) => entry.scope === layeredScope
+    && ((layeredScope === 'organization' || layeredScope === 'user') || entry.scopeId === layeredScopeId));
 
   const addLayeredMemory = async () => {
     const content = layeredText.trim();
     if (!content) return;
     const result = await window.electronAPI?.memoryUpsert?.({
-      scope: layeredScope, scopeId: layeredScopeId, employeeId: layeredScope === 'employee' ? layeredScopeId : undefined,
+      scope: layeredScope, scopeId: layeredScopeId, projectId: layeredScope === 'project' ? layeredScopeId : undefined, employeeId: layeredScope === 'employee' ? layeredScopeId : undefined,
       category: layeredMemoryKind === 'preference' ? 'preference' : layeredMemoryKind === 'procedural' ? 'workflow' : layeredMemoryKind === 'episodic' ? 'decision' : 'lesson',
       memoryKind: layeredMemoryKind, content, source: '手动添加', sourceType: 'manual', importance: 5, confidence: 1,
     });
@@ -801,6 +822,13 @@ function MemoryTab() {
   const removeLayeredMemory = async (entryId: string) => {
     const result = await window.electronAPI?.memoryRemove?.({ entryId, reason: '用户在记忆中心删除' });
     if (!result?.ok) { message.error(result?.error || '删除失败'); return; }
+    await refreshLayered();
+  };
+
+  const rollbackLayeredMemory = async (entryId: string) => {
+    const result = await window.electronAPI?.memoryRollback?.({ entryId, reason: '用户在记忆中心恢复历史版本' });
+    if (!result?.ok) { message.error(result?.error || '恢复历史版本失败'); return; }
+    message.success('已恢复为这个历史版本，并保留当前版本用于追溯');
     await refreshLayered();
   };
 
@@ -897,10 +925,11 @@ function MemoryTab() {
       </div>
       <section className="settings-memory-section settings-memory-layered">
         <div className="settings-memory-section-head">
-          <div><h3>分层记忆</h3><p>团队共享经验供全队复用；员工个人经验只提供给对应员工。组织与用户层负责跨团队规则和使用偏好。</p></div>
+          <div><h3>分层记忆</h3><p>项目记忆默认只服务当前项目；团队与员工经验也会保留项目边界。组织与用户层只保存经确认的跨项目规则和偏好。</p></div>
           <Button size="small" loading={refreshingLayered} onClick={() => void refreshLayered()}>刷新</Button>
         </div>
-        <Segmented block value={layeredScope} options={[{ label: `组织 ${layeredEntries.filter((entry) => entry.scope === 'organization').length}`, value: 'organization' }, { label: `团队 ${layeredEntries.filter((entry) => entry.scope === 'team').length}`, value: 'team' }, { label: `员工 ${layeredEntries.filter((entry) => entry.scope === 'employee').length}`, value: 'employee' }, { label: `用户 ${layeredEntries.filter((entry) => entry.scope === 'user').length}`, value: 'user' }]} onChange={(value) => setLayeredScope(value as LayeredMemoryEntry['scope'])} />
+        <Segmented block value={layeredScope} options={[{ label: `组织 ${layeredEntries.filter((entry) => entry.scope === 'organization').length}`, value: 'organization' }, { label: `项目 ${layeredEntries.filter((entry) => entry.scope === 'project').length}`, value: 'project' }, { label: `团队 ${layeredEntries.filter((entry) => entry.scope === 'team').length}`, value: 'team' }, { label: `员工 ${layeredEntries.filter((entry) => entry.scope === 'employee').length}`, value: 'employee' }, { label: `用户 ${layeredEntries.filter((entry) => entry.scope === 'user').length}`, value: 'user' }]} onChange={(value) => setLayeredScope(value as LayeredMemoryEntry['scope'])} />
+        {layeredScope === 'project' && <Select showSearch optionFilterProp="label" style={{ width: '100%', marginTop: 8 }} value={layeredScopeId} options={state.projects.map((project) => ({ value: project.id, label: project.title }))} onChange={setLayeredScopeId} placeholder="选择项目" />}
         {layeredScope === 'team' && <Select style={{ width: '100%', marginTop: 8 }} value={layeredScopeId} options={state.teams.map((team) => ({ value: team.id, label: team.name }))} onChange={setLayeredScopeId} placeholder="选择团队" />}
         {layeredScope === 'employee' && <Select showSearch optionFilterProp="label" style={{ width: '100%', marginTop: 8 }} value={layeredScopeId} options={state.employees.map((employee) => ({ value: employee.id, label: `${employee.name} · ${employee.title}` }))} onChange={setLayeredScopeId} placeholder="选择员工" />}
         <div className={`memory-capacity${selectedUsage.percent >= 80 ? ' is-warning' : ''}`}><div><span>当前层容量</span><small>{selectedUsage.current} / {selectedUsage.max || '未读取'} 字符</small></div><div><i style={{ width: `${Math.min(100, selectedUsage.percent)}%` }} /></div></div>
@@ -911,25 +940,27 @@ function MemoryTab() {
         <Space.Compact style={{ width: '100%', marginTop: 8 }}><Input value={layeredText} onChange={(event) => setLayeredText(event.target.value)} onPressEnter={() => void addLayeredMemory()} placeholder="手动添加一条可长期复用的原子事实" /><Button type="primary" disabled={!layeredText.trim()} onClick={() => void addLayeredMemory()}>添加</Button></Space.Compact>
         <div className="layered-memory-list">
           {visibleLayeredEntries.length === 0 && <div className="layered-memory-empty">这个记忆层还没有内容。</div>}
-          {visibleLayeredEntries.map((entry) => <div key={entry.id} className="layered-memory-entry"><div className="layered-memory-copy"><div className="layered-memory-tags"><Tag className={`memory-kind-tag is-${entry.memoryKind}`} color={entry.memoryKind === 'procedural' ? 'green' : entry.memoryKind === 'preference' ? 'blue' : entry.memoryKind === 'episodic' ? 'gold' : 'default'}>{entry.memoryKind === 'episodic' ? '情景记忆' : entry.memoryKind === 'semantic' ? '语义记忆' : entry.memoryKind === 'procedural' ? '程序记忆' : '用户偏好'}</Tag><Tag className="memory-meta-tag">{entry.category}</Tag><Tag className="memory-meta-tag">{entry.sourceType === 'task-review' ? '已验收任务' : entry.sourceType === 'review-model' ? '独立审查' : entry.sourceType === 'legacy' ? '旧版迁移' : '手动'}</Tag><Tag className={`memory-confidence-tag${entry.confidence >= 0.9 ? ' is-high' : ''}`} color={entry.confidence >= 0.9 ? 'green' : 'default'}>可信度 {Math.round(entry.confidence * 100)}%</Tag></div><div className="layered-memory-content">{entry.content}</div><small>{entry.source} · {new Date(entry.updatedAt).toLocaleString('zh-CN')}</small></div><Button size="small" type="text" danger icon={<DeleteOutlined />} title="删除这条记忆" aria-label="删除这条记忆" onClick={() => void removeLayeredMemory(entry.id)} /></div>)}
+          {visibleLayeredEntries.map((entry) => <div key={entry.id} className="layered-memory-entry"><div className="layered-memory-copy"><div className="layered-memory-tags"><Tag className={`memory-kind-tag is-${entry.memoryKind}`} color={entry.memoryKind === 'procedural' ? 'green' : entry.memoryKind === 'preference' ? 'blue' : entry.memoryKind === 'episodic' ? 'gold' : 'default'}>{entry.memoryKind === 'episodic' ? '情景记忆' : entry.memoryKind === 'semantic' ? '语义记忆' : entry.memoryKind === 'procedural' ? '程序记忆' : '用户偏好'}</Tag><Tag className="memory-meta-tag">{entry.category}</Tag><Tag className="memory-meta-tag">{entry.sourceType === 'task-review' ? '已验收任务' : entry.sourceType === 'review-model' ? '独立审查' : entry.sourceType === 'legacy' ? '旧版迁移' : entry.sourceType === 'rollback' ? '历史恢复' : '手动'}</Tag><Tag className={`memory-confidence-tag${entry.confidence >= 0.9 ? ' is-high' : ''}`} color={entry.confidence >= 0.9 ? 'green' : 'default'}>可信度 {Math.round(entry.confidence * 100)}%</Tag></div><div className="layered-memory-content">{entry.content}</div><small>{entry.source} · {new Date(entry.updatedAt).toLocaleString('zh-CN')}{entry.evidenceIds?.length ? ` · 证据 ${entry.evidenceIds.length}` : ''}</small></div><Button size="small" type="text" danger icon={<DeleteOutlined />} title="删除这条记忆" aria-label="删除这条记忆" onClick={() => void removeLayeredMemory(entry.id)} /></div>)}
         </div>
+        {visibleHistory.length > 0 && <div className="memory-history-list"><h4>历史版本</h4>{visibleHistory.slice(0, 12).map((entry) => <div className="memory-proposal-row" key={entry.id}><div><strong>{entry.status === 'superseded' ? '已被替代' : entry.status === 'legacy' ? '旧版只读迁移' : '已归档'}</strong><p>{entry.content}</p><small>{entry.source} · {new Date(entry.updatedAt).toLocaleString('zh-CN')}</small></div>{entry.status === 'superseded' && <Button size="small" onClick={() => void rollbackLayeredMemory(entry.id)}>恢复此版本</Button>}</div>)}</div>}
+        {memoryRetrievals.length > 0 && <div className="memory-history-list"><h4>最近引用记录</h4><p>最近一次检索会记录使用了哪些记忆及命中理由，可在任务证据中追溯。</p><small>{String(memoryRetrievals.at(-1)?.createdAt ? new Date(Number(memoryRetrievals.at(-1)?.createdAt)).toLocaleString('zh-CN') : '')}</small></div>}
       </section>
 
       {(pendingProposals.length > 0 || learningReviews.some((item) => item.status !== 'completed')) && <section className="settings-memory-section memory-review-section">
         <div className="settings-memory-section-head"><div><h3>复盘与审核</h3><p>已验收路线会直接沉淀；独立模型提出的新判断必须经过审核。复盘失败不影响原任务结果。</p></div><Button size="small" onClick={() => void processLearningReviews()}>处理全部</Button></div>
         {learningReviews.filter((item) => item.status !== 'completed').slice(-8).map((item) => <div className="memory-review-row" key={item.id}><div><Tag color={item.status === 'failed' ? 'red' : item.status === 'waiting_model' ? 'orange' : 'blue'}>{item.status === 'waiting_model' ? '等待审查模型' : item.status === 'failed' ? '复盘失败' : item.status === 'processing' ? '复盘中' : '待复盘'}</Tag><span>{item.taskId}</span>{item.lastError && <small>{item.lastError}</small>}</div>{(item.status === 'failed' || item.status === 'waiting_model') && <Button size="small" onClick={() => void retryLearningReview(item.id)}>重试</Button>}</div>)}
-        {pendingProposals.map((proposal) => <div className="memory-proposal-row" key={proposal.id}><div><strong>{proposal.summary}</strong><p>{proposal.update.content}</p><small>{proposal.update.scope === 'employee' ? '员工记忆' : proposal.update.scope === 'team' ? '团队记忆' : proposal.update.scope === 'user' ? '用户记忆' : '组织记忆'}</small></div><Space><Button size="small" type="primary" onClick={() => void reviewMemoryProposal(proposal.id, 'approve')}>批准</Button><Button size="small" onClick={() => void reviewMemoryProposal(proposal.id, 'reject')}>拒绝</Button></Space></div>)}
+        {pendingProposals.map((proposal) => <div className="memory-proposal-row" key={proposal.id}><div><strong>{proposal.summary}</strong><p>{proposal.update.content}</p><small>{proposal.update.scope === 'employee' ? '员工记忆' : proposal.update.scope === 'team' ? '团队记忆' : proposal.update.scope === 'project' ? '项目记忆' : proposal.update.scope === 'user' ? '用户记忆' : '组织记忆'}</small></div><Space><Button size="small" type="primary" onClick={() => void reviewMemoryProposal(proposal.id, 'approve')}>批准</Button><Button size="small" onClick={() => void reviewMemoryProposal(proposal.id, 'reject')}>拒绝</Button></Space></div>)}
       </section>}
 
       <section className="settings-memory-section memory-legacy-section">
       <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>
-        旧版长期记忆（兼容）
+        旧版长期记忆备份（只读）
         <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 8 }}>
           共 {items.length} 条
         </span>
       </h3>
       <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
-        系统只保留以后仍然有用的稳定事实，并自动去重、归并和更新冲突信息；一次性任务、闲聊、工具报错和未确认推测不会写入。
+        这是迁移前的兼容备份，便于核对旧数据；它不再直接参与模型上下文。请在上方“分层记忆”中维护新事实源。
       </p>
       <div className="memory-quality-strip">
         <span>有效 {legacyMemoryQuality.active}</span>
@@ -943,8 +974,9 @@ function MemoryTab() {
           onChange={(e) => setNewText(e.target.value)}
           onPressEnter={handleAdd}
           placeholder="记录一条关于用户的信息…"
+          disabled={legacyReadOnly}
         />
-        <Button type="primary" onClick={handleAdd} disabled={!newText.trim()}>添加</Button>
+        <Button type="primary" onClick={handleAdd} disabled={legacyReadOnly || !newText.trim()}>添加</Button>
       </Space.Compact>
 
       <div style={{ maxHeight: 360, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
@@ -974,12 +1006,13 @@ function MemoryTab() {
                 更新于 {new Date(item.updatedAt ?? item.ts).toLocaleString('zh-CN')} · 来源：{item.source}
               </div>
               {item.lastChangeReason && <div className="memory-change-reason">{item.lastChangeReason}</div>}
-              {memoryReviewState(item) === 'review_due' && <Button size="small" type="link" style={{ padding: 0, height: 22 }} onClick={() => handleReviewMemory(item.fingerprint)}>确认仍然有效</Button>}
+              {memoryReviewState(item) === 'review_due' && <Button size="small" type="link" disabled={legacyReadOnly} style={{ padding: 0, height: 22 }} onClick={() => handleReviewMemory(item.fingerprint)}>确认仍然有效</Button>}
             </div>
             <Button
               size="small"
               type="text"
               danger
+              disabled={legacyReadOnly}
               onClick={() => handleDelete(i)}
               title="删除"
               style={{ flexShrink: 0, fontSize: 12 }}
@@ -992,10 +1025,10 @@ function MemoryTab() {
 
       {items.length > 0 && (
         <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
-          <Button size="small" icon={<MergeCellsOutlined />} onClick={handleOrganize}>
+          <Button size="small" icon={<MergeCellsOutlined />} disabled={legacyReadOnly} onClick={handleOrganize}>
             整理现有记忆
           </Button>
-          <Button size="small" danger onClick={handleClearAll}>
+          <Button size="small" danger disabled={legacyReadOnly} onClick={handleClearAll}>
             <DeleteOutlined /> 清空所有记忆
           </Button>
         </div>
@@ -1004,13 +1037,13 @@ function MemoryTab() {
 
       <section className="settings-memory-section memory-legacy-section">
         <h3 style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>
-          任务经验
+          旧版任务经验备份（只读）
           <span style={{ fontSize: 11, fontWeight: 400, color: 'var(--text-muted)', marginLeft: 8 }}>
             共 {taskLearnings.length} 条
           </span>
         </h3>
         <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
-          每次真实执行后记录可行路线、失败路线和阻塞类型。相似任务会先读取这里的经验，再决定第一步和验收方式。
+          这些历史记录只用于迁移核对，不再参与模型决策。新的任务经验会写入有项目边界和证据链的分层记忆账本。
         </p>
         <div style={{ maxHeight: 320, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
           {taskLearnings.length === 0 && (
@@ -1049,7 +1082,7 @@ function MemoryTab() {
         </div>
         {taskLearnings.length > 0 && (
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
-            <Button size="small" danger icon={<DeleteOutlined />} onClick={handleClearTaskLearnings}>
+            <Button size="small" danger disabled={legacyReadOnly} icon={<DeleteOutlined />} onClick={handleClearTaskLearnings}>
               清空任务经验
             </Button>
           </div>

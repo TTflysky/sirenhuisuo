@@ -36,6 +36,7 @@ export function createChatTaskBridge(input: {
   let decisionSequence = 0;
   const attempts = new Map<string, string>();
   const registeredArtifacts: Array<{ path: string; category?: string; verified?: boolean }> = [];
+  const rememberedMemoryRetrievals: Array<{ retrievalId: string; memoryIds: string[] }> = [];
   const pendingWrites: Array<Promise<unknown>> = [];
   const stepId = 'execution';
   const projectId = input.projectId
@@ -195,6 +196,11 @@ export function createChatTaskBridge(input: {
 
   return {
     get taskId() { return taskId; },
+    get projectId() { return projectId; },
+    rememberMemoryRetrieval(retrievalId?: string, references: Array<{ memoryId: string }> = []) {
+      if (!retrievalId || rememberedMemoryRetrievals.some((item) => item.retrievalId === retrievalId)) return;
+      rememberedMemoryRetrievals.push({ retrievalId, memoryIds: references.map((item) => item.memoryId).filter(Boolean).slice(0, 24) });
+    },
     async prepare(decision: TaskDecision) {
       const electron = api();
       if (decision.mode !== 'execute' || !electron?.taskServiceCreate) return;
@@ -263,6 +269,14 @@ export function createChatTaskBridge(input: {
       await Promise.all((input.references ?? []).filter((reference) => reference.label).map((reference) => electron.taskServiceReference({
         taskId: currentTaskId, kind: reference.kind || 'conversation', id: reference.id, label: reference.label!,
         sourceUrl: reference.sourceUrl, state: reference.state || 'bound',
+      })));
+      await Promise.all(rememberedMemoryRetrievals.map((retrieval) => electron.taskServiceReference({
+        taskId: currentTaskId,
+        kind: 'memory',
+        id: retrieval.retrievalId,
+        label: `引用 ${retrieval.memoryIds.length} 条记忆事实`,
+        state: 'retrieved',
+        memoryIds: retrieval.memoryIds,
       })));
     },
     async toolStarted(name: string, args: string) {

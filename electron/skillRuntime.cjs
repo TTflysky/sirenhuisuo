@@ -48,6 +48,7 @@ function createSkillRuntime(options = {}) {
       skills[id] = {
         id, name: safeText(skill.name, 160), scope: skill.scope, source: safeText(skill.source, 300),
         sourceUrl: safeText(skill.sourceUrl, 1000) || undefined, version: safeText(skill.version, 80) || undefined,
+        origin: skill.origin, lifecycleStatus: skill.lifecycleStatus,
         health: skill.health || 'unknown', healthMessage: safeText(skill.healthMessage, 300),
         quarantined: skill.quarantined === true, contentHash: skill.contentHash || previous.contentHash,
         lastSeenAt: now(), lastInvocationAt: previous.lastInvocationAt, invocationCount: previous.invocationCount || 0,
@@ -68,14 +69,20 @@ function createSkillRuntime(options = {}) {
   async function recordInvocation(input = {}) {
     const id = safeText(input.skillId || input.id, 240);
     if (!id) throw new Error('Skill 调用缺少技能 ID');
-    const manifest = await readManifest();
+    let manifest = await readManifest();
+    if (!manifest.skills[id]) manifest = await refresh('invocation-discovery');
     const existing = manifest.skills[id] || { id, name: safeText(input.name, 160), health: 'unknown', invocationCount: 0 };
     existing.lastInvocationAt = now();
     existing.invocationCount = Number(existing.invocationCount || 0) + 1;
     manifest.skills[id] = existing;
     manifest.invocations = [{ id: `inv-${Date.now()}-${hash(id).slice(0, 8)}`, skillId: id, taskId: safeText(input.taskId, 180) || undefined, status: input.ok === false ? 'failed' : 'succeeded', evidence: safeText(input.evidence, 800), occurredAt: now() }, ...(manifest.invocations || [])].slice(0, 500);
     await writeManifest(manifest);
-    return manifest.invocations[0];
+    let lifecycle;
+    if (existing.origin === 'auto' && typeof options.onInvocation === 'function') {
+      lifecycle = await options.onInvocation({ ...input, skillId: id, skillName: existing.name });
+      if (lifecycle?.autoDisabled) await refresh('canary-auto-disabled');
+    }
+    return { ...manifest.invocations[0], lifecycle };
   }
   async function install(input) {
     if (typeof installSkill !== 'function') throw new Error('Skill Runtime 未配置安装器');

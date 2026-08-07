@@ -340,7 +340,7 @@ assert.match(clientSource, /markExecutionBudgetReached\(executionState/u);
 assert.match(clientSource, /retryLimit: maxResearchSummaryAttempts - 1/u);
 assert.match(clientSource, /decideTurnRecovery\(turnRuntime/u);
 assert.match(clientSource, /executionControllerGuidance\(executionState\)/u);
-assert.match(clientSource, /compileTaskDecision\(turns, tools/u);
+assert.match(clientSource, /compile:\s*compileTaskDecision/u, 'Agent Loop must receive the unified task decision compiler through its runtime dependency contract');
 assert.match(clientSource, /buildTaskContract\(taskDecision/u);
 assert.match(clientSource, /recordTaskLearning/u);
 assert.match(clientSource, /resumedFromCapabilityCorrection/u);

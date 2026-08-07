@@ -6,8 +6,9 @@ const { exec, execFile } = require('child_process');
 const officeParser = require('officeparser');
 const { AlignmentType, Document, HeadingLevel, Packer, Paragraph, TextRun } = require('docx');
 const { initAutoUpdater } = require('./autoUpdate.cjs');
-const { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill, inspectSkillSource, repairSkill, createSkillDraft, listSkillDrafts, reviewSkillDraft } = require('./skills.cjs');
+const { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill, inspectSkillSource, repairSkill, createSkillDraft, listSkillDrafts, reviewSkillDraft, setAutoSkillEnabled, rollbackAutoSkill } = require('./skills.cjs');
 const { createSkillRuntime } = require('./skillRuntime.cjs');
+const { createSkillLifecycle } = require('./skillLifecycle.cjs');
 const { createCredentialVault } = require('./credentialVault.cjs');
 const { searchSkillHub } = require('./skillHubSearch.cjs');
 const { testObsidianVault, searchObsidianVault, readObsidianNote, fetchKnowledgeUrl, searchWeb } = require('./knowledge.cjs');
@@ -17,6 +18,7 @@ const { invokeConnectorAdapter, verifyConnectorAdapter } = require('./connectorA
 const { buildPowerShellCommand } = require('./commandShell.cjs');
 const { createTaskRuntimeStore } = require('./taskRuntimeStore.cjs');
 const { createOperationDiagnostics } = require('./operationDiagnostics.cjs');
+const { createAutonomyEvaluation } = require('./autonomyEvaluation.cjs');
 const { createTaskService } = require('./taskService.cjs');
 const { createTaskWorker } = require('./taskWorker.cjs');
 const { createNativeToolRuntime } = require('./nativeToolRuntime.cjs');
@@ -71,6 +73,17 @@ const worktreeManager = createWorktreeManager({
 });
 const PROJECT_ROOT = path.resolve(__dirname, '..');
 const TASK_RUNTIME_ROOT = path.join(app.getPath('userData'), 'task-runtime');
+const skillLifecycle = createSkillLifecycle(path.join(app.getPath('userData'), 'skill-runtime'), {
+  createSkillDraft: (input) => createSkillDraft(PROJECT_ROOT, input),
+  async resolveInstalledSkill(name) {
+    const matched = (await listSkills(PROJECT_ROOT)).find((item) => item.name.toLocaleLowerCase() === String(name || '').toLocaleLowerCase());
+    if (!matched) return undefined;
+    if (matched.origin !== 'auto') throw new Error('自动学习只能更新太极自己生成的 Skill，不能覆盖内置或手动安装 Skill');
+    return { skill: matched, ...(await readSkill(PROJECT_ROOT, matched.id)) };
+  },
+  setAutoSkillEnabled: (name, enabled, reason) => setAutoSkillEnabled(PROJECT_ROOT, name, enabled, reason),
+  rollbackAutoSkill: (name) => rollbackAutoSkill(PROJECT_ROOT, name),
+});
 const skillRuntime = createSkillRuntime({
   stateRoot: path.join(app.getPath('userData'), 'skill-runtime'),
   projectRoot: PROJECT_ROOT,
@@ -78,6 +91,7 @@ const skillRuntime = createSkillRuntime({
   readSkill,
   installSkill: (root, input) => installSkill(root, input, { fetchImpl: (url, options) => net.fetch(url, options) }),
   repairSkill,
+  onInvocation: (input) => skillLifecycle.recordInvocation(input),
 });
 const credentialVault = createCredentialVault({ root: path.join(app.getPath('userData'), 'credential-vault'), safeStorage });
 const operationDiagnostics = createOperationDiagnostics(TASK_RUNTIME_ROOT);
@@ -101,10 +115,69 @@ process.on('unhandledRejection', (reason) => {
 const codingRuntime = createCodingRuntime({ workspaceRoot: WORKSPACE, worktreeManager });
 const taskService = createTaskService(taskRuntimeStore, { codingRuntime });
 const memoryManager = createMemoryManager(path.join(app.getPath('userData'), 'taiji-memory'));
+const autonomyEvaluation = createAutonomyEvaluation(path.join(app.getPath('userData'), 'autonomy-evaluation'));
+async function captureAutonomyEvaluationEvidence() {
+  const [tasks, memory, skills] = await Promise.all([
+    taskRuntimeStore.read(),
+    memoryManager.list({ includeRetrievals: true }),
+    skillLifecycle.list(),
+  ]);
+  return autonomyEvaluation.capture({
+    taskRuns: tasks?.runs || [],
+    memoryRetrievals: memory?.retrievals || [],
+    skillRollouts: skills?.rollouts || [],
+  });
+}
+function registerAutonomyEvaluationIpc(reportIpcResult) {
+  ipcMain.handle('autonomy-evaluation:summary', async () => {
+    try {
+      await captureAutonomyEvaluationEvidence();
+      return await autonomyEvaluation.summary();
+    } catch (error) {
+      await operationDiagnostics.record({ scope: 'ipc', operation: 'autonomy-evaluation-summary', message: error?.message || String(error), error });
+      return { ok: false, error: error?.message || String(error) };
+    }
+  });
+  ipcMain.handle('autonomy-evaluation:start', async (_event, input) => {
+    try {
+      const result = await autonomyEvaluation.start(input || {});
+      await captureAutonomyEvaluationEvidence();
+      return { ...result, summary: await autonomyEvaluation.summary() };
+    } catch (error) {
+      return reportIpcResult('autonomy-evaluation-start', input, { ok: false, error: error?.message || String(error) });
+    }
+  });
+  ipcMain.handle('autonomy-evaluation:complete', async (_event, input) => {
+    try {
+      await captureAutonomyEvaluationEvidence();
+      const result = await autonomyEvaluation.complete(input?.sessionId);
+      return { ...result, summary: await autonomyEvaluation.summary() };
+    } catch (error) {
+      return reportIpcResult('autonomy-evaluation-complete', input, { ok: false, error: error?.message || String(error) });
+    }
+  });
+  ipcMain.handle('autonomy-evaluation:export', async () => {
+    try {
+      await captureAutonomyEvaluationEvidence();
+      const result = await dialog.showSaveDialog({
+        title: '导出自治陪跑评测',
+        defaultPath: `taiji-autonomy-evaluation-${Date.now()}.json`,
+        filters: [{ name: 'JSON 文件', extensions: ['json'] }],
+      });
+      if (result.canceled || !result.filePath) return { ok: true, canceled: true };
+      const payload = await autonomyEvaluation.exportData();
+      await fsp.writeFile(result.filePath, JSON.stringify(payload, null, 2), 'utf8');
+      return { ok: true, path: result.filePath, count: payload.observations.length };
+    } catch (error) {
+      await operationDiagnostics.record({ scope: 'ipc', operation: 'autonomy-evaluation-export', message: error?.message || String(error), error });
+      return { ok: false, error: error?.message || String(error) };
+    }
+  });
+}
 const learningReviewQueue = createLearningReviewQueue(path.join(app.getPath('userData'), 'task-runtime'), {
   memoryManager,
   fetchImpl: (url, options) => net.fetch(url, options),
-  createSkillDraft: (input) => createSkillDraft(PROJECT_ROOT, input),
+  skillLifecycle,
 });
 const taskWorker = createTaskWorker({
   rootDir: path.join(app.getPath('userData'), 'task-runtime'),
@@ -1129,6 +1202,7 @@ function createWindow() {
     await fsp.writeFile(result.filePath, JSON.stringify(payload, null, 2), 'utf8');
     return { ok: true, path: result.filePath, count: payload.diagnostics.length };
   });
+  registerAutonomyEvaluationIpc(reportIpcResult);
   ipcMain.handle('task-ledger:read', async (_event, options) => taskRuntimeStore.read(options));
   ipcMain.handle('task-ledger:audit', async (_event, options) => taskRuntimeStore.audit(options));
   ipcMain.handle('task-recovery:create', async (_event, options) => taskRuntimeStore.createRecoveryPoint(options));
@@ -1169,8 +1243,19 @@ function createWindow() {
   ipcMain.handle('skills:drafts', async () => {
     try { return { ok: true, drafts: await listSkillDrafts() }; } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
   });
+  ipcMain.handle('skills:lifecycle', async (_event, input) => {
+    try { return await skillLifecycle.list(input || {}); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
+  ipcMain.handle('skills:rollbackAuto', async (_event, input) => {
+    try { return await skillLifecycle.rollback(input?.skillName || input?.skillId); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
   ipcMain.handle('skills:reviewDraft', async (_event, input) => {
-    try { return await reviewSkillDraft(PROJECT_ROOT, input?.draftId, input?.decision, input?.note); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+    try {
+      const result = await reviewSkillDraft(PROJECT_ROOT, input?.draftId, input?.decision, input?.note);
+      const lifecycle = await skillLifecycle.reviewDraft(result.draft, input?.decision, result);
+      await skillRuntime.refresh(input?.decision === 'approve' ? 'auto-skill-approved' : 'auto-skill-rejected');
+      return { ...result, lifecycle };
+    } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
   });
   ipcMain.handle('task-worker:status', async () => taskWorker.status());
   ipcMain.handle('task-worker:commands', async (_event, options) => taskWorker.readCommands(options));
@@ -1186,7 +1271,13 @@ function createWindow() {
   ipcMain.handle('memory:upsert', async (_event, input) => {
     try { return await memoryManager.upsert(input, { replaceExact: input?.replaceExact }); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
   });
+  ipcMain.handle('memory:propose', async (_event, input) => {
+    try { return await memoryManager.propose(input); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
   ipcMain.handle('memory:remove', async (_event, input) => memoryManager.remove(input?.entryId, { reason: input?.reason }));
+  ipcMain.handle('memory:rollback', async (_event, input) => {
+    try { return await memoryManager.rollback(input?.entryId, { reason: input?.reason, source: '用户在记忆中心恢复历史版本' }); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
+  });
   ipcMain.handle('memory:reviewProposal', async (_event, input) => {
     try { return await memoryManager.reviewProposal(input?.proposalId, input?.decision, { reviewedBy: 'user', note: input?.note }); } catch (error) { return { ok: false, error: error?.message ?? String(error) }; }
   });

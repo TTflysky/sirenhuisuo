@@ -33,7 +33,7 @@ import { applyModelTaskSummary, shouldModelSummarizeTaskContext } from './engine
 import { buildTaskHistoryPrompt, searchTaskRunHistory } from './engine/taskHistory.mjs';
 import { CONNECTOR_PRESETS, loadConnectors } from './data/connectors';
 import { getConnectorTools } from './engine/connectorTools';
-import { buildLayeredMemoryContext } from './data/layeredMemory';
+import { retrieveLayeredMemoryContext } from './data/layeredMemory';
 import { ensureActiveChatSession } from './data/chatSessions';
 import { projectNativeWorkingEmployees } from './store/nativeEmployeeProjection';
 import { createTeamSupervisorResponder } from './engine/teamSupervisor';
@@ -665,6 +665,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       });
     }
     if (codingProject) run.codingProject = codingProject;
+    run.projectId = run.projectId ?? team.projectId;
     const historyMatches = searchTaskRunHistory(current.taskRuns, request, {
       teams: current.teams,
       teamId: team.id,
@@ -673,7 +674,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       limit: 4,
     });
     const historyContext = buildTaskHistoryPrompt(historyMatches);
-    const layeredMemoryContext = await buildLayeredMemoryContext({ query: request, teamId, limit: 18 });
+    const layeredMemory = await retrieveLayeredMemoryContext({ query: request, projectId: run.projectId, taskId: run.id, conversationId, teamId, limit: 18 });
+    const layeredMemoryContext = layeredMemory.ok ? layeredMemory.context ?? '' : '';
     run.skillEvidence = skillBundle.evidence;
     appendTaskRunContext(run, {
       type: skillRefs.length ? 'decision' : 'progress', source: 'system',
@@ -688,7 +690,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         data: { taskIds: historyMatches.map((item) => item.taskId) },
       });
     }
-    run.projectId = run.projectId ?? team.projectId;
+    if (layeredMemory.retrievalId) {
+      appendTaskRunContext(run, {
+        type: 'history', source: 'system', verified: true,
+        summary: `本轮引用 ${layeredMemory.references?.length ?? 0} 条记忆事实，已登记检索原因和来源。`,
+        data: { retrievalId: layeredMemory.retrievalId, references: layeredMemory.references },
+      });
+    }
     if (projectBrief) {
       appendTaskRunContext(run, {
         type: 'decision', source: 'system', verified: true,

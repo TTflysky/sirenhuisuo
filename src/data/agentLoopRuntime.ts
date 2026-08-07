@@ -47,7 +47,6 @@ import {
   validateExplicitResourceToolCall,
 } from '../engine/explicitResourceContract.mjs';
 import { resolveSkillInstallInput } from '../engine/skillInstallRouting.mjs';
-import { buildTaskLearningContext } from '../engine/taskLearningMemory';
 import {
   applySteering as applyTurnSteering,
   buildTurnGuidance,
@@ -140,7 +139,7 @@ export function createRunAgentLoop(deps: AgentLoopDependencies) {
     || (taskDecision.primaryRoute === 'web_search'
       && !/(?:安装|部署|开发|修改|修复|创建|生成|保存|下载|上传|提交|打包|配置|接入|连接)/u.test(originalUserText));
   const requiresExecutionEvidence = !conversationOnly && taskDecision.requiresEvidence;
-  const taskExperience = conversationOnly ? '' : buildTaskLearningContext(originalUserText);
+  const taskExperience = '';
   const taskContract = buildTaskContract(taskDecision, taskExperience);
   const pinnedSkillInstruction = buildPinnedSkillInstruction(pinnedSkillSource);
   const explicitResourceContract = createExplicitResourceContract(

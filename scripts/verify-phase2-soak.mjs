@@ -15,7 +15,10 @@ const port = Number(process.env.TAIJI_DEBUG_PORT || 9334);
 const endpoint = `http://127.0.0.1:${port}`;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function targets() { return (await fetch(`${endpoint}/json`)).json(); }
+async function targets() {
+  const allTargets = await (await fetch(`${endpoint}/json`)).json();
+  return allTargets.filter((target) => target.type === 'page' && /^https?:\/\//iu.test(target.url || ''));
+}
 async function waitForTargets(minimum, timeoutMs = 20_000) {
   const startedAt = Date.now();
   let latest = [];
@@ -35,15 +38,36 @@ async function connect(target) {
     const request = pending.get(message.id);
     if (!request) return;
     pending.delete(message.id);
+    clearTimeout(request.timer);
     if (message.error) request.reject(new Error(message.error.message));
     else request.resolve(message.result);
   });
   await new Promise((resolve, reject) => { socket.addEventListener('open', resolve, { once: true }); socket.addEventListener('error', reject, { once: true }); });
-  const command = (method, params = {}) => new Promise((resolve, reject) => {
+  const rejectPending = (reason) => {
+    for (const request of pending.values()) {
+      clearTimeout(request.timer);
+      request.reject(reason);
+    }
+    pending.clear();
+  };
+  socket.addEventListener('close', () => rejectPending(new Error('CDP socket closed')));
+  socket.addEventListener('error', () => rejectPending(new Error('CDP socket failed')));
+  const command = (method, params = {}, { timeoutMs = 30_000 } = {}) => new Promise((resolve, reject) => {
     const requestId = ++id;
-    pending.set(requestId, { resolve, reject });
-    socket.send(JSON.stringify({ id: requestId, method, params }));
-    setTimeout(() => { if (pending.delete(requestId)) reject(new Error(`${method} timed out`)); }, 15000);
+    const timer = setTimeout(() => {
+      const request = pending.get(requestId);
+      if (!request) return;
+      pending.delete(requestId);
+      reject(new Error(`${method} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    pending.set(requestId, { resolve, reject, timer });
+    try {
+      socket.send(JSON.stringify({ id: requestId, method, params }));
+    } catch (error) {
+      pending.delete(requestId);
+      clearTimeout(timer);
+      reject(error);
+    }
   });
   const evaluate = async (expression) => (await command('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })).result.value;
   await command('Runtime.enable');
@@ -62,6 +86,8 @@ while (Date.now() - bridgeStartedAt < 30_000) {
   await sleep(200);
 }
 assert.equal(await main.evaluate("Boolean(window.electronAPI?.openChat && window.electronAPI?.openTool && window.electronAPI?.openSettings)"), true, 'Electron preload bridge did not become ready');
+const autonomySummary = await main.evaluate('window.electronAPI.autonomyEvaluationSummary()');
+assert.equal(autonomySummary?.ok, true, autonomySummary?.error || 'V5.8 autonomy evaluation IPC did not become ready');
 const windows = [
   { kind: 'chat', type: 'assistant-chat' },
   ...['emp-pm', 'emp-planner', 'emp-coder', 'emp-checker'].map((refId) => ({ kind: 'chat', type: 'dm-chat', refId })),
@@ -83,10 +109,11 @@ for (const item of windows) {
   console.log('[phase2-soak] opened', `${item.kind}:${item.type || 'settings'}:${item.refId || ''}`, result);
   opened.push({ ...item, reused: result.reused === true });
 }
-const openedTargets = await waitForTargets(10);
-const clients = [];
-for (const target of openedTargets) clients.push(await connect(target));
-assert(clients.length >= 10, `Expected at least 10 Electron windows, found ${clients.length}`);
+const openedTargets = await waitForTargets(12);
+assert(openedTargets.length >= 12, `Expected at least 12 Electron windows, found ${openedTargets.length}`);
+const initialRuntime = await main.evaluate('window.electronAPI.diagnosticsRuntime()');
+assert.equal(initialRuntime?.ok, true, initialRuntime?.error || 'Electron runtime diagnostics did not become ready');
+assert(initialRuntime.windows?.length >= 12, `Runtime window registry reported ${initialRuntime.windows?.length || 0} windows after opening`);
 
 const taskId = `phase2-soak-${Date.now()}`;
 const taskInput = {
@@ -127,14 +154,20 @@ const intervalMs = Math.max(1000, Math.min(10_000, Math.floor(durationMs / 12)))
 let steeringUpdated = false;
 while (Date.now() - startedAt < durationMs) {
   const currentTargets = await targets();
-  assert(currentTargets.length >= 10, `Window count dropped to ${currentTargets.length}`);
-  const metrics = [];
-  for (const client of clients) {
-    const response = await client.command('Performance.getMetrics');
-    const values = Object.fromEntries(response.metrics.map((metric) => [metric.name, metric.value]));
-    metrics.push({ jsHeapUsed: values.JSHeapUsedSize || 0, nodes: values.Nodes || 0, documents: values.Documents || 0 });
-  }
-  samples.push({ ts: Date.now(), windows: currentTargets.length, heapBytes: metrics.reduce((total, item) => total + item.jsHeapUsed, 0), nodes: metrics.reduce((total, item) => total + item.nodes, 0), documents: metrics.reduce((total, item) => total + item.documents, 0) });
+  assert(currentTargets.length >= 12, `Debug target count dropped to ${currentTargets.length}`);
+  const runtime = await main.evaluate('window.electronAPI.diagnosticsRuntime()');
+  assert.equal(runtime?.ok, true, runtime?.error || 'Runtime diagnostics failed during multi-window sampling');
+  assert(runtime.windows?.length >= 12, `Runtime window count dropped to ${runtime.windows?.length || 0}`);
+  assert.equal(runtime.windows?.some((window) => window.loading), false, 'A renderer was still loading during the residency sample');
+  samples.push({
+    ts: Date.now(),
+    windows: runtime.windows.length,
+    debugTargets: currentTargets.length,
+    processCount: runtime.processes?.length || 0,
+    workingSetBytes: runtime.memory?.totalWorkingSetBytes || 0,
+    mainResidentSetBytes: runtime.memory?.mainResidentSetBytes || 0,
+    rendererProcessCount: new Set((runtime.windows || []).map((window) => window.processId)).size,
+  });
   const heartbeat = await main.evaluate(`window.electronAPI.taskWorkerCommand(${JSON.stringify({
     taskId, type: 'heartbeat', payload: { leaseId, progressAt: Date.now(), activity: '持续任务正在整理检查清单' },
   })})`);
@@ -156,8 +189,8 @@ while (Date.now() - startedAt < durationMs) {
 }
 const first = samples[0];
 const last = samples.at(-1);
-const heapGrowthMb = Math.max(0, (last.heapBytes - first.heapBytes) / 1024 / 1024);
-assert(heapGrowthMb < 128, `Renderer heap grew by ${heapGrowthMb.toFixed(1)}MB during the run`);
+const workingSetGrowthMb = Math.max(0, (last.workingSetBytes - first.workingSetBytes) / 1024 / 1024);
+assert(workingSetGrowthMb < 128, `Application working set grew by ${workingSetGrowthMb.toFixed(1)}MB during the run`);
 const completedCheckpoint = await main.evaluate(`window.electronAPI.taskWorkerCommand(${JSON.stringify({
   commandId: `checkpoint-complete-${taskId}`, taskId, type: 'checkpoint', payload: { leaseId, checkpoint: { checkpointId: `cp-${taskId}-2`, sequence: 2, kind: 'step_completed', stepId: 'sustain', summary: '耐久观察完成' } },
 })})`);
@@ -179,11 +212,10 @@ assert.equal(workerJournal?.integrity?.ok, true);
 assert.ok(workerJournal.records.filter((item) => item.taskId === taskId && item.type === 'command_completed').length >= 3);
 const report = {
   passed: true, requestedMinutes, actualMinutes: Number(((Date.now() - startedAt) / 60000).toFixed(2)), formalEightHourRun: requestedMinutes >= 480,
-  windows: last.windows, opened, samples: samples.length, heapGrowthMb: Number(heapGrowthMb.toFixed(2)), first, last,
+  windows: last.windows, opened, samples: samples.length, workingSetGrowthMb: Number(workingSetGrowthMb.toFixed(2)), first, last,
   task: { taskId, status: finalRun.status, checkpointSequence: finalRun.worker.checkpointSequence, residencySequence: finalRun.residencyCheckpoint.checkpointSequence, contextCompactions: finalRun.turnLifecycle.context.compactions, retainedSteering: finalRun.turnLifecycle.steering.map((item) => item.message) },
 };
 await fs.mkdir(path.resolve('artifacts', 'performance'), { recursive: true });
 await fs.writeFile(path.resolve('artifacts', 'performance', `phase2-soak-${Date.now()}.json`), JSON.stringify(report, null, 2));
-clients.forEach((client) => client.socket.close());
 main.socket.close();
 console.log(JSON.stringify(report, null, 2));

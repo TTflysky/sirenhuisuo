@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const fs = require('fs/promises');
 const path = require('path');
 
-const LEARNING_REVIEW_VERSION = 2;
+const LEARNING_REVIEW_VERSION = 4;
 const TERMINAL_OUTCOMES = new Set(['completed', 'failed', 'stopped']);
 
 function clone(value) { return value === undefined ? undefined : JSON.parse(JSON.stringify(value)); }
@@ -43,13 +43,13 @@ function collectInput(run) {
     id: text(step.id, 180), employeeId: text(step.employeeId, 180), title: text(step.title, 260), kind: step.kind,
     status: step.status, attempts: Number(step.attempts) || 0,
     tools: (step.events || []).filter((event) => event.type === 'tool' || event.type === 'error').map((event) => ({ name: toolNameFromEvent(event.detail) || 'unknown', success: event.type === 'tool', result: redact(event.detail).slice(0, 500) })).slice(-30),
-    evidence: (step.evidence || []).map((item) => ({ kind: item.kind, verified: item.verified === true, summary: redact(item.summary).slice(0, 500) })).slice(-12),
+    evidence: (step.evidence || []).map((item, index) => ({ id: text(item.id, 180) || `evidence-${text(run.id, 80)}-${text(step.id, 80)}-${index}-${checksum(item).slice(0, 12)}`, kind: item.kind, verified: item.verified === true, summary: redact(item.summary).slice(0, 500) })).slice(-12),
   }));
   const members = (run.memberSnapshot || []).map((member) => ({ id: text(member.id, 180), name: text(member.name, 120), role: member.role }));
   return {
-    taskId: text(run.id, 180), teamId: text(run.teamId, 180), goal: text(run.goal || run.request, 3000), outcome: TERMINAL_OUTCOMES.has(run.status) ? run.status : 'failed',
+    taskId: text(run.id, 180), projectId: text(run.projectId, 180) || undefined, conversationId: text(run.conversationId, 180) || undefined, teamId: text(run.teamId, 180), goal: text(run.goal || run.request, 3000), outcome: TERMINAL_OUTCOMES.has(run.status) ? run.status : 'failed',
     steps, members,
-    evidence: (run.evidence || []).map((item) => ({ kind: item.kind, verified: item.verified === true, summary: redact(item.summary).slice(0, 600) })).slice(-40),
+    evidence: (run.evidence || []).map((item, index) => ({ id: text(item.id, 180) || `evidence-${text(run.id, 100)}-${index}-${checksum(item).slice(0, 12)}`, kind: item.kind, verified: item.verified === true, summary: redact(item.summary).slice(0, 600) })).slice(-40),
     corrections: (run.recoveryContext?.steeringMessages || []).filter((item) => /不对|错了|不要|必须|改成|纠正|偏题/u.test(item)).map((item) => text(item, 500)).slice(-12),
     failure: text(run.lastError || run.handoff?.blocked, 1000) || undefined,
     completedAt: Date.now(),
@@ -67,23 +67,39 @@ function parseReviewOutput(raw) {
   const parsed = JSON.parse(match[0]);
   const memoryUpdates = [];
   for (const item of Array.isArray(parsed.memory_updates) ? parsed.memory_updates.slice(0, 12) : []) {
-    if (!['organization', 'team', 'employee', 'user'].includes(item?.target)) continue;
+    if (!['organization', 'project', 'team', 'employee', 'user'].includes(item?.target)) continue;
     if (!['add', 'replace'].includes(item?.action || 'add')) continue;
     const content = text(item?.content, 800);
     if (!content) continue;
     if (item.target === 'employee' && !text(item.employee_id, 180)) continue;
     memoryUpdates.push({ target: item.target, action: item.action || 'add', employeeId: text(item.employee_id, 180) || undefined, oldText: text(item.old_text, 800) || undefined, content, category: ['identity', 'preference', 'constraint', 'workflow', 'decision', 'project', 'lesson'].includes(item.category) ? item.category : 'lesson', memoryKind: ['episodic', 'semantic', 'procedural', 'preference'].includes(item.memory_kind) ? item.memory_kind : undefined, importance: Math.max(1, Math.min(5, Number(item.importance) || 3)), confidence: Math.max(0.65, Math.min(1, Number(item.confidence) || 0.8)) });
   }
-  const skillSuggestions = [];
-  for (const item of Array.isArray(parsed.skill_suggestions) ? parsed.skill_suggestions.slice(0, 5) : []) {
-    if (!['create', 'patch'].includes(item?.action)) continue;
+  const skillCandidates = [];
+  const rawCandidates = Array.isArray(parsed.skill_candidates)
+    ? parsed.skill_candidates
+    : Array.isArray(parsed.skill_suggestions) ? parsed.skill_suggestions : [];
+  for (const item of rawCandidates.slice(0, 5)) {
+    if (!['create', 'update', 'patch'].includes(item?.action || 'create')) continue;
     const name = text(item?.name || item?.skill_name, 80);
     if (!name) continue;
-    if (item.action === 'create' && !text(item.content, 12000)) continue;
-    if (item.action === 'patch' && (!text(item.old_string, 12000) || !text(item.new_string, 12000))) continue;
-    skillSuggestions.push({ action: item.action, name, targetSkillName: text(item.skill_name || item.name, 80), description: text(item.description, 300), content: String(item.content || '').slice(0, 60000), oldString: String(item.old_string || '').slice(0, 12000), newString: String(item.new_string || '').slice(0, 12000), reason: text(item.reason, 800) });
+    skillCandidates.push({
+      action: item.action === 'patch' ? 'update' : item.action || 'create',
+      name,
+      target_skill_name: text(item.target_skill_name || item.skill_name, 80) || undefined,
+      description: text(item.description, 500),
+      reason: text(item.reason, 800),
+      steps: Array.isArray(item.steps) ? item.steps.map((step) => text(step, 800)).filter(Boolean).slice(0, 24) : undefined,
+      inputs: Array.isArray(item.inputs) ? item.inputs.map((entry) => text(entry, 500)).filter(Boolean).slice(0, 16) : undefined,
+      outputs: Array.isArray(item.outputs) ? item.outputs.map((entry) => text(entry, 500)).filter(Boolean).slice(0, 16) : undefined,
+      success_criteria: Array.isArray(item.success_criteria) ? item.success_criteria.map((entry) => text(entry, 500)).filter(Boolean).slice(0, 16) : undefined,
+      permissions: Array.isArray(item.permissions) ? item.permissions.map((entry) => text(entry, 160)).filter(Boolean).slice(0, 20) : undefined,
+      external_services: Array.isArray(item.external_services) ? item.external_services.map((entry) => text(entry, 160)).filter(Boolean).slice(0, 12) : undefined,
+      positive_example: text(item.positive_example, 1000),
+      failure_example: text(item.failure_example, 1000),
+      content: String(item.content || '').slice(0, 12000) || undefined,
+    });
   }
-  return { memoryUpdates, skillSuggestions };
+  return { memoryUpdates, skillCandidates };
 }
 
 function createLearningReviewQueue(rootDir, options) {
@@ -134,25 +150,25 @@ function createLearningReviewQueue(rootDir, options) {
     const verified = input.evidence.filter((item) => item.verified).map((item) => item.summary).slice(-5);
     const tools = [...new Set(input.steps.flatMap((step) => step.tools.filter((tool) => tool.success).map((tool) => tool.name)).filter((name) => name !== 'unknown'))].slice(0, 10);
     const teamContent = [`任务“${input.goal.slice(0, 220)}”已通过真实验收`, tools.length ? `有效工具路线：${tools.join(' → ')}` : '', verified.length ? `验收证据：${verified.join('；')}` : ''].filter(Boolean).join('；').slice(0, 900);
-    results.push(await options.memoryManager.upsert({ scope: 'team', scopeId: input.teamId, category: 'lesson', memoryKind: 'procedural', content: teamContent, source: `任务复盘 ${input.taskId}`, sourceType: 'task-review', taskId: input.taskId, importance: 4, confidence: 0.95, evidence: verified, acceptanceVerified: true }));
+    results.push(await options.memoryManager.upsert({ scope: 'team', scopeId: input.teamId, projectId: input.projectId, category: 'lesson', memoryKind: 'procedural', content: teamContent, source: `任务复盘 ${input.taskId}`, sourceType: 'task-review', taskId: input.taskId, importance: 4, confidence: 0.95, evidence: verified, evidenceIds: input.evidence.filter((item) => item.verified).map((item) => item.id).filter(Boolean), acceptanceVerified: true }));
     for (const step of input.steps.filter((item) => item.status === 'completed')) {
       const successful = [...new Set(step.tools.filter((tool) => tool.success).map((tool) => tool.name).filter((name) => name !== 'unknown'))];
       const evidence = step.evidence.filter((item) => item.verified).map((item) => item.summary).slice(-4);
       if (!evidence.length) continue;
       const content = `完成“${step.title}”时验证有效：${successful.length ? successful.join(' → ') : evidence.join('；')}`.slice(0, 800);
-      results.push(await options.memoryManager.upsert({ scope: 'employee', scopeId: step.employeeId, employeeId: step.employeeId, category: 'lesson', memoryKind: 'procedural', content, source: `任务复盘 ${input.taskId}`, sourceType: 'task-review', taskId: input.taskId, importance: 4, confidence: 0.95, evidence, acceptanceVerified: true }));
+      results.push(await options.memoryManager.upsert({ scope: 'employee', scopeId: step.employeeId, employeeId: step.employeeId, projectId: input.projectId, category: 'lesson', memoryKind: 'procedural', content, source: `任务复盘 ${input.taskId}`, sourceType: 'task-review', taskId: input.taskId, importance: 4, confidence: 0.95, evidence, evidenceIds: step.evidence.filter((item) => item.verified).map((item) => item.id).filter(Boolean), acceptanceVerified: true }));
     }
     return results;
   }
 
   function buildPrompt(input, existingContext) {
-    return `你是太极的独立任务复盘器。只从真实记录中提取对未来仍有用的原子经验，不得把一次性状态、凭据、错误代码或猜测写入记忆。\n\n当前记忆：\n${existingContext || '暂无'}\n\n任务记录：\n${JSON.stringify(input, null, 2).slice(0, 30000)}\n\n只返回 JSON：\n{"memory_updates":[{"target":"organization|team|employee|user","employee_id":"员工目标时必填","action":"add|replace","old_text":"精确旧文本，仅 replace","content":"一条原子事实","category":"lesson|workflow|constraint|preference|decision|project","memory_kind":"episodic|semantic|procedural|preference","importance":1,"confidence":0.8}],"skill_suggestions":[{"action":"create|patch","name":"名称","description":"用途","content":"create 时完整可执行说明","skill_name":"patch 目标","old_string":"精确旧文本","new_string":"替换文本","reason":"为什么可复用"}]}\n规则：情景记忆记录一次任务或决定，语义记忆记录稳定事实，程序记忆只记录已被真实验收证明有效的路线，用户偏好写 preference。只有跨任务可复用的内容才建议；个人偏好写 user，团队约定写 team，员工独有路线写 employee，跨团队通用经验写 organization。Skill 必须是重复出现、步骤稳定的工作流；不确定时返回空数组。`;
+    return `你是太极的独立任务复盘器。只从真实记录中提取对未来仍有用的原子经验，不得把一次性状态、凭据、错误代码或猜测写入记忆。你只能提出结构化 Skill 候选观察，禁止直接编写 SKILL.md、安装命令或精确补丁。\n\n当前记忆：\n${existingContext || '暂无'}\n\n任务记录：\n${JSON.stringify(input, null, 2).slice(0, 30000)}\n\n只返回 JSON：\n{"memory_updates":[{"target":"organization|project|team|employee|user","employee_id":"员工目标时必填","action":"add|replace","old_text":"精确旧文本，仅 replace","content":"一条原子事实","category":"lesson|workflow|constraint|preference|decision|project","memory_kind":"episodic|semantic|procedural|preference","importance":1,"confidence":0.8}],"skill_candidates":[{"action":"create|update","name":"简短用途名称","target_skill_name":"仅 update 时填写自动 Skill 名称","description":"做什么以及什么场景触发","steps":["稳定步骤"],"inputs":["所需输入"],"outputs":["交付结果"],"success_criteria":["真实验收标准"],"permissions":["来源任务已经实际使用的权限"],"external_services":["真实外部依赖"],"positive_example":"一个成功样例","failure_example":"一个应该停止或失败的样例","reason":"为什么可能可复用"}]}\n规则：情景记忆记录一次任务或决定，语义记忆记录稳定事实，程序记忆只记录已被真实验收证明有效的路线，用户偏好写 preference。默认写 project，项目结束后不得自动提升到其他范围。只有可跨团队复用且有多项真实验收时才建议 organization，且必须等待用户批准；个人偏好写 user，团队约定写 team，员工独有路线写 employee。Skill 候选只是本次任务的一条观察，必须保留实际输入、输出、权限、正向样例和失败样例；是否达到跨任务门槛、如何编译和能否启用由确定性生命周期内核决定。不确定时返回空数组。`;
   }
 
   async function callReviewModel(input, modelConfig) {
     const endpoint = resolveEndpoint(modelConfig);
     if (!endpoint) throw new Error('未配置独立审查模型');
-    const memory = await options.memoryManager.context({ query: input.goal, teamId: input.teamId, limit: 18 });
+    const memory = await options.memoryManager.context({ query: input.goal, taskId: input.taskId, conversationId: input.conversationId, projectId: input.projectId, teamId: input.teamId, limit: 18 });
     const headers = { Accept: 'application/json', 'Content-Type': 'application/json' };
     if (modelConfig.apiKey) headers.Authorization = `Bearer ${modelConfig.apiKey}`;
     const response = await options.fetchImpl(endpoint, { method: 'POST', headers, signal: AbortSignal.timeout(60000), body: JSON.stringify({ model: modelName(modelConfig), messages: [{ role: 'system', content: '你是独立审查模型，只输出严格 JSON。' }, { role: 'user', content: buildPrompt(input, memory.context) }], response_format: { type: 'json_object' }, stream: false }) });
@@ -164,21 +180,20 @@ function createLearningReviewQueue(rootDir, options) {
 
   async function applyModelReview(input, review, settings = {}) {
     const proposalIds = [];
-    const draftIds = [];
+    let skillLifecycleResult = { candidateIds: [], skillDraftIds: [] };
     for (const update of review.memoryUpdates) {
       const scope = update.target;
-      const scopeId = scope === 'team' ? input.teamId : scope === 'employee' ? update.employeeId : 'default';
+      const scopeId = scope === 'project' ? input.projectId : scope === 'team' ? input.teamId : scope === 'employee' ? update.employeeId : 'default';
       const requestedMemoryKind = update.memoryKind || (update.category === 'preference' ? 'preference' : ['workflow', 'lesson'].includes(update.category) ? 'procedural' : update.taskId ? 'episodic' : 'semantic');
       const memoryKind = requestedMemoryKind === 'procedural' && !hasVerifiedAcceptance(input) ? 'episodic' : requestedMemoryKind;
-      const proposal = await options.memoryManager.propose({ taskId: input.taskId, source: 'review-model', summary: `独立审查建议更新${scope === 'employee' ? '员工个人' : scope === 'team' ? '团队' : scope === 'user' ? '用户' : '组织'}记忆`, update: { scope, scopeId, employeeId: update.employeeId, category: update.category, memoryKind, content: update.content, replaceExact: update.action === 'replace' ? update.oldText : undefined, source: `独立审查 ${input.taskId}`, sourceType: 'review-model', taskId: input.taskId, importance: update.importance, confidence: update.confidence, acceptanceVerified: memoryKind === 'procedural' && hasVerifiedAcceptance(input) } });
+      const proposal = await options.memoryManager.propose({ taskId: input.taskId, source: 'review-model', summary: `独立审查建议更新${scope === 'employee' ? '员工个人' : scope === 'team' ? '团队' : scope === 'project' ? '当前项目' : scope === 'user' ? '用户' : '组织'}记忆`, update: { scope, scopeId, projectId: input.projectId, employeeId: update.employeeId, category: update.category, memoryKind, content: update.content, replaceExact: update.action === 'replace' ? update.oldText : undefined, source: `独立审查 ${input.taskId}`, sourceType: 'review-model', taskId: input.taskId, importance: update.importance, confidence: update.confidence, acceptanceVerified: memoryKind === 'procedural' && hasVerifiedAcceptance(input) } });
       proposalIds.push(proposal.proposal.id);
-      if (settings.memoryWriteApproval === false && update.confidence >= 0.9) await options.memoryManager.reviewProposal(proposal.proposal.id, 'approve', { reviewedBy: 'policy:auto-high-confidence' });
+      if (settings.memoryWriteApproval === false && update.confidence >= 0.9 && ['team', 'employee'].includes(scope) && memoryKind === 'procedural' && hasVerifiedAcceptance(input)) await options.memoryManager.reviewProposal(proposal.proposal.id, 'approve', { reviewedBy: 'policy:auto-high-confidence' });
     }
-    for (const suggestion of review.skillSuggestions) {
-      const draft = await options.createSkillDraft({ ...suggestion, taskId: input.taskId });
-      draftIds.push(draft.draft.id);
+    if (review.skillCandidates.length && options.skillLifecycle?.observe) {
+      skillLifecycleResult = await options.skillLifecycle.observe(input, review.skillCandidates);
     }
-    return { proposalIds, draftIds };
+    return { proposalIds, candidateIds: skillLifecycleResult.candidateIds || [], draftIds: skillLifecycleResult.skillDraftIds || [] };
   }
 
   async function processOne(item, runtime = {}) {
@@ -188,12 +203,12 @@ function createLearningReviewQueue(rootDir, options) {
     });
     try {
       const verifiedResults = await applyVerifiedLessons(item.input);
-      let review = { memoryUpdates: [], skillSuggestions: [] };
+      let review = { memoryUpdates: [], skillCandidates: [] };
       if (shouldUseReviewModel(item.input)) review = await callReviewModel(item.input, runtime.reviewModelConfig);
       const applied = await applyModelReview(item.input, review, runtime);
       await transact(async () => {
         item.status = 'completed'; item.completedAt = Date.now(); item.updatedAt = Date.now();
-        item.result = { verifiedMemories: verifiedResults.filter((result) => result?.ok).length, memoryProposalIds: applied.proposalIds, skillDraftIds: applied.draftIds };
+        item.result = { verifiedMemories: verifiedResults.filter((result) => result?.ok).length, memoryProposalIds: applied.proposalIds, skillCandidateIds: applied.candidateIds, skillDraftIds: applied.draftIds };
         await persist();
       });
     } catch (error) {
@@ -237,7 +252,7 @@ function createLearningReviewQueue(rootDir, options) {
       item = state.items.find((candidate) => candidate.reviewKey === reviewKey);
       idempotencyHit = Boolean(item);
       if (!item) {
-        item = { id: `learning-review-${crypto.randomUUID()}`, reviewKey, taskId: input.taskId, teamId: input.teamId, status: 'queued', attempts: 0, input, createdAt: Date.now(), updatedAt: Date.now() };
+        item = { id: `learning-review-${crypto.randomUUID()}`, reviewKey, taskId: input.taskId, projectId: input.projectId, teamId: input.teamId, status: 'queued', attempts: 0, input, createdAt: Date.now(), updatedAt: Date.now() };
         state.items.push(item);
         await persist();
       }

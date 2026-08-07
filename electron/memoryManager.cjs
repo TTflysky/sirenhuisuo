@@ -2,12 +2,13 @@ const crypto = require('crypto');
 const fs = require('fs/promises');
 const path = require('path');
 
-const MEMORY_SCHEMA_VERSION = 3;
-const MEMORY_MANAGER_VERSION = 3;
-const VALID_SCOPES = new Set(['organization', 'team', 'employee', 'user']);
+const MEMORY_SCHEMA_VERSION = 4;
+const MEMORY_MANAGER_VERSION = 4;
+const VALID_SCOPES = new Set(['organization', 'project', 'team', 'employee', 'user']);
 const VALID_CATEGORIES = new Set(['identity', 'preference', 'constraint', 'workflow', 'decision', 'project', 'lesson']);
 const VALID_MEMORY_KINDS = new Set(['episodic', 'semantic', 'procedural', 'preference']);
-const DEFAULT_LIMITS = { organization: 6000, team: 4000, employee: 2600, user: 2600 };
+const VALID_STATUSES = new Set(['active', 'superseded', 'archived', 'legacy']);
+const DEFAULT_LIMITS = { organization: 6000, project: 5000, team: 4000, employee: 2600, user: 2600 };
 const DEFAULT_DECAY_HALF_LIFE_DAYS = { episodic: 45, semantic: 365, procedural: 180, preference: 180 };
 
 function clone(value) { return value === undefined ? undefined : JSON.parse(JSON.stringify(value)); }
@@ -63,7 +64,7 @@ function memoryDecayMultiplier(entry, now = Date.now()) {
 }
 function scopeKey(scope, scopeId) { return `${scope}:${scopeId || 'default'}`; }
 function safeScopeId(value) { return text(value || 'default', 160).replace(/[^a-z0-9._-]+/giu, '-').replace(/^-+|-+$/gu, '') || 'default'; }
-function emptyState() { return { schemaVersion: MEMORY_SCHEMA_VERSION, entries: [], proposals: [], audit: [], imports: [], updatedAt: Date.now() }; }
+function emptyState() { return { schemaVersion: MEMORY_SCHEMA_VERSION, entries: [], proposals: [], retrievals: [], audit: [], imports: [], updatedAt: Date.now() }; }
 function envelope(state) { return { state: clone(state), checksum: checksum(state) }; }
 
 async function atomicWrite(filePath, content) {
@@ -78,22 +79,33 @@ function normalizeEntry(input, now = Date.now()) {
   const scope = VALID_SCOPES.has(input?.scope) ? input.scope : 'organization';
   const content = sanitize(input?.content);
   if (!content) throw new Error('记忆内容不能为空');
-  const scopeId = scope === 'organization' || scope === 'user' ? 'default' : safeScopeId(input?.scopeId);
+  const scopeId = scope === 'organization' || scope === 'user'
+    ? 'default'
+    : safeScopeId(scope === 'project' ? input?.projectId || input?.scopeId : input?.scopeId);
   const evidence = Array.isArray(input?.evidence) ? input.evidence.map((item) => sanitize(item)).filter(Boolean).slice(0, 8) : [];
+  const memoryId = text(input?.memoryId || input?.id, 200) || `memory-${scope}-${scopeId}-${crypto.randomUUID()}`;
+  const projectId = text(input?.projectId || (scope === 'project' ? scopeId : ''), 180) || undefined;
   return {
-    id: text(input?.id, 200) || `memory-${scope}-${scopeId}-${crypto.randomUUID()}`,
+    id: memoryId,
+    memoryId,
     scope, scopeId,
+    projectId,
     category: VALID_CATEGORIES.has(input?.category) ? input.category : 'lesson',
     memoryKind: inferMemoryKind(input, evidence),
     content,
     source: text(input?.source || 'system', 180),
-    sourceType: ['manual', 'legacy', 'task-review', 'review-model'].includes(input?.sourceType) ? input.sourceType : 'manual',
-    taskId: text(input?.taskId, 180) || undefined,
+    sourceType: ['manual', 'legacy', 'task-review', 'review-model', 'rollback'].includes(input?.sourceType) ? input.sourceType : 'manual',
+    taskId: text(input?.taskId || input?.sourceTaskId, 180) || undefined,
+    sourceTaskId: text(input?.sourceTaskId || input?.taskId, 180) || undefined,
     employeeId: text(input?.employeeId, 180) || undefined,
     evidence,
+    evidenceIds: Array.isArray(input?.evidenceIds) ? uniqueText(input.evidenceIds, 24, 200) : [],
     acceptanceVerified: input?.acceptanceVerified === true || (input?.sourceType === 'task-review' && evidence.length > 0),
     importance: Math.max(1, Math.min(5, Math.round(Number(input?.importance) || 3))),
     confidence: Math.max(0, Math.min(1, Number(input?.confidence) || 0.8)),
+    status: VALID_STATUSES.has(input?.status) ? input.status : 'active',
+    supersedes: text(input?.supersedes, 200) || undefined,
+    reviewAfter: Number(input?.reviewAfter) || undefined,
     fingerprint: fingerprint(content),
     decayHalfLifeDays: decayHalfLifeDays({ ...input, memoryKind: inferMemoryKind(input, evidence) }),
     lastAccessedAt: Number(input?.lastAccessedAt) || Number(input?.updatedAt) || now,
@@ -101,6 +113,10 @@ function normalizeEntry(input, now = Date.now()) {
     createdAt: Number(input?.createdAt) || now,
     updatedAt: Number(input?.updatedAt) || now,
   };
+}
+
+function uniqueText(values, limit = 20, itemLimit = 240) {
+  return [...new Set((values || []).map((item) => text(item, itemLimit)).filter(Boolean))].slice(0, limit);
 }
 
 function createMemoryManager(rootDir, options = {}) {
@@ -133,9 +149,10 @@ function createMemoryManager(rootDir, options = {}) {
       state = { ...emptyState(), ...parsed.state, schemaVersion: MEMORY_SCHEMA_VERSION };
       state.entries = Array.isArray(state.entries) ? state.entries.map((item) => normalizeEntry(item, item.updatedAt)).filter(Boolean) : [];
       state.proposals = Array.isArray(state.proposals) ? state.proposals : [];
+      state.retrievals = Array.isArray(state.retrievals) ? state.retrievals : [];
       state.audit = Array.isArray(state.audit) ? state.audit : [];
       state.imports = Array.isArray(state.imports) ? state.imports : [];
-      if (previousSchemaVersion < MEMORY_SCHEMA_VERSION) state.audit.push({ id: crypto.randomUUID(), ts: Date.now(), action: 'schema_migrated', fromVersion: previousSchemaVersion, toVersion: MEMORY_SCHEMA_VERSION, detail: '新增事实访问记录与时间衰减参数' });
+      if (previousSchemaVersion < MEMORY_SCHEMA_VERSION) state.audit.push({ id: crypto.randomUUID(), ts: Date.now(), action: 'schema_migrated', fromVersion: previousSchemaVersion, toVersion: MEMORY_SCHEMA_VERSION, detail: '新增项目范围、记忆版本替代与检索引用账本' });
     } catch (error) {
       if (error?.code !== 'ENOENT') {
         const corruptPath = `${statePath}.corrupt-${Date.now()}`;
@@ -158,9 +175,10 @@ function createMemoryManager(rootDir, options = {}) {
     await initializationPromise;
   }
 
-  function entriesFor(scope, scopeId) {
+  function entriesFor(scope, scopeId, includeInactive = false) {
     const id = scope === 'organization' || scope === 'user' ? 'default' : safeScopeId(scopeId);
-    return state.entries.filter((entry) => entry.scope === scope && entry.scopeId === id);
+    return state.entries.filter((entry) => entry.scope === scope && entry.scopeId === id
+      && (includeInactive || entry.status === 'active'));
   }
 
   function usage(scope, scopeId, entries = entriesFor(scope, scopeId)) {
@@ -173,7 +191,7 @@ function createMemoryManager(rootDir, options = {}) {
     await fs.rm(projectionDir, { recursive: true, force: true });
     await fs.mkdir(projectionDir, { recursive: true });
     const groups = new Map();
-    for (const entry of state.entries) {
+    for (const entry of state.entries.filter((item) => item.status === 'active')) {
       const key = scopeKey(entry.scope, entry.scopeId);
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(entry);
@@ -183,8 +201,9 @@ function createMemoryManager(rootDir, options = {}) {
       const [scope, ...idParts] = key.split(':');
       const id = idParts.join(':');
       const relative = scope === 'employee' ? `employees/${safeScopeId(id)}.md`
-        : scope === 'team' ? `teams/${safeScopeId(id)}.md` : `${scope}.md`;
-      const body = [`# ${scope === 'organization' ? '组织共享记忆' : scope === 'team' ? `团队记忆 ${id}` : scope === 'employee' ? `员工经验 ${id}` : '用户画像记忆'}`, '', ...entries
+        : scope === 'team' ? `teams/${safeScopeId(id)}.md`
+          : scope === 'project' ? `projects/${safeScopeId(id)}.md` : `${scope}.md`;
+      const body = [`# ${scope === 'organization' ? '组织共享记忆' : scope === 'project' ? `项目记忆 ${id}` : scope === 'team' ? `团队记忆 ${id}` : scope === 'employee' ? `员工经验 ${id}` : '用户画像记忆'}`, '', ...entries
         .sort((a, b) => b.importance - a.importance || b.updatedAt - a.updatedAt)
         .map((entry) => `- [${entry.memoryKind}/${entry.category}] ${entry.content} <!-- ${entry.id} -->`), ''].join('\n');
       await atomicWrite(path.join(projectionDir, relative), body);
@@ -197,6 +216,7 @@ function createMemoryManager(rootDir, options = {}) {
     state.updatedAt = Date.now();
     state.audit = state.audit.slice(-1000);
     state.proposals = state.proposals.slice(-500);
+    state.retrievals = state.retrievals.slice(-2000);
     await atomicWrite(statePath, `${JSON.stringify(envelope(state), null, 2)}\n`);
     // Markdown is a rebuildable projection. A projection failure must not make a
     // successfully persisted fact look failed and trigger a duplicate retry.
@@ -231,9 +251,12 @@ function createMemoryManager(rootDir, options = {}) {
     }
     validateCapacity(candidate, match?.id);
     if (match) {
-      const merged = { ...candidate, id: match.id, createdAt: match.createdAt, updatedAt: Date.now(), importance: Math.max(match.importance, candidate.importance), confidence: Math.max(match.confidence, candidate.confidence) };
-      state.entries[state.entries.findIndex((item) => item.id === match.id)] = merged;
-      return { action: 'updated', entry: merged, usage: usage(merged.scope, merged.scopeId) };
+      const timestamp = Date.now();
+      const index = state.entries.findIndex((item) => item.id === match.id);
+      state.entries[index] = { ...match, status: 'superseded', supersededAt: timestamp, updatedAt: timestamp };
+      const merged = { ...candidate, supersedes: match.id, createdAt: timestamp, updatedAt: timestamp, importance: Math.max(match.importance, candidate.importance), confidence: Math.max(match.confidence, candidate.confidence) };
+      state.entries.push(merged);
+      return { action: 'updated', entry: merged, previous: match, usage: usage(merged.scope, merged.scopeId) };
     }
     state.entries.push(candidate);
     return { action: 'added', entry: candidate, usage: usage(candidate.scope, candidate.scopeId) };
@@ -244,7 +267,7 @@ function createMemoryManager(rootDir, options = {}) {
       await initialize();
       const applied = applyUpsert(input, metadata.replaceExact);
       const entry = applied.entry;
-      appendAudit(applied.action === 'ignored' ? 'ignored_duplicate' : applied.action, { entryId: entry.id, scope: entry.scope, scopeId: entry.scopeId, source: entry.source, taskId: entry.taskId });
+      appendAudit(applied.action === 'ignored' ? 'ignored_duplicate' : applied.action, { entryId: entry.id, previousEntryId: applied.previous?.id, scope: entry.scope, scopeId: entry.scopeId, projectId: entry.projectId, source: entry.source, taskId: entry.taskId });
       await persist();
       return { ok: true, action: applied.action, entry: clone(entry), usage: applied.usage };
     });
@@ -255,7 +278,8 @@ function createMemoryManager(rootDir, options = {}) {
       await initialize();
       const index = state.entries.findIndex((item) => item.id === entryId);
       if (index < 0) return { ok: false, error: '记忆不存在或已经删除' };
-      const [entry] = state.entries.splice(index, 1);
+      const entry = state.entries[index];
+      state.entries[index] = { ...entry, status: 'archived', archivedAt: Date.now(), updatedAt: Date.now() };
       appendAudit('removed', { entryId, scope: entry.scope, scopeId: entry.scopeId, reason: text(metadata.reason, 300) });
       await persist();
       return { ok: true, entry: clone(entry) };
@@ -266,8 +290,11 @@ function createMemoryManager(rootDir, options = {}) {
     await initialize();
     await queue;
     const requestedKinds = Array.isArray(filter.memoryKinds) ? new Set(filter.memoryKinds.filter((item) => VALID_MEMORY_KINDS.has(item))) : undefined;
-    const entries = state.entries.filter((entry) => (!filter.scope || entry.scope === filter.scope)
+    const entries = state.entries.filter((entry) => (filter.includeHistory || entry.status === 'active')
+      && (!filter.status || entry.status === filter.status)
+      && (!filter.scope || entry.scope === filter.scope)
       && (!filter.scopeId || entry.scopeId === safeScopeId(filter.scopeId))
+      && (!filter.projectId || entry.projectId === safeScopeId(filter.projectId) || (entry.scope === 'project' && entry.scopeId === safeScopeId(filter.projectId)))
       && (!filter.employeeId || entry.employeeId === filter.employeeId || (entry.scope === 'employee' && entry.scopeId === safeScopeId(filter.employeeId)))
       && (!filter.taskId || entry.taskId === filter.taskId)
       && (!filter.category || entry.category === filter.category)
@@ -277,32 +304,60 @@ function createMemoryManager(rootDir, options = {}) {
     const scopeUsages = {};
     for (const entry of state.entries) scopeUsages[scopeKey(entry.scope, entry.scopeId)] = usage(entry.scope, entry.scopeId);
     for (const scope of ['organization', 'user']) scopeUsages[scopeKey(scope, 'default')] ||= usage(scope, 'default');
-    return { ok: true, version: MEMORY_MANAGER_VERSION, entries: clone(entries), proposals: clone(state.proposals.filter((item) => !filter.proposalStatus || item.status === filter.proposalStatus)), audit: clone(filter.includeAudit ? state.audit.slice(-200) : []), limits: clone(limits), usage: clone(scopeUsages) };
+    return { ok: true, version: MEMORY_MANAGER_VERSION, entries: clone(entries), proposals: clone(state.proposals.filter((item) => !filter.proposalStatus || item.status === filter.proposalStatus)), retrievals: clone(filter.includeRetrievals ? state.retrievals.slice(-200) : []), audit: clone(filter.includeAudit ? state.audit.slice(-200) : []), limits: clone(limits), usage: clone(scopeUsages) };
   }
 
   async function context(input = {}) {
-    await initialize();
-    await queue;
-    const allowed = new Set(['organization:default', 'user:default']);
-    if (input.teamId) allowed.add(scopeKey('team', safeScopeId(input.teamId)));
-    if (input.employeeId) allowed.add(scopeKey('employee', safeScopeId(input.employeeId)));
-    const now = Number(input.now) || Date.now();
-    const requestedKinds = Array.isArray(input.memoryKinds) ? new Set(input.memoryKinds.filter((item) => VALID_MEMORY_KINDS.has(item))) : undefined;
-    const ranked = state.entries.filter((entry) => allowed.has(scopeKey(entry.scope, entry.scopeId))
-      && (!input.memoryKind || entry.memoryKind === input.memoryKind)
-      && (!requestedKinds?.size || requestedKinds.has(entry.memoryKind))).map((entry) => ({
-      entry: { ...entry, decayScore: memoryDecayMultiplier(entry, now) },
-      score: similarity(input.query || '', entry.content) * 100 * memoryDecayMultiplier(entry, now)
-        + entry.importance * 8 * memoryDecayMultiplier(entry, now)
-        + entry.confidence * 6,
-    })).sort((a, b) => b.score - a.score).slice(0, Math.max(4, Math.min(24, Number(input.limit) || 14)));
-    const labels = { organization: '组织共享经验', team: '当前团队共享经验', employee: '当前员工个人经验', user: '老板画像与偏好' };
-    const blocks = [];
-    for (const scope of ['organization', 'team', 'employee', 'user']) {
-      const items = ranked.filter((item) => item.entry.scope === scope).map((item) => item.entry);
-      if (items.length) blocks.push(`## ${labels[scope]}\n${items.map((item) => `- [${item.memoryKind}/${item.category}] ${item.content}`).join('\n')}`);
-    }
-    return { ok: true, context: blocks.join('\n\n'), entries: clone(ranked.map((item) => item.entry)) };
+    return transact(async () => {
+      const projectId = text(input.projectId, 180) || undefined;
+      const allowed = new Set(['organization:default', 'user:default']);
+      if (projectId) allowed.add(scopeKey('project', safeScopeId(projectId)));
+      if (input.teamId) allowed.add(scopeKey('team', safeScopeId(input.teamId)));
+      if (input.employeeId) allowed.add(scopeKey('employee', safeScopeId(input.employeeId)));
+      const now = Number(input.now) || Date.now();
+      const requestedKinds = Array.isArray(input.memoryKinds) ? new Set(input.memoryKinds.filter((item) => VALID_MEMORY_KINDS.has(item))) : undefined;
+      const ranked = state.entries.filter((entry) => entry.status === 'active'
+        && allowed.has(scopeKey(entry.scope, entry.scopeId))
+        && (!entry.projectId || entry.projectId === projectId)
+        && (!input.memoryKind || entry.memoryKind === input.memoryKind)
+        && (!requestedKinds?.size || requestedKinds.has(entry.memoryKind))).map((entry) => {
+        const relevance = similarity(input.query || '', entry.content);
+        const decay = memoryDecayMultiplier(entry, now);
+        const score = relevance * 100 * decay + entry.importance * 8 * decay + entry.confidence * 6;
+        const reason = relevance >= 0.72 ? '与当前目标高度相关'
+          : relevance >= 0.25 ? '与当前目标部分相关'
+            : entry.scope === 'project' ? '属于当前项目事实'
+              : entry.importance >= 5 ? '高重要度长期事实' : '当前范围内的稳定背景';
+        return { entry: { ...entry, decayScore: decay }, score, reason };
+      }).sort((a, b) => b.score - a.score).slice(0, Math.max(4, Math.min(24, Number(input.limit) || 14)));
+      const labels = { organization: '组织共享经验', project: '当前项目事实与经验', team: '当前团队共享经验', employee: '当前员工个人经验', user: '老板画像与偏好' };
+      const blocks = [];
+      for (const scope of ['organization', 'project', 'team', 'employee', 'user']) {
+        const items = ranked.filter((item) => item.entry.scope === scope).map((item) => item.entry);
+        if (items.length) blocks.push(`## ${labels[scope]}\n${items.map((item) => `- [${item.memoryKind}/${item.category}] ${item.content}`).join('\n')}`);
+      }
+      for (const item of ranked) {
+        const index = state.entries.findIndex((entry) => entry.id === item.entry.id);
+        if (index >= 0) state.entries[index] = { ...state.entries[index], lastAccessedAt: now, accessCount: (Number(state.entries[index].accessCount) || 0) + 1 };
+      }
+      const retrieval = {
+        id: `memory-retrieval-${crypto.randomUUID()}`,
+        retrievalId: undefined,
+        taskId: text(input.taskId, 180) || undefined,
+        conversationId: text(input.conversationId, 180) || undefined,
+        projectId,
+        teamId: text(input.teamId, 180) || undefined,
+        employeeId: text(input.employeeId, 180) || undefined,
+        query: sanitize(input.query).slice(0, 500),
+        references: ranked.map((item) => ({ memoryId: item.entry.id, scope: item.entry.scope, scopeId: item.entry.scopeId, score: Math.round(item.score * 100) / 100, reason: item.reason })),
+        createdAt: now,
+      };
+      retrieval.retrievalId = retrieval.id;
+      state.retrievals.push(retrieval);
+      appendAudit('context_retrieved', { retrievalId: retrieval.id, taskId: retrieval.taskId, conversationId: retrieval.conversationId, projectId, memoryIds: retrieval.references.map((item) => item.memoryId) });
+      await persist();
+      return { ok: true, context: blocks.join('\n\n'), entries: clone(ranked.map((item) => item.entry)), references: clone(retrieval.references), retrievalId: retrieval.id };
+    });
   }
 
   async function propose(input) {
@@ -329,6 +384,11 @@ function createMemoryManager(rootDir, options = {}) {
       const proposal = state.proposals.find((item) => item.id === proposalId);
       if (!proposal) throw new Error('记忆建议不存在');
       if (proposal.status !== 'pending') throw new Error('这条记忆建议已经处理');
+      const autoReview = String(metadata.reviewedBy || '').startsWith('policy:auto');
+      const updateKind = proposal.update?.memoryKind || inferMemoryKind(proposal.update, proposal.update?.evidence || []);
+      const autoAllowed = ['team', 'employee'].includes(proposal.update?.scope)
+        && updateKind === 'procedural' && proposal.update?.acceptanceVerified === true;
+      if (decision === 'approve' && autoReview && !autoAllowed) throw new Error('组织、用户、项目或未验收记忆必须由用户明确批准');
       let applied;
       if (decision === 'approve') applied = applyUpsert(proposal.update, proposal.update.replaceExact);
       proposal.status = decision === 'approve' ? 'approved' : 'rejected';
@@ -340,6 +400,26 @@ function createMemoryManager(rootDir, options = {}) {
       await persist();
       if (!applied) return { ok: true, action: 'rejected' };
       return { ok: true, action: applied.action, entry: clone(applied.entry), usage: applied.usage };
+    });
+  }
+
+  async function rollback(entryId, metadata = {}) {
+    return transact(async () => {
+      const target = state.entries.find((item) => item.id === entryId);
+      if (!target) throw new Error('要恢复的记忆版本不存在');
+      const active = entriesFor(target.scope, target.scopeId).find((item) => item.fingerprint === target.fingerprint || item.supersedes === target.id)
+        || entriesFor(target.scope, target.scopeId).find((item) => item.category === target.category && item.memoryKind === target.memoryKind);
+      const timestamp = Date.now();
+      if (active) {
+        const activeIndex = state.entries.findIndex((item) => item.id === active.id);
+        state.entries[activeIndex] = { ...active, status: 'superseded', supersededAt: timestamp, updatedAt: timestamp };
+      }
+      const restored = normalizeEntry({ ...target, id: undefined, memoryId: undefined, status: 'active', supersedes: active?.id, source: text(metadata.source || `回滚到 ${target.id}`, 180), sourceType: 'rollback', updatedAt: timestamp, createdAt: timestamp }, timestamp);
+      validateCapacity(restored);
+      state.entries.push(restored);
+      appendAudit('rolled_back', { entryId: restored.id, restoredFrom: target.id, replacedEntryId: active?.id, reason: text(metadata.reason, 300) });
+      await persist();
+      return { ok: true, action: 'rolled_back', entry: clone(restored), usage: usage(restored.scope, restored.scopeId) };
     });
   }
 
@@ -363,7 +443,7 @@ function createMemoryManager(rootDir, options = {}) {
       const avoid = Array.isArray(item?.failedTools) && item.failedTools.length ? `避免重复：${item.failedTools.join('、')}` : '';
       const content = [`相似任务“${text(item?.goal, 220)}”`, route, avoid, text(item?.lesson, 400)].filter(Boolean).join('；');
       if (!content) continue;
-      const result = await upsert({ scope: 'organization', category: 'lesson', memoryKind: 'episodic', content, source: '旧版任务经验（未迁移为已验收程序）', sourceType: 'legacy', importance: item?.outcome === 'completed' ? 4 : 3, confidence: 0.75, createdAt: item?.createdAt, updatedAt: item?.updatedAt });
+      const result = await upsert({ scope: item?.projectId ? 'project' : 'organization', scopeId: item?.projectId, projectId: item?.projectId, category: 'lesson', memoryKind: 'episodic', status: 'legacy', content, source: '旧版任务经验（只读迁移，不参与模型上下文）', sourceType: 'legacy', importance: item?.outcome === 'completed' ? 4 : 3, confidence: 0.75, createdAt: item?.createdAt, updatedAt: item?.updatedAt });
       if (result.action !== 'ignored') imported += 1;
     }
     for (const item of Array.isArray(input.layeredMemory) ? input.layeredMemory.slice(0, 500) : []) {
@@ -379,7 +459,7 @@ function createMemoryManager(rootDir, options = {}) {
     return { ok: true, imported, unchanged: false };
   }
 
-  return { initialize, list, context, upsert, remove, propose, reviewProposal, importLegacy, statePath, projectionDir };
+  return { initialize, list, context, upsert, remove, rollback, propose, reviewProposal, importLegacy, statePath, projectionDir };
 }
 
-module.exports = { MEMORY_SCHEMA_VERSION, MEMORY_MANAGER_VERSION, DEFAULT_LIMITS, DEFAULT_DECAY_HALF_LIFE_DAYS, VALID_MEMORY_KINDS, createMemoryManager, inferMemoryKind, memoryDecayMultiplier, similarity, sanitize };
+module.exports = { MEMORY_SCHEMA_VERSION, MEMORY_MANAGER_VERSION, DEFAULT_LIMITS, DEFAULT_DECAY_HALF_LIFE_DAYS, VALID_MEMORY_KINDS, VALID_STATUSES, createMemoryManager, inferMemoryKind, memoryDecayMultiplier, similarity, sanitize };

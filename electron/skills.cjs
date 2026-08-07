@@ -13,7 +13,8 @@ const MAX_SKILL_BUNDLE_FILES = 160;
 const MAX_SKILL_BUNDLE_BYTES = 8 * 1024 * 1024;
 const MAX_SKILL_ARCHIVE_BYTES = 12 * 1024 * 1024;
 const MAX_SKILL_EXPANDED_BYTES = 16 * 1024 * 1024;
-const SKILL_DRAFT_SCHEMA = 1;
+const SKILL_DRAFT_SCHEMA = 2;
+const LEGACY_SKILL_DRAFT_SCHEMA = 1;
 const SKILL_DOCUMENT_ROOTS = new Set(['references', 'scripts', 'assets', 'agents', 'eval-viewer', 'knowledge-base', 'notes']);
 let skillInstallRoutingPromise;
 
@@ -231,10 +232,15 @@ async function scanSkills(projectRoot) {
           let healthMessage;
           let sourceUrl;
           let origin = root === userSkillsRoot ? 'manual' : 'system';
+          let lifecycleStatus;
           try {
             const metadata = JSON.parse(await fs.readFile(path.join(path.dirname(real), '.taiji-skill.json'), 'utf8'));
             sourceUrl = metadata.requestedSourceUrl || metadata.sourceUrl;
-            if (metadata.origin === 'auto') origin = 'auto';
+            if (metadata.origin === 'auto') { origin = 'auto'; lifecycleStatus = metadata.lifecycleStatus || 'active'; }
+            if (metadata.origin === 'auto' && metadata.lifecycleStatus === 'disabled') {
+              health = 'broken';
+              healthMessage = metadata.disableReason || '自动 Skill 在灰度调用失败后已停用，可在学习与审批中回滚。';
+            }
             if (metadata.installMode === 'single-file') {
               health = 'limited';
               healthMessage = '此技能仅安装了 SKILL.md；如原作者依赖脚本或参考资料，请从完整目录重新安装。';
@@ -271,6 +277,7 @@ async function scanSkills(projectRoot) {
             requirements,
             sourceUrl,
             origin,
+            lifecycleStatus,
             _path: real,
           });
         } catch {}
@@ -1122,6 +1129,12 @@ function skillDraftRoot() {
   return path.resolve(userProfile, '.workbuddy', 'skill-drafts');
 }
 
+function autoSkillVersionRoot() {
+  const userProfile = process.env.USERPROFILE || process.env.HOME || '';
+  if (!userProfile) throw new Error('无法定位当前用户目录');
+  return path.resolve(userProfile, '.workbuddy', 'skill-versions');
+}
+
 function countExact(source, needle) {
   if (!needle) return 0;
   let count = 0;
@@ -1136,11 +1149,100 @@ function skillDraftManifest(input) {
   const instructions = String(input?.content || '').trim().slice(0, MAX_BODY_BYTES);
   if (!name || !instructions) throw new Error('Skill 草案缺少名称或操作说明');
   if (/^---\s*\r?\n[\s\S]*?\r?\n---\s*(?:\r?\n|$)/u.test(instructions)) return instructions;
-  return `---\nname: ${name.replace(/[\r\n:]/gu, ' ')}\ndescription: ${(description || '太极任务复盘生成的待审核 Skill').replace(/[\r\n]/gu, ' ')}\nversion: 0.1.0\norigin: auto\n---\n\n# ${name}\n\n${instructions}\n`;
+  const safeName = name.replace(/[^a-z0-9-]/giu, '-').replace(/^-+|-+$/gu, '').toLocaleLowerCase();
+  return `---\nname: ${safeName}\ndescription: ${JSON.stringify((description || '太极任务复盘生成的待审核 Skill').replace(/[\r\n]/gu, ' '))}\n---\n\n# ${name}\n\n${instructions}\n`;
+}
+
+async function validateDraftBundle(bundleRoot) {
+  const files = await collectPackageFiles(bundleRoot);
+  if (!files.some((file) => file.path === 'SKILL.md')) throw new Error('Skill 草案包缺少 SKILL.md');
+  if (files.length > MAX_SKILL_BUNDLE_FILES) throw new Error('Skill 草案包文件过多');
+  if (files.reduce((sum, file) => sum + file.bytes, 0) > MAX_SKILL_BUNDLE_BYTES) throw new Error('Skill 草案包超过 8MB');
+  return files;
+}
+
+async function writeDraftBundle(draftDir, input, content) {
+  const bundleRoot = path.join(draftDir, 'bundle');
+  const sourceFiles = input?.bundleFiles && typeof input.bundleFiles === 'object'
+    ? { ...input.bundleFiles, 'SKILL.md': input.bundleFiles['SKILL.md'] || content }
+    : { 'SKILL.md': content };
+  const bundlePaths = [];
+  for (const [relativePath, value] of Object.entries(sourceFiles)) {
+    if (relativePath === '.taiji-skill.json') throw new Error('Skill 草案不能自带安装元数据');
+    const { normalized, target } = safeBundlePath(bundleRoot, relativePath);
+    const fileContent = String(value ?? '');
+    if (!fileContent.trim()) throw new Error(`Skill 草案文件不能为空：${normalized}`);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, fileContent, 'utf8');
+    bundlePaths.push(normalized);
+  }
+  await validateDraftBundle(bundleRoot);
+  return bundlePaths.sort((a, b) => a.localeCompare(b));
+}
+
+async function copyDraftBundleToStage(draftDir, stageDir, proposal) {
+  const bundleRoot = path.join(draftDir, 'bundle');
+  try {
+    await validateDraftBundle(bundleRoot);
+    await fs.cp(bundleRoot, stageDir, { recursive: true, errorOnExist: false, force: false });
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+    await fs.writeFile(path.join(stageDir, 'SKILL.md'), skillDraftManifest(proposal), 'utf8');
+  }
+}
+
+async function readAutoSkillMetadata(skillDir) {
+  try { return JSON.parse(await fs.readFile(path.join(skillDir, '.taiji-skill.json'), 'utf8')); }
+  catch { return {}; }
+}
+
+async function writeAutoSkillMetadata(stageDir, proposal, versionId, previous = {}) {
+  return writeInstallMetadata(stageDir, {
+    ...previous,
+    installMode: 'directory',
+    origin: 'auto',
+    lifecycleStatus: proposal.candidateId ? 'canary' : previous.lifecycleStatus || 'active',
+    sourceUrl: `taiji-review:${proposal.taskIds?.join(',') || proposal.taskId || proposal.id}`,
+    requestedSourceUrl: `taiji-review:${proposal.candidateId || proposal.taskId || proposal.id}`,
+    source: { type: 'taiji-review', candidateId: proposal.candidateId, draftId: proposal.id },
+    approvedDraftId: proposal.id,
+    candidateId: proposal.candidateId,
+    projectId: proposal.projectId,
+    autoVersionId: versionId,
+    disabledAt: undefined,
+    disableReason: undefined,
+  });
+}
+
+async function recordAutoSkillVersion(skillDir, proposal, versionId) {
+  const slug = path.basename(skillDir);
+  const versionDir = path.join(autoSkillVersionRoot(), slug, versionId);
+  try { if ((await fs.stat(path.join(versionDir, 'bundle'))).isDirectory()) return versionId; } catch {}
+  await fs.mkdir(versionDir, { recursive: true });
+  await fs.cp(skillDir, path.join(versionDir, 'bundle'), { recursive: true, errorOnExist: false, force: false });
+  const metadata = await readAutoSkillMetadata(skillDir);
+  await fs.writeFile(path.join(versionDir, 'version.json'), `${JSON.stringify({
+    schema: 1,
+    versionId,
+    skillName: proposal.name || proposal.targetSkillName || slug,
+    draftId: proposal.id,
+    candidateId: proposal.candidateId,
+    projectId: proposal.projectId,
+    contentHash: metadata.contentHash,
+    createdAt: Date.now(),
+  }, null, 2)}\n`, 'utf8');
+  return versionId;
+}
+
+async function ensureCurrentAutoVersion(skillDir, proposal) {
+  const metadata = await readAutoSkillMetadata(skillDir);
+  const versionId = metadata.autoVersionId || `skill-version-${Date.now()}-${crypto.randomBytes(5).toString('hex')}`;
+  await recordAutoSkillVersion(skillDir, { ...proposal, id: metadata.approvedDraftId || proposal.id }, versionId);
+  return versionId;
 }
 
 async function createSkillDraft(projectRoot, input) {
-  const action = input?.action === 'patch' ? 'patch' : 'create';
+  const action = input?.action === 'patch' ? 'patch' : input?.action === 'replace' ? 'replace' : 'create';
   const name = String(input?.name || input?.skillName || '').trim().slice(0, 80);
   if (!name) throw new Error('Skill 草案缺少名称');
   const draftRoot = skillDraftRoot();
@@ -1148,6 +1250,7 @@ async function createSkillDraft(projectRoot, input) {
   const draftId = `skill-draft-${Date.now()}-${crypto.randomBytes(5).toString('hex')}`;
   const draftDir = path.join(draftRoot, draftId);
   await fs.mkdir(draftDir, { recursive: true });
+  const proposalContent = action === 'patch' ? undefined : skillDraftManifest(input);
   const proposal = {
     schema: SKILL_DRAFT_SCHEMA,
     id: draftId,
@@ -1155,18 +1258,31 @@ async function createSkillDraft(projectRoot, input) {
     action,
     name,
     description: String(input?.description || '').trim().slice(0, 300),
-    content: action === 'create' ? skillDraftManifest(input) : undefined,
-    targetSkillName: action === 'patch' ? String(input?.targetSkillName || name).trim().slice(0, 80) : undefined,
+    content: proposalContent,
+    previousContent: action === 'replace' ? String(input?.previousContent || '').slice(0, MAX_BODY_BYTES) || undefined : undefined,
+    targetSkillName: action === 'patch' || action === 'replace' ? String(input?.targetSkillName || name).trim().slice(0, 80) : undefined,
     oldString: action === 'patch' ? String(input?.oldString || '').slice(0, 12000) : undefined,
     newString: action === 'patch' ? String(input?.newString || '').slice(0, 12000) : undefined,
     reason: String(input?.reason || '任务复盘发现可复用流程').trim().slice(0, 800),
     taskId: String(input?.taskId || '').trim().slice(0, 180) || undefined,
+    candidateId: String(input?.candidateId || '').trim().slice(0, 180) || undefined,
+    projectId: String(input?.projectId || '').trim().slice(0, 180) || undefined,
+    taskIds: Array.isArray(input?.taskIds) ? input.taskIds.map((item) => String(item).slice(0, 180)).filter(Boolean).slice(0, 100) : undefined,
+    evidenceIds: Array.isArray(input?.evidenceIds) ? input.evidenceIds.map((item) => String(item).slice(0, 180)).filter(Boolean).slice(0, 200) : undefined,
+    routeFingerprint: String(input?.routeFingerprint || '').slice(0, 128) || undefined,
+    route: Array.isArray(input?.route) ? input.route.map((item) => String(item).slice(0, 100)).filter(Boolean).slice(0, 80) : undefined,
+    permissions: Array.isArray(input?.permissions) ? input.permissions.map((item) => String(item).slice(0, 120)).filter(Boolean).slice(0, 40) : [],
+    risk: ['low', 'medium', 'high'].includes(input?.risk) ? input.risk : 'low',
+    validation: input?.validation && typeof input.validation === 'object' ? input.validation : undefined,
+    diff: String(input?.diff || '').slice(0, MAX_BODY_BYTES) || undefined,
+    rollout: input?.rollout && typeof input.rollout === 'object' ? input.rollout : undefined,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   };
   if (action === 'patch' && (!proposal.oldString || !proposal.newString)) throw new Error('Skill 补丁草案缺少精确旧文本或新文本');
+  if (proposal.candidateId && proposal.validation?.passed !== true) throw new Error('Skill 候选没有通过编译验证，不能进入审批');
+  if (action !== 'patch') proposal.bundlePaths = await writeDraftBundle(draftDir, input, proposalContent);
   await fs.writeFile(path.join(draftDir, 'proposal.json'), `${JSON.stringify(proposal, null, 2)}\n`, 'utf8');
-  if (proposal.content) await fs.writeFile(path.join(draftDir, 'SKILL.md'), proposal.content, 'utf8');
   return { ok: true, draft: proposal };
 }
 
@@ -1179,7 +1295,7 @@ async function listSkillDrafts() {
     if (!directory.isDirectory() || !directory.name.startsWith('skill-draft-')) continue;
     try {
       const proposal = JSON.parse(await fs.readFile(path.join(draftRoot, directory.name, 'proposal.json'), 'utf8'));
-      if (proposal?.schema === SKILL_DRAFT_SCHEMA) drafts.push(proposal);
+      if ([LEGACY_SKILL_DRAFT_SCHEMA, SKILL_DRAFT_SCHEMA].includes(proposal?.schema)) drafts.push(proposal);
     } catch {}
   }
   return drafts.sort((a, b) => b.createdAt - a.createdAt);
@@ -1194,6 +1310,7 @@ async function reviewSkillDraft(projectRoot, draftId, decision, note = '') {
   const proposalPath = path.join(draftDir, 'proposal.json');
   const proposal = JSON.parse(await fs.readFile(proposalPath, 'utf8'));
   if (proposal.status !== 'pending') throw new Error('这条 Skill 草案已经处理');
+  if (proposal.candidateId && proposal.validation?.passed !== true) throw new Error('Skill 草案未通过结构、安全、权限和样例验证');
   proposal.status = decision === 'approve' ? 'approved' : 'rejected';
   proposal.reviewNote = String(note || '').trim().slice(0, 500) || undefined;
   proposal.updatedAt = Date.now();
@@ -1206,20 +1323,24 @@ async function reviewSkillDraft(projectRoot, draftId, decision, note = '') {
   const skillsRoot = path.resolve(userProfile, '.workbuddy', 'skills');
   const slug = skillDirectoryName(proposal.name);
   if (!slug) throw new Error('无法生成安全的自动 Skill 目录名');
-  if (proposal.action === 'create') {
+  let versionId;
+  if (proposal.action === 'create' || proposal.action === 'replace') {
     const targetDir = path.resolve(skillsRoot, slug);
     const existing = (await scanSkills(projectRoot)).find((item) => item.name.toLocaleLowerCase() === proposal.name.toLocaleLowerCase());
-    if (existing) throw new Error('同名 Skill 已存在，自动草案不能覆盖现有 Skill');
+    if (proposal.action === 'create' && existing) throw new Error('同名 Skill 已存在，自动草案不能覆盖现有 Skill');
+    if (proposal.action === 'replace') {
+      if (!existing) throw new Error('要更新的自动 Skill 不存在');
+      if (existing.scope !== 'mine' || existing.origin !== 'auto') throw new Error('只允许更新由太极复盘生成的自动 Skill；内置和手动安装 Skill 不会被后台修改');
+      await ensureCurrentAutoVersion(path.dirname(existing._path), proposal);
+    }
     const stageDir = await createSkillStage(skillsRoot, slug);
-    const content = skillDraftManifest(proposal);
+    versionId = `skill-version-${Date.now()}-${crypto.randomBytes(5).toString('hex')}`;
     try {
-      await fs.writeFile(path.join(stageDir, 'SKILL.md'), content, 'utf8');
-      await fs.writeFile(path.join(stageDir, '.taiji-skill.json'), JSON.stringify({
-        schema: 1, installMode: 'single-file', origin: 'auto', sourceUrl: `taiji-review:${proposal.taskId || proposal.id}`,
-        requestedSourceUrl: `taiji-review:${proposal.taskId || proposal.id}`, contentHash: crypto.createHash('sha256').update(content).digest('hex'),
-        files: 1, installedAt: new Date().toISOString(), approvedDraftId: proposal.id,
-      }, null, 2), 'utf8');
+      await copyDraftBundleToStage(draftDir, stageDir, proposal);
+      const previous = proposal.action === 'replace' ? await readAutoSkillMetadata(path.dirname(existing._path)) : {};
+      await writeAutoSkillMetadata(stageDir, proposal, versionId, previous);
       await replaceSkillDirectoryAtomically(targetDir, stageDir);
+      await recordAutoSkillVersion(targetDir, proposal, versionId);
     } catch (error) {
       await fs.rm(stageDir, { recursive: true, force: true }).catch(() => {});
       throw error;
@@ -1229,6 +1350,7 @@ async function reviewSkillDraft(projectRoot, draftId, decision, note = '') {
     if (!target) throw new Error('要更新的自动 Skill 不存在');
     if (target.scope !== 'mine' || target.origin !== 'auto') throw new Error('只允许更新由太极复盘生成的自动 Skill；内置和手动安装 Skill 不会被后台修改');
     const targetDir = path.dirname(target._path);
+    await ensureCurrentAutoVersion(targetDir, proposal);
     const source = await fs.readFile(target._path, 'utf8');
     const matches = countExact(source, proposal.oldString);
     if (matches !== 1) throw new Error(`精确补丁要求旧文本恰好匹配一次，当前匹配 ${matches} 次`);
@@ -1237,20 +1359,88 @@ async function reviewSkillDraft(projectRoot, draftId, decision, note = '') {
     try {
       await fs.cp(targetDir, stageDir, { recursive: true, errorOnExist: false, force: false });
       await fs.writeFile(path.join(stageDir, 'SKILL.md'), updated, 'utf8');
-      const metadataPath = path.join(stageDir, '.taiji-skill.json');
-      const metadata = JSON.parse(await fs.readFile(metadataPath, 'utf8'));
-      metadata.contentHash = crypto.createHash('sha256').update(updated).digest('hex');
-      metadata.updatedAt = new Date().toISOString();
-      metadata.approvedDraftId = proposal.id;
-      await fs.writeFile(metadataPath, JSON.stringify(metadata, null, 2), 'utf8');
+      versionId = `skill-version-${Date.now()}-${crypto.randomBytes(5).toString('hex')}`;
+      await writeAutoSkillMetadata(stageDir, proposal, versionId, await readAutoSkillMetadata(targetDir));
       await replaceSkillDirectoryAtomically(targetDir, stageDir);
+      await recordAutoSkillVersion(targetDir, proposal, versionId);
     } catch (error) {
       await fs.rm(stageDir, { recursive: true, force: true }).catch(() => {});
       throw error;
     }
   }
   await fs.writeFile(proposalPath, `${JSON.stringify(proposal, null, 2)}\n`, 'utf8');
-  return { ok: true, action: proposal.action === 'create' ? 'created' : 'patched', draft: proposal };
+  return { ok: true, action: proposal.action === 'create' ? 'created' : proposal.action === 'replace' ? 'replaced' : 'patched', draft: proposal, versionId };
 }
 
-module.exports = { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill, inspectSkillSource, repairSkill, createSkillDraft, listSkillDrafts, reviewSkillDraft, validateZipArchive, validateStagedSkill, validatePackageManifest, replaceSkillDirectoryAtomically, isSkillHubDownloadUrl, MAX_BODY_BYTES };
+async function findAutoSkill(projectRoot, identifier) {
+  const normalized = String(identifier || '').trim().toLocaleLowerCase();
+  const candidates = (await scanSkills(projectRoot)).filter((item) => item.scope === 'mine' && item.origin === 'auto'
+    && (item.id.toLocaleLowerCase() === normalized || item.name.toLocaleLowerCase() === normalized));
+  if (candidates.length !== 1) throw new Error(candidates.length ? '自动 Skill 标识不明确' : '自动 Skill 不存在');
+  return candidates[0];
+}
+
+async function listAutoSkillVersions(projectRoot, identifier) {
+  const skill = await findAutoSkill(projectRoot, identifier);
+  const versionRoot = path.join(autoSkillVersionRoot(), path.basename(path.dirname(skill._path)));
+  const versions = [];
+  let entries = [];
+  try { entries = await fs.readdir(versionRoot, { withFileTypes: true }); } catch (error) { if (error?.code !== 'ENOENT') throw error; }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    try { versions.push(JSON.parse(await fs.readFile(path.join(versionRoot, entry.name, 'version.json'), 'utf8'))); } catch {}
+  }
+  return versions.sort((a, b) => b.createdAt - a.createdAt);
+}
+
+async function setAutoSkillEnabled(projectRoot, identifier, enabled, reason = '') {
+  const skill = await findAutoSkill(projectRoot, identifier);
+  const targetDir = path.dirname(skill._path);
+  const stageDir = await createSkillStage(path.dirname(targetDir), path.basename(targetDir));
+  try {
+    await fs.cp(targetDir, stageDir, { recursive: true, errorOnExist: false, force: false });
+    const metadata = await readAutoSkillMetadata(targetDir);
+    await writeInstallMetadata(stageDir, {
+      ...metadata,
+      lifecycleStatus: enabled ? 'active' : 'disabled',
+      disabledAt: enabled ? undefined : new Date().toISOString(),
+      disableReason: enabled ? undefined : String(reason || '灰度失败后自动停用').slice(0, 500),
+    });
+    await replaceSkillDirectoryAtomically(targetDir, stageDir);
+    return { ok: true, skillName: skill.name, enabled };
+  } catch (error) {
+    await fs.rm(stageDir, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+async function rollbackAutoSkill(projectRoot, identifier) {
+  const skill = await findAutoSkill(projectRoot, identifier);
+  const targetDir = path.dirname(skill._path);
+  const currentMetadata = await readAutoSkillMetadata(targetDir);
+  const versions = await listAutoSkillVersions(projectRoot, identifier);
+  const previous = versions.find((item) => item.versionId !== currentMetadata.autoVersionId);
+  if (!previous) throw new Error('这个自动 Skill 还没有可回滚的上一版本');
+  const versionBundle = path.join(autoSkillVersionRoot(), path.basename(targetDir), previous.versionId, 'bundle');
+  const stageDir = await createSkillStage(path.dirname(targetDir), path.basename(targetDir));
+  try {
+    await fs.cp(versionBundle, stageDir, { recursive: true, errorOnExist: false, force: false });
+    const restoredMetadata = await readAutoSkillMetadata(stageDir);
+    await writeInstallMetadata(stageDir, {
+      ...restoredMetadata,
+      lifecycleStatus: 'active',
+      autoVersionId: previous.versionId,
+      rolledBackAt: new Date().toISOString(),
+      rollbackFromVersionId: currentMetadata.autoVersionId,
+      disabledAt: undefined,
+      disableReason: undefined,
+    });
+    await replaceSkillDirectoryAtomically(targetDir, stageDir);
+    return { ok: true, skillName: skill.name, versionId: previous.versionId };
+  } catch (error) {
+    await fs.rm(stageDir, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+module.exports = { listSkills, readSkill, resolveSkillDirectory, deleteSkill, installSkill, inspectSkillSource, repairSkill, createSkillDraft, listSkillDrafts, reviewSkillDraft, listAutoSkillVersions, setAutoSkillEnabled, rollbackAutoSkill, validateZipArchive, validateStagedSkill, validatePackageManifest, replaceSkillDirectoryAtomically, isSkillHubDownloadUrl, MAX_BODY_BYTES };

@@ -34,7 +34,7 @@ import {
   getToolReport,
   isToolResultSuccessful,
 } from '../../data/assistantPresentation';
-import { buildLayeredMemoryContext } from '../../data/layeredMemory';
+import { retrieveLayeredMemoryContext } from '../../data/layeredMemory';
 import { referenceClarification, referencesFromToolResult, resolveConversationReferences } from '../../engine/conversationReferences.mjs';
 import { createChatTaskBridge } from '../../engine/taskServiceBridge';
 import { continuationExecutionPrompt, resolveChatTaskContinuation } from '../../engine/chatTaskContinuation';
@@ -559,7 +559,15 @@ export default function DmChatApp({ empId }: Props) {
     const showThoughtChain = loadSettings().showThoughtChain !== false;
     const executionSkillEvidence = [...skillEvidence];
     const executionReferences: ConversationReference[] = [];
-    const layeredMemoryContext = await buildLayeredMemoryContext({ query: enriched, employeeId: empId, limit: 16 });
+    const layeredMemory = await retrieveLayeredMemoryContext({
+      query: enriched,
+      projectId: taskBridge?.projectId,
+      conversationId: targetConversationId,
+      employeeId: empId,
+      limit: 16,
+    });
+    taskBridge?.rememberMemoryRetrieval(layeredMemory.retrievalId, layeredMemory.references);
+    const layeredMemoryContext = layeredMemory.ok ? layeredMemory.context ?? '' : '';
     const r = await runAgentLoop({
       turns: [{ role: 'system', content: systemPrompt }, ...history, { role: 'user', content: enriched }],
       tools: getRegisteredTools(), scene: 'dm', label: emp.name, modelConfig: getEmployeeModel(emp),
@@ -624,12 +632,16 @@ export default function DmChatApp({ empId }: Props) {
             toolName: name, reason: resultSuccess ? `员工实际执行了 ${name}` : `${name} 执行失败`,
             detail: result.slice(0, 240), verified: resultSuccess, stage: name === 'install_skill' ? 'installation' : 'rules', source: 'employee',
           });
-        } else if (resultSuccess) {
+        } else {
           const activeSkills = [...new Map(executionSkillEvidence.filter((item) => item.action === 'read' && item.verified).map((item) => [item.skillId || item.skillName, item])).values()];
-          for (const item of activeSkills) executionSkillEvidence.push({
-            ts: Date.now(), skillId: item.skillId, skillName: item.skillName, action: 'called', toolName: name,
-            reason: '已按当前 Skill 规则执行真实工具', detail: result.slice(0, 240), verified: true, stage: 'invocation', source: 'employee',
-          });
+          for (const item of activeSkills) {
+            executionSkillEvidence.push({
+              ts: Date.now(), skillId: item.skillId, skillName: item.skillName, action: 'called', toolName: name,
+              reason: resultSuccess ? '已按当前 Skill 规则执行真实工具' : '按当前 Skill 规则执行工具时失败',
+              detail: result.slice(0, 240), verified: resultSuccess, stage: 'invocation', source: 'employee',
+            });
+            if (item.skillId) void window.electronAPI?.skillsRuntimeInvocation?.({ skillId: item.skillId, taskId: taskBridge?.taskId, ok: resultSuccess, evidence: `${name}：${result.slice(0, 600)}` });
+          }
         }
         setCompletedActionCount((count) => count + 1);
         setLiveActivities((current) => {

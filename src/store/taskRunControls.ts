@@ -4,7 +4,7 @@ import { appendTaskRunContext, getExecutionSessionId, sendTaskWorkerCommand, tas
 import { initializeTaskWorkspace } from '../utils/attachments';
 import { applyExecutionSteering } from '../engine/executionController.mjs';
 import { buildSkillContextWithEvidence } from '../data/skills';
-import { buildLayeredMemoryContext } from '../data/layeredMemory';
+import { retrieveLayeredMemoryContext } from '../data/layeredMemory';
 
 interface TaskRunControlDependencies {
   getState: () => AppState;
@@ -116,7 +116,8 @@ export function createTaskRunControls({
       });
       dispatch({ type: 'UPDATE_TASK_RUN', run: resumedWithSkills });
       const workerPendingSteps = resumedWithSkills.steps.filter((step) => pendingStepIds.has(step.id));
-      const layeredMemoryContext = await buildLayeredMemoryContext({ query: workerRun.goal || workerRun.request, teamId: workerRun.teamId, limit: 18 });
+      const layeredMemory = await retrieveLayeredMemoryContext({ query: workerRun.goal || workerRun.request, projectId: workerRun.projectId, taskId: workerRun.id, conversationId: workerRun.conversationId, teamId: workerRun.teamId, limit: 18 });
+      const layeredMemoryContext = layeredMemory.ok ? layeredMemory.context ?? '' : '';
       const extraSystemContext = [layeredMemoryContext, skillBundle.context, taskRunContextPrompt(resumedWithSkills)].filter(Boolean).join('\n\n');
       const nativeResult = await startNativeTaskExecution(resumedWithSkills, extraSystemContext);
       if (!nativeResult) {

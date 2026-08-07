@@ -4,7 +4,7 @@ import { runTeamDiscussion } from '../engine/teamDiscussion';
 import { appendTaskRunContext, formalPlanStepForRun, getExecutionSessionId, updateTaskRun } from '../data/taskRuns';
 import { executionControllerStatus, type ExecutionControllerSnapshot } from '../engine/executionController.mjs';
 import { appendTaskRunnerSteps, beginTaskStep, recordTaskReviewDecision, recordTaskStepResult } from '../engine/taskRunner.mjs';
-import { buildLayeredMemoryContext } from '../data/layeredMemory';
+import { retrieveLayeredMemoryContext } from '../data/layeredMemory';
 import { cleanExecutionDisplay } from '../engine/executionDisplay.mjs';
 import { ensureActiveChatSession, messageBelongsToConversation } from '../data/chatSessions';
 import { buildReviewStageSummary, buildRunCompletionSummary, buildWorkStageSummary } from '../engine/teamStageHandoff';
@@ -141,7 +141,22 @@ export function createTeamDiscussionRuntime({
     Promise.resolve().then(async () => {
       await workerLease.claim();
       markRunExecuting();
-      const layeredMemoryContext = await buildLayeredMemoryContext({ query: opts?.userText || opts?.task?.title || '', teamId, limit: 18 });
+      const layeredMemory = await retrieveLayeredMemoryContext({
+        query: opts?.userText || opts?.task?.title || '',
+        projectId: liveRun?.projectId,
+        taskId: liveRun?.id,
+        conversationId,
+        teamId,
+        limit: 18,
+      });
+      if (layeredMemory.retrievalId && liveRun) updateRun((run) => {
+        appendTaskRunContext(run, {
+          type: 'history', source: 'system', verified: true,
+          summary: `本轮团队讨论引用 ${layeredMemory.references?.length ?? 0} 条记忆事实。`,
+          data: { retrievalId: layeredMemory.retrievalId, references: layeredMemory.references },
+        });
+      });
+      const layeredMemoryContext = layeredMemory.ok ? layeredMemory.context ?? '' : '';
       return runTeamDiscussion(
       conversationTeam,
       getState().employees,

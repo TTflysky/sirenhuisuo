@@ -25,7 +25,7 @@ import {
 } from '../../utils/attachments';
 import { useFileDrop } from '../../hooks/useFileDrop';
 import { formatExecutionDuration, useAgentExecutionControl } from '../../hooks/useAgentExecutionControl';
-import AssistantSettingsModal, { DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX_V26 } from '../settings/AssistantSettingsModal';
+import AssistantSettingsModal, { DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX_V29 } from '../settings/AssistantSettingsModal';
 import { getAssistantPrompt } from '../../data/assistantPrompt';
 import { useStore } from '../../storeContext';
 import { BUS_CHANNELS, onBus, sendBus } from '../../ipcBus';
@@ -60,7 +60,7 @@ import {
   simplifyLegacyAssistantContent,
   summarizeToolResult,
 } from '../../data/assistantPresentation';
-import { buildLayeredMemoryContext } from '../../data/layeredMemory';
+import { retrieveLayeredMemoryContext } from '../../data/layeredMemory';
 import { referenceClarification, referencesFromToolResult, resolveConversationReferences } from '../../engine/conversationReferences.mjs';
 import { resolveDispatchContinuity } from '../../engine/conversationDispatchContext.mjs';
 import { createChatTaskBridge } from '../../engine/taskServiceBridge';
@@ -848,11 +848,18 @@ export default function AssistantChat() {
 ${employeeDirectory}
 
 以上名单来自客户端当前状态，每次对话都会重新读取。用户提到某位员工时，先按姓名核对这里的真实名单；名单中存在就不得回答“没有这名员工”。需要调度多人任务时，先明确将由哪些现有员工承担。`;
-      const layeredMemoryContext = await buildLayeredMemoryContext({ query: executionPrompt, limit: 16 });
+      const layeredMemory = await retrieveLayeredMemoryContext({
+        query: executionPrompt,
+        projectId: taskBridge.projectId,
+        conversationId: conversationIdRef.current,
+        limit: 16,
+      });
+      taskBridge.rememberMemoryRetrieval(layeredMemory.retrievalId, layeredMemory.references);
+      const layeredMemoryContext = layeredMemory.ok ? layeredMemory.context ?? '' : '';
 
       const r = await runAgentLoop({
         turns: [
-          { role: 'system', content: `${getAssistantPrompt(DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX_V26)}\n\n${selectedSkillGuide}\n\n${BEGINNER_RESPONSE_GUIDE}` },
+          { role: 'system', content: `${getAssistantPrompt(DEFAULT_ASSISTANT_PROMPT, DEFAULT_PROMPT_VERSION, PERSONA_MIGRATION_APPENDIX_V29)}\n\n${selectedSkillGuide}\n\n${BEGINNER_RESPONSE_GUIDE}` },
           ...history,
           { role: 'user', content: executionPrompt },
         ],
@@ -954,11 +961,16 @@ ${employeeDirectory}
               toolName: name, reason: resultSuccess ? '助理实际执行了技能工具' : '技能工具执行失败',
               detail: result.slice(0, 240), verified: resultSuccess, stage: name === 'install_skill' ? 'installation' : 'rules', source: 'assistant',
             });
-          } else if (resultSuccess && refs.length) {
-            for (const ref of refs) skillEvidence.push({
+          } else if (refs.length) {
+            const activeRefs = usedSkillRefs.length ? usedSkillRefs : refs;
+            for (const ref of activeRefs) {
+              skillEvidence.push({
               ts: Date.now(), skillId: ref.id, skillName: ref.name, action: 'called', toolName: name,
-              reason: '已按当前 Skill 规则执行真实工具', detail: result.slice(0, 240), verified: true, stage: 'invocation', source: 'assistant',
-            });
+                reason: resultSuccess ? '已按当前 Skill 规则执行真实工具' : '按当前 Skill 规则执行工具时失败',
+                detail: result.slice(0, 240), verified: resultSuccess, stage: 'invocation', source: 'assistant',
+              });
+              void window.electronAPI?.skillsRuntimeInvocation?.({ skillId: ref.id, taskId: taskBridge.taskId, ok: resultSuccess, evidence: `${name}：${result.slice(0, 600)}` });
+            }
           }
           usedReferences.push(...referencesFromToolResult(name, args, result, resultSuccess));
           if (name === 'web_search' && resultSuccess) {

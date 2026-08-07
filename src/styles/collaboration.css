@@ -1030,12 +1030,49 @@
   background: var(--bg-deep); overflow: hidden;
   margin-bottom: 4px;
 }
+.skill-learning-view { display: flex; flex-direction: column; gap: 12px; padding-bottom: 18px; }
+.skill-review-card { min-width: 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); overflow: hidden; }
+.skill-review-card.is-open { border-color: color-mix(in srgb,#0a84ff 58%,var(--border)); }
+.skill-review-card-head { width: 100%; min-height: 76px; display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 12px; padding: 14px; border: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; font: inherit; }
+.skill-review-card-head > span:nth-child(2) { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.skill-review-card-head strong { font-size: 14px; overflow-wrap: anywhere; }
+.skill-review-card-head small { color: var(--text-secondary); font-size: 11px; line-height: 1.5; }
+.skill-review-card-count { color: var(--text-muted); font-size: 10px; white-space: nowrap; }
+.skill-risk-badge { min-width: 52px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; text-align: center; color: #16803b; font-size: 10px; }
+.skill-risk-badge.is-medium { color: #a86400; border-color: color-mix(in srgb,#d28b00 48%,var(--border)); }
+.skill-risk-badge.is-high { color: #d94b4b; border-color: color-mix(in srgb,#d94b4b 48%,var(--border)); }
+.skill-review-detail { display: flex; flex-direction: column; gap: 14px; padding: 0 14px 16px; border-top: 1px solid var(--border-light); }
+.skill-review-facts { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; margin: 14px 0 0; }
+.skill-review-facts > div { min-width: 0; padding: 9px 10px; border: 1px solid var(--border-light); border-radius: 6px; background: var(--bg-deep); }
+.skill-review-facts dt { color: var(--text-muted); font-size: 9px; }
+.skill-review-facts dd { margin: 3px 0 0; color: var(--text); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.skill-review-detail section { min-width: 0; }
+.skill-review-detail h4 { margin: 0 0 6px; font-size: 11px; }
+.skill-review-detail p { margin: 3px 0; color: var(--text-secondary); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.skill-review-detail pre { max-height: 300px; margin: 0; padding: 12px; overflow: auto; border: 1px solid var(--border-light); border-radius: 6px; background: var(--bg-deep); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.55 var(--font-mono,monospace); }
+.skill-validation-list { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
+.skill-validation-list > span { min-width: 0; display: grid; grid-template-columns: auto minmax(0,1fr); gap: 4px 7px; padding: 8px; border: 1px solid var(--border-light); border-radius: 6px; font-size: 10px; }
+.skill-validation-list b { color: #16803b; font-size: 9px; }
+.skill-validation-list .failed b { color: #d94b4b; }
+.skill-validation-list small { grid-column: 1 / -1; color: var(--text-muted); line-height: 1.45; }
+.skill-review-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.skill-candidate-section { display: flex; flex-direction: column; gap: 7px; margin-top: 4px; }
+.skill-candidate-section h3 { margin: 4px 0; font-size: 13px; }
+.skill-candidate-row { min-width: 0; display: grid; grid-template-columns: minmax(220px,1fr) repeat(3,auto); align-items: center; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--border-light); }
+.skill-candidate-row > span:first-child { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.skill-candidate-row strong { font-size: 12px; }
+.skill-candidate-row small,.skill-candidate-row > span:not(:first-child) { color: var(--text-muted); font-size: 10px; }
 @media (max-width: 760px) {
   .skill-library-view { padding: 14px; }
   .skill-market-grid { grid-template-columns: 1fr; }
   .skill-library-tabs { overflow-x: auto; }
   .skill-library-tabs button { min-width: 96px; }
   .skill-install-inspection dl { grid-template-columns: 1fr; }
+  .skill-review-card-head { grid-template-columns: auto minmax(0,1fr); }
+  .skill-review-card-count { grid-column: 2; }
+  .skill-review-facts,.skill-validation-list { grid-template-columns: 1fr; }
+  .skill-candidate-row { grid-template-columns: 1fr 1fr; }
+  .skill-candidate-row > span:first-child { grid-column: 1 / -1; }
 }
 .skill-grid-detail-body {
   margin: 0; padding: 16px 20px;

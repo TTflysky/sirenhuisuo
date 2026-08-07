@@ -31,6 +31,7 @@ export function recordTeamToolEvidence({
   protocolEvidence,
   structuredEvidence,
 }: TeamToolEvidenceInput) {
+  const runtimeInvocations: Array<{ skillId: string; taskId: string; ok: boolean; evidence: string }> = [];
   dispatch({ type: 'UPDATE_EMPLOYEE', id: employee.id, partial: { isWorking: true, currentTask: `正在调用 ${toolName}` } });
   updateRun((run) => {
     const step = run.steps.find((item) => item.id === stepId) ?? run.steps.find((item) => item.employeeId === employee.id && item.status === 'running');
@@ -106,12 +107,14 @@ export function recordTeamToolEvidence({
         action, toolName, reason: `成员 ${employee.name} 实际调用 ${toolName}`, detail: result.slice(0, 240), verified,
         stage: toolName === 'install_skill' ? 'installation' : toolName === 'search_skills' ? 'discovery' : 'rules', source: 'team',
       }].slice(-60);
-    } else if (verified && run.skillRefs?.length) {
+    } else if (run.skillRefs?.length) {
       for (const ref of run.skillRefs) {
-        const invocationEvidence: SkillUsageEvidence = { ts: Date.now(), skillId: ref.id, skillName: ref.name, action: 'called', toolName, reason: `成员 ${employee.name} 已按 Skill 规则执行真实工具`, detail: result.slice(0, 240), verified: true, stage: 'invocation', source: 'team' };
-        const outputEvidence: SkillUsageEvidence = { ts: Date.now(), skillId: ref.id, skillName: ref.name, action: 'produced', toolName, reason: '工具结果已进入任务证据', detail: evidenceSummary.slice(0, 240), verified: true, stage: 'output', source: 'team' };
+        const invocationEvidence: SkillUsageEvidence = { ts: Date.now(), skillId: ref.id, skillName: ref.name, action: 'called', toolName, reason: verified ? `成员 ${employee.name} 已按 Skill 规则执行真实工具` : `成员 ${employee.name} 按 Skill 规则执行工具时失败`, detail: result.slice(0, 240), verified, stage: 'invocation', source: 'team' };
+        const outputEvidence: SkillUsageEvidence = { ts: Date.now(), skillId: ref.id, skillName: ref.name, action: verified ? 'produced' : 'rejected', toolName, reason: verified ? '工具结果已进入任务证据' : '工具结果没有通过验证', detail: evidenceSummary.slice(0, 240), verified, stage: 'output', source: 'team' };
         run.skillEvidence = [...(run.skillEvidence ?? []), invocationEvidence, outputEvidence].slice(-60);
+        runtimeInvocations.push({ skillId: ref.id, taskId: run.id, ok: verified, evidence: `${toolName}：${result.slice(0, 600)}` });
       }
     }
   });
+  for (const invocation of runtimeInvocations) void window.electronAPI?.skillsRuntimeInvocation?.(invocation);
 }

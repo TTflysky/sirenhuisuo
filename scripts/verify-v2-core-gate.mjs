@@ -42,6 +42,7 @@ const checks = [
   'verify:module-boundaries',
   'verify:function-boundaries',
   'verify:phase3-performance',
+  'verify:v58',
 ];
 
 for (const script of checks) {

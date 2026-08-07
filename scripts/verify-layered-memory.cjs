@@ -15,7 +15,7 @@ function checksum(value) { return crypto.createHash('sha256').update(JSON.string
 async function main() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'taiji-memory-'));
   try {
-    const manager = createMemoryManager(root, { limits: { organization: 1800, team: 1600, employee: 1200, user: 1200 } });
+    const manager = createMemoryManager(root, { limits: { organization: 1800, project: 1600, team: 1600, employee: 1200, user: 1200 } });
     const organization = await manager.upsert({ scope: 'organization', category: 'constraint', memoryKind: 'semantic', content: '所有连接器完成前必须做真实调用验证', source: '测试', importance: 5, confidence: 1 });
     assert.equal(organization.ok, true);
     const team = await manager.upsert({ scope: 'team', scopeId: 'team-a', category: 'workflow', memoryKind: 'procedural', content: '甲团队发布前先运行完整回归', source: '测试任务', sourceType: 'task-review', importance: 4, confidence: 0.95, evidence: ['完整回归通过'], acceptanceVerified: true });
@@ -59,7 +59,7 @@ async function main() {
     assert.equal((await manager.importLegacy({ importId: 'legacy-fixture' })).unchanged, true);
     const files = await fs.readdir(path.join(root, 'projections'));
     assert(files.includes('README.md'));
-    const listed = await manager.list({ includeAudit: true });
+    const listed = await manager.list({ includeAudit: true, includeHistory: true });
     assert(listed.entries.length >= 8);
     assert(listed.usage['team:team-a'].current > 0);
     assert.equal(listed.usage['team:team-a'].max, 1600);
@@ -77,7 +77,7 @@ async function main() {
     const migrated = createMemoryManager(migrationRoot);
     const migratedList = await migrated.list({ includeAudit: true });
     assert.equal(migratedList.entries[0].memoryKind, 'semantic');
-    assert(migratedList.audit.some((event) => event.action === 'schema_migrated' && event.toVersion === 3));
+    assert(migratedList.audit.some((event) => event.action === 'schema_migrated' && event.toVersion === 4));
     console.log(`layered memory verified: ${listed.entries.length} entries, ${listed.audit.length} audit events`);
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 }

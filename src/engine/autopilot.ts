@@ -10,12 +10,11 @@ import {
   chatCompletion,
   runAgentLoop,
   resolveApiBase,
-  buildUserContext,
-  loadUserProfile,
   type ChatTurn,
 } from '../data/hermesClient';
 import type { ModelConfig } from '../types';
 import { getRegisteredTools } from './toolCatalog';
+import { buildLayeredMemoryContext } from '../data/layeredMemory';
 
 // ===== 上下文（由 UI 汇总当前办公室状态后传入）=====
 export interface AutopilotContext {
@@ -74,11 +73,10 @@ const STRATEGIST_SYSTEM = `你是 Hermes 办公室的首席战略官（PM 兼调
  */
 export async function recommendProjects(ctx: AutopilotContext, modelConfig?: ModelConfig): Promise<ProjectPlan[]> {
   if (!resolveApiBase()) return [];
-  const profile = loadUserProfile().trim();
-  const userCtx = buildUserContext();
+  const userCtx = await buildLayeredMemoryContext({ query: '推荐适合用户长期推进的软件项目', limit: 12 });
 
   const situation = [
-    `## 用户画像\n${profile || '（无）'}`,
+    `## 已批准的用户与组织记忆\n${userCtx || '（无）'}`,
     `## 当前办公室团队\n${ctx.teams.length ? ctx.teams.map((t) => `- 「${t.name}」成员 ${t.members.length} 人；待办 ${t.openTasks.length ? t.openTasks.join('、') : '无'}`).join('\n') : '（还没有团队）'}`,
     `## 模型后端\n${ctx.backendOnline ? `在线（${ctx.model ?? '未知模型'}），团队可自主调用工具写码/跑命令` : '离线（仅能推荐，无法实际执行）'}`,
   ].join('\n\n');
