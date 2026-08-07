@@ -12,7 +12,7 @@
 - `unifiedHost` 现在只把 `search_skills` 视为需要 SkillHub 外部能力的工具。原生 `install_skill`、文件与 Coding 等内部能力不再因市场连接状态被误拦。
 - 技能安装工具未启动时，聊天窗口显示真实的“检查技能安装能力”阶段；不再以“连接 AI 模型”掩盖工具门禁或输入错误。
 - 发布脚本将日常证据生成与正式发布验证分离：发布只校验已提交的 SBOM/来源证明，避免它在清洁工作区门禁之后自己制造未提交文件。
-- 发布前证据：54 个测试文件、184 项测试、`verify:v317`、`verify:agent-kernel`、`verify:v2-core-gate`、生产构建和 Lint 已通过。待构建 Windows 安装包并创建 GitHub Release `v5.5.3`。
+- 发布前证据：54 个测试文件、184 项测试、`verify:v317`、`verify:agent-kernel`、`verify:v2-core-gate`、生产构建和 Lint 已通过；Windows 安装包已构建。2026-08-07 发布上传被 GitHub HTTPS 网络重置/超时阻断，本机 `main` 已整合远端 v5.5.2 并领先 `origin/main`，网络恢复后只需推送并上传已校验的三个发布资产。
 
 ## v5.5.2 当前交接（2026-08-07）
 
