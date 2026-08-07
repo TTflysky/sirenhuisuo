@@ -25,6 +25,7 @@
 - 主进程每 5 秒自动采集，无论诊断页面是否打开；重启后仍有进行中的会话会恢复采集。界面显示秒级时长、最近采集时间和运行指示。
 - 新增“一键验收 24 项”。它在隔离的 `automated` 会话中覆盖 24 个标准场景，自动结果与真实 `live` 会话严格隔离；用户不需要为填表而创建任务。
 - 已通过：`npm.cmd run verify:v58`、`npm.cmd run lint`、`npm.cmd run verify:package` 和 `git diff --check`。用户已于 2026-08-07 授权发布 `v5.8.1`；发布脚本将再次执行完整发布门禁、重建安装包并核验远端资产。真实陪跑的长期数据仍需在正常使用中持续积累，不以自动基准替代。
+- 首次发布预检曾因遗漏版本绑定的 `docs/sbom-v5.8.1.json` 与 `docs/release-provenance-v5.8.1.json` 被发布治理门禁正确拦截；现已通过 `generate:sbom`、`generate:provenance` 与 `verify:release-governance` 补齐并验证。今后在版本号变更后、首次提交发布内容前必须先生成并提交这两份证明。
 
 ## v5.8 发布状态
 
