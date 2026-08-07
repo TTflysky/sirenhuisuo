@@ -26,6 +26,7 @@
 - 新增“一键验收 24 项”。它在隔离的 `automated` 会话中覆盖 24 个标准场景，自动结果与真实 `live` 会话严格隔离；用户不需要为填表而创建任务。
 - 已通过：`npm.cmd run verify:v58`、`npm.cmd run lint`、`npm.cmd run verify:package` 和 `git diff --check`。用户已于 2026-08-07 授权发布 `v5.8.1`；发布脚本将再次执行完整发布门禁、重建安装包并核验远端资产。真实陪跑的长期数据仍需在正常使用中持续积累，不以自动基准替代。
 - 首次发布预检曾因遗漏版本绑定的 `docs/sbom-v5.8.1.json` 与 `docs/release-provenance-v5.8.1.json` 被发布治理门禁正确拦截；现已通过 `generate:sbom`、`generate:provenance` 与 `verify:release-governance` 补齐并验证。今后在版本号变更后、首次提交发布内容前必须先生成并提交这两份证明。
+- 已于 2026-08-07 发布并远端校验 [GitHub Release v5.8.1](https://github.com/TTflysky/sirenhuisuo/releases/tag/v5.8.1)。发布目标提交为 `524432ecf331134fbcd27c7a2f860511e56c26f9`；安装包 `release/taiji-office-setup-5.8.1.exe` 的 SHA-256 为 `1EA1414F568CCA39DB7A1C31BCFD6422D3B3D7A886346EACF45AE9678B9C93F2`。Release 同时包含 blockmap 与 `latest.yml`，且由发布脚本完成远端校验。
 
 ## v5.8 发布状态
 

@@ -10,7 +10,7 @@
 - 修复真实陪跑把启动前历史记录误写进当前会话的问题；旧记录不会再影响本轮完成率、恢复率或场景覆盖。
 - 实时会话由主进程每 5 秒采集任务、记忆与 Skill 账本，客户端显示秒级时长、最近采集时间和运行状态。
 - 新增隔离的“一键验收 24 项”，自动覆盖全部标准场景；自动基准和真实陪跑始终分开统计，用户不需要创建专门测试任务。
-- 本轮 `v5.8.1` 已在本地通过自动基准、构建、Lint、包完整性与发布治理校验；`docs/sbom-v5.8.1.json`、`docs/release-provenance-v5.8.1.json` 已随版本生成。用户已于 2026-08-07 授权进入正式 GitHub Release 发布门禁；发布脚本会重跑发布级验证、重建安装包并核验远端资产。
+- 本轮 `v5.8.1` 已在本地通过自动基准、构建、Lint、包完整性与发布治理校验；`docs/sbom-v5.8.1.json`、`docs/release-provenance-v5.8.1.json` 已随版本生成。已于 2026-08-07 发布 [GitHub Release v5.8.1](https://github.com/TTflysky/sirenhuisuo/releases/tag/v5.8.1)，目标提交 `524432ecf331134fbcd27c7a2f860511e56c26f9`，安装包 SHA-256 为 `1EA1414F568CCA39DB7A1C31BCFD6422D3B3D7A886346EACF45AE9678B9C93F2`；发布脚本已核验远端安装包、blockmap 和 `latest.yml`。
 
 ## v5.8.0 发布交接（2026-08-07）
 
