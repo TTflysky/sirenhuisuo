@@ -57,6 +57,34 @@ describe('agent loop Skill installation route', () => {
     expect(result.content).toContain('已经安装好了');
   });
 
+  it('parses a repository followed directly by Chinese instructions as the current source', async () => {
+    const command = 'npx skills add mattpocock/skills安装这套skill然后把名称发给我';
+    const chatCompletion = vi.fn(async () => {
+      throw new Error('the direct native install route must not call the planning model');
+    });
+    executeAgentTool.mockResolvedValue({
+      toolCallId: 'native-install-current-source', name: 'install_skill', success: true,
+      output: 'Skill 已安装并完成完整包回读验证。\n已安装 35 个 Skill。',
+    });
+    const runAgentLoop = createRunAgentLoop({
+      chatCompletion,
+      isUsefulToolOutcome: (_name, success) => success,
+      isConnectorTask: () => false,
+      isConnectorSetupRequest: () => false,
+      compileTaskDecision: vi.fn(async () => {
+        throw new Error('an explicit native install must not return to task planning');
+      }) as any,
+    });
+
+    await runAgentLoop({ turns: [{ role: 'user', content: command }], tools, scene: 'assistant', label: '章北海助理' });
+
+    expect(chatCompletion).not.toHaveBeenCalled();
+    expect(executeAgentTool).toHaveBeenCalledTimes(1);
+    expect(executeAgentTool.mock.calls[0][0]).toMatchObject({
+      name: 'install_skill', args: { sourceUrl: 'https://github.com/mattpocock/skills', installAll: true },
+    });
+  });
+
   it('resumes an explicit Skill installation from its original source without re-planning', async () => {
     const command = 'npx skills add mattpocock/skills';
     const chatCompletion = vi.fn(async () => {

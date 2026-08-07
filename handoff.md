@@ -1,4 +1,62 @@
-# 当前 V5.5.2 交接（2026-08-07）
+# 当前 V5.5.3 交接（2026-08-07）
+
+## Explicit Skill source isolation and truthful failure state (2026-08-07)
+
+### Goal and boundary
+- Goal: repair the general command-to-task boundary behind an explicit `npx skills add owner/repo` request being parsed incorrectly, then silently resuming an older Skill installation.
+- Boundary: preserve the user-provided source as a new task contract, route native installation without marketplace gating, and show the actual failure stage. Do not add a Skill-name-specific exception or change an existing release tag.
+
+### Completed
+- `skillInstallRouting` now recognizes strict GitHub repository grammar even when Chinese instructions immediately follow the repository token.
+- `chatTaskContinuation` treats any newly explicit Skill source as a new task and keeps malformed current input local instead of falling back to an older source.
+- `unifiedHost` gates only true external dependencies: SkillHub availability remains relevant to `search_skills`, while the native `install_skill` path is allowed to validate its own GitHub, ZIP, or marketplace source.
+- The chat failure presentation reports the actual Skill-install capability stage rather than a misleading AI-model connection stage.
+- Extracted the multimodal attachment message preparation from `agentLoopRuntime`; the runtime is 855 lines and its main factory function is exactly within the 760-line function boundary.
+
+### Verification and release follow-up
+- Passed: 54 Vitest files / 184 tests, `verify:agent-kernel`, `verify:v317`, `verify:v2-core-gate`, production build, and lint.
+- Expected user test after installation: submit `npx skills add mattpocock/skills安装这套skill然后把名称发给我`. The task must target `https://github.com/mattpocock/skills`, must not reuse an earlier repository or workspace, and any true installer error must be reported as an installation issue rather than an AI-model connection problem.
+- Next: synchronize version references, build the Windows package, commit, publish GitHub Release `v5.5.3`, then record installer checksum and remote verification here.
+
+## Skill command boundary and truthful failure state (2026-08-07)
+
+### Goal and boundary
+- Goal: diagnose a new explicit Skill install request that failed after the v5.5.2 client was already confirmed installed, without mistaking it for an updater or model-connection failure.
+- Boundary: repair general command parsing, task/project continuation isolation, external-capability gating, and user-facing error semantics. Do not add a special case for `mattpocock/skills`; do not publish an installer in this repair.
+
+### Root cause
+- The new request `npx skills add mattpocock/skills安装这套skill然后把名称发给我` put Chinese instructions immediately after `owner/repo`. `parseSkillCliInstall()` previously consumed all non-space characters, rejected the source, and `resolveSkillInstallContinuation()` then inherited the prior `vercel-labs/agent-skills` task.
+- `unifiedHost` mapped every tool whose name contained `skill` to the external `skillhub` capability. It blocked native `install_skill` before the installer could validate its own GitHub/ZIP/SkillHub source, then the chat catch path left the default stage at “连接 AI 模型”.
+
+### Completed
+- CLI parsing now recognizes the exact GitHub repository grammar, including a repository immediately followed by Chinese prose.
+- An explicit malformed install command keeps its own validation error and cannot silently inherit an older Skill source. A new concrete Skill source also cannot reuse an older assistant task/workspace, even if an upstream relation label is incorrectly `continuation`.
+- The external capability matrix now gates only real external dependencies. `search_skills` remains gated by SkillHub availability; native `install_skill`, coding, file output, and other internal contract capabilities are not blocked by marketplace inventory.
+- Failure presentation classifies the actual exception before rendering the final chat message. A capability block for `install_skill` now says “检查技能安装能力”, and the summary explains that the tool did not start; it no longer claims an AI model connection failure.
+
+### Verification and follow-up
+- Passed: focused Skill/continuation/presentation tests (23 assertions); full test suite (53 files, 182 tests); `verify:agent-kernel`; `verify:v317`; `verify:external-capability-matrix`; `verify:task-service`; and production `build`.
+- `verify:v2-core-gate` reached the existing module-boundary check and stopped because `src/data/agentLoopRuntime.ts` is 911 lines while the repository limit is 900. This repair did not modify that file; do not claim the full core gate passed until the runtime split is handled as a separate scoped task.
+- Next user verification after a client build: send the exact command above. Expected behavior is one native `install_skill` call against `https://github.com/mattpocock/skills`, no reuse of yesterday's repository, and no “连接 AI 模型” message. The real network/download result still determines whether installation completes.
+
+## Operational migration: old updater backup-limit recovery (2026-08-07)
+
+### Goal and boundary
+- Goal: recover a client still physically running v5.0.0 after its built-in updater stopped before installer launch because the legacy pre-update single-file backup was limited to 24MB.
+- Boundary: preserve the canonical `taiji-office` user-data root, including memory, task runtime, and project workspaces. Do not treat an updater download as a completed installation.
+
+### Completed
+- Confirmed the installed executable at `C:\Users\Administrator\AppData\Local\Programs\taiji-office\太极 AI 办公会所.exe` was v5.0.0, which exactly explains the visible legacy "configuration exceeds 24MB" error.
+- Confirmed the old client had already downloaded and checksum-verified `taiji-office-setup-5.5.2.exe` into the updater pending directory.
+- Created an independent pre-install snapshot at `E:\私人办公会所项目\local-backups\taiji-office-pre-v5.5.2-20260807-090945`. The snapshot contains every file present in the live user-data tree and additionally preserves files that were cleaned from an old workspace during copying.
+- Installed v5.5.2 over the old program directory. The installer exited with code 0 and the installed executable reports v5.5.2.
+- Verified the live user-data root after installation: 627 files, 306,692,544 bytes; `taiji-memory`, `task-runtime`, `workspace`, and Chromium local storage remain present.
+- Started the installed client and verified its real main-process log: startup completed, windows were revealed, and the updater reported that v5.5.2 is already the latest available version. The v5.0.0 24MB backup path is no longer the executing client.
+
+### Follow-up
+- Future update investigations must first verify the physical executable version, not only the downloaded release or updater cache state.
+- Keep the pre-v5.5.2 snapshot until the user has completed normal task and Skill checks on the upgraded client.
+
 
 ## V5.5.2 补丁发布：Skill 安装回读与公开执行记录（2026-08-07）
 

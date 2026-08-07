@@ -1,7 +1,3 @@
-import type { ModelConfig, SkillReference } from '../types';
-import type { OutputScope } from './outputs';
-import type { ConnectorProtocolResult } from '../engine/connectorProtocol.mjs';
-import type { ToolExecutionEvidence } from '../engine/executionEvidence.mjs';
 import { redactToolArguments } from '../engine/securityBoundary';
 import { presentModelFailure } from '../engine/modelFailurePresentation.mjs';
 import { createAssistantToolHistoryMessage } from '../engine/modelReasoningCompatibility.mjs';
@@ -73,7 +69,7 @@ import {
   recordLifecycleToolStarted,
   type TurnLifecycleState,
 } from '../engine/turnLifecycle.mjs';
-import type { Attachment, ChatResult, ChatTurn, ContentPart, ContextUsage, ImagePart, TokenUsage } from './hermesClient';
+import type { ChatResult, ChatTurn, ContentPart, ContextUsage, TokenUsage } from './hermesClient';
 import type { ToolResult } from '../engine/tools';
 import {
   buildPinnedSkillInstruction,
@@ -83,48 +79,10 @@ import {
 } from './agentLoopPolicy';
 import { finalizeAgentLoopResult, type AgentLoopCallLogEntry } from './agentLoopFinalization';
 import { executePinnedSkillInstall, prepareAgentSkillInstallation, resolveAgentTaskDecisionCompilation } from './agentLoopSkillInstall';
+import { attachImagesToLatestUserTurn } from './agentLoopMessagePreparation';
+import type { AgentLoopOpts } from './agentLoopTypes';
+export type { AgentLoopOpts } from './agentLoopTypes';
 type CompileTaskDecisionFunction = typeof import('./hermesClient').compileTaskDecision;
-
-export interface AgentLoopOpts {
-  turns: ChatTurn[];
-  tools: any[];
-  scene: string;
-  label: string;
-  onToolCall?: (name: string, args: string) => Promise<void> | void;
-  onToolResult?: (name: string, args: string, result: string, success?: boolean, protocolEvidence?: ConnectorProtocolResult, structuredEvidence?: ToolExecutionEvidence) => void;
-  modelConfig?: ModelConfig;  // 可选员工独立模型配置
-  extraSystemContext?: string; // 额外的系统上下文（如 soul.md）
-  scope?: OutputScope;        // 产出物作用域
-  /** 任务专属磁盘工作区；展示仍按 scope 聚合。 */
-  workspaceId?: string;
-  /** Explicitly selected skills participate in route enforcement, not only prompt injection. */
-  skillRefs?: SkillReference[];
-  /** A deterministic binding for follow-up language such as "install it". */
-  referenceContext?: string;
-  /** Real source URL carried by the bound reference, never inferred by the model. */
-  referenceSourceUrl?: string;
-  attachments?: Attachment[];  // 用户上传/粘贴的图片附件（多模态视觉）
-  shouldStop?: () => boolean;  // 自主执行中断信号（如用户点「停止」）
-  waitIfPaused?: () => Promise<void>; // 在模型调用和工具调用之间等待用户继续
-  consumeSteeringMessages?: () => string[]; // 运行中追加的老板指令
-  getModelRequestSignal?: () => AbortSignal; // 新指令可以中断正在等待的模型响应
-  onSteeringReply?: (content: string, usage: TokenUsage, contextUsage?: ContextUsage) => void;
-  onModelRetry?: (attempt: number, maxAttempts: number, error: string, nextDelayMs: number) => void;
-  /** Public model output stream. Partial text is never completion evidence. */
-  onTextDelta?: (delta: string, accumulated: string) => void;
-  /** 恢复中的统一执行状态；未提供时从当前用户目标创建。 */
-  initialExecutionState?: ExecutionControllerSnapshot;
-  /** 每次观察、恢复决策或验收状态变化时通知调用方。 */
-  onExecutionState?: (state: ExecutionControllerSnapshot) => void;
-  /** 跨聊天与后台 Worker 共享的公开行动生命周期，不包含隐藏思维链。 */
-  onTurnLifecycle?: (state: TurnLifecycleState) => void;
-  /** Called after intent compilation and before any executable route starts. */
-  onTaskPrepared?: (decision: TaskDecision) => Promise<void> | void;
-  /** UI control-plane routes may compile once before choosing the executor. */
-  taskDecisionCompilation?: Awaited<ReturnType<CompileTaskDecisionFunction>>;
-  /** 团队多步骤共享控制器时用于隔离各步骤的同名工具路线。 */
-  executionRouteScope?: string;
-}
 
 interface AgentLoopDependencies {
   chatCompletion: (...args: any[]) => Promise<any>;
@@ -216,21 +174,7 @@ export function createRunAgentLoop(deps: AgentLoopDependencies) {
     }, ...currentTurns];
 
   // 多模态：把最后一条 user 消息转为 [text, image_url] 数组
-  if (attachments && attachments.length > 0) {
-    const lastUserIdx = currentTurns.map((t) => t.role).lastIndexOf('user');
-    if (lastUserIdx >= 0) {
-      const t = currentTurns[lastUserIdx];
-      const textPart: ContentPart = { type: 'text', text: typeof t.content === 'string' ? t.content : '' };
-      const imageParts: ImagePart[] = attachments
-        .filter((a) => a.kind === 'image' && a.dataUrl)
-        .map((a) => ({ type: 'image_url', image_url: { url: a.dataUrl! } }));
-      if (imageParts.length > 0) {
-        currentTurns = currentTurns.map((turn, i) =>
-          i === lastUserIdx ? { ...turn, content: [textPart, ...imageParts] } : turn
-        );
-      }
-    }
-  }
+  currentTurns = attachImagesToLatestUserTurn(currentTurns, attachments);
   const checkpointBaseTurns = [...currentTurns];
   const steeringCheckpointTurns: ChatTurn[] = [];
 

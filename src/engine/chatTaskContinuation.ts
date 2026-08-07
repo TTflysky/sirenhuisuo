@@ -1,4 +1,5 @@
 import type { TaskServiceTask } from '../electron';
+import { isExplicitSkillInstallOperation, resolveSkillInstallRequest } from './skillInstallRouting.mjs';
 
 export type ContinuationRelation = 'new_task' | 'continuation' | 'correction' | 'control' | 'question' | string;
 
@@ -41,6 +42,10 @@ export function selectChatTaskContinuation(input: {
   message: string;
   relation?: ContinuationRelation;
 }): ChatTaskContinuation | undefined {
+  // A newly supplied concrete Skill source is a new task contract even when a
+  // model relation label says "continuation". Never reuse an older workspace
+  // and repository for it.
+  if (isExplicitSkillInstallOperation(input.message) && resolveSkillInstallRequest(input.message)?.sourceUrl) return undefined;
   if (!requestsTaskContinuation(input.message, input.relation)) return undefined;
   const allowCompleted = input.relation === 'correction' || /(?:修改|修正|优化|调整|边框|问题|缺陷)/u.test(input.message);
   const matching = input.tasks

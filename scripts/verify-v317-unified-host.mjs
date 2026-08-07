@@ -37,6 +37,23 @@ assert.equal(validateUnifiedHostAction({
   requiredCapabilities: ['web_page'],
 }).allowed, false);
 
+// Native Skill installation is a local, source-validated action. A populated
+// marketplace matrix may restrict marketplace search, but it must not block
+// the installer before it gets a chance to validate the supplied repository.
+assert.equal(capabilityKindForTool('install_skill'), undefined);
+assert.equal(validateUnifiedHostAction({
+  run: { id: 'task-skill-install', goal: 'install a supplied Skill', goalState: { goalId: 'goal-skill-install' }, capabilityMatrix: matrix },
+  action: { kind: 'use_tool', toolName: 'install_skill' },
+  capabilityMatrix: matrix,
+  requiredCapabilities: ['skill_installation', 'skill_selection'],
+}).allowed, true);
+assert.equal(validateUnifiedHostAction({
+  run: { id: 'task-skill-search', goal: 'search the Skill marketplace', goalState: { goalId: 'goal-skill-search' }, capabilityMatrix: matrix },
+  action: { kind: 'use_tool', toolName: 'search_skills' },
+  capabilityMatrix: matrix,
+  requiredCapabilities: ['skill_selection'],
+}).allowed, false);
+
 const legacyHost = buildUnifiedHostState({ taskId: 'legacy', goalId: 'legacy-goal', goal: 'legacy task', requiredCapabilities: ['web_page'] });
 assert.equal(legacyHost.capabilityReadiness.enforced, false);
 assert.equal(legacyHost.capabilityReadiness.ready, true);

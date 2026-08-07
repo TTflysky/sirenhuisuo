@@ -52,6 +52,7 @@ import { classifyLocalOfficeQuery, formatLocalOfficeAnswer } from '../../engine/
 import {
   BEGINNER_RESPONSE_GUIDE,
   getToolActivity,
+  getExecutionFailureStage,
   getToolReport,
   getToolStage,
   humanizeExecutionError,
@@ -1084,6 +1085,8 @@ ${employeeDirectory}
         extractUserInsights(chatText, '章北海助理对话').catch(() => {});
       }
     } catch (e: any) {
+      const errorMessage = String(e?.message ?? '未知错误');
+      lastStage = getExecutionFailureStage(errorMessage, lastStage);
       await taskBridge.fail(e);
       appendTraceStep({
         id: nextTraceId('blocked'),
@@ -1092,14 +1095,14 @@ ${employeeDirectory}
         summary: `任务暂时停在“${lastStage}”。已保留前面的有效结果，后续会从此处继续，而不是重新开始。`,
         toolName: 'task_blocked',
         args: '',
-        result: String(e?.message ?? '未知错误').slice(0, 2000),
+        result: errorMessage.slice(0, 2000),
         success: false,
         state: 'blocked',
         timestamp: Date.now(),
       });
       push({
         id: `h-${Date.now()}-err`, authorId: 'assistant', roleId: 'custom',
-        content: `还没有处理好。卡在“${lastStage}”这一步。${humanizeExecutionError(e?.message ?? '')}`,
+        content: `还没有处理好。卡在“${lastStage}”这一步。${humanizeExecutionError(errorMessage)}`,
         mentions: [], timestamp: Date.now(), kind: 'text',
         thoughtChain: showCoT && cotSteps.length > 0 ? cotSteps : undefined,
       });

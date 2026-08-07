@@ -70,9 +70,14 @@ function githubRepositoryUrl(value) {
 /** Parse skills CLI input without starting its interactive installer. */
 export function parseSkillCliInstall(value) {
   const source = clean(value, 12000);
-  const match = source.match(/(?:^|\s)(?:npx\s+)?skills\s+add\s+([^\s`'"<>]+)/iu);
-  if (!match) return undefined;
-  const repositoryUrl = githubRepositoryUrl(match[1].replace(/[),.;!?]+$/gu, ''));
+  const command = /(?:^|\s)(?:npx\s+)?skills\s+add(?:\s+|$)/iu.exec(source);
+  if (!command) return undefined;
+  const sourceTail = source.slice((command.index ?? 0) + command[0].length).trimStart();
+  // The command is often pasted straight into Chinese prose without a space
+  // after owner/repo. Match the repository grammar itself instead of treating
+  // every non-space character as part of the repository name.
+  const target = sourceTail.match(/^(?:https:\/\/github\.com\/[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,99}|@?[a-z0-9][a-z0-9._-]{0,63}\/[a-z0-9][a-z0-9._-]{0,99})/iu)?.[0] ?? '';
+  const repositoryUrl = githubRepositoryUrl(target.replace(/[),.;!?]+$/gu, ''));
   if (!repositoryUrl) return { error: 'skills add 只支持 GitHub 仓库地址或 owner/repo 格式。' };
   const skillNames = [...source.matchAll(/(?:--skill|--skills?)\s*(?:=|\s)\s*([^\s,]+(?:\s*,\s*[^\s,]+)*)/giu)]
     .flatMap((item) => String(item[1] || '').split(','))
@@ -140,6 +145,10 @@ export function resolveSkillInstallContinuation(messages = [], options = {}) {
     .filter(Boolean)
     .slice(-12);
   const latest = clean(options.latestMessage || history.at(-1), 12000);
+  const parsedCli = parseSkillCliInstall(latest);
+  // A malformed explicit command belongs to this turn. It must surface its
+  // own validation error rather than silently inheriting an older repository.
+  if (parsedCli?.error) return { ...parsedCli, requestText: latest, resumed: false };
   const direct = isSkillInstallAction(latest) ? resolveSkillInstallRequest(latest) : undefined;
   if (direct?.sourceUrl) return { ...direct, requestText: latest, resumed: false };
   if (!isSkillInstallContinuationMessage(latest)) return undefined;

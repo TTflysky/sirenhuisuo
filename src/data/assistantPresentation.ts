@@ -181,6 +181,9 @@ export function isToolResultSuccessful(result: string, explicitSuccess?: boolean
 }
 
 export function humanizeExecutionError(raw: string): string {
+  if (/requires unavailable capability|required external capability is not ready|capability.+(?:unavailable|not ready)|能力.+(?:不可用|未就绪)/iu.test(raw)) {
+    return '执行前的工具能力检查没有通过，这一步尚未真正启动。';
+  }
   if (/401|403|unauthorized|forbidden|api\s*key|鉴权|密钥/iu.test(raw)) return '账号验证没有通过，请检查模型或服务的账号设置。';
   if (/timeout|timed out|超时/iu.test(raw)) return '等待时间太久，服务没有及时回应。请稍后重试。';
   if (/network|fetch|ECONN|ENOTFOUND|网络|连接失败/iu.test(raw)) return '网络连接没有成功，请检查网络后重试。';
@@ -188,6 +191,18 @@ export function humanizeExecutionError(raw: string): string {
   if (/EACCES|EPERM|permission|权限|拒绝访问/iu.test(raw)) return '系统不允许这一步操作，需要确认安装权限。';
   if (/(?:退出码|exit\s*code)\s*[:：]?\s*[1-9]\d*/iu.test(raw)) return '这一步没有顺利完成，需要换一种方法重试。';
   return '这一步没有顺利完成，详细记录已放在下方“执行过程”中。';
+}
+
+export function getExecutionFailureStage(raw: string, fallback = '处理任务'): string {
+  const source = String(raw ?? '');
+  if (/requires unavailable capability|required external capability is not ready|capability.+(?:unavailable|not ready)|能力.+(?:不可用|未就绪)/iu.test(source)) {
+    return /install[_\s-]?skill|技能.*安装|安装.*技能/iu.test(source) ? '检查技能安装能力' : '检查工具能力';
+  }
+  if (/401|403|unauthorized|forbidden|api\s*key|model response|模型响应|模型.+(?:失败|不可用)/iu.test(source)) return '连接 AI 模型';
+  if (/timeout|timed out|超时/iu.test(source)) return '等待外部服务响应';
+  if (/network|fetch|ECONN|ENOTFOUND|网络|连接失败/iu.test(source)) return '连接外部服务';
+  if (/workspace|工作区|ENOENT|not found|找不到|不存在/iu.test(source)) return '准备任务工作区';
+  return fallback;
 }
 
 export function summarizeToolResult(name: string, result: string, success: boolean): string {

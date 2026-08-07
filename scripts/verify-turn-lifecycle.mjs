@@ -122,8 +122,9 @@ interruptedLifecycle = synchronizeTurnLifecycle(interruptedLifecycle, recoveredR
 assert.equal(interruptedLifecycle.toolCalls.length, 1, '恢复时不得复制相同 callId 的工具调用');
 assert.equal(interruptedLifecycle.toolCalls[0].status, 'succeeded', '恢复时必须用真实证据闭合进行中的工具调用');
 
-const [agentRuntime, bridge, assistant, dm, adapter, service, lifecycleCommands, taskServiceIpc, preload, main] = await Promise.all([
+const [agentRuntime, agentLoopTypes, bridge, assistant, dm, adapter, service, lifecycleCommands, taskServiceIpc, preload, main] = await Promise.all([
   readFile('src/data/agentLoopRuntime.ts', 'utf8'),
+  readFile('src/data/agentLoopTypes.ts', 'utf8'),
   readFile('src/engine/taskServiceBridge.ts', 'utf8'),
   readFile('src/components/chat/AssistantChat.tsx', 'utf8'),
   readFile('src/components/chat/DmChatApp.tsx', 'utf8'),
@@ -134,7 +135,8 @@ const [agentRuntime, bridge, assistant, dm, adapter, service, lifecycleCommands,
   readFile('electron/preload.cjs', 'utf8'),
   readFile('electron/main.cjs', 'utf8'),
 ]);
-assert.match(agentRuntime, /onTurnLifecycle\?:/);
+assert.match(agentRuntime, /from '\.\/agentLoopTypes'/);
+assert.match(agentLoopTypes, /onTurnLifecycle\?:/);
 assert.match(agentRuntime, /recordLifecycleToolStarted/);
 assert.match(agentRuntime, /recordLifecycleToolFinished/);
 assert.match(agentRuntime, /recordLifecycleContext/);

@@ -54,6 +54,10 @@ describe('chat task continuation', () => {
     expect(selectChatTaskContinuation({ tasks, conversationId: 'conversation-b', taskType: 'assistant', ownerId: 'assistant', message: '继续', relation: 'continuation' })).toBeUndefined();
     expect(selectChatTaskContinuation({ tasks, conversationId: 'conversation-a', taskType: 'assistant', ownerId: 'other', message: '继续', relation: 'continuation' })).toBeUndefined();
     expect(selectChatTaskContinuation({ tasks, conversationId: 'conversation-a', taskType: 'assistant', ownerId: 'assistant', message: '制作一份新的财务报表', relation: 'new_task' })).toBeUndefined();
+    expect(selectChatTaskContinuation({
+      tasks, conversationId: 'conversation-a', taskType: 'assistant', ownerId: 'assistant',
+      message: 'npx skills add mattpocock/skills安装这套skill然后把名称发给我', relation: 'continuation',
+    })).toBeUndefined();
   });
 
   it('lets a correction reopen a completed artifact in the same workspace', () => {

@@ -16,6 +16,30 @@ export const UNIFIED_HOST_ENTRYPOINTS = Object.freeze([
 ]);
 
 const AVAILABLE = 'available';
+const EXTERNAL_CAPABILITY_KINDS = Object.freeze({
+  chatmodel: 'chat_model',
+  imagegeneration: 'image_generation',
+  webpage: 'web_page',
+  skillhub: 'skillhub',
+  knowledgebase: 'knowledge_base',
+  email: 'email',
+  github: 'github',
+  generichttp: 'generic_http',
+  mcp: 'mcp',
+});
+
+const EXTERNAL_CAPABILITY_ALIASES = Object.freeze({
+  webresearch: 'web_page',
+  websearch: 'web_page',
+  image: 'image_generation',
+  model: 'chat_model',
+  chat: 'chat_model',
+  github: 'github',
+  skillhub: 'skillhub',
+  knowledgebase: 'knowledge_base',
+  generichttp: 'generic_http',
+  mcp: 'mcp',
+});
 
 function text(value, max = 1200) {
   return String(value ?? '').trim().slice(0, max);
@@ -60,10 +84,23 @@ export function capabilityKindForTool(toolName) {
   const name = normalized(toolName);
   if (/websearch|readweb|fetchurl|browser|网页|联网/.test(name)) return 'web_page';
   if (/image|draw|generate|生图|图片/.test(name)) return 'image_generation';
-  if (/skill|技能/.test(name)) return 'skillhub';
+  // Searching the external marketplace needs SkillHub. Reading and installing
+  // a Skill are native runtime operations and validate their own source.
+  if (name === 'searchskills') return 'skillhub';
   if (/github|git|发布|仓库/.test(name)) return 'github';
   if (/connector|mcp|ima|knowledge|知识库|连接器/.test(name)) return 'knowledge_base';
   return undefined;
+}
+
+function externalCapabilityRequirements(requiredCapabilities = []) {
+  return [...new Set(list(requiredCapabilities)
+    .map((requirement) => {
+      const normalizedRequirement = normalized(requirement);
+      return EXTERNAL_CAPABILITY_KINDS[normalizedRequirement]
+        ? EXTERNAL_CAPABILITY_KINDS[normalizedRequirement]
+        : EXTERNAL_CAPABILITY_ALIASES[normalizedRequirement];
+    })
+    .filter(Boolean))];
 }
 
 export function normalizeUnifiedHostRequest(input = {}) {
@@ -97,7 +134,11 @@ export function normalizeUnifiedHostRequest(input = {}) {
 }
 
 export function evaluateCapabilityReadiness(matrix, requiredCapabilities = []) {
-  const required = list(requiredCapabilities);
+  // Contracts describe both internal work (coding, file output, native Skill
+  // installation) and external dependencies. Only the latter belong in the
+  // external capability matrix; otherwise a healthy local action is blocked
+  // merely because it has no marketplace/connector record.
+  const required = externalCapabilityRequirements(requiredCapabilities);
   const entries = entriesFrom(matrix);
   // An empty inventory means the capability subsystem has not been synced yet.
   // It is observable, but it must not brick legacy tasks that never declared a
@@ -147,17 +188,19 @@ export function validateUnifiedHostRequest(input = {}) {
 
 export function validateUnifiedHostAction(input = {}) {
   const requestResult = validateUnifiedHostRequest({ ...input, operation: 'execute' });
+  const capabilityMatrix = input.capabilityMatrix || input.run?.capabilityMatrix || input.run?.externalCapabilityMatrix;
   const readiness = evaluateCapabilityReadiness(
-    input.capabilityMatrix || input.run?.capabilityMatrix || input.run?.externalCapabilityMatrix,
+    capabilityMatrix,
     input.requiredCapabilities || input.run?.requiredCapabilities || input.run?.contract?.requiredCapabilities,
   );
   const action = input.action || {};
   const errors = [...requestResult.errors];
   const inferredCapability = capabilityKindForTool(action.toolName);
-  if (readiness.enforced && inferredCapability && !readiness.required.includes(inferredCapability)) {
-    const inferred = evaluateCapabilityReadiness(input.capabilityMatrix || input.run?.capabilityMatrix, [inferredCapability]);
+  if (inferredCapability) {
+    const inferred = evaluateCapabilityReadiness(capabilityMatrix, [inferredCapability]);
     if (!inferred.ready) errors.push(`Tool ${text(action.toolName, 120)} requires unavailable capability ${inferredCapability}`);
-  } else if (readiness.enforced && !readiness.ready) {
+  }
+  if (readiness.enforced && !readiness.ready) {
     errors.push(`Required external capability is not ready: ${[...readiness.missing, ...readiness.blocked.map((item) => item.requirement)].join(', ')}`);
   }
   return {

@@ -1,9 +1,17 @@
 # 项目交接手册
 
 > 最后整理：2026-08-07
-> 当前源码版本：`v5.5.2`；V5.5 真实 Electron 项目验收等待客户端手动启动后完成
+> 当前源码版本：`v5.5.3`；Skill 安装修复已进入完整发布门禁，V5.5 真实 Electron 项目验收仍等待客户端手动启动后完成
 > 主分支：`main`
 > 仓库：[TTflysky/sirenhuisuo](https://github.com/TTflysky/sirenhuisuo)
+
+## v5.5.3 当前交接（2026-08-07）
+
+- 本轮针对“新明确来源却串入昨天安装任务”的内核故障收口，不为 `mattpocock/skills` 或任意具体 Skill 添加关键词特例。
+- `npx skills add owner/repo` 现按严格仓库语法解析，允许仓库地址后直接紧跟中文说明；当前显式来源或当前格式错误命令都不会继承旧安装来源、旧任务或旧工作区。
+- `unifiedHost` 现在只把 `search_skills` 视为需要 SkillHub 外部能力的工具。原生 `install_skill`、文件与 Coding 等内部能力不再因市场连接状态被误拦。
+- 技能安装工具未启动时，聊天窗口显示真实的“检查技能安装能力”阶段；不再以“连接 AI 模型”掩盖工具门禁或输入错误。
+- 发布前证据：54 个测试文件、184 项测试、`verify:v317`、`verify:agent-kernel`、`verify:v2-core-gate`、生产构建和 Lint 已通过。待构建 Windows 安装包并创建 GitHub Release `v5.5.3`。
 
 ## v5.5.2 当前交接（2026-08-07）
 
