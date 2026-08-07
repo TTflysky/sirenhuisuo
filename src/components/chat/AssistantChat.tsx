@@ -63,6 +63,7 @@ import {
 import { retrieveLayeredMemoryContext } from '../../data/layeredMemory';
 import { referenceClarification, referencesFromToolResult, resolveConversationReferences } from '../../engine/conversationReferences.mjs';
 import { resolveDispatchContinuity } from '../../engine/conversationDispatchContext.mjs';
+import { deriveProjectTitle } from '../../engine/projectNaming.mjs';
 import { createChatTaskBridge } from '../../engine/taskServiceBridge';
 import { continuationExecutionPrompt, resolveChatTaskContinuation } from '../../engine/chatTaskContinuation';
 import type { ConversationReferenceResolution } from '../../engine/conversationReferences.mjs';
@@ -640,7 +641,12 @@ export default function AssistantChat() {
       const selectionRequest = [dispatchRequest, ...requiredCapabilities].filter(Boolean).join('\n所需能力：');
       const existing = state.projects.find((project) => project.status === 'awaiting_approval' && project.conversationId === conversationIdRef.current && project.request === dispatchRequest);
       if (!existing) createProjectDraft({
-        title: content.slice(0, 40),
+        title: deriveProjectTitle({
+          goal: decision.goal,
+          originalGoal: continuity.originalGoal,
+          request: dispatchRequest,
+          fallback: content,
+        }),
         request: dispatchRequest,
         conversationId: conversationIdRef.current,
         requiredCapabilities,

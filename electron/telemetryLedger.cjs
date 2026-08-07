@@ -59,22 +59,33 @@ function createTelemetryLedger(rootDir, options = {}) {
   const filePath = path.join(rootDir, 'telemetry-events.jsonl');
   const maxEvents = Number.isInteger(options.maxEvents) ? Math.max(500, options.maxEvents) : MAX_EVENTS;
   let writeQueue = Promise.resolve();
+  let cachedEntries;
 
-  async function readAll() {
+  async function readFile() {
     try {
       const raw = await fs.readFile(filePath, 'utf8');
       return raw.split(/\r?\n/u).filter(Boolean).map((line) => { try { return JSON.parse(line); } catch { return undefined; } }).filter(Boolean);
     } catch (error) { if (error?.code === 'ENOENT') return []; throw error; }
   }
+  async function readAll() {
+    if (!cachedEntries) cachedEntries = await readFile();
+    return cachedEntries;
+  }
   async function trim() {
-    const entries = await readAll();
-    if (entries.length > maxEvents) await fs.writeFile(filePath, `${entries.slice(-maxEvents).map((item) => JSON.stringify(item)).join('\n')}\n`, 'utf8');
+    const current = await readAll();
+    if (current.length > maxEvents) {
+      const kept = current.slice(-maxEvents);
+      await fs.writeFile(filePath, `${kept.map((item) => JSON.stringify(item)).join('\n')}\n`, 'utf8');
+      cachedEntries = kept;
+    }
   }
   function record(input = {}) {
     const operation = writeQueue.then(async () => {
       await fs.mkdir(rootDir, { recursive: true });
       const event = normalize(input);
+      await readAll();
       await fs.appendFile(filePath, `${JSON.stringify(event)}\n`, 'utf8');
+      cachedEntries.push(event);
       await trim();
       return { ok: true, event };
     });

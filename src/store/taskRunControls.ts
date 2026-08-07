@@ -25,19 +25,45 @@ export function createTaskRunControls({
   startNativeTaskExecution,
   enqueueDiscussion,
 }: TaskRunControlDependencies) {
-  const pauseTaskRun = (runId: string) => {
+  const markPausedLocally = (run: AppState['taskRuns'][number], detail: string) => updateTaskRun(run, (next) => {
+    next.status = 'paused';
+    next.phase = 'blocked';
+    next.steps.forEach((step) => {
+      if (step.status === 'queued' || step.status === 'running') {
+        step.status = 'paused';
+        step.events.push({ ts: Date.now(), type: 'status', detail });
+      }
+    });
+    if (next.worker) next.worker = { ...next.worker, state: 'paused', activity: detail, releasedAt: Date.now(), expiresAt: undefined };
+    if (next.recoveryContext) next.recoveryContext.summary = '任务已暂停，等待后台确认；工作区、产物和检查点均已保留。';
+  });
+
+  const pauseTaskRun = async (runId: string): Promise<boolean> => {
     pausedRunIds.add(runId);
     const run = getState().taskRuns.find((item) => item.id === runId);
     if (run) abortTeamModelRequest(run.teamId);
-    if (!run) return;
+    if (!run) return false;
+    // Reflect the user control before Worker persistence/model abort finishes.
+    dispatch({ type: 'UPDATE_TASK_RUN', run: markPausedLocally(run, '正在暂停当前模型、工具和子任务…') });
     const fallback = () => dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
       next.status = 'paused'; next.steps.forEach((step) => { if (step.status === 'queued' || step.status === 'running') step.status = 'paused'; });
       if (next.recoveryContext) next.recoveryContext.summary = '任务已暂停，工作区和上下文均已保留。';
     }) });
-    void sendTaskWorkerCommand({ taskId: runId, type: 'pause', requestedBy: 'task-control' }).then((result) => {
-      if (result?.ok && result.run) dispatch({ type: 'UPDATE_TASK_RUN', run: result.run });
-      else fallback();
-    });
+    const result = await sendTaskWorkerCommand({ taskId: runId, type: 'pause', requestedBy: 'task-control' });
+    if (result?.ok && result.run?.status === 'paused') {
+      dispatch({ type: 'UPDATE_TASK_RUN', run: result.run });
+      return true;
+    }
+    if (result && !result.ok) {
+      pausedRunIds.delete(runId);
+      dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
+        next.lastError = `暂停命令未被后台确认：${result.error || '未知错误'}`;
+        if (next.recoveryContext) next.recoveryContext.summary = next.lastError;
+      }) });
+      return false;
+    }
+    fallback();
+    return true;
   };
 
   const resumeTaskRun = async (runId: string): Promise<void> => {
@@ -130,12 +156,25 @@ export function createTaskRunControls({
     }
   };
 
-  const stopTaskRun = (runId: string) => {
+  const stopTaskRun = async (runId: string): Promise<boolean> => {
     stoppedRunIds.add(runId);
     pausedRunIds.delete(runId);
     const run = getState().taskRuns.find((item) => item.id === runId);
     if (run) abortTeamModelRequest(run.teamId);
-    if (!run) return;
+    if (!run) return false;
+    // Stop is intentionally optimistic: once the user clicks it, no new work
+    // should be presented as active while the durable command is being written.
+    dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
+      next.status = 'stopped';
+      next.phase = 'blocked';
+      next.steps.forEach((step) => {
+        if (step.status === 'queued' || step.status === 'running' || step.status === 'paused') {
+          step.status = 'stopped';
+          step.events.push({ ts: Date.now(), type: 'status', detail: '正在停止当前任务和子任务…' });
+        }
+      });
+      if (next.worker) next.worker = { ...next.worker, state: 'stopped', activity: '正在停止任务', releasedAt: Date.now(), expiresAt: undefined };
+    }) });
     const fallback = () => dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
       next.status = 'stopped';
       next.phase = 'blocked';
@@ -153,10 +192,21 @@ export function createTaskRunControls({
         nextAction: '已完成内容会保留；需要继续时请重新发起任务。',
       };
     }) });
-    void sendTaskWorkerCommand({ taskId: runId, type: 'stop', requestedBy: 'task-control' }).then((result) => {
-      if (result?.ok && result.run) dispatch({ type: 'UPDATE_TASK_RUN', run: result.run });
-      else fallback();
-    });
+    const result = await sendTaskWorkerCommand({ taskId: runId, type: 'stop', requestedBy: 'task-control' });
+    if (result?.ok && result.run?.status === 'stopped') {
+      dispatch({ type: 'UPDATE_TASK_RUN', run: result.run });
+      return true;
+    }
+    if (result && !result.ok) {
+      stoppedRunIds.delete(runId);
+      dispatch({ type: 'UPDATE_TASK_RUN', run: updateTaskRun(run, (next) => {
+        next.lastError = `停止命令未被后台确认：${result.error || '未知错误'}`;
+        if (next.recoveryContext) next.recoveryContext.summary = next.lastError;
+      }) });
+      return false;
+    }
+    fallback();
+    return true;
   };
 
   const closeTaskRun = (runId: string) => {

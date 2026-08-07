@@ -150,6 +150,14 @@ export function projectBelongsToConversation(project: Pick<Project, 'conversatio
   return conversationId === 'conversation-legacy-assistant';
 }
 
+function refersToExistingProject(text: string): boolean {
+  const normalized = text.trim();
+  return isProjectApprovalIntent(normalized)
+    || isProjectRosterRematchRequest(normalized)
+    || isTeamMemberAdditionRequest(normalized)
+    || /(?:\u7ee7\u7eed|\u521a\u624d|\u8fd9\u4e2a|\u90a3\u4e2a|\u4e0a\u9762|\u4e4b\u524d|\u539f\u9879\u76ee|\u5f53\u524d\u9879\u76ee|\u5df2\u7ecf\u5efa\u7acb\u7684\u56e2\u961f|\u5f85\u5ba1\u6279\u7684\u65b9\u6848)/u.test(normalized);
+}
+
 export function resolveTargetProject(text: string, projects: Project[], conversationId?: string): Project | undefined {
   const candidates = projects
     .filter((project) => project.status === 'awaiting_approval' || project.status === 'clarifying' || project.status === 'running')
@@ -158,9 +166,12 @@ export function resolveTargetProject(text: string, projects: Project[], conversa
   const normalized = compact(text);
   const explicit = candidates.find((project) => normalized.includes(compact(project.title)));
   if (explicit) return explicit;
-  return candidates.find((project) => project.status === 'awaiting_approval')
-    ?? candidates.find((project) => project.status === 'clarifying')
-    ?? candidates[0];
+  // A new request must never silently attach to an earlier project merely
+  // because it is the most recent record. Continuity is allowed only where
+  // the user has actually referred to an existing proposal/project; if several
+  // remain eligible, the assistant must ask which one is intended.
+  if (!refersToExistingProject(text) || candidates.length !== 1) return undefined;
+  return candidates[0];
 }
 
 export function resolveLatestRejectedProject(projects: Project[], conversationId?: string): Project | undefined {

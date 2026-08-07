@@ -55,12 +55,16 @@ try {
     fs.readFile('electron/nativeExecutionAdapter.cjs', 'utf8'),
     fs.readFile('electron/nativeCollaborationProtocol.cjs', 'utf8'),
   ]);
-  for (const [label, source] of [['assistant', assistant], ['dm', dm], ['team', team]]) {
+  for (const [label, source] of [['assistant', assistant], ['dm', dm]]) {
     assert.match(source, /新建聊天/u, `${label} 缺少明确的新建聊天控件`);
     assert.match(source, /历史对话/u, `${label} 缺少历史聊天入口`);
     assert.match(source, /createChatSession/u, `${label} 没有建立独立会话`);
     assert.match(source, /messageBelongsToConversation/u, `${label} 没有按会话过滤消息`);
   }
+  assert.doesNotMatch(team, />新建聊天</u, '团队群不应重复提供新建聊天入口');
+  assert.doesNotMatch(team, />发起讨论<|>发布任务</u, '团队群不应重复提供讨论或任务入口');
+  assert.match(team, /历史对话/u, '团队群缺少历史会话读取入口');
+  assert.match(team, /messageBelongsToConversation/u, '团队群没有按会话过滤消息');
   assert.match(discussionRuntime, /messageBelongsToConversation\(message, conversationId/u, '团队调度没有限制到当前会话');
   assert.match(discussionRuntime, /runConversationId/u, '团队执行没有继承任务所属会话');
   assert.match(taskRunControls, /conversationId: workerRun\.conversationId/u, '任务恢复没有继承原会话');

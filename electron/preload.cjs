@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   diagnosticsExport: (options) => ipcRenderer.invoke('diagnostics:export', options),
   telemetryQuery: (options) => ipcRenderer.invoke('telemetry:query', options),
   telemetrySummary: (options) => ipcRenderer.invoke('telemetry:summary', options),
+  telemetryDashboard: (options) => ipcRenderer.invoke('telemetry:dashboard', options),
   telemetryExport: (options) => ipcRenderer.invoke('telemetry:export', options),
   autonomyEvaluationSummary: () => ipcRenderer.invoke('autonomy-evaluation:summary'),
   autonomyEvaluationStart: (input) => ipcRenderer.invoke('autonomy-evaluation:start', input),

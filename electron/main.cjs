@@ -19,6 +19,7 @@ const { buildPowerShellCommand } = require('./commandShell.cjs');
 const { createTaskRuntimeStore } = require('./taskRuntimeStore.cjs');
 const { createOperationDiagnostics } = require('./operationDiagnostics.cjs');
 const { createTelemetryLedger } = require('./telemetryLedger.cjs');
+const { buildRuntimeDashboard } = require('./runtimeDashboard.cjs');
 const { createAutonomyEvaluation } = require('./autonomyEvaluation.cjs');
 const { createTaskService } = require('./taskService.cjs');
 const { createTaskWorker } = require('./taskWorker.cjs');
@@ -1277,6 +1278,15 @@ function createWindow() {
   });
   ipcMain.handle('telemetry:query', async (_event, options) => telemetryLedger.query(options));
   ipcMain.handle('telemetry:summary', async (_event, options) => telemetryLedger.summary(options));
+  ipcMain.handle('telemetry:dashboard', async (_event, options) => {
+    const [tasks, telemetry] = await Promise.all([
+      taskRuntimeStore.read({ taskId: options?.taskId, projectId: options?.projectId, limit: 200 }),
+      telemetryLedger.query({ limit: 600 }),
+    ]);
+    if (!tasks.ok) return { ok: false, error: tasks.error || '读取任务状态失败' };
+    if (!telemetry.ok) return { ok: false, error: telemetry.error || '读取运行事件失败' };
+    return buildRuntimeDashboard(tasks.runs || [], telemetry.entries || [], options);
+  });
   ipcMain.handle('telemetry:export', async (_event, options) => {
     try {
       const result = await dialog.showSaveDialog({

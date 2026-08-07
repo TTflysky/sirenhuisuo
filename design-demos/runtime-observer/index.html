@@ -1,0 +1,611 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>太极项目观察窗 Demo</title>
+  <style>
+    :root {
+      --ink: #181818;
+      --paper: #f4f4f1;
+      --surface: #ffffff;
+      --surface-2: #ecece8;
+      --muted: #6a6a65;
+      --line: #c9c9c3;
+      --accent: #f04424;
+      --accent-soft: #fff0eb;
+      --yellow: #ffd84d;
+      --green: #1f8a55;
+      --green-soft: #e3f5ea;
+      --blue: #1569c7;
+      --blue-soft: #e7f1ff;
+      --danger: #c92e2e;
+      --danger-soft: #ffebeb;
+      --shadow: 0 10px 28px rgba(24, 24, 24, 0.08);
+      font-family: "Microsoft YaHei", "PingFang SC", Arial, sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+    }
+
+    * { box-sizing: border-box; }
+    html { min-width: 320px; background: var(--paper); }
+    body { min-width: 320px; height: 100vh; margin: 0; overflow: hidden; background: var(--paper); }
+    button, input { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, summary:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+    svg { width: 18px; height: 18px; stroke-width: 2; }
+
+    .app { height: 100vh; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(240px, 1fr) auto auto;
+      align-items: center;
+      gap: 18px;
+      min-height: 72px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+    .identity { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .brand-mark {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      border: 2px solid var(--ink);
+      border-radius: 10px;
+      background: var(--yellow);
+      font-size: 13px;
+      font-weight: 900;
+    }
+    .identity-text { min-width: 0; }
+    .identity strong, .identity span { display: block; }
+    .identity strong { overflow: hidden; font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
+    .identity span { margin-top: 4px; color: var(--muted); font-size: 11px; }
+    .run-state { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .state-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px var(--green-soft); animation: pulse 1.5s ease-in-out infinite; }
+    .mode-switch { display: flex; gap: 4px; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-2); }
+    .mode {
+      min-height: 38px;
+      padding: 0 12px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .mode.active { background: var(--surface); box-shadow: 0 1px 4px rgba(24,24,24,.12); }
+
+    .workspace { min-height: 0; display: grid; grid-template-columns: 228px minmax(420px, 1fr) minmax(360px, 430px); }
+    .phase-rail, .activity, .artifact-pane { min-height: 0; overflow: auto; }
+    .phase-rail { border-right: 1px solid var(--line); background: var(--surface); }
+    .section-heading {
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-height: 48px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255,255,255,.96);
+      backdrop-filter: blur(8px);
+    }
+    .section-heading strong { font-size: 13px; }
+    .section-heading span { color: var(--muted); font-size: 10px; }
+    .phase-list { padding: 6px 14px 14px; }
+    .phase { position: relative; display: grid; grid-template-columns: 24px minmax(0,1fr); gap: 9px; padding: 12px 0; }
+    .phase:not(:last-child)::after { content: ""; position: absolute; left: 11px; top: 36px; bottom: -4px; width: 1px; background: var(--line); }
+    .phase-marker { position: relative; z-index: 1; width: 24px; height: 24px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; background: var(--surface); color: var(--muted); font-size: 9px; font-weight: 800; }
+    .phase.done .phase-marker { border-color: var(--green); background: var(--green); color: white; }
+    .phase.live .phase-marker { border: 2px solid var(--ink); background: var(--yellow); color: var(--ink); }
+    .phase strong, .phase span { display: block; }
+    .phase strong { font-size: 12px; }
+    .phase span { margin-top: 4px; color: var(--muted); font-size: 10px; line-height: 1.45; }
+    .phase.live span { color: var(--ink); }
+    .team-summary { border-top: 1px solid var(--line); }
+    .team-list { padding: 4px 14px 16px; }
+    .member { display: grid; grid-template-columns: 34px minmax(0,1fr) auto; gap: 9px; align-items: center; padding: 9px 0; border-bottom: 1px solid #e3e3df; }
+    .member:last-child { border-bottom: 0; }
+    .member img { width: 34px; height: 34px; border: 1px solid var(--ink); border-radius: 7px; object-fit: cover; background: var(--surface-2); }
+    .member strong, .member span { display: block; }
+    .member strong { font-size: 11px; }
+    .member span { margin-top: 3px; color: var(--muted); font-size: 9px; }
+    .member-state { padding: 3px 6px; border-radius: 4px; background: var(--surface-2); color: var(--muted); font-size: 9px; white-space: nowrap; }
+    .member-state.live { background: var(--green-soft); color: var(--green); }
+    .member-state.submitted { background: var(--blue-soft); color: var(--blue); }
+
+    .activity { display: grid; grid-template-rows: auto auto minmax(0,1fr) auto; overflow: hidden; background: var(--paper); }
+    .metrics { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); border-bottom: 1px solid var(--line); background: var(--surface); }
+    .metric { min-width: 0; padding: 12px 14px; border-right: 1px solid var(--line); }
+    .metric:last-child { border-right: 0; }
+    .metric span, .metric small { display: block; }
+    .metric span { color: var(--muted); font-size: 10px; }
+    .metric strong { display: block; margin: 3px 0; font-size: 22px; font-variant-numeric: tabular-nums; }
+    .metric small { overflow: hidden; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+    .content { min-height: 0; overflow: auto; padding: 14px 16px 24px; }
+    .summary {
+      display: grid;
+      grid-template-columns: 4px minmax(0,1fr) auto;
+      gap: 12px;
+      align-items: start;
+      margin-bottom: 14px;
+      padding: 13px 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .summary-accent { width: 4px; align-self: stretch; border-radius: 3px; background: var(--accent); }
+    .summary strong, .summary p { display: block; }
+    .summary strong { font-size: 12px; }
+    .summary p { margin: 6px 0 0; color: #3f3f3b; font-size: 11px; line-height: 1.6; }
+    .summary time { color: var(--muted); font-size: 10px; white-space: nowrap; }
+
+    .now {
+      margin-bottom: 14px;
+      border: 1px solid var(--ink);
+      border-radius: 8px;
+      background: var(--surface);
+      overflow: hidden;
+    }
+    .now-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+    .now-icon { width: 32px; height: 32px; display: grid; place-items: center; flex: 0 0 auto; border-radius: 6px; background: var(--yellow); }
+    .now-copy { min-width: 0; }
+    .now-copy strong, .now-copy span { display: block; }
+    .now-copy strong { font-size: 12px; }
+    .now-copy span { margin-top: 3px; color: var(--muted); font-size: 10px; }
+    .elapsed { margin-left: auto; font: 11px/1.2 Consolas, monospace; color: var(--muted); }
+    .stream { height: 104px; overflow: hidden; }
+    .stream-row { display: grid; grid-template-columns: 12px minmax(0,1fr) auto; align-items: center; gap: 9px; min-height: 26px; padding: 5px 12px; border-bottom: 1px solid #ecece8; font-size: 10px; }
+    .stream-row:last-child { border-bottom: 0; }
+    .stream-row i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+    .stream-row.live i { background: var(--accent); animation: pulse 1.3s ease-in-out infinite; }
+    .stream-row.wait i { border: 1px solid var(--line); background: var(--surface); }
+    .stream-row time { color: var(--muted); font: 9px/1.2 Consolas, monospace; }
+
+    .timeline-title { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; padding: 6px 0 8px; }
+    .timeline-title strong { font-size: 13px; }
+    .timeline-title span { color: var(--muted); font-size: 10px; }
+    .timeline { border-top: 1px solid var(--line); }
+    .event { display: grid; grid-template-columns: 58px 34px minmax(0,1fr) auto; gap: 10px; align-items: start; padding: 12px 2px; border-bottom: 1px solid var(--line); }
+    .event time { padding-top: 8px; color: var(--muted); font: 9px/1.2 Consolas, monospace; }
+    .event img { width: 34px; height: 34px; border: 1px solid var(--ink); border-radius: 7px; object-fit: cover; }
+    .event-main { min-width: 0; }
+    .event-main strong, .event-main span { display: block; }
+    .event-main strong { font-size: 11px; }
+    .event-main span { margin-top: 4px; color: var(--muted); font-size: 10px; line-height: 1.45; }
+    .event-badge { margin-top: 5px; padding: 3px 6px; border-radius: 4px; background: var(--surface-2); color: var(--muted); font-size: 9px; white-space: nowrap; }
+    .event-badge.ok { background: var(--green-soft); color: var(--green); }
+    .event-badge.review { background: var(--blue-soft); color: var(--blue); }
+    .event-badge.rework { background: var(--accent-soft); color: var(--accent); }
+    details.tech { margin-top: 14px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); }
+    details.tech summary { min-height: 44px; display: flex; align-items: center; padding: 0 12px; cursor: pointer; font-size: 11px; font-weight: 700; }
+    .tech-log { max-height: 190px; overflow: auto; border-top: 1px solid var(--line); }
+    .tech-log div { display: grid; grid-template-columns: 64px minmax(0,1fr) auto; gap: 10px; padding: 7px 11px; border-bottom: 1px solid #ecece8; font: 9px/1.45 Consolas, monospace; }
+    .tech-log time, .tech-log em { color: var(--muted); font-style: normal; }
+
+    .artifact-pane { border-left: 1px solid var(--line); background: var(--surface); }
+    .preview-toolbar { position: sticky; top: 48px; z-index: 2; display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-bottom: 1px solid var(--line); background: var(--surface); }
+    .preview-state { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 8px; border-radius: 5px; background: var(--yellow); font-size: 9px; font-weight: 800; }
+    .preview-state i { width: 7px; height: 7px; border-radius: 50%; background: var(--ink); }
+    .preview-path { min-width: 0; overflow: hidden; color: var(--muted); font: 9px/1.2 Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+    .icon-button { width: 36px; height: 36px; display: grid; place-items: center; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); cursor: pointer; }
+    .preview-toolbar .icon-button { margin-left: auto; }
+    .preview-shell { padding: 12px; background: var(--surface-2); }
+    .preview {
+      min-height: 430px;
+      border: 1px solid var(--ink);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff9e9;
+      box-shadow: var(--shadow);
+    }
+    .preview-cover { padding: 16px; border-bottom: 4px solid var(--ink); background-image: radial-gradient(#18181825 1px, transparent 1px); background-size: 8px 8px; }
+    .preview-brand { display: flex; align-items: center; gap: 9px; }
+    .preview-logo { width: 42px; height: 42px; display: grid; place-items: center; border: 3px solid var(--ink); border-radius: 9px; background: var(--accent); color: white; font-size: 13px; font-weight: 900; transform: rotate(-3deg); }
+    .preview-brand strong { font-size: 16px; }
+    .preview-brand span { display: block; margin-top: 2px; font-size: 8px; }
+    .preview-quote { margin-top: 12px; padding: 9px 11px; border: 3px solid var(--ink); border-radius: 16px; background: var(--yellow); font-size: 10px; font-weight: 800; }
+    .preview-days { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 5px; padding: 10px; background: var(--ink); }
+    .preview-day { min-width: 0; padding: 7px 4px; border: 1px solid var(--ink); border-radius: 4px; background: white; text-align: center; font-size: 8px; }
+    .preview-day.active { background: var(--yellow); outline: 2px solid var(--accent); }
+    .preview-stats { display: grid; grid-template-columns: repeat(4,1fr); gap: 6px; padding: 12px; background: var(--yellow); }
+    .preview-stat { text-align: center; }
+    .preview-stat strong, .preview-stat span { display: block; }
+    .preview-stat strong { font-size: 18px; }
+    .preview-stat span { font-size: 7px; }
+    .preview-board { padding: 10px; }
+    .preview-filter { display: flex; gap: 5px; margin-bottom: 9px; }
+    .preview-filter span { padding: 4px 7px; border: 2px solid var(--ink); border-radius: 12px; background: white; font-size: 7px; font-weight: 800; }
+    .preview-filter span:first-child { background: var(--yellow); }
+    .preview-task { padding: 9px; border: 2px solid var(--ink); border-radius: 6px; background: white; }
+    .preview-task header { display: flex; justify-content: space-between; gap: 8px; font-size: 8px; }
+    .preview-task h4 { margin: 8px 0 5px; font-size: 11px; }
+    .preview-task p { margin: 0; padding: 6px; background: #fff1ae; font-size: 8px; }
+    .preview-warning { display: none; align-items: center; gap: 7px; margin-top: 10px; padding: 9px; border: 1px solid #d4a229; border-radius: 6px; background: #fff6ce; color: #6e5100; font-size: 9px; }
+    .artifacts { border-top: 1px solid var(--line); }
+    .artifact-row { display: grid; grid-template-columns: 34px minmax(0,1fr) auto; gap: 9px; align-items: center; padding: 10px 12px; border-bottom: 1px solid #e4e4df; }
+    .file-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 6px; background: var(--blue-soft); color: var(--blue); }
+    .artifact-row strong, .artifact-row span { display: block; }
+    .artifact-row strong { font-size: 10px; }
+    .artifact-row span { margin-top: 3px; color: var(--muted); font-size: 9px; }
+    .artifact-actions { display: flex; gap: 4px; }
+    .artifact-actions button { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; cursor: pointer; }
+    .artifact-actions button:hover { background: var(--surface-2); }
+
+    .footer-controls { position: sticky; bottom: 0; z-index: 4; display: grid; grid-template-columns: 1fr 1fr; gap: 7px; padding: 10px 12px; border-top: 1px solid var(--line); background: rgba(255,255,255,.96); backdrop-filter: blur(8px); }
+    .command { min-height: 42px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid var(--ink); border-radius: 7px; background: var(--surface); cursor: pointer; font-size: 11px; font-weight: 800; }
+    .command.stop { border-color: #e3b7b7; background: var(--danger-soft); color: var(--danger); }
+    .command:hover, .icon-button:hover, .mode:hover { filter: brightness(.97); }
+
+    .decision { display: none; margin-bottom: 14px; padding: 14px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent-soft); }
+    .decision.open { display: block; }
+    .decision-label { display: inline-flex; align-items: center; gap: 6px; padding: 4px 7px; border-radius: 5px; background: var(--accent); color: white; font-size: 9px; font-weight: 800; }
+    .decision h3 { margin: 10px 0 6px; font-size: 13px; }
+    .decision p { margin: 0; color: #4c3b36; font-size: 10px; line-height: 1.55; }
+    .decision-actions { display: flex; gap: 7px; margin-top: 11px; }
+    .decision-actions button { min-height: 38px; padding: 0 12px; border: 1px solid var(--ink); border-radius: 6px; background: var(--surface); cursor: pointer; font-size: 10px; font-weight: 800; }
+    .decision-actions .approve { background: var(--ink); color: white; }
+    .interjection { display: grid; grid-template-columns: 34px minmax(0,1fr); gap: 10px; margin-bottom: 14px; padding: 11px 12px; border: 1px solid var(--blue); border-radius: 8px; background: var(--blue-soft); }
+    .interjection.hidden { display: none; }
+    .interjection-icon { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 7px; background: var(--blue); color: white; }
+    .interjection strong, .interjection span { display: block; }
+    .interjection strong { font-size: 11px; }
+    .interjection span { margin-top: 4px; font-size: 10px; line-height: 1.5; }
+    .chat-composer { padding: 9px 12px 11px; border-top: 1px solid var(--line); background: rgba(255,255,255,.98); box-shadow: 0 -8px 22px rgba(24,24,24,.06); }
+    .compose-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; color: var(--muted); font-size: 9px; }
+    .compose-target { display: inline-flex; align-items: center; gap: 6px; }
+    .compose-target i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+    .compose-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .compose-row { display: grid; grid-template-columns: 44px minmax(0,1fr) auto; gap: 7px; align-items: end; }
+    .compose-row textarea { width: 100%; min-height: 44px; max-height: 92px; resize: vertical; padding: 11px 12px; border: 1px solid var(--ink); border-radius: 7px; background: var(--surface); color: var(--ink); font-size: 12px; line-height: 1.5; }
+    .compose-row textarea::placeholder { color: #92928c; }
+    .compose-row textarea:focus { outline: 3px solid var(--blue-soft); border-color: var(--blue); }
+    .compose-action { width: 44px; height: 44px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); cursor: pointer; }
+    .send-button { min-width: 78px; height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 0 13px; border: 1px solid var(--ink); border-radius: 7px; background: var(--ink); color: white; cursor: pointer; font-size: 11px; font-weight: 800; }
+    .stop-confirm { display: none; grid-column: 1 / -1; padding: 10px; border: 1px solid var(--danger); border-radius: 7px; background: var(--danger-soft); font-size: 10px; line-height: 1.45; }
+    .stop-confirm.open { display: block; }
+    .stop-confirm div { display: flex; gap: 6px; margin-top: 8px; }
+    .stop-confirm button { min-height: 34px; padding: 0 10px; border: 1px solid var(--danger); border-radius: 5px; background: white; cursor: pointer; font-size: 9px; font-weight: 800; }
+
+    .app[data-mode="approval"] .state-dot { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); animation: none; }
+    .app[data-mode="approval"] .preview-state { background: var(--green-soft); color: var(--green); }
+    .app[data-mode="approval"] .preview-state i { background: var(--green); }
+    .app[data-mode="approval"] .preview-warning { display: flex; }
+    .app[data-mode="paused"] .state-dot { background: #7a7a76; box-shadow: 0 0 0 4px var(--surface-2); animation: none; }
+    .app[data-mode="paused"] .stream-row.live i { background: #8c8c88; animation: none; }
+    .app[data-mode="paused"] .preview-state { background: var(--surface-2); color: var(--muted); }
+    .app[data-mode="paused"] .preview-state i { background: var(--muted); }
+    .app[data-mode="paused"] .now-icon { background: var(--surface-2); }
+    .app[data-mode="stopped"] .state-dot { background: var(--danger); box-shadow: 0 0 0 4px var(--danger-soft); animation: none; }
+    .app[data-mode="stopped"] .preview-state { background: var(--danger-soft); color: var(--danger); }
+    .app[data-mode="stopped"] .preview-state i { background: var(--danger); }
+
+    @keyframes pulse { 0%, 100% { opacity: .45; transform: scale(.8); } 50% { opacity: 1; transform: scale(1); } }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; } }
+
+    @media (max-width: 1180px) {
+      .workspace { grid-template-columns: 200px minmax(390px,1fr) 350px; }
+      .metric { padding-inline: 10px; }
+    }
+    @media (max-width: 940px) {
+      body { height: auto; min-height: 100vh; overflow: auto; }
+      .app { height: auto; min-height: 100vh; }
+      .topbar { grid-template-columns: minmax(220px,1fr) auto; }
+      .activity { display: block; overflow: visible; }
+      .content { overflow: visible; }
+      .chat-composer { position: sticky; bottom: 0; z-index: 6; }
+      .run-state { display: none; }
+      .workspace { grid-template-columns: 190px minmax(0,1fr); }
+      .artifact-pane { grid-column: 1 / -1; max-height: none; border-top: 1px solid var(--line); border-left: 0; }
+      .preview-toolbar { top: 0; }
+      .preview-shell { display: grid; grid-template-columns: minmax(0,1fr) 260px; gap: 12px; }
+      .artifacts { border-top: 0; border-left: 1px solid var(--line); }
+    }
+    @media (max-width: 680px) {
+      .topbar { position: sticky; top: 0; z-index: 9; grid-template-columns: 1fr; gap: 8px; }
+      .section-heading, .preview-toolbar { position: static; }
+      .mode-switch { width: 100%; }
+      .mode { flex: 1; min-width: 0; padding-inline: 7px; }
+      .workspace { display: block; }
+      .phase-rail { max-height: none; overflow: visible; border-right: 0; border-bottom: 1px solid var(--line); }
+      .team-summary { display: none; }
+      .metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }
+      .metric:nth-child(2) { border-right: 0; }
+      .metric:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+      .content { padding-inline: 12px; }
+      .event { grid-template-columns: 46px 30px minmax(0,1fr); gap: 7px; }
+      .event-badge { grid-column: 3; justify-self: start; margin-top: 0; }
+      .preview-shell { display: block; }
+      .artifacts { border-top: 1px solid var(--line); border-left: 0; }
+      .preview { min-height: 390px; }
+      .preview-brand strong { font-size: 14px; }
+      .preview-stats { gap: 3px; padding-inline: 6px; }
+      .compose-meta { align-items: flex-start; }
+      .compose-status { max-width: 48vw; }
+      .send-button { min-width: 44px; width: 44px; padding: 0; }
+      .send-button span { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app" id="app" data-mode="running">
+    <header class="topbar">
+      <div class="identity">
+        <div class="brand-mark">太极</div>
+        <div class="identity-text">
+          <strong>抖音摄影师工作台</strong>
+          <span>独立项目 · 前端整合与本地验证</span>
+        </div>
+      </div>
+      <div class="run-state"><span class="state-dot"></span><strong id="runStateText">正在推进</strong><span id="elapsedTop">已运行 16:42</span></div>
+      <nav class="mode-switch" aria-label="观察窗演示状态">
+        <button class="mode active" data-mode="running">执行中</button>
+        <button class="mode" data-mode="approval">需确认</button>
+        <button class="mode" data-mode="paused">已暂停</button>
+      </nav>
+    </header>
+
+    <div class="workspace">
+      <aside class="phase-rail">
+        <div class="section-heading"><strong>阶段与依赖</strong><span>03 / 05</span></div>
+        <div class="phase-list">
+          <div class="phase done"><div class="phase-marker"><i data-lucide="check"></i></div><div><strong>目标与验收</strong><span>范围、风格和 HTML 交付已明确</span></div></div>
+          <div class="phase done"><div class="phase-marker"><i data-lucide="check"></i></div><div><strong>并行专业产出</strong><span>数据与视觉系统均已提交</span></div></div>
+          <div class="phase live"><div class="phase-marker">03</div><div><strong>整合与自检</strong><span id="phaseLiveText">前端负责人正在整合页面</span></div></div>
+          <div class="phase"><div class="phase-marker">04</div><div><strong>交互验证</strong><span>等待可运行预览版本</span></div></div>
+          <div class="phase"><div class="phase-marker">05</div><div><strong>最终交付</strong><span>等待验证证据通过</span></div></div>
+        </div>
+
+        <div class="team-summary">
+          <div class="section-heading"><strong>团队状态</strong><span>1 执行 · 2 已提交</span></div>
+          <div class="team-list">
+            <div class="member"><img src="../pop-comic-ui/assets/avatar-03-green.png" alt="前端负责人头像" /><div><strong>前端负责人</strong><span>整合与验证</span></div><b class="member-state live" id="leadState">执行中</b></div>
+            <div class="member"><img src="../pop-comic-ui/assets/avatar-05-amber.png" alt="内容策划头像" /><div><strong>内容策划</strong><span>scripts/data.js</span></div><b class="member-state submitted">已提交</b></div>
+            <div class="member"><img src="../pop-comic-ui/assets/avatar-02-cyan.png" alt="美术指导头像" /><div><strong>美术指导</strong><span>styles/popart.css</span></div><b class="member-state submitted">已验证</b></div>
+            <div class="member"><img src="../pop-comic-ui/assets/avatar-06-blue.png" alt="质量审核头像" /><div><strong>质量审核</strong><span>等待整合版本</span></div><b class="member-state">等待</b></div>
+          </div>
+        </div>
+      </aside>
+
+      <main class="activity">
+        <div class="metrics">
+          <div class="metric"><span>真实执行</span><strong id="runningMetric">1</strong><small>前端负责人</small></div>
+          <div class="metric"><span>等待依赖</span><strong>1</strong><small>质量审核</small></div>
+          <div class="metric"><span>任务状态</span><strong id="taskMetric">2/3</strong><small>已提交 / 全部</small></div>
+          <div class="metric"><span>验证证据</span><strong id="evidenceMetric">3/5</strong><small>尚不可验收</small></div>
+        </div>
+
+        <div class="section-heading"><strong>执行摘要</strong><span>隐藏心跳、租约和重复工具流水</span></div>
+        <div class="content">
+          <section class="decision" id="decisionCard">
+            <span class="decision-label"><i data-lucide="shield-alert"></i> 需要你确认</span>
+            <h3>是否允许发布外部预览？</h3>
+            <p>本地构建、核心交互和响应式截图已经通过。下一步会把产物上传到外部托管服务；不批准不会影响本地交付。</p>
+            <div class="decision-actions"><button class="approve" id="approveButton">允许发布</button><button id="rejectButton">仅保留本地</button></div>
+          </section>
+
+          <section class="interjection hidden" id="interjectionCard">
+            <div class="interjection-icon"><i data-lucide="message-square-more"></i></div>
+            <div><strong>你的插话已进入当前任务</strong><span id="interjectionText"></span></div>
+          </section>
+
+          <section class="summary">
+            <div class="summary-accent"></div>
+            <div><strong id="summaryTitle">阶段小结 · 专业产出已完成</strong><p id="summaryText">内容策划和美术指导已分别提交数据与视觉系统，主代理正在整合页面。当前无需你介入；整合后将自动进入交互验证。</p></div>
+            <time>20:27</time>
+          </section>
+
+          <section class="now">
+            <div class="now-head">
+              <div class="now-icon"><i data-lucide="code-2"></i></div>
+              <div class="now-copy"><strong id="nowTitle">前端负责人 · 写入交互逻辑</strong><span id="nowSubtitle">scripts/app.js · 完成后自动执行语法与数据检查</span></div>
+              <span class="elapsed" id="elapsedNow">01:42</span>
+            </div>
+            <div class="stream" aria-label="最近四行动态过程">
+              <div class="stream-row"><i></i><span>已读取数据和视觉系统交付</span><time>20:27:18</time></div>
+              <div class="stream-row"><i></i><span>已创建 index.html 与 styles/app.css</span><time>20:29:56</time></div>
+              <div class="stream-row live"><i></i><span id="liveText">正在写入 scripts/app.js</span><time>20:32:00</time></div>
+              <div class="stream-row wait"><i></i><span id="nextText">下一步：运行语法与数据完整性验证</span><time>待执行</time></div>
+            </div>
+          </section>
+
+          <div class="timeline-title"><strong>最近有效进展</strong><span>仅展示产出、验证、返工、阻塞和决定</span></div>
+          <div class="timeline">
+            <article class="event"><time>20:22</time><img src="../pop-comic-ui/assets/avatar-05-amber.png" alt="内容策划头像" /><div class="event-main"><strong>内容策划提交仿真数据</strong><span>5 天、17 个拍摄任务、72 个分镜；字段完整性检查通过。</span></div><b class="event-badge review">已提交待整合</b></article>
+            <article class="event"><time>20:25</time><img src="../pop-comic-ui/assets/avatar-02-cyan.png" alt="美术指导头像" /><div class="event-main"><strong>视觉系统第 4 次自检未通过</strong><span>发现组件括号和遮罩点击问题，责任员工已自行返工，无需用户介入。</span></div><b class="event-badge rework">返工 4/6</b></article>
+            <article class="event"><time>20:27</time><img src="../pop-comic-ui/assets/avatar-02-cyan.png" alt="美术指导头像" /><div class="event-main"><strong>波普漫画视觉系统验证通过</strong><span>709 行 CSS；关键组件、动效降级和点击穿透规则通过检查。</span></div><b class="event-badge ok">证据通过</b></article>
+            <article class="event"><time>20:28</time><img src="../pop-comic-ui/assets/avatar-03-green.png" alt="前端负责人头像" /><div class="event-main"><strong>创建首个页面预览</strong><span>预览已在右侧打开；依赖文件尚未齐全，明确标记为“生成中”。</span></div><b class="event-badge">未验证预览</b></article>
+          </div>
+
+          <details class="tech">
+            <summary>技术详情 · 31 条事件 · 0 个未处理错误</summary>
+            <div class="tech-log">
+              <div><time>20:32:00</time><span>execution.file_written · scripts/app.js</span><em>26.4 KB</em></div>
+              <div><time>20:31:58</time><span>worker.heartbeat · lead lease active</span><em>隐藏于默认流</em></div>
+              <div><time>20:27:11</time><span>subtask.result_received · visual-system</span><em>success</em></div>
+              <div><time>20:26:49</time><span>execution.tool_result · css check</span><em>success</em></div>
+            </div>
+          </details>
+        </div>
+
+        <form class="chat-composer" id="chatComposer">
+          <div class="compose-meta">
+            <span class="compose-target"><i></i>发送到：主代理 · 当前项目</span>
+            <span class="compose-status" id="composeStatus">可随时插话</span>
+          </div>
+          <div class="compose-row">
+            <button class="compose-action" type="button" title="添加附件" aria-label="添加附件"><i data-lucide="paperclip"></i></button>
+            <textarea id="chatInput" rows="1" aria-label="消息" placeholder="输入消息"></textarea>
+            <button class="send-button" type="submit"><i data-lucide="send-horizontal"></i><span>发送</span></button>
+          </div>
+        </form>
+      </main>
+
+      <aside class="artifact-pane">
+        <div class="section-heading"><strong>产物与证据</strong><span id="artifactCount">5 个文件 · 3 项证据</span></div>
+        <div class="preview-toolbar">
+          <span class="preview-state" id="previewState"><i></i>生成中 · 尚未验证</span>
+          <span class="preview-path">douyin-photographer-workbench/index.html</span>
+          <button class="icon-button" title="在新窗口预览" aria-label="在新窗口预览"><i data-lucide="external-link"></i></button>
+        </div>
+        <div class="preview-shell">
+          <div>
+            <div class="preview" aria-label="抖音摄影师工作台产物预览">
+              <div class="preview-cover">
+                <div class="preview-brand"><div class="preview-logo">DY</div><div><strong>摄影师工作台</strong><span>DOUYIN SHOOTING DESK · No.207</span></div></div>
+                <div class="preview-quote">光线不会等你，但观众会等好内容。</div>
+              </div>
+              <div class="preview-days"><div class="preview-day">周三<br />08-05</div><div class="preview-day">周四<br />08-06</div><div class="preview-day active">周五<br />今天</div><div class="preview-day">周六<br />08-08</div><div class="preview-day">周日<br />08-09</div></div>
+              <div class="preview-stats"><div class="preview-stat"><strong>4</strong><span>今日任务</span></div><div class="preview-stat"><strong>1</strong><span>已完成</span></div><div class="preview-stat"><strong>1</strong><span>拍摄中</span></div><div class="preview-stat"><strong>0</strong><span>没完成</span></div></div>
+              <div class="preview-board">
+                <div class="preview-filter"><span>全部 4</span><span>探店美食</span><span>女装穿搭</span><span>宠物日常</span></div>
+                <div class="preview-task"><header><span>T0810 · 待拍摄</span><b>宠物日常</b></header><h4>养猫前 VS 养猫后 · 宠物 90 秒</h4><p>钩子：养猫前我家一尘不染，养猫后我成了猫的游乐场。</p></div>
+              </div>
+            </div>
+            <div class="preview-warning" id="previewWarning"><i data-lucide="circle-check-big"></i><span>本地验证已通过。外部发布仍需你的明确授权。</span></div>
+          </div>
+
+          <div class="artifacts">
+            <div class="artifact-row"><div class="file-icon"><i data-lucide="file-code-2"></i></div><div><strong>index.html</strong><span>3.7 KB · 已生成</span></div><div class="artifact-actions"><button title="打开文件" aria-label="打开 index.html"><i data-lucide="file-search"></i></button><button title="打开所在文件夹" aria-label="打开 index.html 所在文件夹"><i data-lucide="folder-open"></i></button></div></div>
+            <div class="artifact-row"><div class="file-icon"><i data-lucide="file-code-2"></i></div><div><strong>app.js</strong><span>26.4 KB · 写入中</span></div><div class="artifact-actions"><button title="打开文件" aria-label="打开 app.js"><i data-lucide="file-search"></i></button><button title="复制路径" aria-label="复制 app.js 路径"><i data-lucide="copy"></i></button></div></div>
+            <div class="artifact-row"><div class="file-icon"><i data-lucide="braces"></i></div><div><strong>data.js</strong><span>29.1 KB · 已验证</span></div><div class="artifact-actions"><button title="打开文件" aria-label="打开 data.js"><i data-lucide="file-search"></i></button><button title="复制路径" aria-label="复制 data.js 路径"><i data-lucide="copy"></i></button></div></div>
+            <div class="artifact-row"><div class="file-icon"><i data-lucide="palette"></i></div><div><strong>popart.css</strong><span>27.3 KB · 已验证</span></div><div class="artifact-actions"><button title="打开文件" aria-label="打开 popart.css"><i data-lucide="file-search"></i></button><button title="复制路径" aria-label="复制 popart.css 路径"><i data-lucide="copy"></i></button></div></div>
+          </div>
+        </div>
+
+        <div class="footer-controls">
+          <button class="command" id="pauseButton"><i data-lucide="pause"></i><span>暂停任务</span></button>
+          <button class="command stop" id="stopButton"><i data-lucide="square"></i><span>停止任务</span></button>
+          <div class="stop-confirm" id="stopConfirm">停止后会终止主任务、全部子任务和外部进程，保留工作区与检查点。
+            <div><button id="confirmStop">确认停止</button><button id="cancelStop">取消</button></div>
+          </div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
+  <script>
+    window.lucide?.createIcons();
+
+    const app = document.getElementById('app');
+    const decisionCard = document.getElementById('decisionCard');
+    const previewState = document.getElementById('previewState');
+    const runStateText = document.getElementById('runStateText');
+    const elapsedTop = document.getElementById('elapsedTop');
+    const runningMetric = document.getElementById('runningMetric');
+    const taskMetric = document.getElementById('taskMetric');
+    const evidenceMetric = document.getElementById('evidenceMetric');
+    const phaseLiveText = document.getElementById('phaseLiveText');
+    const leadState = document.getElementById('leadState');
+    const summaryTitle = document.getElementById('summaryTitle');
+    const summaryText = document.getElementById('summaryText');
+    const nowTitle = document.getElementById('nowTitle');
+    const nowSubtitle = document.getElementById('nowSubtitle');
+    const elapsedNow = document.getElementById('elapsedNow');
+    const liveText = document.getElementById('liveText');
+    const nextText = document.getElementById('nextText');
+    const artifactCount = document.getElementById('artifactCount');
+    const stopConfirm = document.getElementById('stopConfirm');
+    const chatComposer = document.getElementById('chatComposer');
+    const chatInput = document.getElementById('chatInput');
+    const composeStatus = document.getElementById('composeStatus');
+    const interjectionCard = document.getElementById('interjectionCard');
+    const interjectionText = document.getElementById('interjectionText');
+
+    const states = {
+      running: {
+        run: '正在推进', elapsed: '已运行 16:42', running: '1', tasks: '2/3', evidence: '3/5',
+        phase: '前端负责人正在整合页面', lead: '执行中',
+        summaryTitle: '阶段小结 · 专业产出已完成',
+        summary: '内容策划和美术指导已分别提交数据与视觉系统，主代理正在整合页面。当前无需你介入；整合后将自动进入交互验证。',
+        now: '前端负责人 · 写入交互逻辑', subtitle: 'scripts/app.js · 完成后自动执行语法与数据检查', timer: '01:42',
+        live: '正在写入 scripts/app.js', next: '下一步：运行语法与数据完整性验证',
+        preview: '生成中 · 尚未验证', artifacts: '5 个文件 · 3 项证据'
+      },
+      approval: {
+        run: '等待你的决定', elapsed: '已等待 00:38', running: '0', tasks: '3/3', evidence: '5/5',
+        phase: '本地验证已通过，等待发布授权', lead: '待确认',
+        summaryTitle: '阶段小结 · 本地交付已通过',
+        summary: '页面渲染、核心交互和响应式截图均已通过。项目已具备本地交付条件；是否发布外部预览由你决定。',
+        now: '主代理 · 等待发布授权', subtitle: '没有后台继续执行，也不会继续消耗模型与工具预算', timer: '00:38',
+        live: '本地验证证据已经通过', next: '下一步：根据你的决定发布或保留本地',
+        preview: '可验收 · 本地验证通过', artifacts: '5 个文件 · 5 项证据'
+      },
+      paused: {
+        run: '主任务已确认暂停', elapsed: '暂停于 20:32:18', running: '0', tasks: '2/3', evidence: '3/5',
+        phase: '现场已保留，等待继续指令', lead: '已暂停',
+        summaryTitle: '暂停确认 · 全部执行单元已停止',
+        summary: '主任务、2 个子任务、租约、心跳和外部进程均已确认暂停。工作区与检查点已保留，继续后从 scripts/app.js 恢复。',
+        now: '前端负责人 · 已暂停', subtitle: '最后检查点：scripts/app.js 写入完成 78%', timer: '--:--',
+        live: '执行已停止，不再产生模型或工具调用', next: '下一步：等待你点击继续',
+        preview: '已暂停 · 非验收版本', artifacts: '5 个文件 · 3 项证据'
+      },
+      stopped: {
+        run: '任务已停止', elapsed: '停止于 20:32:41', running: '0', tasks: '2/3', evidence: '3/5',
+        phase: '执行已结束，工作区只读保留', lead: '已停止',
+        summaryTitle: '停止确认 · 不再产生任何执行事件',
+        summary: '主任务、全部子任务和外部进程已终止。工作区、任务回放和已生成产物继续保留，可从项目记录重新发起。',
+        now: '执行器 · 已终止', subtitle: '没有活动租约、模型请求或工具进程', timer: '--:--',
+        live: '任务已停止', next: '下一步：查看产物或从检查点重新发起',
+        preview: '已停止 · 非验收版本', artifacts: '5 个文件 · 3 项证据'
+      }
+    };
+
+    function setMode(mode) {
+      const data = states[mode];
+      app.dataset.mode = mode;
+      document.querySelectorAll('.mode').forEach((button) => button.classList.toggle('active', button.dataset.mode === mode));
+      decisionCard.classList.toggle('open', mode === 'approval');
+      runStateText.textContent = data.run;
+      elapsedTop.textContent = data.elapsed;
+      runningMetric.textContent = data.running;
+      taskMetric.textContent = data.tasks;
+      evidenceMetric.textContent = data.evidence;
+      phaseLiveText.textContent = data.phase;
+      leadState.textContent = data.lead;
+      summaryTitle.textContent = data.summaryTitle;
+      summaryText.textContent = data.summary;
+      nowTitle.textContent = data.now;
+      nowSubtitle.textContent = data.subtitle;
+      elapsedNow.textContent = data.timer;
+      liveText.textContent = data.live;
+      nextText.textContent = data.next;
+      previewState.lastChild.textContent = data.preview;
+      artifactCount.textContent = data.artifacts;
+      stopConfirm.classList.remove('open');
+    }
+
+    document.querySelectorAll('.mode').forEach((button) => button.addEventListener('click', () => setMode(button.dataset.mode)));
+    document.getElementById('pauseButton').addEventListener('click', () => setMode('paused'));
+    document.getElementById('stopButton').addEventListener('click', () => stopConfirm.classList.add('open'));
+    document.getElementById('cancelStop').addEventListener('click', () => stopConfirm.classList.remove('open'));
+    document.getElementById('confirmStop').addEventListener('click', () => setMode('stopped'));
+    document.getElementById('approveButton').addEventListener('click', () => setMode('running'));
+    document.getElementById('rejectButton').addEventListener('click', () => setMode('paused'));
+    chatComposer.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const message = chatInput.value.trim();
+      if (!message) {
+        chatInput.focus();
+        return;
+      }
+      setMode('running');
+      interjectionText.textContent = message;
+      interjectionCard.classList.remove('hidden');
+      composeStatus.textContent = '已发送 · 主代理重新评估中';
+      nowTitle.textContent = '主代理 · 重新评估当前计划';
+      nowSubtitle.textContent = '结合你的插话、原始目标和现有产物更新任务图';
+      liveText.textContent = '正在判断继续、修改、暂停或重新分派';
+      nextText.textContent = '下一步：发布更新后的计划与责任人';
+      chatInput.value = '';
+    });
+  </script>
+</body>
+</html>

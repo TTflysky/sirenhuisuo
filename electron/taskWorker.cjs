@@ -248,6 +248,7 @@ function createTaskWorker(options) {
         return;
       }
       if (command.type === 'checkpoint') {
+        if (run.status !== 'running') throw new Error(`任务状态 ${run.status} 不能写入执行检查点`);
         if (!isActiveLease(worker) || worker.leaseId !== command.payload.leaseId) throw new Error('执行检查点租约不匹配');
         const checkpoint = normalizeCheckpoint(command.payload.checkpoint, Number(worker.checkpointSequence) || 0, now);
         applyCheckpoint(run, checkpoint);
@@ -270,6 +271,7 @@ function createTaskWorker(options) {
         return;
       }
       if (command.type === 'heartbeat') {
+        if (run.status !== 'running') throw new Error(`任务状态 ${run.status} 不能续租执行心跳`);
         if (!isActiveLease(worker) || worker.leaseId !== command.payload.leaseId) throw new Error('Worker 心跳租约不匹配');
         const reportedProgressAt = Math.min(now, Number(command.payload.progressAt) || 0);
         run.worker = {

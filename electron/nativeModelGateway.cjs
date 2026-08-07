@@ -67,6 +67,7 @@ async function callNativeModel(input) {
         };
       })();
       const result = await Promise.race([operation, deadline.promise]);
+      await assertCanContinue(job);
       await reportActivity(job, 'model_response_received', `${member.name} 已收到模型回复，正在检查下一步动作`, {
         stepId: job.currentStepId, member: publicMember(member), attempt: attempt + 1,
       });

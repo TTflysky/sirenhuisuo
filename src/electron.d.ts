@@ -361,6 +361,19 @@ export interface RuntimeTelemetryEvent {
   public?: { summary?: string; error?: string; metadata?: Record<string, unknown> };
 }
 
+export interface RuntimeDashboard {
+  ok: boolean;
+  generatedAt: number;
+  project?: { projectId: string; rootTaskId?: string; title: string; phase: string; lastMeaningfulAction?: string };
+  counts: { total: number; completed: number; running: number; queued: number; waitingUser: number; paused: number; failed: number; stopped: number; completedSteps: number; totalSteps: number; artifacts: number; verifiedArtifacts: number };
+  approvals: Array<{ taskId: string; approvalId?: string; title: string; reason: string; requestedBy: string; scope: string; createdAt: number }>;
+  waitingConditions: Array<{ taskId: string; title: string; reason: string }>;
+  activeWork: Array<{ taskId: string; stepId: string; actorId?: string; actorName: string; title: string; activity: string; startedAt: number }>;
+  meaningfulEvents: RuntimeTelemetryEvent[];
+  technical: { telemetryEvents: number; errors: number; warnings: number; latest: RuntimeTelemetryEvent[] };
+  error?: string;
+}
+
 export interface TaskServiceTask {
   id: string;
   taskServiceVersion?: number;
@@ -582,6 +595,7 @@ declare global {
     diagnosticsExport: (options?: { taskId?: string; teamId?: string }) => Promise<{ ok: boolean; canceled?: boolean; path?: string; count?: number; error?: string }>;
     telemetryQuery: (options?: { taskId?: string; projectId?: string; type?: string; severity?: RuntimeTelemetryEvent['severity']; failureClass?: string; limit?: number }) => Promise<{ ok: boolean; entries: RuntimeTelemetryEvent[]; total: number; filePath?: string; error?: string }>;
     telemetrySummary: (options?: { taskId?: string; projectId?: string }) => Promise<{ ok: boolean; total: number; errors: number; warnings: number; totalTokens: number; byType: Record<string, number>; byFailureClass: Record<string, number>; latest: RuntimeTelemetryEvent[]; activeTask?: RuntimeTelemetryEvent; error?: string }>;
+    telemetryDashboard: (options?: { taskId?: string; projectId?: string }) => Promise<RuntimeDashboard>;
     telemetryExport: (options?: { taskId?: string; projectId?: string }) => Promise<{ ok: boolean; canceled?: boolean; path?: string; count?: number; error?: string }>;
     autonomyEvaluationSummary: () => Promise<AutonomyEvaluationSummary>;
     autonomyEvaluationStart: (input?: { label?: string; mode?: 'live' | 'automated'; operator?: string; targetMinutes?: number }) => Promise<AutonomyEvaluationSummary & { reused?: boolean; session?: Record<string, unknown>; summary?: AutonomyEvaluationSummary }>;

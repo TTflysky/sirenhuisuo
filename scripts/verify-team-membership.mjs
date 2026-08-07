@@ -41,7 +41,8 @@ const projects = [
   { id: 'old', title: '旧项目', status: 'running', updatedAt: 1 },
   { id: 'pending', title: '操作系统前端改造', status: 'awaiting_approval', updatedAt: 2 },
 ];
-assert.equal(membership.resolveTargetProject('为什么不叫UI设计师', projects)?.id, 'pending');
+assert.equal(membership.resolveTargetProject('为什么不叫UI设计师', projects)?.id, undefined, 'ambiguous correction must not attach to an arbitrary project');
+assert.equal(membership.resolveTargetProject('继续操作系统前端改造', projects)?.id, 'pending');
 
 const scopedProjects = [
   { id: 'other-chat', title: '另一个项目', status: 'awaiting_approval', conversationId: 'chat-other', updatedAt: 9 },

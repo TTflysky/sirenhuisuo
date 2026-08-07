@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { ArrowLeftOutlined, EditOutlined, HistoryOutlined, PauseCircleOutlined, PlayCircleOutlined, PlusOutlined, RobotOutlined, SearchOutlined, StopOutlined, UserAddOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, BarChartOutlined, CloseOutlined, DownloadOutlined, EditOutlined, FolderOpenOutlined, HistoryOutlined, PauseCircleOutlined, PlayCircleOutlined, RobotOutlined, SearchOutlined, StopOutlined, ThunderboltOutlined, UserAddOutlined } from '@ant-design/icons';
 import type { Team, Employee, TaskApprovalContract, TaskRun, ThoughtChainStep } from '../../types';
 import { useStore } from '../../storeContext';
 import { generatedImageAttachment, generateImage, getConversationModel, isImageGenerationModel, type Attachment } from '../../data/hermesClient';
@@ -33,7 +33,6 @@ import StageSummaryCard from './StageSummaryCard';
 import ExecutionApprovalCard from './ExecutionApprovalCard';
 import {
   activateChatSession,
-  createChatSession,
   ensureActiveChatSession,
   legacyConversationId,
   listChatSessions,
@@ -46,6 +45,8 @@ import {
 interface Props {
   teamId: string;
 }
+
+type ObserverTab = 'observer' | 'outputs' | 'skills' | 'replay';
 
 type TaskAuditNode = { id: string; depth: number; title: string; status: string; blocked?: string; steps: { completed: number; total: number }; compensation: { completed: number; blocked: number; failed: number } };
 function taskStatusLabel(status: string): string {
@@ -90,7 +91,7 @@ function SupervisorAvatar({ size = 34 }: { size?: number }) {
 export default function TeamChatApp({ teamId }: Props) {
   const {
     state, dispatch, sendMessage,
-    publishTask, claimTask, advanceTask, triggerDiscussion, pauseTaskRun, resumeTaskRun, stopTaskRun, closeTaskRun, clearTeamExecution, archiveProject, startProjectExecution,
+    claimTask, advanceTask, triggerDiscussion, pauseTaskRun, resumeTaskRun, stopTaskRun, closeTaskRun, clearTeamExecution, archiveProject, startProjectExecution,
   } = useStore();
   const team = state.teams.find((t: Team) => t.id === teamId);
   const sessionScope: ChatSessionScope = `team:${teamId}`;
@@ -102,13 +103,10 @@ export default function TeamChatApp({ teamId }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const [text, setText] = useState('');
-  const [showTaskForm, setShowTaskForm] = useState(false);
-  const [taskTitle, setTaskTitle] = useState('');
-  const [taskDesc, setTaskDesc] = useState('');
-  const [showOutputs, setShowOutputs] = useState(false);
   const [selectedOutputFilename, setSelectedOutputFilename] = useState<string | null>(null);
-  const [workspacePanelWidth, setWorkspacePanelWidth] = useState(320);
+  const [workspacePanelWidth, setWorkspacePanelWidth] = useState(440);
   const [showTaskList, setShowTaskList] = useState(false);
+  const [observerTab, setObserverTab] = useState<ObserverTab>('observer');
   const [showRenameTeam, setShowRenameTeam] = useState(false);
   const [showManageMembers, setShowManageMembers] = useState(false);
   const [taskHistoryQuery, setTaskHistoryQuery] = useState('');
@@ -365,6 +363,30 @@ export default function TeamChatApp({ teamId }: Props) {
 
   if (!team) return <div style={{ padding: 20 }}>团队不存在</div>;
 
+  const observerRun = currentLiveRun ?? waitingRun ?? taskRuns[0];
+  const observerStep = observerRun?.steps.find((step) => step.status === 'running')
+    ?? observerRun?.steps.find((step) => step.status === 'queued')
+    ?? observerRun?.steps.at(-1);
+  const observerEmployee = observerStep
+    ? state.employees.find((employee) => employee.id === observerStep.employeeId)
+    : undefined;
+  const observerCompletedSteps = observerRun?.steps.filter((step) => step.status === 'completed').length ?? 0;
+  const observerWaitingSteps = observerRun?.steps.filter((step) => step.status === 'queued').length ?? 0;
+  const observerEvidenceCount = (observerRun?.evidence ?? []).filter((item) => item.verified).length
+    + (observerRun?.verification ?? []).filter((item) => item.status === 'passed').length;
+  const observerEvents = observerStep?.events.slice(-4) ?? [];
+  const skillRuns = taskRuns.filter((run) => (run.skillRefs?.length ?? 0) > 0 || (run.skillEvidence?.length ?? 0) > 0);
+
+  const openObserver = (tab: ObserverTab) => {
+    setObserverTab(tab);
+    setShowTaskList(true);
+  };
+
+  const openTaskReplay = (taskId: string) => {
+    setReplayTaskId(taskId);
+    openObserver('replay');
+  };
+
   const handleSend = async () => {
     if (!text.trim() && attachments.length === 0) return;
     const content = text.trim();
@@ -453,22 +475,6 @@ export default function TeamChatApp({ teamId }: Props) {
     }
   };
 
-  const handleStartNewChat = () => {
-    const running = taskRuns.filter((run) => run.status === 'queued' || run.status === 'running');
-    if (running.length && !confirm(`当前有 ${running.length} 个任务正在执行。新建聊天会安全停止这些任务并保留已完成内容，是否继续？`)) return;
-    running.forEach((run) => stopTaskRun(run.id));
-    if (visibleMessages.length) touchChatSession(sessionScope, conversationIdRef.current, titleFromMessages(visibleMessages, team.name));
-    const session = createChatSession(sessionScope);
-    setConversationId(session.id);
-    setText('');
-    setAttachments([]);
-    setSkillRefs([]);
-    setMentionOpen(false);
-    setReplayTaskId(null);
-    setShowTaskList(false);
-    window.requestAnimationFrame(() => textareaRef.current?.focus());
-  };
-
   const handleRestoreChat = (targetConversationId: string) => {
     if (!targetConversationId || !activateChatSession(sessionScope, targetConversationId)) return;
     if (visibleMessages.length) touchChatSession(sessionScope, conversationIdRef.current, titleFromMessages(visibleMessages, team.name));
@@ -479,6 +485,8 @@ export default function TeamChatApp({ teamId }: Props) {
     setMentionOpen(false);
     setReplayTaskId(null);
     setShowTaskList(false);
+    setObserverTab('observer');
+    setSelectedOutputFilename(null);
   };
 
   const insertMention = (emp: Employee) => {
@@ -543,12 +551,6 @@ export default function TeamChatApp({ teamId }: Props) {
     }
   };
 
-  const handlePublishTask = () => {
-    if (!taskTitle.trim()) return;
-    publishTask(teamId, taskTitle.trim(), taskDesc.trim() || undefined);
-    setTaskTitle(''); setTaskDesc(''); setShowTaskForm(false);
-  };
-
   const transcriptIdentity = (message: { authorId: string; roleId: string; authorName?: string }) => {
     if (message.authorId === 'assistant') return { author: '章北海助理', role: '常驻主助理' };
     const employee = state.employees.find((item) => item.id === message.authorId);
@@ -590,8 +592,7 @@ export default function TeamChatApp({ teamId }: Props) {
 
   const openOutputFromMessage = (output: OutputRecord) => {
     setSelectedOutputFilename(output.filename);
-    setShowTaskList(false);
-    setShowOutputs(true);
+    openObserver('outputs');
   };
 
   const renderTextWithOutputLinks = (value: string, keySeed: string): React.ReactNode[] => {
@@ -730,7 +731,7 @@ export default function TeamChatApp({ teamId }: Props) {
         {run.handoff && <div className="task-run-handoff"><strong>当前交接</strong><p>{run.handoff.blocked}</p>{(run.handoff.completed ?? []).length > 0 && <p>已完成：{(run.handoff.completed ?? []).join('、')}</p>}<p>下一步：{run.handoff.nextAction}</p></div>}
         <div className="task-run-actions">
           <button className="btn btn-sm" onClick={() => void exportTaskReplay(run)} title="一键导出完整任务回放 Markdown">导出回放 MD</button>
-          <button className="btn btn-sm" onClick={() => setReplayTaskId(run.id)} title="只读回放任务"><HistoryOutlined />回放</button>
+          <button className="btn btn-sm" onClick={() => openTaskReplay(run.id)} title="只读回放任务"><HistoryOutlined />回放</button>
           {active && <button className="btn btn-sm" onClick={() => pauseTaskRun(run.id)}><PauseCircleOutlined />暂停</button>}
           {(run.status === 'paused' || run.status === 'failed' || run.status === 'awaiting_user') && <button className="btn btn-sm btn-primary" disabled={resumingRunIds.has(run.id)} onClick={() => handleResumeTaskRun(run.id)}><PlayCircleOutlined />{resumingRunIds.has(run.id) ? '正在继续…' : '继续执行'}</button>}
           {(active || run.status === 'paused' || run.status === 'failed' || run.status === 'awaiting_user') && <button className="btn btn-sm btn-danger" onClick={() => stopTaskRun(run.id)}><StopOutlined />停止</button>}
@@ -780,7 +781,7 @@ export default function TeamChatApp({ teamId }: Props) {
                   <strong>{employee?.name ?? step.title}</strong><span>{step.title}</span>
                   <small>{detail}</small>
                   <div className="project-board-entry-metrics"><span>{formatDuration(entry.elapsedMs)}</span><span>证据 {entry.verifiedEvidence}/{entry.evidenceTotal}</span><span>下一步：{entry.nextAction}</span>{entry.responsibility && <span className="is-responsibility">{entry.responsibility}</span>}</div>
-                  <button type="button" onClick={() => setReplayTaskId(run.id)} title="查看该任务的可审计回放"><HistoryOutlined /></button>
+                  <button type="button" onClick={() => openTaskReplay(run.id)} title="查看该任务的可审计回放"><HistoryOutlined /></button>
                 </div>;
               })}
             </details>;
@@ -804,7 +805,7 @@ export default function TeamChatApp({ teamId }: Props) {
     resizingPanelRef.current = true;
     const move = (moveEvent: PointerEvent) => {
       if (!resizingPanelRef.current) return;
-      setWorkspacePanelWidth(Math.max(240, Math.min(520, window.innerWidth - moveEvent.clientX)));
+      setWorkspacePanelWidth(Math.max(360, Math.min(680, window.innerWidth - moveEvent.clientX)));
     };
     const stop = () => {
       resizingPanelRef.current = false;
@@ -816,7 +817,22 @@ export default function TeamChatApp({ teamId }: Props) {
   };
 
   return (
-    <div className="chat-panel">
+    <div className="chat-panel runtime-demo-shell">
+      <div className="runtime-demo-topbar" aria-label="当前项目状态">
+        <div className="runtime-demo-brand">太极</div>
+        <div className="runtime-demo-project">
+          <strong>{team.name}</strong>
+          <span>{teamProject?.title || teamProject?.brief?.goal || '自主智能体团队协作'}</span>
+        </div>
+        <div className="runtime-demo-run-state">
+          <i className={`runtime-demo-state-dot ${observerRun?.status || 'idle'}`} />
+          <span>{observerRun ? taskStatusLabel(observerRun.status) : '等待任务'}</span>
+          <small>{taskRuns.length} 个任务</small>
+        </div>
+        <button type="button" className="runtime-demo-open-observer" onClick={() => openObserver('observer')}>
+          <BarChartOutlined /> 运行观察
+        </button>
+      </div>
       <div className="chat-layout">
         <div className="chat-main">
           <div className="team-chat-body">
@@ -1068,32 +1084,20 @@ export default function TeamChatApp({ teamId }: Props) {
 
           {/* 工具栏 */}
           <div className="chat-toolbar" style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', padding: '6px 14px' }}>
-            <button className="btn btn-sm chat-new-session-btn" onClick={handleStartNewChat} title="保存当前记录并开启不继承旧任务的新聊天"><PlusOutlined /><span>新建聊天</span></button>
             {chatSessions.length > 0 && <select className="assistant-chat-history-select" value="" onChange={(event) => handleRestoreChat(event.target.value)} aria-label="历史对话"><option value="">历史对话</option>{chatSessions.map((session) => <option key={session.id} value={session.id}>{session.title}</option>)}</select>}
             <button className="btn btn-sm" onClick={handleCopyAll} title="复制全部对话">📋</button>
             <button className="btn btn-sm" onClick={handleExport} title="导出为 markdown">📤</button>
             <button className="btn btn-sm" onClick={() => fileInputRef.current?.click()} title="上传文件/图片">📎</button>
             <SkillPickerButton selected={skillRefs} onSelectedChange={setSkillRefs} />
-            <button
-              className="btn btn-sm"
-              onClick={() => triggerDiscussion(teamId, { conversationId })}
-              disabled={state.status.demoRunning}
-              title="让团队 AI 成员就当前讨论话题展开协作"
-            >
-              💬 发起讨论
-            </button>
-            <button className="btn btn-sm" onClick={() => setShowTaskForm(!showTaskForm)}>
-              📋 发布任务
-            </button>
-            <button className={`btn btn-sm ${showTaskList ? 'btn-primary' : ''}`} onClick={() => { setShowOutputs(false); setShowTaskList((visible) => !visible); }} title="显示或隐藏右侧任务列表">
-              任务 {taskRuns.length}
+            <button className={`btn btn-sm ${showTaskList && observerTab === 'observer' ? 'btn-primary' : ''}`} onClick={() => showTaskList && observerTab === 'observer' ? setShowTaskList(false) : openObserver('observer')} title="显示或隐藏团队运行观察窗">
+              <BarChartOutlined />观察 {taskRuns.length}
             </button>
             <button
-              className={`btn btn-sm ${showOutputs ? 'btn-primary' : ''}`}
-              onClick={() => { setShowTaskList(false); setShowOutputs(!showOutputs); }}
-              title="产出物"
+              className={`btn btn-sm ${showTaskList && observerTab === 'outputs' ? 'btn-primary' : ''}`}
+              onClick={() => showTaskList && observerTab === 'outputs' ? setShowTaskList(false) : openObserver('outputs')}
+              title="查看当前项目产物"
             >
-              📁{showOutputs ? ' ✕' : ''}
+              <FolderOpenOutlined />产物 {availableOutputs.length}
             </button>
             <div style={{ flex: 1 }} />
             <ModelSelector scene="team" messages={visibleMessages} />
@@ -1101,32 +1105,6 @@ export default function TeamChatApp({ teamId }: Props) {
               {state.status.backendOnline ? '🟢 默认模型可用' : '🔴 默认模型不可用'}
             </span>
           </div>
-
-          {/* 发布任务表单 */}
-          {showTaskForm && (
-            <div style={{ padding: '8px 14px', background: 'var(--bg-deep)', borderTop: '1px solid var(--border-light)' }}>
-              <input
-                className="form-input"
-                value={taskTitle}
-                onChange={(e) => setTaskTitle(e.target.value)}
-                placeholder="任务标题 *"
-                style={{ marginBottom: 4 }}
-              />
-              <input
-                className="form-input"
-                value={taskDesc}
-                onChange={(e) => setTaskDesc(e.target.value)}
-                placeholder="任务描述（可选）"
-                style={{ marginBottom: 4 }}
-              />
-              <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                <button className="btn btn-sm" onClick={() => setShowTaskForm(false)}>取消</button>
-                <button className="btn btn-sm btn-primary" onClick={handlePublishTask} disabled={!taskTitle.trim()}>
-                  发布
-                </button>
-              </div>
-            </div>
-          )}
 
           {/* 输入区 */}
           <div className={`chat-composer ${fileDrop.dragActive ? 'is-file-dragging' : ''}`} style={{ position: 'relative' }} {...fileDrop.dropProps}>
@@ -1201,42 +1179,96 @@ export default function TeamChatApp({ teamId }: Props) {
               </div>
               <button type="button" className="chat-jump-bottom" title="跳到最新消息" onClick={() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })}>↓</button>
             </nav>
-            {showTaskList && <><div className="workspace-resize-handle" onPointerDown={startPanelResize} title="拖动调整任务面板宽度" /><aside className="team-task-sidebar" style={{ width: workspacePanelWidth, minWidth: workspacePanelWidth }} aria-label="项目面板">
-              <div className="team-task-sidebar-head"><strong>{taskReplay ? '任务回放' : '项目面板'}</strong><span>{taskReplay ? '只读' : `${projectBoard.length} 个项目`}</span>{!taskReplay && <button type="button" className="team-task-clear" title="清理聊天中的旧执行过程" onClick={() => clearTeamExecution(teamId)}>清理过程</button>}<button type="button" className="task-run-close" title="收起项目面板" onClick={() => setShowTaskList(false)}>×</button></div>
-              {!taskReplay && <label className="task-history-search"><SearchOutlined /><input value={taskHistoryQuery} onChange={(event) => setTaskHistoryQuery(event.target.value)} placeholder="历史任务检索" aria-label="历史任务检索" />{taskHistoryQuery && <button type="button" onClick={() => setTaskHistoryQuery('')} title="清空搜索">×</button>}</label>}
-              {!taskReplay && <div className="team-task-export-all"><button type="button" className="btn btn-sm" disabled={taskRuns.length === 0} onClick={exportAllTaskReplays} title="将当前团队会话的全部任务合并导出为 Markdown">导出全部回放 MD</button></div>}
-              <div className="team-task-sidebar-body">
-                {taskReplay ? <div className="task-replay">
-                  <button type="button" className="task-replay-back" onClick={() => setReplayTaskId(null)}><ArrowLeftOutlined />返回任务列表</button>
-                  <div className="task-replay-heading"><span>{state.teams.find((item) => item.id === taskReplay.teamId)?.name ?? taskReplay.teamId}</span><strong>{taskReplay.title}</strong><small>{new Date(taskReplay.updatedAt).toLocaleString('zh-CN')} · {taskReplay.status}</small></div>
-                  <div className="task-replay-goal"><strong>原目标</strong><p>{taskReplay.goal}</p></div>
-                  <details className="task-replay-section"><summary>确定性压缩摘要</summary><p>{taskReplay.summary.narrative || '暂无摘要'}</p>{taskReplay.summary.modelNarrative && <p className="task-replay-model-summary">模型辅助：{taskReplay.summary.modelNarrative}</p>}</details>
-                  <details className="task-replay-section"><summary>已验证事实 {taskReplay.summary.verifiedFacts.length}</summary>{taskReplay.summary.verifiedFacts.map((item, index) => <p key={`${index}-${item.slice(0, 24)}`}>{item}</p>)}</details>
-                  <details className="task-replay-section"><summary>交付文件 {taskReplay.summary.artifactPaths.length}</summary>{taskReplay.summary.artifactPaths.map((item) => <p key={item}>{item}</p>)}</details>
-                  {replayWorkerCommands.length > 0 && <details className="task-replay-section task-worker-command-log"><summary>Worker 命令记录 {replayWorkerCommands.length}</summary>{replayWorkerCommands.map((record) => <p key={record.recordId}><time>#{record.sequence} · {new Date(record.occurredAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time><span>{record.commandType} · {record.type === 'command_submitted' ? '已入队' : record.result?.ok ? '已完成' : `失败：${record.result?.error ?? '未知原因'}`}</span></p>)}</details>}
-                  <div className={`task-ledger-integrity${ledgerIntegrity?.recovered ? ' is-recovered' : ''}`}><strong>任务事件账本</strong><span>{ledgerIntegrity?.recovered ? '已恢复损坏尾部' : '账本完整'}</span><small>{taskReplay.ledgerEvents.length ? `${taskReplay.ledgerEvents.length} 条事件` : '兼容回放'}</small></div>
-                  <div className="task-replay-timeline"><strong>任务回放</strong>{replayTimeline.map((event) => <div key={`${event.source}-${event.id}`} className={event.verified ? 'is-verified' : ''}><time>{new Date(event.ts).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</time><span>{event.sequence ? `#${event.sequence} · ` : ''}{event.source} · {event.type}</span>{event.transition && <small>状态：{event.transition}</small>}{event.domains.length > 0 && <small>变化域：{event.domains.join('、')}</small>}<p>{event.detail}</p></div>)}</div>
-                </div> : taskHistoryQuery.trim() ? <div className="task-history-results">
-                  <div className="team-task-section-title">跨会话结果 · {historyMatches.length}</div>
-                  {historyMatches.map((match) => <button type="button" key={match.taskId} className="task-history-result" onClick={() => setReplayTaskId(match.taskId)}><span>{match.teamName} · {match.status}</span><strong>{match.title}</strong><p>{match.summary || match.goal}</p><small>已验证 {match.verifiedFacts.length} · 文件 {match.artifactPaths.length} · {new Date(match.updatedAt).toLocaleDateString('zh-CN')}</small></button>)}
-                  {historyMatches.length === 0 && <div className="team-task-empty">没有匹配的历史任务</div>}
-                </div> : <>
-                  {projectSections.current.length > 0 && <div className="team-task-section"><div className="team-task-section-title">当前与待处理</div>{projectSections.current.map((project) => renderProjectCard(project as ProjectBoardProject))}</div>}
-                  {projectSections.completed.length > 0 && <div className="team-task-section completed"><div className="team-task-section-title">已完成</div>{projectSections.completed.map((project) => renderProjectCard(project as ProjectBoardProject))}</div>}
-                  {projectSections.stopped.length > 0 && <div className="team-task-section completed"><div className="team-task-section-title">已停止与归档</div>{projectSections.stopped.map((project) => renderProjectCard(project as ProjectBoardProject))}</div>}
-                  {projectBoard.length === 0 && <div className="team-task-empty">暂无项目</div>}
-                </>}
+            {showTaskList && <><div className="workspace-resize-handle" onPointerDown={startPanelResize} title="拖动调整观察窗宽度" /><aside className="team-task-sidebar runtime-observer" style={{ width: workspacePanelWidth, minWidth: workspacePanelWidth }} aria-label="团队运行观察窗">
+              <header className="runtime-observer-head">
+                <div><span className={`runtime-observer-status status-${observerRun?.status ?? 'idle'}`} /><span><strong>团队观察</strong><small>{observerRun ? `${taskStatusLabel(observerRun.status)} · ${taskRuns.length} 个任务` : '当前没有运行任务'}</small></span></div>
+                <div className="runtime-observer-head-actions">
+                  <button type="button" onClick={() => clearTeamExecution(teamId)} title="清理聊天中的旧执行过程">清理</button>
+                  <button type="button" disabled={taskRuns.length === 0} onClick={exportAllTaskReplays} title="导出当前会话全部任务、事件与证据为 Markdown" aria-label="导出全部回放"><DownloadOutlined /><span>导出全部</span></button>
+                  <button type="button" title="收起观察窗" aria-label="收起观察窗" onClick={() => setShowTaskList(false)}><CloseOutlined /></button>
+                </div>
+              </header>
+              <nav className="runtime-observer-tabs" aria-label="观察窗视图">
+                <button type="button" className={observerTab === 'observer' ? 'active' : ''} onClick={() => setObserverTab('observer')}><BarChartOutlined /><span>观察</span></button>
+                <button type="button" className={observerTab === 'outputs' ? 'active' : ''} onClick={() => setObserverTab('outputs')}><FolderOpenOutlined /><span>产物</span><small>{availableOutputs.length}</small></button>
+                <button type="button" className={observerTab === 'skills' ? 'active' : ''} onClick={() => setObserverTab('skills')}><ThunderboltOutlined /><span>技能</span><small>{skillRuns.length}</small></button>
+                <button type="button" className={observerTab === 'replay' ? 'active' : ''} onClick={() => setObserverTab('replay')}><HistoryOutlined /><span>回放</span><small>{taskRuns.length}</small></button>
+              </nav>
+              <div className={`team-task-sidebar-body runtime-observer-body tab-${observerTab}`}>
+                {observerTab === 'observer' && <div className="runtime-observer-overview">
+                  {observerRun ? <>
+                    <section className="runtime-observer-project">
+                      <div><span>{taskStatusLabel(observerRun.status)}</span><time>{formatDuration(progressNow - observerRun.createdAt)}</time></div>
+                      <strong>{observerRun.title}</strong>
+                      <p>{observerRun.goal ?? observerRun.request}</p>
+                    </section>
+                    <section className="runtime-observer-metrics" aria-label="运行指标">
+                      <div><strong>{observerRun.worker?.state === 'running' ? 1 : 0}</strong><span>真实执行</span></div>
+                      <div><strong>{observerWaitingSteps}</strong><span>等待前置</span></div>
+                      <div><strong>{observerCompletedSteps}/{observerRun.steps.length}</strong><span>完成步骤</span></div>
+                      <div><strong>{observerEvidenceCount}</strong><span>验收证据</span></div>
+                    </section>
+                    <section className="runtime-observer-current">
+                      <div className="runtime-observer-section-head"><strong>当前工作</strong><span>{observerStep?.status === 'running' ? '执行中' : observerStep?.status === 'queued' ? '等待执行' : taskStatusLabel(observerRun.status)}</span></div>
+                      <div className="runtime-observer-owner">
+                        {observerEmployee ? <AgentAvatar employee={observerEmployee} size={36} /> : <SupervisorAvatar size={36} />}
+                        <span><strong>{observerEmployee?.name ?? '章北海助理'}</strong><small>{observerEmployee?.title ?? '主代理整合与监督'}</small></span>
+                        <time>{observerStep?.startedAt ? formatDuration(progressNow - observerStep.startedAt) : '未开始'}</time>
+                      </div>
+                      <p>{observerRun.worker?.activity || observerStep?.assignment || observerRun.handoff?.nextAction || '正在核对任务状态与下一步动作。'}</p>
+                      <div className="runtime-observer-event-list" aria-label="最近四行动态">
+                        {(observerEvents.length ? observerEvents : [{ ts: observerRun.updatedAt, type: 'status' as const, detail: observerRun.worker?.activity || observerRun.handoff?.blocked || '等待新的有效进展' }]).map((event, index, events) => <div key={`${event.ts}-${index}`} className={index === events.length - 1 ? 'is-current' : ''}><i /><span>{cleanExecutionDisplay(event.detail, 180)}</span><time>{new Date(event.ts).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time></div>)}
+                      </div>
+                    </section>
+                  </> : <div className="team-task-empty">当前会话还没有任务。发布任务后，这里会显示负责人、动作、依赖、证据和真实进度。</div>}
+                  {projectSections.current.length > 0 && <section className="runtime-observer-projects"><div className="runtime-observer-section-head"><strong>阶段与依赖</strong><span>{projectSections.current.length} 个进行中项目</span></div>{projectSections.current.map((project) => renderProjectCard(project as ProjectBoardProject))}</section>}
+                  {projectSections.completed.length > 0 && <details className="runtime-observer-archive"><summary>已完成项目 {projectSections.completed.length}</summary>{projectSections.completed.map((project) => renderProjectCard(project as ProjectBoardProject))}</details>}
+                  {projectSections.stopped.length > 0 && <details className="runtime-observer-archive"><summary>已停止与归档 {projectSections.stopped.length}</summary>{projectSections.stopped.map((project) => renderProjectCard(project as ProjectBoardProject))}</details>}
+                  {availableOutputs.length > 0 && <section className="runtime-observer-output-summary"><div className="runtime-observer-section-head"><strong>最近产物</strong><button type="button" onClick={() => setObserverTab('outputs')}>查看全部</button></div>{availableOutputs.slice(-3).reverse().map((output) => <button type="button" key={output.id} onClick={() => { setSelectedOutputFilename(output.filename); setObserverTab('outputs'); }}><FolderOpenOutlined /><span><strong>{output.title || output.filename}</strong><small>{output.filename}</small></span></button>)}</section>}
+                </div>}
+
+                {observerTab === 'outputs' && <ChatOutputsPanel scope={`team:${teamId}`} maxHeight={Number.POSITIVE_INFINITY} selectedFilename={selectedOutputFilename} />}
+
+                {observerTab === 'skills' && <div className="runtime-observer-skills">
+                  <div className="runtime-observer-section-head"><strong>技能与使用证据</strong><span>{skillRuns.length} 个任务有记录</span></div>
+                  <p className="runtime-observer-help">分别记录技能匹配、规则读取、真实调用、产出与验收，避免只显示“已选择”却没有执行证据。</p>
+                  {skillRuns.map((run) => <section key={run.id} className="runtime-observer-skill-run">
+                    <div><span className={`runtime-observer-status status-${run.status}`} /><span><strong>{run.title}</strong><small>{taskStatusLabel(run.status)} · {new Date(run.updatedAt).toLocaleString('zh-CN')}</small></span></div>
+                    <MessageSkillEvidence refs={run.skillRefs} evidence={run.skillEvidence} />
+                    <button type="button" onClick={() => openTaskReplay(run.id)}><HistoryOutlined />查看完整证据</button>
+                  </section>)}
+                  {skillRuns.length === 0 && <div className="team-task-empty">当前会话没有 Skill 使用记录。选择或调用 Skill 后，证据会按任务显示在这里。</div>}
+                </div>}
+
+                {observerTab === 'replay' && <div className="runtime-observer-replay">
+                  {taskReplay ? <div className="task-replay">
+                    <button type="button" className="task-replay-back" onClick={() => setReplayTaskId(null)}><ArrowLeftOutlined />返回回放列表</button>
+                    <div className="task-replay-heading"><span>{state.teams.find((item) => item.id === taskReplay.teamId)?.name ?? taskReplay.teamId}</span><strong>{taskReplay.title}</strong><small>{new Date(taskReplay.updatedAt).toLocaleString('zh-CN')} · {taskReplay.status}</small></div>
+                    <div className="task-replay-goal"><strong>原目标</strong><p>{taskReplay.goal}</p></div>
+                    <details className="task-replay-section" open><summary>确定性压缩摘要</summary><p>{taskReplay.summary.narrative || '暂无摘要'}</p>{taskReplay.summary.modelNarrative && <p className="task-replay-model-summary">模型辅助：{taskReplay.summary.modelNarrative}</p>}</details>
+                    <details className="task-replay-section"><summary>已验证事实 {taskReplay.summary.verifiedFacts.length}</summary>{taskReplay.summary.verifiedFacts.map((item, index) => <p key={`${index}-${item.slice(0, 24)}`}>{item}</p>)}</details>
+                    <details className="task-replay-section"><summary>交付文件 {taskReplay.summary.artifactPaths.length}</summary>{taskReplay.summary.artifactPaths.map((item) => <p key={item}>{item}</p>)}</details>
+                    {replayWorkerCommands.length > 0 && <details className="task-replay-section task-worker-command-log"><summary>Worker 命令记录 {replayWorkerCommands.length}</summary>{replayWorkerCommands.map((record) => <p key={record.recordId}><time>#{record.sequence} · {new Date(record.occurredAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</time><span>{record.commandType} · {record.type === 'command_submitted' ? '已入队' : record.result?.ok ? '已完成' : `失败：${record.result?.error ?? '未知原因'}`}</span></p>)}</details>}
+                    <div className={`task-ledger-integrity${ledgerIntegrity?.recovered ? ' is-recovered' : ''}`}><strong>任务事件账本</strong><span>{ledgerIntegrity?.recovered ? '已恢复损坏尾部' : '账本完整'}</span><small>{taskReplay.ledgerEvents.length ? `${taskReplay.ledgerEvents.length} 条事件` : '兼容回放'}</small></div>
+                    <div className="task-replay-timeline"><strong>任务回放</strong>{replayTimeline.map((event) => <div key={`${event.source}-${event.id}`} className={event.verified ? 'is-verified' : ''}><time>{new Date(event.ts).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</time><span>{event.sequence ? `#${event.sequence} · ` : ''}{event.source} · {event.type}</span>{event.transition && <small>状态：{event.transition}</small>}{event.domains.length > 0 && <small>变化域：{event.domains.join('、')}</small>}<p>{event.detail}</p></div>)}</div>
+                  </div> : <>
+                    <label className="task-history-search"><SearchOutlined /><input value={taskHistoryQuery} onChange={(event) => setTaskHistoryQuery(event.target.value)} placeholder="检索任务标题、目标或证据" aria-label="历史任务检索" />{taskHistoryQuery && <button type="button" onClick={() => setTaskHistoryQuery('')} title="清空搜索"><CloseOutlined /></button>}</label>
+                    {taskHistoryQuery.trim() ? <div className="task-history-results">
+                      <div className="team-task-section-title">跨会话结果 · {historyMatches.length}</div>
+                      {historyMatches.map((match) => <button type="button" key={match.taskId} className="task-history-result" onClick={() => openTaskReplay(match.taskId)}><span>{match.teamName} · {match.status}</span><strong>{match.title}</strong><p>{match.summary || match.goal}</p><small>已验证 {match.verifiedFacts.length} · 文件 {match.artifactPaths.length} · {new Date(match.updatedAt).toLocaleDateString('zh-CN')}</small></button>)}
+                      {historyMatches.length === 0 && <div className="team-task-empty">没有匹配的历史任务</div>}
+                    </div> : <div className="runtime-replay-list">{taskRuns.map((run) => <section key={run.id}>
+                      <div><span className={`runtime-observer-status status-${run.status}`} /><span><strong>{run.title}</strong><small>{taskStatusLabel(run.status)} · {new Date(run.updatedAt).toLocaleString('zh-CN')}</small></span></div>
+                      <p>{run.goal ?? run.request}</p>
+                      <span>步骤 {run.steps.filter((step) => step.status === 'completed').length}/{run.steps.length} · Skill 证据 {run.skillEvidence?.length ?? 0} · 验收证据 {(run.verification ?? []).length}</span>
+                      <footer><button type="button" onClick={() => void exportTaskReplay(run)}><DownloadOutlined />导出 MD</button><button type="button" onClick={() => openTaskReplay(run.id)}><HistoryOutlined />查看回放</button></footer>
+                    </section>)}{taskRuns.length === 0 && <div className="team-task-empty">当前会话没有可回放任务</div>}</div>}
+                  </>}
+                </div>}
               </div>
             </aside></>}
           </div>
         </div>
-
-        {/* 右侧产出物面板 */}
-        {showOutputs && (
-          <><div className="workspace-resize-handle" onPointerDown={startPanelResize} title="拖动调整产出物面板宽度" /><div className="chat-outputs-wrap" style={{ width: workspacePanelWidth, minWidth: workspacePanelWidth }}>
-            <ChatOutputsPanel scope={`team:${teamId}`} maxHeight={500} selectedFilename={selectedOutputFilename} onBack={() => { setShowOutputs(false); setSelectedOutputFilename(null); }} />
-          </div></>
-        )}
       </div>
       {showRenameTeam && <RenameTeamModal teamId={team.id} currentName={team.name} onClose={() => setShowRenameTeam(false)} />}
       {showManageMembers && <ManageTeamMembersModal teamId={team.id} onClose={() => setShowManageMembers(false)} />}

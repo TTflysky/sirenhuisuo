@@ -21,9 +21,9 @@ interface TeamMessageCommandDependencies {
   enqueueTeamAssistantReply: (...args: any[]) => Promise<any>;
   startTaskRun: (...args: any[]) => Promise<void>;
   addTeamMembers: (teamId: string, memberIds: string[]) => Employee[];
-  pauseTaskRun: (runId: string) => void;
+  pauseTaskRun: (runId: string) => Promise<boolean>;
   resumeTaskRun: (runId: string) => Promise<void>;
-  stopTaskRun: (runId: string) => void;
+  stopTaskRun: (runId: string) => Promise<boolean>;
 }
 
 export function createTeamMessageCommands({
@@ -136,10 +136,12 @@ export function createTeamMessageCommands({
       const directControl = getDirectExecutionControl(content) ?? (resumeTarget ? 'resume' : null);
       if (directControl) {
         const activeRuns = current.taskRuns.filter((run) => run.teamId === teamId && runBelongsToConversation(run) && (run.status === 'queued' || run.status === 'running'));
+        let controlConfirmed = true;
         if (directControl === 'resume') {
           if (resumeTarget) await resumeTaskRun(resumeTarget.id);
         } else {
-          activeRuns.forEach((run) => directControl === 'stop' ? stopTaskRun(run.id) : pauseTaskRun(run.id));
+          const results = await Promise.all(activeRuns.map((run) => directControl === 'stop' ? stopTaskRun(run.id) : pauseTaskRun(run.id)));
+          controlConfirmed = activeRuns.length > 0 && results.every(Boolean);
         }
         dispatch({
           type: 'APPEND_CHAT', teamId, conversationId,
@@ -148,8 +150,8 @@ export function createTeamMessageCommands({
             content: directControl === 'resume'
               ? resumeTarget ? '继续命令已写入原项目。系统会先恢复暂停的子任务，再从未完成阶段接着执行；不会重新做已经通过的规划。' : '当前没有等待恢复的团队任务。'
               : directControl === 'stop'
-                ? '团队任务已停止，已完成内容保留；旧任务不会自行恢复。'
-                : '团队任务已暂停。你仍可以继续对话，只有明确说“继续”才会恢复。',
+                ? controlConfirmed ? '主进程已确认团队任务停止，已完成内容保留；旧任务不会自行恢复。' : '停止命令没有获得主进程确认。系统不会把它显示成已停止，请打开任务卡重试或导出问题包。'
+                : controlConfirmed ? '主进程已确认团队任务暂停。你仍可以继续对话，只有明确说“继续”才会恢复。' : '暂停命令没有获得主进程确认。系统不会把它显示成已暂停，请打开任务卡重试或导出问题包。',
             mentions: [], timestamp: Date.now(), kind: 'text',
           }],
         });
@@ -193,20 +195,20 @@ export function createTeamMessageCommands({
         const targets = (directMentions.length ? directMentions : team.memberIds)
           .map((id) => current.employees.find((employee) => employee.id === id))
           .filter((employee): employee is Employee => !!employee);
-
-        if (pauseRequested) {
-          current.taskRuns
-            .filter((run) => run.teamId === teamId && runBelongsToConversation(run) && (run.status === 'queued' || run.status === 'running'))
-            .forEach((run) => pauseTaskRun(run.id));
-          targets.forEach((employee) => dispatch({ type: 'UPDATE_EMPLOYEE', id: employee.id, partial: { isWorking: false } }));
-        }
-
         const now = Date.now();
         const messages: ChatMessage[] = [];
+
         if (pauseRequested) {
+          const results = await Promise.all(current.taskRuns
+            .filter((run) => run.teamId === teamId && runBelongsToConversation(run) && (run.status === 'queued' || run.status === 'running'))
+            .map((run) => pauseTaskRun(run.id)));
+          const pauseConfirmed = results.length > 0 && results.every(Boolean);
+          targets.forEach((employee) => dispatch({ type: 'UPDATE_EMPLOYEE', id: employee.id, partial: { isWorking: false } }));
           messages.push({
             id: `msg-control-${now}`, authorId: 'assistant', roleId: 'custom',
-            content: '当前团队任务已暂停。此指令不会创建新任务，也不会调用 Skill 或文件工具。',
+            content: pauseConfirmed
+              ? '主进程已确认当前团队任务暂停。此指令不会创建新任务，也不会调用 Skill 或文件工具。'
+              : '暂停命令没有获得主进程确认，不能宣称任务已经停止。请打开任务卡重试，或导出问题包排查。',
             mentions: targets.map((employee) => employee.id), timestamp: now, kind: 'text',
           });
         }

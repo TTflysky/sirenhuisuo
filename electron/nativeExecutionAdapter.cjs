@@ -132,9 +132,11 @@ function createNativeExecutionAdapter(options) {
           } else await execute(job);
         }
         finally { activeJob = undefined; }
-        if (job.requeueAfterExecution) {
+        if (job.requeueAfterExecution && job.state === 'queued' && !job.control) {
           job.requeueAfterExecution = false;
           enqueueJob(job, 'steering-preempted');
+        } else {
+          job.requeueAfterExecution = false;
         }
       }
     } finally {
@@ -348,6 +350,7 @@ function createNativeExecutionAdapter(options) {
   }
 
   async function checkpoint(job, checkpointInput) {
+    await assertCanContinue(job);
     job.checkpointSequence += 1;
     const result = await options.worker.dispatch({
       commandId: `native-checkpoint-${job.taskId}-${job.checkpointSequence}`,
@@ -963,9 +966,31 @@ function createNativeExecutionAdapter(options) {
       else if (type === 'mixed') typedChecks.set('mixed', { kind: 'mixed', label: 'mixed deliverable', passed: hasResult || hasFile || hasConnection || hasOperation, detail: 'A mixed deliverable needs at least one verified result.' });
       else typedChecks.set(type, { kind: type, label: `${type} deliverable`, passed: hasResult, detail: 'An answer or decision deliverable needs a persisted real result.' });
     }
-    if (typedChecks.size) checks.splice(0, checks.length, ...typedChecks.values(), ...(run.steps.some((step) => step.kind === 'review')
-      ? [{ kind: 'review', label: 'review decision', passed: evidence.some((item) => item.kind === 'review' && item.verified), detail: 'A review step needs an explicit PASS result.' }]
-      : []));
+    if (typedChecks.size) {
+      // Typed deliverables refine the generic checks; they must never erase
+      // independent gates such as command execution or connector verification.
+      // The previous replacement made a file-producing step hide a required
+      // run/connection check, so a visible artifact could close an unverified
+      // task. Keep one authoritative check per kind and let the typed result
+      // override only its matching generic check.
+      // The legacy generic file check is intentionally unconditional for old
+      // answer tasks. Once a step declares a different deliverable type, it
+      // is no longer a requirement and must not block a valid decision,
+      // operation, or mixed result.
+      const mergedChecks = new Map(checks
+        .filter((item) => item.kind !== 'file' || typedChecks.has('file'))
+        .map((item) => [item.kind, item]));
+      for (const [kind, check] of typedChecks) mergedChecks.set(kind, check);
+      if (run.steps.some((step) => step.kind === 'review')) {
+        mergedChecks.set('review', {
+          kind: 'review',
+          label: 'review decision',
+          passed: evidence.some((item) => item.kind === 'review' && item.verified),
+          detail: 'A review step needs an explicit PASS result.',
+        });
+      }
+      checks.splice(0, checks.length, ...mergedChecks.values());
+    }
     const blocked = checks.filter((item) => !item.passed);
     if (unfinished.length || blocked.length) throw new Error(unfinished.length ? `仍有 ${unfinished.length} 个步骤未完成` : `验收未通过：${blocked.map((item) => item.detail).join('；')}`);
     const beforeFinish = await readRun(job.taskId);
@@ -975,11 +1000,13 @@ function createNativeExecutionAdapter(options) {
     }
     await updateRun(job.taskId, (next) => {
       next.verification = checks.map((item) => ({ kind: item.kind, label: item.label, status: item.passed ? 'passed' : 'blocked', detail: item.detail }));
-      next.status = 'completed'; next.phase = 'completed'; next.lastError = undefined;
       next.handoff = undefined;
       if (next.recoveryContext) next.recoveryContext.summary = '任务已由主进程原生 Adapter 完成并通过验收。';
     }, '原生 Adapter 完成最终验收');
     await checkpoint(job, { kind: 'run_finished', finalStatus: 'completed', summary: '主进程原生 Adapter 已完成任务并通过验收' });
+    await updateRun(job.taskId, (next) => {
+      next.status = 'completed'; next.phase = 'completed'; next.lastError = undefined;
+    }, '原生 Adapter 完成最终验收');
     if (options.learningReviewQueue) {
       const completedRun = await readRun(job.taskId);
       void options.learningReviewQueue.enqueue(completedRun, {
@@ -1426,6 +1453,17 @@ function createNativeExecutionAdapter(options) {
         emit(job, 'job_controlled', { control: controlKind, error: error.message });
       } else {
         job.lastError = text(error?.message || error, 1200);
+        // The durable ledger is authoritative once finishRun has committed
+        // the terminal state. A failure in the final checkpoint/notification
+        // must not turn an already-completed task into a misleading failure.
+        const durableAfterFinish = await readRun(job.taskId).catch(() => undefined);
+        if (durableAfterFinish?.status === 'completed') {
+          job.lastError = undefined;
+          job.state = 'completed';
+          await syncChildTaskTerminal(job.taskId, 'completed', 'Child task completed and passed its gate').catch(() => {});
+          emit(job, 'job_completed', { recoveredAfterFinalizeError: true, finalizeError: text(error?.message || error, 600) });
+          return;
+        }
         await persistControlledLifecycle(job, 'failed', job.lastError);
         await runCompensations(job, job.lastError).catch(() => {});
         await syncChildTaskTerminal(job.taskId, 'failed', job.lastError).catch(() => {});

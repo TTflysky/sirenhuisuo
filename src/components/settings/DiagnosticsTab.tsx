@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button, Select, Spin, Tag } from 'antd';
 import { CheckCircleOutlined, CloseCircleOutlined, ClockCircleOutlined, DownloadOutlined, ExperimentOutlined, PlayCircleOutlined, ReloadOutlined, RobotOutlined, StopOutlined, ThunderboltOutlined, WarningOutlined } from '@ant-design/icons';
-import type { AutonomyEvaluationMetric, AutonomyEvaluationSummary, OperationDiagnosticEntry, RuntimeTelemetryEvent } from '../../electron';
+import type { AutonomyEvaluationMetric, AutonomyEvaluationSummary, OperationDiagnosticEntry, RuntimeDashboard, RuntimeTelemetryEvent } from '../../electron';
 import { runSystemDiagnostics, type SystemDiagnosticItem, type SystemDiagnosticReport } from '../../diagnostics/systemDiagnostics';
 import { optimizeSystemDiagnostics, type DiagnosticOptimizationResult } from '../../diagnostics/diagnosticOptimizer';
 import { getModelCapabilities, loadSettings, saveSettings } from '../../data/hermesClient';
@@ -62,7 +62,7 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
   const [settings, setSettings] = useState(() => loadSettings());
   const [error, setError] = useState('');
   const [operationSummary, setOperationSummary] = useState<{ total: number; errors: number; recoverable: number; latest: OperationDiagnosticEntry[] }>();
-  const [telemetrySummary, setTelemetrySummary] = useState<{ total: number; errors: number; warnings: number; totalTokens: number; latest: RuntimeTelemetryEvent[]; activeTask?: RuntimeTelemetryEvent }>();
+  const [runtimeDashboard, setRuntimeDashboard] = useState<RuntimeDashboard>();
   const [telemetryBusy, setTelemetryBusy] = useState(false);
   const [telemetryExporting, setTelemetryExporting] = useState(false);
   const [autonomySummary, setAutonomySummary] = useState<AutonomyEvaluationSummary>();
@@ -79,12 +79,12 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
         runSystemDiagnostics(),
         window.electronAPI?.diagnosticsSummary?.() ?? Promise.resolve(undefined),
         window.electronAPI?.autonomyEvaluationSummary?.() ?? Promise.resolve(undefined),
-        window.electronAPI?.telemetrySummary?.() ?? Promise.resolve(undefined),
+        window.electronAPI?.telemetryDashboard?.() ?? Promise.resolve(undefined),
       ]);
       setReport(systemReport);
       if (diagnostics?.ok) setOperationSummary(diagnostics);
       if (autonomy?.ok) setAutonomySummary(autonomy);
-      if (telemetry?.ok) setTelemetrySummary(telemetry);
+      if (telemetry?.ok) setRuntimeDashboard(telemetry);
     }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setRunning(false); }
@@ -92,9 +92,9 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
   const refreshTelemetry = async () => {
     setTelemetryBusy(true);
     try {
-      const result = await window.electronAPI?.telemetrySummary?.();
+      const result = await window.electronAPI?.telemetryDashboard?.();
       if (!result?.ok) setError(result?.error || '读取运行监控失败');
-      else setTelemetrySummary(result);
+      else setRuntimeDashboard(result);
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setTelemetryBusy(false); }
   };
@@ -252,7 +252,7 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
   }, [activeAutonomySession?.sessionId]);
 
   useEffect(() => {
-    const timer = window.setInterval(() => { void refreshTelemetry(); }, 2500);
+    const timer = window.setInterval(() => { void refreshTelemetry(); }, 5000);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -308,11 +308,11 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
       <small>所有窗口共用；导出后可直接发送给排查人员。</small>
       {operationSummary.latest.slice(0, 2).map((entry) => <div key={entry.id} className="diagnostic-log-preview"><Tag color={entry.recoverable ? 'gold' : 'red'}>{entry.failureClass}</Tag><span>{entry.operation}: {entry.message}</span></div>)}
     </section>}
-    {telemetrySummary && <section className="runtime-monitor-panel">
+    {runtimeDashboard && <section className="runtime-monitor-panel">
       <header>
         <div>
           <strong><ClockCircleOutlined /> 运行监控台</strong>
-          <span>{telemetrySummary.activeTask?.taskId ? `当前任务 ${telemetrySummary.activeTask.taskId}` : '等待新的任务、工具或诊断事件'}</span>
+          <span>{runtimeDashboard.project ? `${runtimeDashboard.project.title} · ${runtimeDashboard.project.phase}` : '当前没有可观察的项目'}</span>
         </div>
         <div className="runtime-monitor-actions">
           <Button size="small" icon={<ReloadOutlined />} loading={telemetryBusy} onClick={() => void refreshTelemetry()}>刷新</Button>
@@ -320,19 +320,42 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
         </div>
       </header>
       <div className="runtime-monitor-metrics">
-        <article><span>已记录</span><strong>{telemetrySummary.total}</strong></article>
-        <article className={telemetrySummary.errors ? 'is-error' : ''}><span>错误</span><strong>{telemetrySummary.errors}</strong></article>
-        <article className={telemetrySummary.warnings ? 'is-warning' : ''}><span>提醒</span><strong>{telemetrySummary.warnings}</strong></article>
-        <article><span>Token</span><strong>{telemetrySummary.totalTokens.toLocaleString('zh-CN')}</strong></article>
+        <article><span>正在执行</span><strong>{runtimeDashboard.counts.running}</strong><small>{runtimeDashboard.counts.queued} 项等待前置条件</small></article>
+        <article className={runtimeDashboard.counts.waitingUser ? 'is-warning' : ''}><span>需要你决定</span><strong>{runtimeDashboard.approvals.length}</strong><small>{runtimeDashboard.waitingConditions.length} 项缺少有效审批</small></article>
+        <article><span>步骤进度</span><strong>{runtimeDashboard.counts.completedSteps}/{runtimeDashboard.counts.totalSteps}</strong><small>{runtimeDashboard.counts.completed} 个任务完成</small></article>
+        <article><span>交付证据</span><strong>{runtimeDashboard.counts.verifiedArtifacts}/{runtimeDashboard.counts.artifacts}</strong><small>已验证 / 全部产物</small></article>
       </div>
-      <div className="runtime-monitor-timeline">
-        {telemetrySummary.latest.length ? telemetrySummary.latest.slice(0, 8).map((event) => <article key={event.eventId} className={`runtime-event runtime-event-${event.severity}`}>
-          <time>{new Date(event.occurredAt).toLocaleTimeString('zh-CN', { hour12: false })}</time>
-          <Tag color={event.severity === 'error' ? 'red' : event.severity === 'warning' ? 'gold' : 'blue'}>{event.type}</Tag>
-          <div><strong>{event.public?.summary || '运行事件'}</strong><span>{[event.status, event.actorId, event.modelId, event.durationMs ? `${Math.round(event.durationMs)}ms` : undefined, event.usage?.totalTokens ? `${event.usage.totalTokens} Token` : undefined].filter(Boolean).join(' · ') || '已记录'}</span></div>
-        </article>) : <p>监控台会在任务、工具、Worker 或异常真实发生后更新。</p>}
+      {(runtimeDashboard.approvals.length > 0 || runtimeDashboard.waitingConditions.length > 0) && <div className="runtime-decision-zone">
+        <div className="runtime-section-heading"><strong>需要你决定</strong><span>这里只展示真正需要人工处理的事项</span></div>
+        {runtimeDashboard.approvals.map((approval) => <article className="runtime-decision-card" key={`${approval.taskId}-${approval.approvalId}`}>
+          <WarningOutlined />
+          <div><strong>{approval.title}</strong><p>{approval.reason}</p><span>{approval.requestedBy} · {approval.scope}</span></div>
+        </article>)}
+        {runtimeDashboard.waitingConditions.map((condition) => <article className="runtime-decision-card is-invalid" key={condition.taskId}>
+          <CloseCircleOutlined />
+          <div><strong>{condition.title}</strong><p>{condition.reason}</p><span>系统没有生成有效审批卡，不能要求你盲目点击继续</span></div>
+        </article>)}
+      </div>}
+      <div className="runtime-active-work">
+        <div className="runtime-section-heading"><strong>当前工作</strong><span>{runtimeDashboard.activeWork.length ? `${runtimeDashboard.activeWork.length} 位负责人正在产生结果` : '没有员工正在执行'}</span></div>
+        {runtimeDashboard.activeWork.length ? runtimeDashboard.activeWork.map((work) => <article key={`${work.taskId}-${work.stepId}`}>
+          <i />
+          <div><strong>{work.actorName} · {work.title}</strong><p>{work.activity}</p></div>
+          <time>{new Date(work.startedAt).toLocaleTimeString('zh-CN', { hour12: false, hour: '2-digit', minute: '2-digit' })}</time>
+        </article>) : <p className="runtime-empty-state">当前没有真实运行中的步骤。排队、暂停和等待依赖不会显示成“工作中”。</p>}
       </div>
-      <small className="runtime-monitor-notice">只展示可审计的公开执行事实；不记录模型隐藏推理、密钥或附件正文。</small>
+      {runtimeDashboard.project?.lastMeaningfulAction && <div className="runtime-latest-action"><span>最近有效进展</span><strong>{runtimeDashboard.project.lastMeaningfulAction}</strong></div>}
+      <details className="runtime-technical-details">
+        <summary>技术详情 · {runtimeDashboard.technical.telemetryEvents} 条事件 · {runtimeDashboard.technical.errors} 个错误</summary>
+        <div className="runtime-monitor-timeline">
+          {runtimeDashboard.technical.latest.length ? runtimeDashboard.technical.latest.slice(0, 12).map((event: RuntimeTelemetryEvent) => <article key={event.eventId} className={`runtime-event runtime-event-${event.severity}`}>
+            <time>{new Date(event.occurredAt).toLocaleTimeString('zh-CN', { hour12: false })}</time>
+            <Tag color={event.severity === 'error' ? 'red' : event.severity === 'warning' ? 'gold' : 'blue'}>{event.type}</Tag>
+            <div><strong>{event.public?.summary || '运行事件'}</strong><span>{[event.status, event.actorId, event.modelId, event.durationMs ? `${Math.round(event.durationMs)}ms` : undefined].filter(Boolean).join(' · ') || '已记录'}</span></div>
+          </article>) : <p>尚无技术事件。</p>}
+        </div>
+      </details>
+      <small className="runtime-monitor-notice">展示的是公开执行摘要和可审计证据，不包含模型隐藏推理、密钥或附件正文。</small>
     </section>}
     {autonomySummary && <section className="autonomy-evaluation-panel">
       <header>

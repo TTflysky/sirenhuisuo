@@ -34,6 +34,8 @@ async function main() {
     assert.equal(exported.events.length, 3);
     const reloaded = createTelemetryLedger(root);
     assert.equal((await reloaded.summary()).total, 3, '追加式账本必须在重启后可恢复');
+    await reloaded.record({ type: 'runtime.after_restart', source: 'test', summary: '重启后继续追加' });
+    assert.equal((await reloaded.summary()).total, 4, '首次追加不能覆盖尚未载入内存的历史事件');
 
     const repoRoot = path.resolve(__dirname, '..');
     const [main, preload, ui, packageJson] = await Promise.all([

@@ -19,6 +19,7 @@ const {
   modelName,
   publicMember,
 } = require('../electron/nativeExecutionPolicy.cjs');
+const { isSafeVerificationCommand } = require('../electron/nativeToolRuntime.cjs');
 
 assert.equal(resolveEndpoint({ apiHost: 'https://api.example.com' }), 'https://api.example.com/v1/chat/completions');
 assert.equal(resolveEndpoint({ apiHost: 'https://api.example.com/v1/' }), 'https://api.example.com/v1/chat/completions');
@@ -61,6 +62,10 @@ assert.equal(toolKey('run_command', { b: 2, a: 1 }), toolKey('run_command', { a:
 assert.equal(isWorkspaceMutationTool('write_file', {}), true);
 assert.equal(isWorkspaceMutationTool('run_command', { verification: false }), true);
 assert.equal(isWorkspaceSnapshotTool('run_command', { verification: true }), true);
+assert.equal(isSafeVerificationCommand('node --check app.js'), true);
+assert.equal(isSafeVerificationCommand('npm.cmd run build'), true);
+assert.equal(isSafeVerificationCommand('node build.js'), false);
+assert.equal(isSafeVerificationCommand('npm.cmd run build; Remove-Item -Recurse .'), false);
 assert.notEqual(toolCacheKey('read_file', { path: 'app.js' }, 1), toolCacheKey('read_file', { path: 'app.js' }, 2));
 assert.equal(toolCacheKey('web_search', { query: 'Taiji' }, 1), toolCacheKey('web_search', { query: 'Taiji' }, 2));
 

@@ -185,6 +185,15 @@ function isRoutineCommand(command) {
     || /^(?:node|npm|npm\.cmd|python|py)\s+--version$/iu.test(value);
 }
 
+function isSafeVerificationCommand(command) {
+  const value = String(command || '').trim();
+  if (/[;|&`<>]/u.test(value) || /\$[({]/u.test(value)) return false;
+  return isRoutineCommand(value)
+    || /^node\s+--check\s+[-\w.*?\\/.:'"]+$/iu.test(value)
+    || /^(?:npx\s+)?tsc(?:\.cmd)?\s+--noemit(?:\s+[-\w.*?\\/.:'"]+)*$/iu.test(value)
+    || /^(?:npx\s+)?(?:vitest|jest)(?:\.cmd)?\s+(?:run|--runinband)(?:\s+[-\w.*?\\/.:='"]+)*$/iu.test(value);
+}
+
 function connectorMatches(connector, query) {
   const needle = String(query || '').trim().toLowerCase();
   if (!needle) return true;
@@ -586,7 +595,8 @@ function createNativeToolRuntime(options) {
         if (isSkillHubCliCommand(command) || isSkillsCliInstallCommand(command)) return failed(name, '技能 CLI 安装路线已停用：交互式命令无法在后台可靠完成，也不会写入太极的受管 Skill 目录。请直接调用客户端原生 install_skill，安装器会完整落盘并回读校验。');
         if (containsSensitiveLiteral(command)) return failed(name, '命令中包含疑似明文密钥、Token 或密码，已拒绝执行。请改用连接器凭据或受限环境变量。');
         const policy = context.executionPolicy || {};
-        if (context.approvalGranted !== true && (policy.approvalMode === 'ask' || (policy.approvalMode !== 'full' && !isRoutineCommand(command)))) {
+        const autonomousLocalVerification = args.verification === true && isSafeVerificationCommand(command);
+        if (context.approvalGranted !== true && (policy.approvalMode === 'ask' || (policy.approvalMode !== 'full' && !isRoutineCommand(command) && !autonomousLocalVerification))) {
           return failed(name, `等待用户批准命令：${command.slice(0, 500)}`, {
             awaitingApproval: true,
             approvalRequest: commandApprovalRequest(command, context.goal),
@@ -655,4 +665,4 @@ function isSkillsCliInstallCommand(command) { return /(?:^|[;&|]\s*)(?:npx\s+)?s
 function succeeded(name, output, structuredEvidence) { return { name, success: true, output: String(output || ''), structuredEvidence }; }
 function failed(name, output, metadata) { return { name, success: false, output: String(output || ''), ...metadata }; }
 
-module.exports = { NATIVE_TOOL_DEFINITIONS, createNativeToolRuntime, redact, isRoutineCommand, containsSensitiveLiteral, isSkillHubCliCommand, isSkillsCliInstallCommand };
+module.exports = { NATIVE_TOOL_DEFINITIONS, createNativeToolRuntime, redact, isRoutineCommand, isSafeVerificationCommand, containsSensitiveLiteral, isSkillHubCliCommand, isSkillsCliInstallCommand };

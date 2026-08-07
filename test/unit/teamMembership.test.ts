@@ -49,4 +49,14 @@ describe('project conversation isolation', () => {
     expect(resolveTargetProject('继续', projects, 'conversation-assistant-new')?.id).toBe('current');
     expect(resolveLatestRejectedProject(projects, 'conversation-assistant-new')?.id).toBe('rejected-current');
   });
+
+  it('does not silently attach an unspecified request to one of several current projects', () => {
+    const projects = [
+      project('calculator', 'conversation-assistant-new', 'running'),
+      project('novel-tool', 'conversation-assistant-new', 'awaiting_approval'),
+    ];
+    expect(resolveTargetProject('\u5e2e\u6211\u505a\u4e2a\u65b0\u7684\u4e2a\u4eba\u53d1\u5e03\u5e73\u53f0\u5ba2\u6237\u7aef', projects, 'conversation-assistant-new')).toBeUndefined();
+    expect(resolveTargetProject('\u7ee7\u7eed\u8fd9\u4e2a\u9879\u76ee', projects, 'conversation-assistant-new')).toBeUndefined();
+    expect(resolveTargetProject('\u7ee7\u7eed calculator', projects, 'conversation-assistant-new')?.id).toBe('calculator');
+  });
 });

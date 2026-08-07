@@ -113,6 +113,10 @@ function assertJournalChain(records) {
     assert.equal(paused.run.status, 'paused');
     assert.equal(paused.run.steps[0].status, 'completed');
     assert.equal(paused.run.worker.state, 'paused');
+    const staleHeartbeat = await workerA.dispatch({ commandId: 'heartbeat-after-pause', taskId: 'worker-task', type: 'heartbeat', payload: { leaseId } });
+    assert.equal(staleHeartbeat.ok, false, '暂停后的旧心跳不能重新制造工作中状态');
+    const staleCheckpoint = await workerA.dispatch({ commandId: 'checkpoint-after-pause', taskId: 'worker-task', type: 'checkpoint', payload: { leaseId, checkpoint: { checkpointId: 'cp-after-pause', sequence: 3, kind: 'run_finished' } } });
+    assert.equal(staleCheckpoint.ok, false, '暂停后的旧检查点不能覆盖暂停状态');
 
     const resumed = await workerA.dispatch({ commandId: 'resume-1', taskId: 'worker-task', type: 'resume' });
     assert.equal(resumed.run.status, 'queued');
