@@ -86,7 +86,9 @@ if (-not $SkipTests) {
   # Current semantic, external-capability, engineering, and release gates run
   # together. Full Electron E2E remains separate because some hosts can lose
   # the renderer to the GPU driver; verify:v2-core-gate covers deterministic checks.
-  $verificationScripts = @('verify:repository-hygiene', 'verify:upgrade-backup', 'verify:phase-a', 'verify:phase-b', 'verify:phase3', 'verify:v2-core-gate')
+  # Release runs verify the already committed SBOM/provenance. Generation is a
+  # source-preparation action and would otherwise dirty this required-clean worktree.
+  $verificationScripts = @('verify:repository-hygiene', 'verify:upgrade-backup', 'verify:phase-a', 'verify:phase-b', 'verify:phase3:release', 'verify:v2-core-gate')
   foreach ($script in $verificationScripts) {
     Invoke-CheckedCommand npm.cmd @('run', $script)
   }

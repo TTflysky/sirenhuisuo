@@ -157,6 +157,7 @@
     "verify:repository-hygiene": "node scripts/verify-repository-hygiene.mjs",
     "verify:release-governance": "node scripts/verify-release-governance.mjs",
     "verify:phase3": "node scripts/verify-phase3.mjs",
+    "verify:phase3:release": "node scripts/verify-phase3-release.mjs",
     "verify:task-semantics-benchmark": "node scripts/verify-task-semantics-benchmark.mjs",
     "verify:task-decision-pipeline": "node scripts/verify-task-decision-pipeline.mjs",
     "verify:model-reliability": "node scripts/verify-model-reliability.mjs",

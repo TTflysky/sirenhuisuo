@@ -12,6 +12,7 @@
 - `unifiedHost` gates only true external dependencies: SkillHub availability remains relevant to `search_skills`, while the native `install_skill` path is allowed to validate its own GitHub, ZIP, or marketplace source.
 - The chat failure presentation reports the actual Skill-install capability stage rather than a misleading AI-model connection stage.
 - Extracted the multimodal attachment message preparation from `agentLoopRuntime`; the runtime is 855 lines and its main factory function is exactly within the 760-line function boundary.
+- Release verification now validates the committed SBOM/provenance rather than regenerating evidence after the clean-worktree check. This prevents the release gate from blocking itself with newly untracked proof files.
 
 ### Verification and release follow-up
 - Passed: 54 Vitest files / 184 tests, `verify:agent-kernel`, `verify:v317`, `verify:v2-core-gate`, production build, and lint.
