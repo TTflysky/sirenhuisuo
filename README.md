@@ -43,9 +43,9 @@
 ## 项目状态
 
 - 当前源码版本：`5.5.2`
-- 当前可安装验收版本：`5.5.1`（本轮为源码发布，尚未附带新的安装包）
+- 当前可安装验收版本：`5.5.2`
 - 发布分支：`main`
-- GitHub Release：`v5.5.1`；未配置代码签名，Windows 可能显示 SmartScreen warning。
+- GitHub Release：`v5.5.2`；未配置代码签名，Windows 可能显示 SmartScreen warning。
 - 支持系统：Windows 10 / 11 x64
 - 技术栈：Electron 43、React 19、TypeScript 6、Ant Design 6、Vite 8
 - 模型接口：OpenAI 兼容的 `/chat/completions` API

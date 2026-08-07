@@ -10,7 +10,7 @@
 - 本轮修复明确来源的 Skill 安装收尾，并补上聊天窗口的公开执行记录。用户现在能看到“理解目标 -> 制定计划 -> 正在执行 -> 观察结果/调整 -> 最终验收或阻塞”的实际进度，而不是只看到工具名称。
 - 这不是模型内部思维链：不会暴露或持久化 provider 的 `reasoning_content`。展示内容只来自任务合同、工具参数、真实工具结果、重试/插话事件和完成门禁，因而可审计、可回放且不误导为私有推理。
 - Skill 安装读回修复 Windows `ADMINI~1` 与 `Administrator` 等同一路径被字符串比较误判的问题；GitHub 仓库、ZIP 和单文件安装均使用规范化路径验证。
-- 已通过：`node scripts/verify-skill-install-e2e.cjs`、相关 Vitest、`npm.cmd run build`、`node scripts/verify-execution-detail-contract.mjs`、真实 Electron `verify-execution-detail-ui.mjs`。本轮为源码发布，不附带新的安装包或 GitHub Release。
+- 已通过：`node scripts/verify-skill-install-e2e.cjs`、相关 Vitest、`npm.cmd run build`、`node scripts/verify-execution-detail-contract.mjs`、真实 Electron `verify-execution-detail-ui.mjs`。本轮按正式 `v5.5.2` Release 发布安装器、Blockmap 和自动更新清单，办公室客户端可直接同步。
 
 ## v5.5.1 当前交接（2026-08-06）
 
