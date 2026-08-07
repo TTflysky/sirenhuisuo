@@ -1,4 +1,4 @@
-# 太极 AI 办公会所 v5.8.1
+# 太极 AI 办公会所 v5.9.0
 
 [![Release](https://img.shields.io/github/v/release/TTflysky/sirenhuisuo?label=release)](https://github.com/TTflysky/sirenhuisuo/releases/latest)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D4)](https://github.com/TTflysky/sirenhuisuo/releases/latest)
@@ -9,7 +9,7 @@
 
 > 接手开发请先阅读：[项目交接手册](./docs/PROJECT_HANDOFF.md)。其中记录了当前架构、不可破坏规则、数据边界、发布流程和后续优先级。
 
-> V5.8 自治陪跑评测已接入：[V5 自主智能体路线](./docs/TAIJI_V5_AUTONOMOUS_AGENT_ROADMAP.md)。本版提供 24 个可回放场景、真实观察记录、审计和导出；连续 8 小时真实驻留仍需在客户端中完成。
+> V5.9 统一运行轨迹与监控台已接入：[V5 自主智能体路线](./docs/TAIJI_V5_AUTONOMOUS_AGENT_ROADMAP.md)。在“设置 -> 诊断中心”可实时查看任务、Worker、执行、诊断、Token 和错误事实，并导出脱敏问题包；连续 8 小时真实驻留仍需在客户端中完成。
 
 ## 30 秒了解太极
 
