@@ -18,6 +18,7 @@ const { invokeConnectorAdapter, verifyConnectorAdapter } = require('./connectorA
 const { buildPowerShellCommand } = require('./commandShell.cjs');
 const { createTaskRuntimeStore } = require('./taskRuntimeStore.cjs');
 const { createOperationDiagnostics } = require('./operationDiagnostics.cjs');
+const { createTelemetryLedger } = require('./telemetryLedger.cjs');
 const { createAutonomyEvaluation } = require('./autonomyEvaluation.cjs');
 const { createTaskService } = require('./taskService.cjs');
 const { createTaskWorker } = require('./taskWorker.cjs');
@@ -94,7 +95,17 @@ const skillRuntime = createSkillRuntime({
   onInvocation: (input) => skillLifecycle.recordInvocation(input),
 });
 const credentialVault = createCredentialVault({ root: path.join(app.getPath('userData'), 'credential-vault'), safeStorage });
-const operationDiagnostics = createOperationDiagnostics(TASK_RUNTIME_ROOT);
+const telemetryLedger = createTelemetryLedger(TASK_RUNTIME_ROOT);
+const operationDiagnostics = createOperationDiagnostics(TASK_RUNTIME_ROOT, {
+  onRecord(entry) {
+    return telemetryLedger.record({
+      type: 'diagnostic.recorded', source: entry.scope, severity: entry.level, taskId: entry.taskId,
+      status: entry.level === 'error' ? 'failed' : undefined, failureClass: entry.failureClass,
+      recoverable: entry.recoverable, occurredAt: entry.occurredAt, summary: entry.message,
+      metadata: { operation: entry.operation, teamId: entry.teamId, diagnosticId: entry.id },
+    });
+  },
+});
 if (identityMigration.status === 'partial') {
   void operationDiagnostics.record({
     scope: 'app-identity',
@@ -105,7 +116,16 @@ if (identityMigration.status === 'partial') {
     context: { failures: identityMigration.failures },
   });
 }
-const taskRuntimeStore = createTaskRuntimeStore(TASK_RUNTIME_ROOT, { diagnostics: operationDiagnostics });
+const taskRuntimeStore = createTaskRuntimeStore(TASK_RUNTIME_ROOT, {
+  diagnostics: operationDiagnostics,
+  onEvents(events) {
+    return telemetryLedger.recordMany(events.map((event) => ({
+      type: `task.${event.type}`, source: event.source || 'task-runtime', occurredAt: event.occurredAt,
+      taskId: event.taskId, sessionId: event.sessionId, status: event.nextStatus || event.previousStatus,
+      summary: event.detail, metadata: { sequence: event.sequence, domains: event.domains, teamId: event.teamId },
+    })));
+  },
+});
 process.on('uncaughtException', (error) => {
   void operationDiagnostics.record({ scope: 'main-process', operation: 'uncaught-exception', message: error?.message || String(error), error });
 });
@@ -223,6 +243,11 @@ const taskWorker = createTaskWorker({
   store: taskRuntimeStore,
   sessionId: APP_SESSION_ID,
   onChanged(event) {
+    void telemetryLedger.record({
+      type: `worker.${event?.type || 'changed'}`, source: 'task-worker', sessionId: APP_SESSION_ID,
+      taskId: event?.taskId, status: event?.status || event?.state, summary: event?.detail || event?.message || 'Worker 状态已更新',
+      metadata: { workerId: event?.workerId, commandId: event?.commandId },
+    });
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) win.webContents.send('task-worker:changed', event);
     }
@@ -280,6 +305,15 @@ const nativeExecutionAdapter = createNativeExecutionAdapter({
   sessionId: APP_SESSION_ID,
   fetchImpl: (url, options) => net.fetch(url, options),
   onChanged(event) {
+    void telemetryLedger.record({
+      type: `execution.${event?.type || 'changed'}`, source: 'native-execution', sessionId: APP_SESSION_ID,
+      taskId: event?.taskId, projectId: event?.projectId, stepId: event?.stepId, attemptId: event?.attemptId,
+      status: event?.status || event?.job?.state, actorId: event?.actorId || event?.memberId,
+      modelId: event?.modelId, toolCallId: event?.toolCallId, durationMs: event?.durationMs, usage: event?.usage,
+      failureClass: event?.failureClass || event?.errorClass, error: event?.error,
+      summary: event?.summary || event?.detail || event?.activity || '执行状态已更新',
+      metadata: { success: event?.success, toolName: event?.toolName, eventSequence: event?.sequence },
+    });
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed()) win.webContents.send('task-execution:changed', compactExecutionEventForRenderer(event));
     }
@@ -1240,6 +1274,31 @@ function createWindow() {
     const payload = await operationDiagnostics.exportData(options);
     await fsp.writeFile(result.filePath, JSON.stringify(payload, null, 2), 'utf8');
     return { ok: true, path: result.filePath, count: payload.diagnostics.length };
+  });
+  ipcMain.handle('telemetry:query', async (_event, options) => telemetryLedger.query(options));
+  ipcMain.handle('telemetry:summary', async (_event, options) => telemetryLedger.summary(options));
+  ipcMain.handle('telemetry:export', async (_event, options) => {
+    try {
+      const result = await dialog.showSaveDialog({
+        title: '导出运行问题包',
+        defaultPath: `taiji-runtime-report-${Date.now()}.json`,
+        filters: [{ name: 'JSON 文件', extensions: ['json'] }],
+      });
+      if (result.canceled || !result.filePath) return { ok: true, canceled: true };
+      const [telemetry, tasks, diagnostics] = await Promise.all([
+        telemetryLedger.exportData(options), taskRuntimeStore.read({ taskId: options?.taskId, projectId: options?.projectId, limit: 200 }), operationDiagnostics.exportData({ taskId: options?.taskId }),
+      ]);
+      const payload = {
+        format: 'taiji-runtime-problem-package/v1', exportedAt: Date.now(), appVersion: APP_VERSION,
+        filters: options || {}, telemetry, taskSnapshot: { runs: tasks.runs || [], events: tasks.events || [], integrity: tasks.integrity }, diagnostics,
+        notice: '已脱敏：不包含模型隐藏推理、密钥、访问令牌或附件正文。',
+      };
+      await fsp.writeFile(result.filePath, JSON.stringify(payload, null, 2), 'utf8');
+      return { ok: true, path: result.filePath, count: telemetry.events.length };
+    } catch (error) {
+      await operationDiagnostics.record({ scope: 'ipc', operation: 'telemetry-export', message: error?.message || String(error), error });
+      return { ok: false, error: error?.message || String(error) };
+    }
   });
   registerAutonomyEvaluationIpc(reportIpcResult);
   ipcMain.handle('task-ledger:read', async (_event, options) => taskRuntimeStore.read(options));

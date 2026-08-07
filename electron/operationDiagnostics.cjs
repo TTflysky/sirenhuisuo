@@ -65,6 +65,7 @@ function createOperationDiagnostics(rootDir, options = {}) {
       });
       await fs.appendFile(filePath, `${JSON.stringify(entry)}\n`, 'utf8');
       await trimIfNeeded();
+      await options.onRecord?.(clone(entry));
       return { ok: true, entry };
     });
     writeQueue = operation.then(() => undefined, () => undefined);

@@ -1,7 +1,7 @@
 {
   "name": "taiji-office",
   "private": true,
-  "version": "5.8.1",
+  "version": "5.9.0",
   "description": "太极 AI 办公会所 - 面向 Windows 的多模型协作与可恢复任务执行平台",
   "author": "TTflysky",
   "license": "MIT",
@@ -82,6 +82,8 @@
     "verify:v57": "npm.cmd run verify:v57-skill-lifecycle && npm.cmd run verify:learning-review && npm.cmd run verify:skill-drafts && npm.cmd run verify:skill-runtime && npm.cmd run verify:agent-kernel && npm.cmd run build",
     "verify:v58-autonomy-evaluation": "node scripts/verify-v58-autonomy-evaluation.cjs",
     "verify:v58": "npm.cmd run verify:v58-autonomy-evaluation && npm.cmd run verify:v56 && npm.cmd run verify:v57 && npm.cmd run verify:agent-trajectory-suite && npm.cmd run verify:v315-soak && npm.cmd run verify:phase3-performance && npm.cmd run verify:phase2-soak:smoke && npm.cmd run build",
+    "verify:v59-runtime-telemetry": "node scripts/verify-v59-runtime-telemetry.cjs",
+    "verify:v59": "npm.cmd run verify:v59-runtime-telemetry && npm.cmd run verify:v58 && npm.cmd run lint && npm.cmd run build",
     "verify:learning-review": "node scripts/verify-learning-review.cjs",
     "verify:memory-ui": "node scripts/verify-memory-ui.mjs",
     "verify:skill-drafts": "node scripts/verify-skill-drafts.cjs",

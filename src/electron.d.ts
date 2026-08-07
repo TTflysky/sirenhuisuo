@@ -342,6 +342,25 @@ export interface OperationDiagnosticEntry {
   context?: Record<string, unknown>;
 }
 
+export interface RuntimeTelemetryEvent {
+  eventId: string;
+  occurredAt: number;
+  type: string;
+  source: string;
+  severity: 'info' | 'warning' | 'error';
+  status?: string;
+  taskId?: string;
+  projectId?: string;
+  stepId?: string;
+  actorId?: string;
+  modelId?: string;
+  toolCallId?: string;
+  durationMs?: number;
+  usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number };
+  failureClass?: string;
+  public?: { summary?: string; error?: string; metadata?: Record<string, unknown> };
+}
+
 export interface TaskServiceTask {
   id: string;
   taskServiceVersion?: number;
@@ -561,6 +580,9 @@ declare global {
     diagnosticsQuery: (options?: { taskId?: string; teamId?: string; failureClass?: string; level?: OperationDiagnosticEntry['level']; limit?: number }) => Promise<{ ok: boolean; entries: OperationDiagnosticEntry[]; total: number; filePath?: string }>;
     diagnosticsSummary: (options?: { taskId?: string; teamId?: string }) => Promise<{ ok: boolean; total: number; errors: number; recoverable: number; byFailureClass: Record<string, number>; latest: OperationDiagnosticEntry[] }>;
     diagnosticsExport: (options?: { taskId?: string; teamId?: string }) => Promise<{ ok: boolean; canceled?: boolean; path?: string; count?: number; error?: string }>;
+    telemetryQuery: (options?: { taskId?: string; projectId?: string; type?: string; severity?: RuntimeTelemetryEvent['severity']; failureClass?: string; limit?: number }) => Promise<{ ok: boolean; entries: RuntimeTelemetryEvent[]; total: number; filePath?: string; error?: string }>;
+    telemetrySummary: (options?: { taskId?: string; projectId?: string }) => Promise<{ ok: boolean; total: number; errors: number; warnings: number; totalTokens: number; byType: Record<string, number>; byFailureClass: Record<string, number>; latest: RuntimeTelemetryEvent[]; activeTask?: RuntimeTelemetryEvent; error?: string }>;
+    telemetryExport: (options?: { taskId?: string; projectId?: string }) => Promise<{ ok: boolean; canceled?: boolean; path?: string; count?: number; error?: string }>;
     autonomyEvaluationSummary: () => Promise<AutonomyEvaluationSummary>;
     autonomyEvaluationStart: (input?: { label?: string; mode?: 'live' | 'automated'; operator?: string; targetMinutes?: number }) => Promise<AutonomyEvaluationSummary & { reused?: boolean; session?: Record<string, unknown>; summary?: AutonomyEvaluationSummary }>;
     autonomyEvaluationRunBaseline: () => Promise<AutonomyEvaluationSummary & { session?: Record<string, unknown>; summary?: AutonomyEvaluationSummary }>;

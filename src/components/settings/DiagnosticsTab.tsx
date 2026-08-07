@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button, Select, Spin, Tag } from 'antd';
-import { CheckCircleOutlined, CloseCircleOutlined, DownloadOutlined, ExperimentOutlined, PlayCircleOutlined, ReloadOutlined, RobotOutlined, StopOutlined, ThunderboltOutlined, WarningOutlined } from '@ant-design/icons';
-import type { AutonomyEvaluationMetric, AutonomyEvaluationSummary, OperationDiagnosticEntry } from '../../electron';
+import { CheckCircleOutlined, CloseCircleOutlined, ClockCircleOutlined, DownloadOutlined, ExperimentOutlined, PlayCircleOutlined, ReloadOutlined, RobotOutlined, StopOutlined, ThunderboltOutlined, WarningOutlined } from '@ant-design/icons';
+import type { AutonomyEvaluationMetric, AutonomyEvaluationSummary, OperationDiagnosticEntry, RuntimeTelemetryEvent } from '../../electron';
 import { runSystemDiagnostics, type SystemDiagnosticItem, type SystemDiagnosticReport } from '../../diagnostics/systemDiagnostics';
 import { optimizeSystemDiagnostics, type DiagnosticOptimizationResult } from '../../diagnostics/diagnosticOptimizer';
 import { getModelCapabilities, loadSettings, saveSettings } from '../../data/hermesClient';
@@ -62,6 +62,9 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
   const [settings, setSettings] = useState(() => loadSettings());
   const [error, setError] = useState('');
   const [operationSummary, setOperationSummary] = useState<{ total: number; errors: number; recoverable: number; latest: OperationDiagnosticEntry[] }>();
+  const [telemetrySummary, setTelemetrySummary] = useState<{ total: number; errors: number; warnings: number; totalTokens: number; latest: RuntimeTelemetryEvent[]; activeTask?: RuntimeTelemetryEvent }>();
+  const [telemetryBusy, setTelemetryBusy] = useState(false);
+  const [telemetryExporting, setTelemetryExporting] = useState(false);
   const [autonomySummary, setAutonomySummary] = useState<AutonomyEvaluationSummary>();
   const [autonomyBusy, setAutonomyBusy] = useState(false);
   const [autonomyNow, setAutonomyNow] = useState(() => Date.now());
@@ -72,17 +75,36 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
     setRunning(true);
     setError('');
     try {
-      const [systemReport, diagnostics, autonomy] = await Promise.all([
+      const [systemReport, diagnostics, autonomy, telemetry] = await Promise.all([
         runSystemDiagnostics(),
         window.electronAPI?.diagnosticsSummary?.() ?? Promise.resolve(undefined),
         window.electronAPI?.autonomyEvaluationSummary?.() ?? Promise.resolve(undefined),
+        window.electronAPI?.telemetrySummary?.() ?? Promise.resolve(undefined),
       ]);
       setReport(systemReport);
       if (diagnostics?.ok) setOperationSummary(diagnostics);
       if (autonomy?.ok) setAutonomySummary(autonomy);
+      if (telemetry?.ok) setTelemetrySummary(telemetry);
     }
     catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setRunning(false); }
+  };
+  const refreshTelemetry = async () => {
+    setTelemetryBusy(true);
+    try {
+      const result = await window.electronAPI?.telemetrySummary?.();
+      if (!result?.ok) setError(result?.error || '读取运行监控失败');
+      else setTelemetrySummary(result);
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setTelemetryBusy(false); }
+  };
+  const exportTelemetry = async () => {
+    setTelemetryExporting(true);
+    try {
+      const result = await window.electronAPI?.telemetryExport?.();
+      if (result && !result.ok) setError(result.error || '导出运行问题包失败');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setTelemetryExporting(false); }
   };
   const exportDiagnostics = async () => {
     setExporting(true);
@@ -229,6 +251,11 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
     };
   }, [activeAutonomySession?.sessionId]);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => { void refreshTelemetry(); }, 2500);
+    return () => window.clearInterval(timer);
+  }, []);
+
   return <div className="settings-content-page diagnostics-page">
     <header className="diagnostics-header">
       <div><h2>诊断中心</h2><span>一次检查模型、连接器、Skill、任务内核、记忆复盘、工作区和权限</span></div>
@@ -280,6 +307,32 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
       <span>已记录 {operationSummary.total} 条，错误 {operationSummary.errors} 条，可恢复 {operationSummary.recoverable} 条</span>
       <small>所有窗口共用；导出后可直接发送给排查人员。</small>
       {operationSummary.latest.slice(0, 2).map((entry) => <div key={entry.id} className="diagnostic-log-preview"><Tag color={entry.recoverable ? 'gold' : 'red'}>{entry.failureClass}</Tag><span>{entry.operation}: {entry.message}</span></div>)}
+    </section>}
+    {telemetrySummary && <section className="runtime-monitor-panel">
+      <header>
+        <div>
+          <strong><ClockCircleOutlined /> 运行监控台</strong>
+          <span>{telemetrySummary.activeTask?.taskId ? `当前任务 ${telemetrySummary.activeTask.taskId}` : '等待新的任务、工具或诊断事件'}</span>
+        </div>
+        <div className="runtime-monitor-actions">
+          <Button size="small" icon={<ReloadOutlined />} loading={telemetryBusy} onClick={() => void refreshTelemetry()}>刷新</Button>
+          <Button size="small" icon={<DownloadOutlined />} loading={telemetryExporting} onClick={() => void exportTelemetry()}>导出问题包</Button>
+        </div>
+      </header>
+      <div className="runtime-monitor-metrics">
+        <article><span>已记录</span><strong>{telemetrySummary.total}</strong></article>
+        <article className={telemetrySummary.errors ? 'is-error' : ''}><span>错误</span><strong>{telemetrySummary.errors}</strong></article>
+        <article className={telemetrySummary.warnings ? 'is-warning' : ''}><span>提醒</span><strong>{telemetrySummary.warnings}</strong></article>
+        <article><span>Token</span><strong>{telemetrySummary.totalTokens.toLocaleString('zh-CN')}</strong></article>
+      </div>
+      <div className="runtime-monitor-timeline">
+        {telemetrySummary.latest.length ? telemetrySummary.latest.slice(0, 8).map((event) => <article key={event.eventId} className={`runtime-event runtime-event-${event.severity}`}>
+          <time>{new Date(event.occurredAt).toLocaleTimeString('zh-CN', { hour12: false })}</time>
+          <Tag color={event.severity === 'error' ? 'red' : event.severity === 'warning' ? 'gold' : 'blue'}>{event.type}</Tag>
+          <div><strong>{event.public?.summary || '运行事件'}</strong><span>{[event.status, event.actorId, event.modelId, event.durationMs ? `${Math.round(event.durationMs)}ms` : undefined, event.usage?.totalTokens ? `${event.usage.totalTokens} Token` : undefined].filter(Boolean).join(' · ') || '已记录'}</span></div>
+        </article>) : <p>监控台会在任务、工具、Worker 或异常真实发生后更新。</p>}
+      </div>
+      <small className="runtime-monitor-notice">只展示可审计的公开执行事实；不记录模型隐藏推理、密钥或附件正文。</small>
     </section>}
     {autonomySummary && <section className="autonomy-evaluation-panel">
       <header>

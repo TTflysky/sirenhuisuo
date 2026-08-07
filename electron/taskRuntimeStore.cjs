@@ -305,6 +305,7 @@ async function atomicWrite(filePath, content, options = {}) {
 
 function createTaskRuntimeStore(rootDir, options = {}) {
   const diagnostics = options.diagnostics;
+  const onEvents = typeof options.onEvents === 'function' ? options.onEvents : undefined;
   const maxRuns = Number.isInteger(options.maxRuns) && options.maxRuns > 0 ? options.maxRuns : DEFAULT_MAX_RUNS;
   const maxReturnedEvents = Number.isInteger(options.maxReturnedEvents) && options.maxReturnedEvents > 0
     ? options.maxReturnedEvents : DEFAULT_MAX_RETURNED_EVENTS;
@@ -463,6 +464,7 @@ function createTaskRuntimeStore(rootDir, options = {}) {
       lastHash: nextEvents.at(-1).hash,
       eventCount: events.length,
     };
+    await onEvents?.(nextEvents.map(clone));
   }
 
   async function migrateAutonomousProjection() {
