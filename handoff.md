@@ -20,10 +20,10 @@
 
 ## v5.8 发布状态
 
-- 已生成并提交 `docs/sbom-v5.8.0.json` 与 `docs/release-provenance-v5.8.0.json`；核心提交为 `2c20643`。
-- 已构建并校验 `taiji-office-setup-5.8.0.exe`、Blockmap 和 `latest.yml`；安装包为 197,595,650 字节。
-- 剩余工作仅为推送 `main` 并创建 GitHub Release `v5.8.0`；发布前不覆盖用户数据目录。
-- 发布后在“设置 -> 诊断中心 -> 自治陪跑评测”启动真实客户端陪跑。
+- 已生成并提交 `docs/sbom-v5.8.0.json` 与 `docs/release-provenance-v5.8.0.json`；核心实现提交为 `2c20643`，发布提交为 `793799f3239843319643541c0fcfdbf58d489029`。
+- 已构建并校验 `taiji-office-setup-5.8.0.exe`、Blockmap 和 `latest.yml`；安装包为 197,595,650 字节，SHA-256 为 `92779099E56CA2DCCBC3B8EFE07D933EEBA464ED2C1288BED9C02AA2386DBEC4`。
+- 已推送 `main` 并发布 GitHub Release `v5.8.0`；安装包、Blockmap 和 `latest.yml` 已由发布脚本远端核验。发布过程未覆盖用户数据目录。
+- 后续在“设置 -> 诊断中心 -> 自治陪跑评测”启动真实客户端陪跑。
 
 ## 必须如实保留的限制
 
