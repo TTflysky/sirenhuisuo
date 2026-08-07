@@ -13,7 +13,7 @@
 
 ### 验证证据与下一步
 - 已通过 Skill 安装 E2E、相关 15 项单元测试、生产构建、执行记录契约与真实 Electron 界面回归。界面验证确认 5 个步骤可见、字号为 15px、长结果可滚动、放大详情适配窗口且无横向溢出。
-- 本轮发布正式 `v5.5.2` Release，包含 Windows 安装器、Blockmap 和 `latest.yml`。发布脚本必须核对远端分支、标签、资产大小和 SHA-256 后才可报告完成。
+- 已发布正式 [v5.5.2 Release](https://github.com/TTflysky/sirenhuisuo/releases/tag/v5.5.2)，包含 Windows 安装器、Blockmap 和 `latest.yml`。标签提交为 `b817026b7bfc7f83710766f365eeced61cce72de`；安装器为 `197580487` 字节，SHA-256 为 `6BACA78CF0B47DEC31DD22A66EB6CEA682AAB72996412690709D26755D8891C2`；远端资产大小和摘要均已通过发布脚本核对。
 
 ## V5.5.1 补丁发布：Skill 安装确定性闭环（2026-08-06）
 
