@@ -157,10 +157,8 @@ export function createRunAgentLoop(deps: AgentLoopDependencies) {
     ? turn.content
     : (turn.content ?? []).filter((part): part is ContentPart => part.type === 'text').map((part) => part.text).join('\n'));
   const latestUserText = userTexts.at(-1) ?? '';
-  const compiled = await resolveAgentTaskDecisionCompilation({
-    turns, tools, modelConfig, signal: getModelRequestSignal?.(), userTexts,
-    current: taskDecisionCompilation, compile: compileTaskDecision,
-  });
+  const compiled = await resolveAgentTaskDecisionCompilation({ turns, tools, modelConfig,
+    signal: getModelRequestSignal?.(), userTexts, current: taskDecisionCompilation, compile: compileTaskDecision });
   totalUsage.promptTokens += compiled.usage.promptTokens;
   totalUsage.completionTokens += compiled.usage.completionTokens;
   totalUsage.totalTokens += compiled.usage.totalTokens;
