@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   diagnosticsExport: (options) => ipcRenderer.invoke('diagnostics:export', options),
   autonomyEvaluationSummary: () => ipcRenderer.invoke('autonomy-evaluation:summary'),
   autonomyEvaluationStart: (input) => ipcRenderer.invoke('autonomy-evaluation:start', input),
+  autonomyEvaluationRunBaseline: () => ipcRenderer.invoke('autonomy-evaluation:run-baseline'),
   autonomyEvaluationComplete: (input) => ipcRenderer.invoke('autonomy-evaluation:complete', input),
   autonomyEvaluationExport: () => ipcRenderer.invoke('autonomy-evaluation:export'),
   taskExecutionSteer: (input) => ipcRenderer.invoke('task-execution:steer', input),

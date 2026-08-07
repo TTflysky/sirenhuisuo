@@ -143,6 +143,9 @@
 .autonomy-evaluation-panel > header strong { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; }
 .autonomy-evaluation-panel > header strong .anticon { color: var(--apple-accent); }
 .autonomy-evaluation-panel > header span { color: var(--text-muted); font-size: 9px; }
+.autonomy-live-status { display: inline-flex; align-items: center; gap: 5px; color: var(--text-secondary); font-size: 9px; line-height: 1.4; }
+.autonomy-live-status i { width: 6px; height: 6px; flex: 0 0 6px; border-radius: 50%; background: #1a9f63; animation: autonomy-capture-pulse 1.4s ease-in-out infinite; }
+@keyframes autonomy-capture-pulse { 50% { opacity: .35; } }
 .autonomy-evaluation-actions { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex: 0 0 auto; }
 .autonomy-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid var(--border-light); }
 .autonomy-metrics article { min-height: 58px; display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 9px 12px; border-right: 1px solid var(--border-light); border-bottom: 1px solid var(--border-light); }
@@ -154,6 +157,7 @@
 .autonomy-coverage > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
 .autonomy-coverage > div:first-child strong { font-size: 11px; }
 .autonomy-coverage > div:first-child span { color: var(--text-muted); font-size: 9px; }
+.autonomy-coverage-note { margin: -3px 0 9px; color: var(--text-muted); font-size: 9px; line-height: 1.45; }
 .autonomy-scenario-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--border-light); border-radius: 5px; overflow: hidden; }
 .autonomy-scenario-grid article { min-height: 34px; display: flex; align-items: center; gap: 6px; min-width: 0; padding: 6px 8px; border-right: 1px solid var(--border-light); border-bottom: 1px solid var(--border-light); }
 .autonomy-scenario-grid article:nth-child(3n) { border-right: 0; }

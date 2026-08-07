@@ -89,6 +89,30 @@ async function main() {
     assert.equal(afterRestart.latestSession.status, 'completed');
     assert.equal(afterRestart.coverage.total, 24);
 
+    let liveClock = 50_000;
+    const liveRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'taiji-v58-live-'));
+    const live = createAutonomyEvaluation(liveRoot, { now: () => liveClock });
+    const liveStarted = await live.start({ label: '真实陪跑边界', mode: 'live' });
+    liveClock += 100;
+    await live.capture({
+      taskRuns: [
+        { id: 'before-live-session', projectId: 'old-project', status: 'completed', updatedAt: liveStarted.session.startedAt - 1, evidence: [{ id: 'old-evidence' }] },
+        { id: 'during-live-session', projectId: 'new-project', status: 'completed', updatedAt: liveClock, evidence: [{ id: 'new-evidence' }], toolAttempts: [{}] },
+      ],
+    });
+    const liveSummary = await live.summary();
+    assert.equal(liveSummary.coverage.observed, 1, '真实陪跑不得采纳启动前的历史任务');
+    assert.equal(liveSummary.metrics.completionRate.denominator, 1, '真实陪跑指标只能使用本轮证据');
+    assert.equal(liveSummary.activeSession.lastCaptureAt, liveClock, '空闲页面之外的后台采集必须留下心跳时间');
+    const baselineRun = await live.complete(liveStarted.session.sessionId);
+    assert.equal(baselineRun.ok, true);
+    const automated = await live.runBaseline({ label: '一键 24 项验收' });
+    assert.equal(automated.ok, true);
+    assert.equal(automated.summary.selectedSession.mode, 'automated');
+    assert.equal(automated.summary.coverage.observed, 24, '内置自动验收必须覆盖全部标准场景');
+    assert.equal(automated.summary.coverage.passed, 24, '内置自动验收必须清晰完成全部场景');
+    await fs.rm(liveRoot, { recursive: true, force: true });
+
     const repoRoot = path.resolve(__dirname, '..');
     const [mainSource, preloadSource, uiSource, personaSource] = await Promise.all([
       fs.readFile(path.join(repoRoot, 'electron', 'main.cjs'), 'utf8'),
@@ -96,9 +120,9 @@ async function main() {
       fs.readFile(path.join(repoRoot, 'src', 'components', 'settings', 'DiagnosticsTab.tsx'), 'utf8'),
       fs.readFile(path.join(repoRoot, 'src', 'components', 'settings', 'AssistantSettingsModal.tsx'), 'utf8'),
     ]);
-    for (const marker of ['autonomy-evaluation:summary', 'autonomy-evaluation:start', 'autonomy-evaluation:complete', 'autonomy-evaluation:export']) assert(mainSource.includes(marker));
-    for (const marker of ['autonomyEvaluationSummary', 'autonomyEvaluationStart', 'autonomyEvaluationComplete', 'autonomyEvaluationExport']) assert(preloadSource.includes(marker));
-    for (const marker of ['自治陪跑评测', '开始陪跑', '场景覆盖', '无必要工具调用']) assert(uiSource.includes(marker));
+    for (const marker of ['autonomy-evaluation:summary', 'autonomy-evaluation:start', 'autonomy-evaluation:run-baseline', 'autonomy-evaluation:complete', 'autonomy-evaluation:export', 'AUTONOMY_CAPTURE_INTERVAL_MS', 'ensureAutonomyCaptureLoop']) assert(mainSource.includes(marker));
+    for (const marker of ['autonomyEvaluationSummary', 'autonomyEvaluationStart', 'autonomyEvaluationRunBaseline', 'autonomyEvaluationComplete', 'autonomyEvaluationExport']) assert(preloadSource.includes(marker));
+    for (const marker of ['自治陪跑评测', '开始真实陪跑', '一键验收 24 项', '自动采集运行中', 'formatAutonomyDuration']) assert(uiSource.includes(marker));
     assert(personaSource.includes("DEFAULT_PROMPT_VERSION = '29'"));
     assert(personaSource.includes('v5.8 真实自治评测与持续学习协议'));
 

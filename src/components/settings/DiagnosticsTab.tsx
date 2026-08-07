@@ -40,6 +40,19 @@ const formatAutonomyMetric = (metric?: AutonomyEvaluationMetric, inverse = false
   const value = typeof metric.percent === 'number' ? `${metric.percent}%` : '样本不足';
   return `${value} · ${metric.numerator ?? 0}/${metric.denominator}${inverse ? '' : ''}`;
 };
+const formatAutonomyDuration = (durationMs: number) => {
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000));
+  const seconds = totalSeconds % 60;
+  const minutes = Math.floor(totalSeconds / 60) % 60;
+  const hours = Math.floor(totalSeconds / 3600);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return hours ? `${pad(hours)}:${pad(minutes)}:${pad(seconds)}` : `${pad(minutes)}:${pad(seconds)}`;
+};
+const formatAutonomyAgo = (timestamp: number | undefined, now: number) => {
+  if (!timestamp) return '尚未采集';
+  const seconds = Math.max(0, Math.floor((now - timestamp) / 1000));
+  return seconds < 2 ? '刚刚' : `${seconds} 秒前`;
+};
 
 export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: TargetTab) => void }) {
   const [report, setReport] = useState<SystemDiagnosticReport>();
@@ -51,6 +64,7 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
   const [operationSummary, setOperationSummary] = useState<{ total: number; errors: number; recoverable: number; latest: OperationDiagnosticEntry[] }>();
   const [autonomySummary, setAutonomySummary] = useState<AutonomyEvaluationSummary>();
   const [autonomyBusy, setAutonomyBusy] = useState(false);
+  const [autonomyNow, setAutonomyNow] = useState(() => Date.now());
   const [exporting, setExporting] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>({ status: 'idle', message: '点击检查更新' });
 
@@ -83,7 +97,10 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
     try {
       const result = await window.electronAPI?.autonomyEvaluationSummary?.();
       if (!result?.ok) setError(result?.error || '读取陪跑评测失败');
-      else setAutonomySummary(result);
+      else {
+        setAutonomySummary(result);
+        setAutonomyNow(Date.now());
+      }
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setAutonomyBusy(false); }
   };
@@ -93,7 +110,10 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
       const result = await window.electronAPI?.autonomyEvaluationStart?.({ label: `V5.8 陪跑 ${new Date().toLocaleString('zh-CN')}`, targetMinutes: 480 });
       const summary = result?.summary ?? result;
       if (!summary?.ok) setError(summary?.error || '启动陪跑失败');
-      else setAutonomySummary(summary);
+      else {
+        setAutonomySummary(summary);
+        setAutonomyNow(Date.now());
+      }
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setAutonomyBusy(false); }
   };
@@ -103,7 +123,10 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
       const result = await window.electronAPI?.autonomyEvaluationComplete?.({ sessionId: autonomySummary?.activeSession?.sessionId });
       const summary = result?.summary ?? result;
       if (!summary?.ok) setError(summary?.error || '结束陪跑失败');
-      else setAutonomySummary(summary);
+      else {
+        setAutonomySummary(summary);
+        setAutonomyNow(Date.now());
+      }
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setAutonomyBusy(false); }
   };
@@ -112,6 +135,19 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
     try {
       const result = await window.electronAPI?.autonomyEvaluationExport?.();
       if (result && !result.ok) setError(result.error || '导出陪跑报告失败');
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
+    finally { setAutonomyBusy(false); }
+  };
+  const runAutonomyBaseline = async () => {
+    setAutonomyBusy(true);
+    try {
+      const result = await window.electronAPI?.autonomyEvaluationRunBaseline?.();
+      const summary = result?.summary ?? result;
+      if (!summary?.ok) setError(summary?.error || '内置自动验收失败');
+      else {
+        setAutonomySummary(summary);
+        setAutonomyNow(Date.now());
+      }
     } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)); }
     finally { setAutonomyBusy(false); }
   };
@@ -168,6 +204,31 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
     };
   }, []);
 
+  const activeAutonomySession = autonomySummary?.activeSession;
+  const selectedAutonomySession = activeAutonomySession ?? autonomySummary?.selectedSession ?? autonomySummary?.latestSession;
+  useEffect(() => {
+    if (!activeAutonomySession?.sessionId) return undefined;
+    let active = true;
+    const updateClock = () => setAutonomyNow(Date.now());
+    const poll = async () => {
+      try {
+        const result = await window.electronAPI?.autonomyEvaluationSummary?.();
+        if (active && result?.ok) {
+          setAutonomySummary(result);
+          updateClock();
+        }
+      } catch { /* The visible timer still proves the page is active; IPC errors are reported on manual refresh. */ }
+    };
+    updateClock();
+    const clockTimer = window.setInterval(updateClock, 1000);
+    const pollTimer = window.setInterval(() => { void poll(); }, 5000);
+    return () => {
+      active = false;
+      window.clearInterval(clockTimer);
+      window.clearInterval(pollTimer);
+    };
+  }, [activeAutonomySession?.sessionId]);
+
   return <div className="settings-content-page diagnostics-page">
     <header className="diagnostics-header">
       <div><h2>诊断中心</h2><span>一次检查模型、连接器、Skill、任务内核、记忆复盘、工作区和权限</span></div>
@@ -222,12 +283,17 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
     </section>}
     {autonomySummary && <section className="autonomy-evaluation-panel">
       <header>
-        <div><strong><ExperimentOutlined /> 自治陪跑评测</strong><span>{autonomySummary.activeSession ? `进行中 · 已运行 ${Math.max(0, Math.round((Date.now() - autonomySummary.activeSession.startedAt) / 60000))} 分钟` : autonomySummary.latestSession ? `最近一轮已结束 · ${autonomySummary.coverage?.observed ?? 0}/${autonomySummary.coverage?.total ?? 24} 场景已观察` : '尚未开始'}</span></div>
+        <div>
+          <strong><ExperimentOutlined /> 自治陪跑评测</strong>
+          <span>{activeAutonomySession ? `进行中 · ${formatAutonomyDuration(autonomyNow - activeAutonomySession.startedAt)} · 最近采集 ${formatAutonomyAgo(activeAutonomySession.lastCaptureAt ?? activeAutonomySession.updatedAt, autonomyNow)}` : selectedAutonomySession?.mode === 'automated' ? `内置自动验收已完成 · ${autonomySummary.coverage?.observed ?? 0}/${autonomySummary.coverage?.total ?? 24} 场景已覆盖` : autonomySummary.latestSession ? `最近一轮已结束 · ${autonomySummary.coverage?.observed ?? 0}/${autonomySummary.coverage?.total ?? 24} 场景已观察` : '尚未开始'}</span>
+          {activeAutonomySession && <small className="autonomy-live-status"><i /> 自动采集运行中：每 5 秒读取本机任务、记忆和 Skill 账本，不需要创建专门测试任务。</small>}
+        </div>
         <div className="autonomy-evaluation-actions">
           <Button size="small" icon={<ReloadOutlined />} onClick={() => void refreshAutonomy()} loading={autonomyBusy}>刷新</Button>
-          {autonomySummary.activeSession
-            ? <Button size="small" icon={<StopOutlined />} onClick={() => void completeAutonomy()} loading={autonomyBusy}>完成本轮</Button>
-            : <Button size="small" type="primary" icon={<PlayCircleOutlined />} onClick={() => void startAutonomy()} loading={autonomyBusy}>开始陪跑</Button>}
+          <Button size="small" icon={<ExperimentOutlined />} onClick={() => void runAutonomyBaseline()} loading={autonomyBusy} disabled={Boolean(activeAutonomySession)}>一键验收 24 项</Button>
+          {activeAutonomySession
+            ? <Button size="small" icon={<StopOutlined />} onClick={() => void completeAutonomy()} loading={autonomyBusy}>结束真实陪跑</Button>
+            : <Button size="small" type="primary" icon={<PlayCircleOutlined />} onClick={() => void startAutonomy()} loading={autonomyBusy}>开始真实陪跑</Button>}
           <Button size="small" icon={<DownloadOutlined />} onClick={() => void exportAutonomy()} loading={autonomyBusy}>导出</Button>
         </div>
       </header>
@@ -236,10 +302,12 @@ export default function DiagnosticsTab({ onNavigate }: { onNavigate: (tab: Targe
       </div>
       <div className="autonomy-coverage">
         <div><strong>场景覆盖</strong><span>{autonomySummary.coverage?.observed ?? 0}/{autonomySummary.coverage?.total ?? 24} · 通过 {autonomySummary.coverage?.passed ?? 0} · 失败 {autonomySummary.coverage?.failed ?? 0} · 阻塞 {autonomySummary.coverage?.blocked ?? 0}</span></div>
+        <p className="autonomy-coverage-note">{activeAutonomySession ? '待观察表示本轮还没有发生对应的真实行为，不会用历史任务或模拟结果填充。' : selectedAutonomySession?.mode === 'automated' ? '这一轮是隔离的内置自动基准，用于一次性验证 24 项链路；它不替代真实陪跑成绩。' : '选择“开始真实陪跑”后，系统会持续采集本轮之后的新证据。'}</p>
         <div className="autonomy-scenario-grid">
           {autonomySummary.coverage?.scenarios.map((scenario) => {
             const state = autonomyStatus(scenario.latest?.status);
-            return <article key={scenario.id} title={scenario.title}><Tag color={state.color}>{state.label}</Tag><span>{scenario.title}</span></article>;
+            const note = scenario.latest?.note ? `：${scenario.latest.note}` : '：等待本轮对应的真实行为';
+            return <article key={scenario.id} title={`${scenario.title} · ${state.label}${note}`}><Tag color={state.color}>{state.label}</Tag><span>{scenario.title}</span></article>;
           })}
         </div>
       </div>

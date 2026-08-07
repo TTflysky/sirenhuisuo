@@ -116,7 +116,13 @@ const codingRuntime = createCodingRuntime({ workspaceRoot: WORKSPACE, worktreeMa
 const taskService = createTaskService(taskRuntimeStore, { codingRuntime });
 const memoryManager = createMemoryManager(path.join(app.getPath('userData'), 'taiji-memory'));
 const autonomyEvaluation = createAutonomyEvaluation(path.join(app.getPath('userData'), 'autonomy-evaluation'));
+const AUTONOMY_CAPTURE_INTERVAL_MS = 5000;
+let autonomyCaptureTimer;
+let autonomyCaptureInFlight = false;
 async function captureAutonomyEvaluationEvidence() {
+  if (autonomyCaptureInFlight) return { ok: true, captured: 0, skipped: true };
+  autonomyCaptureInFlight = true;
+  try {
   const [tasks, memory, skills] = await Promise.all([
     taskRuntimeStore.read(),
     memoryManager.list({ includeRetrievals: true }),
@@ -127,6 +133,29 @@ async function captureAutonomyEvaluationEvidence() {
     memoryRetrievals: memory?.retrievals || [],
     skillRollouts: skills?.rollouts || [],
   });
+  } finally {
+    autonomyCaptureInFlight = false;
+  }
+}
+function stopAutonomyCaptureLoop() {
+  if (!autonomyCaptureTimer) return;
+  clearInterval(autonomyCaptureTimer);
+  autonomyCaptureTimer = undefined;
+}
+async function ensureAutonomyCaptureLoop() {
+  const summary = await autonomyEvaluation.summary();
+  if (!summary.activeSession) {
+    stopAutonomyCaptureLoop();
+    return summary;
+  }
+  if (!autonomyCaptureTimer) {
+    autonomyCaptureTimer = setInterval(() => {
+      void captureAutonomyEvaluationEvidence().catch((error) => operationDiagnostics.record({
+        scope: 'autonomy-evaluation', operation: 'capture-live-evidence', message: error?.message || String(error), error,
+      }));
+    }, AUTONOMY_CAPTURE_INTERVAL_MS);
+  }
+  return summary;
 }
 function registerAutonomyEvaluationIpc(reportIpcResult) {
   ipcMain.handle('autonomy-evaluation:summary', async () => {
@@ -142,6 +171,7 @@ function registerAutonomyEvaluationIpc(reportIpcResult) {
     try {
       const result = await autonomyEvaluation.start(input || {});
       await captureAutonomyEvaluationEvidence();
+      await ensureAutonomyCaptureLoop();
       return { ...result, summary: await autonomyEvaluation.summary() };
     } catch (error) {
       return reportIpcResult('autonomy-evaluation-start', input, { ok: false, error: error?.message || String(error) });
@@ -149,11 +179,20 @@ function registerAutonomyEvaluationIpc(reportIpcResult) {
   });
   ipcMain.handle('autonomy-evaluation:complete', async (_event, input) => {
     try {
+      stopAutonomyCaptureLoop();
       await captureAutonomyEvaluationEvidence();
       const result = await autonomyEvaluation.complete(input?.sessionId);
       return { ...result, summary: await autonomyEvaluation.summary() };
     } catch (error) {
       return reportIpcResult('autonomy-evaluation-complete', input, { ok: false, error: error?.message || String(error) });
+    }
+  });
+  ipcMain.handle('autonomy-evaluation:run-baseline', async () => {
+    try {
+      const result = await autonomyEvaluation.runBaseline({ label: `内置自动验收 ${new Date().toLocaleString('zh-CN')}`, operator: 'system' });
+      return { ...result, summary: await autonomyEvaluation.summary() };
+    } catch (error) {
+      return reportIpcResult('autonomy-evaluation-run-baseline', undefined, { ok: false, error: error?.message || String(error) });
     }
   });
   ipcMain.handle('autonomy-evaluation:export', async () => {
@@ -1580,6 +1619,8 @@ if (!hasSingleInstanceLock) {
   app.whenReady().then(async () => {
     try { await taskWorker.start(); }
     catch (error) { log.error('[taskWorker] startup failed:', String(error?.message ?? error)); }
+    try { await ensureAutonomyCaptureLoop(); }
+    catch (error) { log.error('[autonomyEvaluation] live capture resume failed:', String(error?.message ?? error)); }
     createTray();
     createWindow();
     app.on('activate', () => {
@@ -1595,6 +1636,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  stopAutonomyCaptureLoop();
   nativeExecutionAdapter.stopAll();
   taskWorker.stop();
 });

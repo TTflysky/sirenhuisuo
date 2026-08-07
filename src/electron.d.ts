@@ -452,8 +452,9 @@ export interface AutonomyEvaluationSummary {
   ok: boolean;
   version?: string;
   error?: string;
-  activeSession?: { sessionId: string; label: string; mode: 'live' | 'automated'; status: string; startedAt: number; targetMinutes: number };
-  latestSession?: { sessionId: string; label: string; mode: 'live' | 'automated'; status: string; startedAt: number; completedAt?: number; targetMinutes: number };
+  activeSession?: { sessionId: string; label: string; mode: 'live' | 'automated'; status: string; startedAt: number; targetMinutes: number; updatedAt?: number; lastCaptureAt?: number; lastObservationAt?: number };
+  latestSession?: { sessionId: string; label: string; mode: 'live' | 'automated'; status: string; startedAt: number; completedAt?: number; targetMinutes: number; updatedAt?: number; lastCaptureAt?: number; lastObservationAt?: number };
+  selectedSession?: { sessionId: string; label: string; mode: 'live' | 'automated'; status: string; startedAt: number; completedAt?: number; targetMinutes: number; updatedAt?: number; lastCaptureAt?: number; lastObservationAt?: number };
   coverage?: { total: number; observed: number; passed: number; failed: number; blocked: number; percent: number; scenarios: Array<{ id: string; category: string; title: string; observed: number; passed: number; failed: number; blocked: number; latest?: AutonomyEvaluationObservation }> };
   metrics?: Record<string, AutonomyEvaluationMetric>;
   latestObservations?: AutonomyEvaluationObservation[];
@@ -562,6 +563,7 @@ declare global {
     diagnosticsExport: (options?: { taskId?: string; teamId?: string }) => Promise<{ ok: boolean; canceled?: boolean; path?: string; count?: number; error?: string }>;
     autonomyEvaluationSummary: () => Promise<AutonomyEvaluationSummary>;
     autonomyEvaluationStart: (input?: { label?: string; mode?: 'live' | 'automated'; operator?: string; targetMinutes?: number }) => Promise<AutonomyEvaluationSummary & { reused?: boolean; session?: Record<string, unknown>; summary?: AutonomyEvaluationSummary }>;
+    autonomyEvaluationRunBaseline: () => Promise<AutonomyEvaluationSummary & { session?: Record<string, unknown>; summary?: AutonomyEvaluationSummary }>;
     autonomyEvaluationComplete: (input?: { sessionId?: string }) => Promise<AutonomyEvaluationSummary & { session?: Record<string, unknown>; summary?: AutonomyEvaluationSummary }>;
     autonomyEvaluationExport: () => Promise<{ ok: boolean; canceled?: boolean; path?: string; count?: number; error?: string }>;
     taskExecutionSteer: (input: { taskId: string; message: string }) => Promise<NativeExecutionResult>;
