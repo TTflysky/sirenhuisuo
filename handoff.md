@@ -17,9 +17,10 @@
 ### Verification and release follow-up
 - Passed: 54 Vitest files / 184 tests, `verify:agent-kernel`, `verify:v317`, `verify:v2-core-gate`, production build, and lint.
 - Expected user test after installation: submit `npx skills add mattpocock/skills安装这套skill然后把名称发给我`. The task must target `https://github.com/mattpocock/skills`, must not reuse an earlier repository or workspace, and any true installer error must be reported as an installation issue rather than an AI-model connection problem.
-- Local release commits are `9b709be` (Skill routing) and `a4f14ba` (release verification). They are rebased on GitHub's latest v5.5.2 history and the local `main` is ahead of `origin/main`.
-- The full release workflow passed all release gates and packaged `release/taiji-office-setup-5.5.3.exe` (latest build: 197,580,128 bytes). Publishing is currently blocked only by network: on 2026-08-07, GitHub HTTPS `443` failed once with a reset and twice with a direct-connect timeout; WinHTTP is configured for direct access with no proxy.
-- Resume: restore a working GitHub route, run `git push origin main`, then run `powershell -ExecutionPolicy Bypass -File scripts/publish-github-release.ps1 -SkipTests -SkipBuild` to upload and verify the existing installer, blockmap, and `latest.yml`. Rebuild instead of skipping packaging if any application source changes before release.
+- Local release commits are `9b709be` (Skill routing) and `a4f14ba` (release verification), rebased on the v5.5.2 history before release.
+- Published and verified on 2026-08-07: `https://github.com/TTflysky/sirenhuisuo/releases/tag/v5.5.3`. Release tag and source commit are `f89c856731d94524e79f591f26e143c8c01d0873`.
+- Verified release assets: `taiji-office-setup-5.5.3.exe`, its `.blockmap`, and `latest.yml`. Installer size is 197,580,128 bytes and SHA-256 is `585135CEBF8D473C970F2091EE8EF06DED5BCACAA7684EE091AF3C458934821B`.
+- The initial network reset/timeout was recovered after the proxy route was restored. Future release recovery may use `-SkipTests -SkipBuild` only when the same committed source and already verified package are unchanged.
 
 ## Skill command boundary and truthful failure state (2026-08-07)
 
