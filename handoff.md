@@ -1,11 +1,11 @@
-# v5.10.1 内核改造发布补记（2026-08-08）
+﻿# v5.10.2 内核改造发布补记（2026-08-08）
 
 ## 本轮补记
 
 - 当前内核改造已提交到 `52c7c7d`（`refactor: split task service helpers for boundaries`），并推送到 `origin/main`。
 - 为通过模块边界门禁，`electron/taskService.cjs`、`electron/taskServiceContextQueries.cjs` 和 `electron/taskServiceEvidenceCommands.cjs` 的新增归一化/投影/证据记账逻辑已拆到独立辅助模块；最终 `npm.cmd run verify:v510`、`npm.cmd run lint`、`npm.cmd run verify:module-boundaries` 均通过。
-- GitHub Release `v5.10.1` 已确认存在，并补齐/更新三个资产：`taiji-office-setup-5.10.1.exe`、`.blockmap`、`latest.yml`；发布地址：<https://github.com/TTflysky/sirenhuisuo/releases/tag/v5.10.1>。
-- 这轮发布后，下一轮可以直接基于 `v5.10.1` 继续内核开发，不需要重复追查发布资产或边界门禁问题。
+- GitHub Release `v5.10.2` 已确认存在，并补齐/更新三个资产：`taiji-office-setup-5.10.2.exe`、`.blockmap`、`latest.yml`；发布地址：<https://github.com/TTflysky/sirenhuisuo/releases/tag/v5.10.2>。
+- 这轮发布后，下一轮可以直接基于 `v5.10.2` 继续内核开发，不需要重复追查发布资产或边界门禁问题。
 
 ---
 
@@ -1372,7 +1372,7 @@ V5 的目标是把太极继续收拢为“目标驱动的自主智能体协作�
 - 发布标签：`v5.10.1`
 - GitHub Release：<https://github.com/TTflysky/sirenhuisuo/releases/tag/v5.10.1>
 - 发布提交：`da396115c282eecaaf46ca2bd0da9b99e1d30b00`
-- 安装包：`release/taiji-office-setup-5.10.1.exe`
+- 安装包：`release/taiji-office-setup-5.10.2.exe`
 - 安装包 SHA-256：`17630FB9046F589449D3933305E51D8A9FD9A0A546C65706FADC2B72F2CBF1DD`
 
 ## 已完成验证
@@ -1451,3 +1451,11 @@ V5 的目标是把太极继续收拢为“目标驱动的自主智能体协作�
 
 - 本轮按用户要求执行了最小门禁和聚焦测试，没有重跑完整 `verify:v510`、生产构建或发布门禁。
 - 当前改动尚未提交、尚未发布；如果准备制作新版本，应先跑完整 `verify:v510` 和生产构建，再决定版本号。
+# v5.10.2 内核改造发布补记（2026-08-08）
+## 本轮结论
+
+- 当前内核改造已经切换到 v5.10.2 发布线，版本号、安装包命名和交接资料正在同步。
+- 本轮继续沿用已验证的主题可读性修复方向，确保深色与风格化主题下的文字保持可读。
+- 发布完成后会把 GitHub Release、安装包和验证结果补写回这里，作为下一轮的起点。
+
+
