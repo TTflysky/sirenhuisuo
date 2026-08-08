@@ -1,4 +1,30 @@
-# 当前 v5.10.0 交付物驱动动态团队内核交接（2026-08-08）
+# 当前 v5.10.1 风格化主题聊天可读性修复交接（2026-08-08）
+
+## 本轮完成
+
+- 用户在深色/风格化配色下打开新的团队聊天窗口时，运行观察 Demo 壳仍强制使用固定浅色纸张和白色卡片，但文字继续继承当前深色主题的浅色前景，导致成员名称、恢复提示、消息正文和阶段内容几乎不可见。
+- `src/styles/runtime-observer.css` 的运行观察颜色令牌已改为映射全局语义主题变量：正文、页面、表面、边框和弱文字分别读取 `--text`、`--bg`、`--surface`、`--border` 与 `--text-muted`；聊天壳同时显式继承正文颜色。
+- 人类消息气泡补齐与其背景配套的前景色；删除遗留的孤立 `.runtime-demo-shell` 选择器，恢复运行观察基础样式的正常作用域。
+- `src/styles/collaboration.css` 中使用运行观察私有变量的输入区样式已限定到 `.runtime-demo-shell`，普通聊天不再读取未定义的运行观察变量。
+- `scripts/verify-visual-system.mjs` 新增主题契约回归，禁止运行观察壳重新写死浅色画布，并验证输入区作用域和消息前景配对。
+
+## 验证证据
+
+- `npm.cmd run verify:visual-system`：通过。
+- `npm.cmd run verify:runtime-observer-ui`：通过。
+- `npm.cmd run lint`：通过。
+- `npm.cmd run build`：通过；沙箱内首次因 Vite 子进程 `spawn EPERM` 被阻止，在正常权限环境重跑后完整构建成功。
+- 尝试通过 `scripts/run-electron-e2e.cjs scripts/verify-team-window-layout.mjs` 启动隔离真实窗口，但 Electron 43 在渲染器沙箱预加载阶段报 `binding.startupData` 为空，脚本未进入主题/布局断言；该失败属于现有 E2E 启动环境，不能作为本次界面验收证据。
+- 本轮没有改版本号、提交、推送或发布 GitHub；需要在真实客户端切换原版深色、波普漫画和酸性暗黑主题复核后，再决定是否制作修复版本。
+
+## 下一步
+
+1. 在真实 Electron 客户端复核截图中的团队聊天，确认成员栏、恢复横幅、消息正文、阶段卡片和输入区均随主题保持可读。
+2. 如准备发布，先确定补丁版本号，再执行完整发布门禁、更新 SBOM/来源证明并发布 GitHub Release。
+
+---
+
+# v5.10.0 交付物驱动动态团队内核交接（2026-08-08）
 
 ## v5.10.0 本轮完成
 

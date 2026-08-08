@@ -1,12 +1,13 @@
 /* Runtime observer parity with the approved demo. The palette is scoped to
    the team surface so the rest of the application keeps its theme contract. */
 .runtime-demo-shell {
-  --runtime-ink: #181818;
-  --runtime-paper: #f4f4f1;
-  --runtime-surface: #ffffff;
-  --runtime-line: #c9c9c3;
-  --runtime-muted: #6a6a65;
+  --runtime-ink: var(--text);
+  --runtime-paper: var(--bg);
+  --runtime-surface: var(--surface);
+  --runtime-line: var(--border);
+  --runtime-muted: var(--text-muted);
   background: var(--runtime-paper);
+  color: var(--runtime-ink);
 }
 .runtime-demo-topbar {
   min-height: 56px;
@@ -80,8 +81,7 @@
 }
 .runtime-demo-shell .chat-messages { padding: 12px 14px; }
 .runtime-demo-shell .msg-bubble { border: 1px solid var(--runtime-line); border-radius: 8px; background: var(--runtime-surface); }
-.runtime-demo-shell .msg.human .msg-bubble { border-color: var(--runtime-ink); background: var(--runtime-ink); }
-.runtime-demo-shell
+.runtime-demo-shell .msg.human .msg-bubble { border-color: var(--runtime-ink); background: var(--runtime-ink); color: var(--runtime-surface); }
 
 /* ===== 团队运行观察窗：复用已验收 Demo 的信息层级 ===== */
 .runtime-observer {

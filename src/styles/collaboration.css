@@ -271,7 +271,7 @@
   flex-shrink: 0;
 }
 
-.chat-composer { margin: 0 10px 10px; border: 1px solid var(--runtime-ink); border-radius: 8px; background: var(--runtime-surface); }
+.runtime-demo-shell .chat-composer { margin: 0 10px 10px; border: 1px solid var(--runtime-ink); border-radius: 8px; background: var(--runtime-surface); }
 .runtime-demo-shell .runtime-observer { border-left: 1px solid var(--runtime-line); background: var(--runtime-surface); }
 .runtime-demo-shell .runtime-observer-head { border-bottom-color: var(--runtime-line); background: var(--runtime-surface); }
 .runtime-demo-shell .runtime-observer-tabs { border-bottom-color: var(--runtime-line); background: var(--runtime-paper); }

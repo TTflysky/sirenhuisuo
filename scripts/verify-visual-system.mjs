@@ -2,10 +2,12 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 const root = new URL('../', import.meta.url);
-const [catalog, css, workspaceCss, app, sound, workstation] = await Promise.all([
+const [catalog, css, workspaceCss, runtimeCss, collaborationCss, app, sound, workstation] = await Promise.all([
   readFile(new URL('src/data/visualSystem.ts', root), 'utf8'),
   readFile(new URL('src/styles/visual-system.css', root), 'utf8'),
   readFile(new URL('src/styles/workspace.css', root), 'utf8'),
+  readFile(new URL('src/styles/runtime-observer.css', root), 'utf8'),
+  readFile(new URL('src/styles/collaboration.css', root), 'utf8'),
   readFile(new URL('src/App.tsx', root), 'utf8'),
   readFile(new URL('src/data/interactionSound.ts', root), 'utf8'),
   readFile(new URL('src/components/office/Workstation.tsx', root), 'utf8'),
@@ -39,6 +41,11 @@ assert.match(css, /data-visual-style='pop'\] \.team-hall\s*\{[^}]*background-ima
 assert.match(css, /data-visual-style='pop'\] \.team-hall-card\s*\{[^}]*border:\s*var\(--visual-primary-border\) solid var\(--pop-ink\);[^}]*box-shadow:\s*6px 6px 0 var\(--pop-ink\)/su);
 assert.match(css, /data-visual-style='pop'\] \.team-hall-members\s*\{[^}]*border:\s*var\(--visual-secondary-border\) solid var\(--pop-ink\)/su);
 assert.match(css, /data-visual-style='acid'\] \.team-hall-card\s*\{[^}]*background:\s*#111411/su);
+assert.match(runtimeCss, /\.runtime-demo-shell\s*\{[^}]*--runtime-ink:\s*var\(--text\);[^}]*--runtime-paper:\s*var\(--bg\);[^}]*--runtime-surface:\s*var\(--surface\);[^}]*--runtime-line:\s*var\(--border\);[^}]*--runtime-muted:\s*var\(--text-muted\);[^}]*color:\s*var\(--runtime-ink\);/su);
+assert.doesNotMatch(runtimeCss, /\.runtime-demo-shell\s*\{[^}]*(?:--runtime-paper:\s*#f4f4f1|--runtime-surface:\s*#fff(?:fff)?|--runtime-ink:\s*#181818)/su);
+assert.match(runtimeCss, /\.runtime-demo-shell \.msg\.human \.msg-bubble\s*\{[^}]*color:\s*var\(--runtime-surface\);/su);
+assert.match(collaborationCss, /\.runtime-demo-shell \.chat-composer\s*\{[^}]*background:\s*var\(--runtime-surface\);/su);
+assert.doesNotMatch(collaborationCss, /(?:^|\n)\.chat-composer\s*\{[^}]*var\(--runtime-(?:ink|surface)\)/su);
 assert.match(app, /visual-preferences-changed/u);
 assert.match(app, /InteractionSoundControl/u);
 assert.match(sound, /volume: 80/u);
