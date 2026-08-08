@@ -1,3 +1,5 @@
+const { projectTaskContext } = require('./taskServiceContextProjections.cjs');
+
 function clone(value) {
   return value === undefined ? undefined : JSON.parse(JSON.stringify(value));
 }
@@ -12,22 +14,6 @@ function createTaskServiceContextQueries(store) {
   async function context(taskId, options = {}) {
     const { task } = await readTask(store, taskId);
     const limit = Math.max(1, Math.min(50, Number(options.limit) || 20));
-    const verifiedStepEvidence = (task.steps || []).flatMap((step) => (step.evidence || [])
-      .filter((item) => item.verified === true)
-      .map((item) => ({ ...clone(item), stepId: step.id })));
-    const verifiedVerifications = (task.verifications || [])
-      .filter((item) => item.status === 'passed')
-      .map((item) => ({ ...clone(item), evidenceType: 'verification' }));
-    const verifiedEvidence = [...verifiedStepEvidence, ...verifiedVerifications]
-      .filter((item, index, all) => {
-        const key = item.id || item.verificationId || item.artifactId || `${item.stepId || 'task'}:${item.summary || item.label || index}`;
-        return all.findIndex((candidate, candidateIndex) => {
-          const candidateKey = candidate.id || candidate.verificationId || candidate.artifactId
-            || `${candidate.stepId || 'task'}:${candidate.summary || candidate.label || candidateIndex}`;
-          return candidateKey === key;
-        }) === index;
-      });
-    const contractedSteps = (task.steps || []).filter((step) => step.compensationOnly !== true && step.taskContract);
     return {
       ok: true,
       taskId,
@@ -41,23 +27,7 @@ function createTaskServiceContextQueries(store) {
       references: (task.references || []).slice(-limit).map(clone),
       completedSteps: (task.steps || []).filter((step) => step.status === 'completed').slice(-limit)
         .map((step) => ({ id: step.id, title: step.title, output: clone(step.output) })),
-      stepProjections: (task.steps || []).slice(-limit)
-        .map((step) => ({
-          id: step.id,
-          title: step.title,
-          status: step.status,
-          output: clone(step.output),
-          taskContract: clone(step.taskContract),
-          evidence: clone(step.evidence || []),
-          adaptiveEvidenceIds: clone(task.adaptivePlanGraph?.nodes?.find((node) => node.id === step.id)?.evidenceIds || []),
-        })),
-      verifiedEvidence: verifiedEvidence.slice(-limit),
-      contractCoverage: {
-        total: (task.steps || []).filter((step) => step.compensationOnly !== true).length,
-        contracted: contractedSteps.length,
-        complete: contractedSteps.length === (task.steps || []).filter((step) => step.compensationOnly !== true).length,
-      },
-      recoveryEvidence: clone(task.recoveryContext?.completedEvidence || []),
+      ...projectTaskContext(task, limit),
       unresolvedIssues: [task.lastError, ...(task.steps || []).filter((step) => step.status === 'failed').map((step) => step.lastError)]
         .filter(Boolean)
         .slice(-limit),
