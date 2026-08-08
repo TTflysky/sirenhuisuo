@@ -36,21 +36,7 @@ function createTaskServiceTeamExecution({
           taskDecision: sourceRun.contract?.decision,
           deliverableType: sourceRun.contract?.deliverableType,
           memberSnapshot: sourceRun.memberSnapshot,
-          steps: (sourceRun.steps || []).map((step) => ({
-            ...step,
-            id: step.id,
-            employeeId: step.employeeId,
-            title: step.title,
-            assignment: step.assignment,
-            dependsOnStepIds: step.dependsOnStepIds,
-            acceptanceCriteria: step.acceptanceCriteria,
-            requiredCapabilities: step.requiredCapabilities,
-            expectedEvidence: step.expectedEvidence,
-            outputPath: step.outputPath,
-            maxRetries: step.maxRetries,
-            taskContract: step.taskContract,
-            deliverableType: step.deliverableType,
-          })),
+          steps: (sourceRun.steps || []).map((step) => ({ ...step })),
           idempotencyKey: `team-root:${rootTaskId}`,
         });
         snapshot = await store.read({ taskId: rootTaskId });

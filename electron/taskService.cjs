@@ -8,6 +8,7 @@ const { createTaskServiceApprovalCommands } = require('./taskServiceApprovalComm
 const { createTaskServiceLifecycleCommands } = require('./taskServiceLifecycleCommands.cjs');
 const { createTaskServiceRecoveryCommands } = require('./taskServiceRecoveryCommands.cjs');
 const { createTaskServiceTeamExecution } = require('./taskServiceTeamExecution.cjs');
+const { normalizeTaskContract } = require('./taskServiceContracts.cjs');
 
 const TASK_SERVICE_VERSION = 5;
 const TASK_TYPES = new Set(['assistant', 'dm', 'team', 'child', 'coding']);
@@ -55,29 +56,6 @@ function inferLegacyDeliverableType(input = {}, parent = {}) {
   if (/(?:\binstall\b|\bdeploy\b|\bpublish\b|\bexecute\b|\brun\b|安装|部署|发布|执行|运行|上传|下载)/iu.test(source)) return 'operation';
   if (/(?:\bdesign\b|\bplan\b|\banaly[sz]e\b|\breview\b|\bdecision\b|\bux\b|方案|设计|分析|审查|评估|调研|规划)/iu.test(source)) return 'decision';
   return normalizeDeliverableType(parent.deliverableType || parent.contract?.deliverableType || parent.taskDecision?.deliverableType) || 'answer';
-}
-
-function normalizeTaskContract(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const output = value.output && typeof value.output === 'object' && !Array.isArray(value.output) ? value.output : {};
-  const budget = value.budget && typeof value.budget === 'object' && !Array.isArray(value.budget) ? value.budget : {};
-  return {
-    contractVersion: Math.max(1, Number(value.contractVersion) || 1),
-    inputRefs: list(value.inputRefs, []),
-    output: {
-      type: text(output.type, 80) || 'answer',
-      path: text(output.path, 500) || undefined,
-      description: text(output.description, 1000),
-    },
-    completionConditions: list(value.completionConditions, []),
-    verification: list(value.verification, []),
-    budget: {
-      maxModelRounds: Math.max(1, Number(budget.maxModelRounds) || 8),
-      maxToolCalls: Math.max(1, Number(budget.maxToolCalls) || 24),
-      maxReworkAttempts: Math.max(0, Number(budget.maxReworkAttempts) || 0),
-    },
-    escalationConditions: list(value.escalationConditions, []),
-  };
 }
 
 function normalizeStep(input, index) {

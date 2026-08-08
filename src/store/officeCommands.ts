@@ -3,12 +3,12 @@ import { ROLE_SCARF } from '../types';
 import { findFreeStation } from '../data/officeStations';
 import { expertToEmployee, findExpertCatalogEntry, employeePlanningPool } from '../data/expertCatalog';
 import { matchProjectMembers } from '../engine/taskMatcher';
-import { buildProfessionalProjectBrief } from '../engine/expertOrchestration';
+import { buildProjectDraft, type ProjectDraftInput } from '../engine/projectDraft';
 import { prepareProjectExecution } from '../engine/teamControl';
 import { syncNativeTaskRoster } from '../data/taskExecutionBridge';
 import * as client from '../data/hermesClient';
 import type { AppStateAction } from './appStateReducer';
-import { appendProjectEvent, conversationProjectId, initializeProjectContext, projectDocumentPath, projectWorkspaceId } from '../utils/projectContext';
+import { appendProjectEvent, initializeProjectContext } from '../utils/projectContext';
 import { ensureActiveChatSession } from '../data/chatSessions';
 interface OfficeCommandDependencies {
   getState: () => AppState;
@@ -284,49 +284,11 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
     void appendProjectEvent(project.id, { type: 'proposal_superseded', projectId, previousProposalId: project.proposalId, proposalId: proposal.proposalId, proposalRevision: proposal.proposalRevision, reason: '老板修订了团队成员' });
     return members;
   };
-  const createProjectDraft = (input: { title: string; request: string; conversationId?: string; steps?: string[]; expectedOutputs?: string[]; requiredCapabilities?: string[]; decisionReason?: string; deliverables?: Project['deliverables']; acceptanceCriteria?: string[]; constraints?: string[] }) => {
-    const now = Date.now();
-    const latestEmployees = employeePlanningPool(client.fetchInitial().employees);
-    const requiredCapabilities = [...new Set([
-      ...(input.requiredCapabilities ?? []),
-      ...(input.deliverables ?? []).filter((deliverable) => deliverable.required !== false).flatMap((deliverable) => deliverable.requiredCapabilities ?? []),
-    ].filter(Boolean))];
-    const selectionRequest = [input.request, ...requiredCapabilities].filter(Boolean).join('\n所需能力：');
-    const members = matchProjectMembers(latestEmployees, selectionRequest);
-    const proposalId = newProposalId();
-    const project: Project = {
-      id: `project-${now}-${Math.random().toString(36).slice(2, 7)}`,
-      title: input.title.trim() || '未命名项目',
-      request: input.request.trim(),
-      conversationId: input.conversationId,
-      steps: input.steps?.filter(Boolean) ?? [],
-      expectedOutputs: input.expectedOutputs?.filter(Boolean) ?? [],
-      deliverables: input.deliverables,
-      acceptanceCriteria: input.acceptanceCriteria?.filter(Boolean),
-      constraints: input.constraints?.filter(Boolean),
-      members,
-      brief: buildProfessionalProjectBrief({
-        request: input.request,
-        members,
-        deliverables: input.deliverables,
-        expectedOutputs: input.expectedOutputs,
-        acceptanceCriteria: input.acceptanceCriteria,
-        requiredCapabilities,
-      }),
-      requiredCapabilities,
-      decisionReason: input.decisionReason?.trim(),
-      proposalId,
-      proposalRevision: 1,
-      proposalStatus: 'pending',
-      proposalHistory: [proposalSnapshot(proposalId, 1, 'pending', members, '初始需求生成团队提案')],
-      conversationProjectId: input.conversationId ? conversationProjectId(input.conversationId) : undefined,
-      status: 'awaiting_approval', rosterRevision: 1, createdAt: now, updatedAt: now,
-    };
-    project.workspaceId = projectWorkspaceId(project.id);
-    project.documentPath = projectDocumentPath(project.id);
+  const createProjectDraft = (input: ProjectDraftInput) => {
+    const project = buildProjectDraft(input, employeePlanningPool(client.fetchInitial().employees));
     dispatch({ type: 'CREATE_PROJECT', project });
     void initializeProjectContext(project);
-    void appendProjectEvent(project.id, { type: 'project_created', projectId: project.id, conversationId: project.conversationId, proposalId, proposalRevision: 1, request: project.request });
+    void appendProjectEvent(project.id, { type: 'project_created', projectId: project.id, conversationId: project.conversationId, proposalId: project.proposalId, proposalRevision: 1, request: project.request });
   };
   const approveProject = (projectId: string, override?: { memberIds?: string[]; requiredCapabilities?: string[]; decisionReason?: string; proposalRevision?: number }): ProjectMember[] => {
     const project = getState().projects.find((item) => item.id === projectId);
