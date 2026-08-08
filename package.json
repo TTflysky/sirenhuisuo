@@ -87,6 +87,7 @@
     "verify:runtime-observer-ui": "node scripts/verify-runtime-observer-ui.cjs",
     "verify:v59": "npm.cmd run verify:v59-runtime-telemetry && npm.cmd run verify:v58 && npm.cmd run lint && npm.cmd run build",
     "verify:v510-deliverable-kernel": "node scripts/verify-v510-deliverable-team-kernel.mjs",
+    "verify:kernel-minimal": "npm.cmd run verify:v510-deliverable-kernel",
     "verify:v510": "npm.cmd run verify:v510-deliverable-kernel && npm.cmd run verify:adaptive-plan && npm.cmd run verify:task-service && npm.cmd run verify:completion-gate && npm.cmd run lint && npm.cmd run build",
     "verify:learning-review": "node scripts/verify-learning-review.cjs",
     "verify:memory-ui": "node scripts/verify-memory-ui.mjs",

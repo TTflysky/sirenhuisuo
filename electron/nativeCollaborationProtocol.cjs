@@ -96,6 +96,7 @@ function createNativeCollaborationProtocol(options) {
           if (!artifact.path && !artifact.diskPath) continue;
           await taskService.addArtifact(record.taskId, {
             id: `${record.taskId}:${artifact.path || artifact.diskPath}`,
+            stepId: record.stepId,
             name: artifact.filename || artifact.path || artifact.diskPath,
             path: artifact.path || artifact.diskPath, diskPath: artifact.diskPath,
             workspaceId: artifact.workspaceId || run.workspaceId, category: artifact.category,

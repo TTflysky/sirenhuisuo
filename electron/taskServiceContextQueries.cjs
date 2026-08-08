@@ -12,6 +12,22 @@ function createTaskServiceContextQueries(store) {
   async function context(taskId, options = {}) {
     const { task } = await readTask(store, taskId);
     const limit = Math.max(1, Math.min(50, Number(options.limit) || 20));
+    const verifiedStepEvidence = (task.steps || []).flatMap((step) => (step.evidence || [])
+      .filter((item) => item.verified === true)
+      .map((item) => ({ ...clone(item), stepId: step.id })));
+    const verifiedVerifications = (task.verifications || [])
+      .filter((item) => item.status === 'passed')
+      .map((item) => ({ ...clone(item), evidenceType: 'verification' }));
+    const verifiedEvidence = [...verifiedStepEvidence, ...verifiedVerifications]
+      .filter((item, index, all) => {
+        const key = item.id || item.verificationId || item.artifactId || `${item.stepId || 'task'}:${item.summary || item.label || index}`;
+        return all.findIndex((candidate, candidateIndex) => {
+          const candidateKey = candidate.id || candidate.verificationId || candidate.artifactId
+            || `${candidate.stepId || 'task'}:${candidate.summary || candidate.label || candidateIndex}`;
+          return candidateKey === key;
+        }) === index;
+      });
+    const contractedSteps = (task.steps || []).filter((step) => step.compensationOnly !== true && step.taskContract);
     return {
       ok: true,
       taskId,
@@ -25,6 +41,23 @@ function createTaskServiceContextQueries(store) {
       references: (task.references || []).slice(-limit).map(clone),
       completedSteps: (task.steps || []).filter((step) => step.status === 'completed').slice(-limit)
         .map((step) => ({ id: step.id, title: step.title, output: clone(step.output) })),
+      stepProjections: (task.steps || []).slice(-limit)
+        .map((step) => ({
+          id: step.id,
+          title: step.title,
+          status: step.status,
+          output: clone(step.output),
+          taskContract: clone(step.taskContract),
+          evidence: clone(step.evidence || []),
+          adaptiveEvidenceIds: clone(task.adaptivePlanGraph?.nodes?.find((node) => node.id === step.id)?.evidenceIds || []),
+        })),
+      verifiedEvidence: verifiedEvidence.slice(-limit),
+      contractCoverage: {
+        total: (task.steps || []).filter((step) => step.compensationOnly !== true).length,
+        contracted: contractedSteps.length,
+        complete: contractedSteps.length === (task.steps || []).filter((step) => step.compensationOnly !== true).length,
+      },
+      recoveryEvidence: clone(task.recoveryContext?.completedEvidence || []),
       unresolvedIssues: [task.lastError, ...(task.steps || []).filter((step) => step.status === 'failed').map((step) => step.lastError)]
         .filter(Boolean)
         .slice(-limit),
@@ -51,6 +84,13 @@ function createTaskServiceContextQueries(store) {
       { id: 'steps', label: '所有正常步骤已完成', passed: normalSteps.length > 0 && normalSteps.every((step) => step.status === 'completed') },
       { id: 'approval', label: '没有待处理授权', passed: !(task.approvals || []).some((item) => item.status === 'pending') },
     ];
+    if ((Number(task.taskServiceVersion) || 0) >= 6 || normalSteps.some((step) => step.taskContract)) {
+      checks.push({
+        id: 'step-contracts',
+        label: '所有正常步骤拥有可恢复任务合同',
+        passed: normalSteps.length > 0 && normalSteps.every((step) => Boolean(step.taskContract)),
+      });
+    }
     const requiresCodingEvidence = task.workspace?.requiresEvidence === true
       || task.workspace?.mode === 'git-worktree'
       || task.taskType === 'coding'

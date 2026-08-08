@@ -8,9 +8,9 @@ const { createTaskServiceApprovalCommands } = require('./taskServiceApprovalComm
 const { createTaskServiceLifecycleCommands } = require('./taskServiceLifecycleCommands.cjs');
 const { createTaskServiceRecoveryCommands } = require('./taskServiceRecoveryCommands.cjs');
 const { createTaskServiceTeamExecution } = require('./taskServiceTeamExecution.cjs');
-const { normalizeTaskContract } = require('./taskServiceContracts.cjs');
+const { createStepTaskContract, normalizeTaskContract } = require('./taskServiceContracts.cjs');
 
-const TASK_SERVICE_VERSION = 5;
+const TASK_SERVICE_VERSION = 6;
 const TASK_TYPES = new Set(['assistant', 'dm', 'team', 'child', 'coding']);
 const DELIVERABLE_TYPES = new Set(['answer', 'file', 'connection', 'operation', 'decision', 'mixed']);
 let adaptivePlanPromise;
@@ -58,15 +58,36 @@ function inferLegacyDeliverableType(input = {}, parent = {}) {
   return normalizeDeliverableType(parent.deliverableType || parent.contract?.deliverableType || parent.taskDecision?.deliverableType) || 'answer';
 }
 
-function normalizeStep(input, index) {
+function normalizeStep(input, index, defaults = {}) {
   const stepId = text(input?.stepId || input?.id, 160) || `step-${index + 1}`;
   const status = ['queued', 'running', 'paused', 'stopped', 'failed', 'completed'].includes(input?.status) ? input.status : 'queued';
+  const dependsOnStepIds = list(input?.dependsOnStepIds || input?.dependsOn, []);
+  const deliverableType = normalizeDeliverableType(input?.deliverableType || defaults.deliverableType) || 'answer';
+  const acceptanceCriteria = list(input?.acceptanceCriteria, list(defaults.acceptanceCriteria, []));
+  const expectedEvidence = list(input?.expectedEvidence, list(defaults.expectedEvidence, []));
+  const outputPath = text(input?.outputPath || defaults.outputPath, 500) || undefined;
+  const title = text(input?.title || input?.assignment || stepId, 240);
+  const assignment = text(input?.assignment || input?.title || stepId, 2000);
+  const taskContract = normalizeTaskContract(input?.taskContract) || createStepTaskContract({
+    title,
+    assignment,
+    deliverableType,
+    inputRefs: dependsOnStepIds.map((dependency) => `verified:${dependency}`),
+    acceptanceCriteria,
+    expectedEvidence,
+    outputPath,
+    budget: {
+      maxModelRounds: 8,
+      maxToolCalls: 24,
+      maxReworkAttempts: Number.isInteger(input?.maxRetries) ? Math.max(0, Math.min(10, input.maxRetries)) : 2,
+    },
+  });
   return {
     id: stepId,
-    title: text(input?.title || input?.assignment || stepId, 240),
-    assignment: text(input?.assignment || input?.title || stepId, 2000),
+    title,
+    assignment,
     employeeId: text(input?.employeeId, 160) || undefined,
-    dependsOnStepIds: list(input?.dependsOnStepIds || input?.dependsOn, []),
+    dependsOnStepIds,
     sideEffect: input?.sideEffect !== false,
     compensateStepId: text(input?.compensateStepId || input?.compensate_step, 160) || undefined,
     compensationOnly: input?.compensationOnly === true,
@@ -74,13 +95,13 @@ function normalizeStep(input, index) {
     kind: text(input?.kind, 40) || undefined,
     codingRole: text(input?.codingRole, 80) || undefined,
     reviewPoint: input?.reviewPoint === true,
-    acceptanceCriteria: list(input?.acceptanceCriteria, []),
+    acceptanceCriteria,
     requiredCapabilities: list(input?.requiredCapabilities, []),
-    expectedEvidence: list(input?.expectedEvidence, []),
-    outputPath: text(input?.outputPath, 500) || undefined,
-    taskContract: normalizeTaskContract(input?.taskContract),
+    expectedEvidence,
+    outputPath,
+    taskContract,
     maxRetries: Number.isInteger(input?.maxRetries) ? Math.max(0, Math.min(10, input.maxRetries)) : undefined,
-    deliverableType: normalizeDeliverableType(input?.deliverableType),
+    deliverableType,
     responsibilityTaskId: text(input?.responsibilityTaskId, 180) || undefined,
     executionBinding: input?.executionBinding && typeof input.executionBinding === 'object' ? clone(input.executionBinding) : undefined,
     status,
@@ -100,21 +121,25 @@ function normalizeTaskInput(input = {}) {
   const taskType = TASK_TYPES.has(input.taskType) ? input.taskType : 'assistant';
   const goal = text(input.goal || input.request);
   if (!goal) throw new Error('TaskService: goal is required');
-  const steps = Array.isArray(input.steps) && input.steps.length
-    ? input.steps.map(normalizeStep)
-    : [normalizeStep({ title: '完成用户目标', assignment: goal }, 0)];
-  const requiresWorktree = taskType === 'coding' || input.requiresWorktree === true || /代码|编程|开发|脚本|构建|编译|测试|修复|bug|coding|software|repository/iu.test(goal);
   const rawTaskDecision = input.taskDecision && typeof input.taskDecision === 'object' && !Array.isArray(input.taskDecision)
     ? clone(input.taskDecision)
     : undefined;
   const taskDeliverableType = normalizeDeliverableType(input.deliverableType || rawTaskDecision?.deliverableType);
+  const taskAcceptanceCriteria = list(input.acceptanceCriteria, ['完成用户目标', '留下真实可观察结果', '完成必要验收']);
+  const steps = Array.isArray(input.steps) && input.steps.length
+    ? input.steps.map((step, index) => normalizeStep(step, index, {
+      deliverableType: taskDeliverableType,
+      acceptanceCriteria: taskAcceptanceCriteria,
+    }))
+    : [normalizeStep({ title: '完成用户目标', assignment: goal }, 0, {
+      deliverableType: taskDeliverableType,
+      acceptanceCriteria: taskAcceptanceCriteria,
+    })];
+  const requiresWorktree = taskType === 'coding' || input.requiresWorktree === true || /代码|编程|开发|脚本|构建|编译|测试|修复|bug|coding|software|repository/iu.test(goal);
   const taskDecision = rawTaskDecision || taskDeliverableType ? {
     ...(rawTaskDecision || {}),
     ...(taskDeliverableType ? { deliverableType: taskDeliverableType } : {}),
   } : undefined;
-  if (taskDeliverableType) {
-    for (const step of steps) if (!step.deliverableType) step.deliverableType = taskDeliverableType;
-  }
   const createdAt = Date.now();
   return {
     id: text(input.id, 180) || id('task'),
@@ -131,7 +156,7 @@ function normalizeTaskInput(input = {}) {
     goal,
     status: 'queued',
     phase: 'preflight',
-    acceptanceCriteria: list(input.acceptanceCriteria, ['完成用户目标', '留下真实可观察结果', '完成必要验收']),
+    acceptanceCriteria: taskAcceptanceCriteria,
     constraints: list(input.constraints),
     taskDecision,
     requiredCapabilities: list(input.requiredCapabilities || rawTaskDecision?.requiredCapabilities),

@@ -25,4 +25,31 @@ function normalizeTaskContract(value) {
   };
 }
 
-module.exports = { normalizeTaskContract };
+function createStepTaskContract(input = {}, defaults = {}) {
+  const title = text(input.title || input.assignment || defaults.title || 'task step', 1000);
+  const deliverableType = text(input.deliverableType || defaults.deliverableType, 80) || 'answer';
+  const inputRefs = list(input.inputRefs || defaults.inputRefs);
+  const completionConditions = list(
+    input.completionConditions || input.acceptanceCriteria || defaults.completionConditions || defaults.acceptanceCriteria,
+  );
+  const verification = list(
+    input.verification || input.expectedEvidence || defaults.verification || defaults.expectedEvidence,
+  );
+  return normalizeTaskContract({
+    contractVersion: 1,
+    inputRefs,
+    output: {
+      type: deliverableType,
+      path: text(input.outputPath || input.output?.path || defaults.outputPath, 500) || undefined,
+      description: text(input.outputDescription || input.output?.description || title, 1000),
+    },
+    completionConditions: completionConditions.length ? completionConditions : [title + ' is complete'],
+    verification: verification.length ? verification : ['Verify ' + title],
+    budget: input.budget || defaults.budget || { maxModelRounds: 8, maxToolCalls: 24, maxReworkAttempts: 2 },
+    escalationConditions: input.escalationConditions || defaults.escalationConditions || [
+      'Escalate when the rework budget is exhausted or the acceptance boundary changes.',
+    ],
+  });
+}
+
+module.exports = { normalizeTaskContract, createStepTaskContract };

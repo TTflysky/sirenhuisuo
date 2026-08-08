@@ -30,6 +30,41 @@ function updateStep(task, stepId, mutate) {
   return step;
 }
 
+function appendNodeEvidenceIds(task, stepId, evidenceIds = []) {
+  if (!stepId || !task.adaptivePlanGraph?.nodes) return;
+  const node = task.adaptivePlanGraph.nodes.find((item) => item.id === stepId);
+  if (!node) return;
+  node.evidenceIds = [...new Set([...(node.evidenceIds || []), ...evidenceIds.filter(Boolean)])].slice(-40);
+}
+
+function appendDurableStepEvidence(task, stepId, evidence) {
+  if (!stepId || !evidence?.summary) return;
+  updateStep(task, stepId, (step) => {
+    step.evidence = Array.isArray(step.evidence) ? step.evidence : [];
+    const evidenceId = text(evidence.id, 500);
+    const index = evidenceId
+      ? step.evidence.findIndex((item) => item.id === evidenceId)
+      : step.evidence.findIndex((item) => item.summary === evidence.summary && item.kind === evidence.kind);
+    if (index >= 0) step.evidence[index] = { ...step.evidence[index], ...clone(evidence) };
+    else step.evidence.push(clone(evidence));
+    step.evidence = step.evidence.slice(-60);
+  });
+  appendNodeEvidenceIds(task, stepId, [evidence.id || evidence.summary]);
+  if (evidence.verified === true) {
+    task.recoveryContext = task.recoveryContext && typeof task.recoveryContext === 'object'
+      ? task.recoveryContext
+      : { completedEvidence: [], unresolvedIssues: [], steeringMessages: [], autoResume: false };
+    task.recoveryContext.completedEvidence = Array.isArray(task.recoveryContext.completedEvidence)
+      ? task.recoveryContext.completedEvidence
+      : [];
+    const durableSummary = `${stepId}: ${evidence.summary}`;
+    task.recoveryContext.completedEvidence = [...new Set([
+      ...task.recoveryContext.completedEvidence,
+      durableSummary,
+    ])].slice(-60);
+  }
+}
+
 function createTaskServiceEvidenceCommands(update) {
   async function recordToolAttempt(taskId, input = {}) {
     const attempt = {
@@ -57,11 +92,13 @@ function createTaskServiceEvidenceCommands(update) {
         step.events = Array.isArray(step.events) ? step.events : [];
         step.events.push({ ts: Date.now(), type: 'tool_attempt', detail: `${attempt.toolName}: ${attempt.status}` });
       });
+      if (attempt.stepId) appendNodeEvidenceIds(task, attempt.stepId, attempt.evidenceIds);
       appendEvent(task, 'tool_attempt', `${attempt.toolName} ${attempt.status}`, { attemptId: attempt.id, stepId: attempt.stepId });
     }, '记录工具尝试与结果');
   }
 
   async function addArtifact(taskId, input = {}) {
+    const stepId = text(input.stepId, 160) || undefined;
     const artifact = {
       id: text(input.id, 180) || id('artifact'),
       name: text(input.name || input.path, 500),
@@ -82,6 +119,15 @@ function createTaskServiceEvidenceCommands(update) {
       const index = task.artifacts.findIndex((item) => item.id === artifact.id || item.path === artifact.path);
       if (index >= 0) task.artifacts[index] = { ...task.artifacts[index], ...artifact };
       else task.artifacts.push(artifact);
+      if (stepId) appendDurableStepEvidence(task, stepId, {
+        id: artifact.id,
+        ts: artifact.createdAt,
+        source: 'system',
+        kind: 'file',
+        summary: artifact.path,
+        verified: artifact.verified,
+        artifactId: artifact.id,
+      });
       appendEvent(task, 'artifact_registered', `登记交付物：${artifact.name}`, { artifactId: artifact.id, verified: artifact.verified });
     }, '登记任务交付物');
   }
@@ -135,6 +181,7 @@ function createTaskServiceEvidenceCommands(update) {
   }
 
   async function recordVerification(taskId, input = {}) {
+    const stepId = text(input.stepId, 160) || undefined;
     const verification = {
       id: text(input.id, 180) || id('verification'),
       kind: text(input.kind, 100) || 'command',
@@ -149,6 +196,15 @@ function createTaskServiceEvidenceCommands(update) {
     return update(taskId, (task) => {
       task.verifications = Array.isArray(task.verifications) ? task.verifications : [];
       task.verifications.push(verification);
+      if (stepId) appendDurableStepEvidence(task, stepId, {
+        id: verification.id,
+        ts: verification.createdAt,
+        source: 'system',
+        kind: verification.kind === 'review' ? 'review' : 'run',
+        summary: [verification.label, verification.detail].filter(Boolean).join(': '),
+        verified: verification.status === 'passed',
+        verificationId: verification.id,
+      });
       appendEvent(task, 'verification_recorded', `${verification.label}: ${verification.status}`, { verificationId: verification.id });
     }, '记录任务验证结果');
   }

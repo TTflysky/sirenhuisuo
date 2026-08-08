@@ -71,12 +71,60 @@ try {
   assert.equal(restored.steps.find((step) => step.id === 'client').taskContract.output.path, 'artifacts/client');
   assert.equal(restored.adaptivePlanGraph.nodes.find((node) => node.id === 'integration').taskContract.inputRefs.length, 2);
 
+  const simple = await restarted.create({
+    taskType: 'assistant',
+    projectId: 'project-v510-simple',
+    conversationId: 'conversation-v510-simple',
+    title: 'Verify a small deliverable',
+    goal: 'Create and verify one small deliverable',
+    deliverableType: 'file',
+    acceptanceCriteria: ['The deliverable is present'],
+    steps: [{
+      id: 'step-1',
+      title: 'Create the deliverable',
+      assignment: 'Create the deliverable and record verification evidence',
+      outputPath: 'artifacts/simple',
+      expectedEvidence: ['The deliverable exists'],
+    }],
+  });
+  const simpleId = simple.task.id;
+  const simpleStep = simple.task.steps.find((step) => step.id === 'step-1');
+  assert.equal(simpleStep.taskContract.output.type, 'file');
+  assert.equal(simpleStep.taskContract.output.path, 'artifacts/simple');
+  await restarted.addArtifact(simpleId, {
+    id: 'simple-artifact',
+    stepId: 'step-1',
+    name: 'simple.txt',
+    path: 'artifacts/simple/simple.txt',
+    verified: true,
+  });
+  await restarted.recordVerification(simpleId, {
+    id: 'simple-verification',
+    stepId: 'step-1',
+    label: 'Simple deliverable verification',
+    status: 'passed',
+    command: 'verify simple deliverable',
+    detail: 'The simple deliverable exists',
+  });
+  const simpleRestarted = createTaskService(createTaskRuntimeStore(root));
+  const simpleRestored = (await simpleRestarted.read({ taskId: simpleId })).runs[0];
+  const simpleContext = await simpleRestarted.context(simpleId, { limit: 10 });
+  const simpleNode = simpleRestored.adaptivePlanGraph.nodes.find((node) => node.id === 'step-1');
+  assert.equal(simpleRestored.steps[0].taskContract.contractVersion, 1);
+  assert.equal(simpleRestored.steps[0].evidence.some((item) => item.id === 'simple-artifact'), true);
+  assert.equal(simpleNode.evidenceIds.includes('simple-artifact'), true);
+  assert.equal(simpleContext.contractCoverage.complete, true);
+  assert.equal(simpleContext.verifiedEvidence.length, 2);
+
   console.log(JSON.stringify({
     passed: true,
     rootTaskId: created.task.id,
     readyNodes: readyAdaptiveNodes(restored.adaptivePlanGraph).map((node) => node.id),
     responsibilityTasks: restored.steps.map((step) => step.responsibilityTaskId),
     persistedContractVersion: restored.steps[0].taskContract.contractVersion,
+    simpleTaskId: simpleId,
+    simpleVerifiedEvidence: simpleContext.verifiedEvidence.length,
+    simpleContractCoverage: simpleContext.contractCoverage,
   }, null, 2));
 } finally {
   await fs.rm(root, { recursive: true, force: true });
