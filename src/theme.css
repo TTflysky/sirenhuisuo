@@ -1,5 +1,6 @@
 @import './styles/core.css';
 @import './styles/collaboration.css';
+@import './styles/runtime-observer.css';
 @import './styles/appearance.css';
 @import './styles/settings.css';
 @import './styles/workspace.css';

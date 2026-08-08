@@ -3,6 +3,7 @@ const fs = require('fs');
 
 const limits = {
   'electron/nativeExecutionAdapter.cjs': 1500,
+  'electron/nativeCompletionGate.cjs': 120,
   'electron/nativeExecutionPrompting.cjs': 150,
   'electron/nativeExecutionControl.cjs': 450,
   'electron/nativeStepExecutor.cjs': 520,
@@ -33,6 +34,7 @@ const limits = {
   'src/theme.css': 8,
   'src/styles/core.css': 500,
   'src/styles/collaboration.css': 1500,
+  'src/styles/runtime-observer.css': 400,
   'src/styles/appearance.css': 500,
   'src/styles/settings.css': 400,
   'src/styles/workspace.css': 1800,
@@ -52,6 +54,7 @@ assert.match(adapter, /require\('\.\/adaptiveExecutionRecovery\.cjs'\)/u, 'adapt
 assert.match(adapter, /require\('\.\/nativeExecutionControl\.cjs'\)/u, 'native execution control must remain extracted');
 assert.match(adapter, /require\('\.\/nativeStepExecutor\.cjs'\)/u, 'native step execution must remain extracted');
 assert.match(adapter, /require\('\.\/nativeExecutionPrompting\.cjs'\)/u, 'native execution prompting must remain extracted');
+assert.match(adapter, /require\('\.\/nativeCompletionGate\.cjs'\)/u, 'native completion gate must remain extracted');
 assert.doesNotMatch(adapter, /semanticState:\s*projectExecutionState/u, 'native job projection must not move back into the adapter');
 assert.doesNotMatch(adapter, /function inferStepDeliverableType/u, 'deliverable policy must not move back into the adapter');
 assert.doesNotMatch(adapter, /function compensationNeedsApproval/u, 'compensation policy must not move back into the adapter');
@@ -66,6 +69,8 @@ const nativeStepExecutor = fs.readFileSync('electron/nativeStepExecutor.cjs', 'u
 assert.match(nativeStepExecutor, /function createNativeStepExecutor/u, 'native step executor must expose a focused factory');
 const nativeExecutionPrompting = fs.readFileSync('electron/nativeExecutionPrompting.cjs', 'utf8');
 assert.match(nativeExecutionPrompting, /function createNativeExecutionPrompting/u, 'native execution prompting must expose a focused factory');
+const nativeCompletionGate = fs.readFileSync('electron/nativeCompletionGate.cjs', 'utf8');
+assert.match(nativeCompletionGate, /function evaluateNativeCompletion/u, 'native completion gate must expose a focused evaluator');
 const taskService = fs.readFileSync('electron/taskService.cjs', 'utf8');
 const taskServiceTeamExecution = fs.readFileSync('electron/taskServiceTeamExecution.cjs', 'utf8');
 const taskContextQueries = fs.readFileSync('electron/taskServiceContextQueries.cjs', 'utf8');
