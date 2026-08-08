@@ -1,4 +1,4 @@
-# 太极 AI 办公会所 v5.10.3
+# 太极 AI 办公会所 v5.10.4
 
 [![Release](https://img.shields.io/github/v/release/TTflysky/sirenhuisuo?label=release)](https://github.com/TTflysky/sirenhuisuo/releases/latest)
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D4)](https://github.com/TTflysky/sirenhuisuo/releases/latest)
@@ -9,7 +9,7 @@
 
 > 接手开发请先阅读：[项目交接手册](./docs/PROJECT_HANDOFF.md)。其中记录了当前架构、不可破坏规则、数据边界、发布流程和后续优先级。
 
-> V5.10.3 修复累计 Token 达到预算后被误判为业务失败的问题：任务现在保存容量检查点并继续依据真实证据验收；V5.10.0 的交付物驱动动态执行图保持不变：[V5 自主智能体路线](./docs/TAIJI_V5_AUTONOMOUS_AGENT_ROADMAP.md)。
+> V5.10.4 修复超大任务账本恢复、暂停控制和事实账本重复冲突问题；V5.10.0 的交付物驱动动态执行图保持不变：[V5 自主智能体路线](./docs/TAIJI_V5_AUTONOMOUS_AGENT_ROADMAP.md)。
 
 ## 30 秒了解太极
 

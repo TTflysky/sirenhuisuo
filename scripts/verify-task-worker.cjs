@@ -205,6 +205,30 @@ function assertJournalChain(records) {
     assert.equal(invalid.ok, false);
     workerC.stop();
 
+    const degradedRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'taiji-task-worker-degraded-'));
+    try {
+      const brokenStore = {
+        read: async () => ({ ok: false, error: '读取任务事件账本失败：Invalid string length', runs: [] }),
+        updateTask: async () => { throw new Error('degraded control must not update the broken store'); },
+      };
+      const degradedWorker = createTaskWorker({ rootDir: degradedRoot, store: brokenStore, sessionId: 'session-degraded' });
+      activeWorkers.push(degradedWorker);
+      await degradedWorker.start();
+      const emergencyPause = await degradedWorker.dispatch({ commandId: 'pause-degraded', taskId: 'blocked-task', type: 'pause' });
+      assert.equal(emergencyPause.ok, true);
+      assert.equal(emergencyPause.degraded, true);
+      assert.equal(emergencyPause.status, 'paused');
+      const emergencyStop = await degradedWorker.dispatch({ commandId: 'stop-degraded', taskId: 'blocked-task', type: 'stop' });
+      assert.equal(emergencyStop.ok, true);
+      assert.equal(emergencyStop.degraded, true);
+      assert.equal(emergencyStop.status, 'stopped');
+      const degradedCommands = await degradedWorker.readCommands({ taskId: 'blocked-task' });
+      assert.equal(degradedCommands.records.filter((record) => record.type === 'command_completed').length, 2);
+      degradedWorker.stop();
+    } finally {
+      await fs.rm(degradedRoot, { recursive: true, force: true });
+    }
+
     console.log(JSON.stringify({
       passed: true,
       protocolVersion: WORKER_PROTOCOL_VERSION,

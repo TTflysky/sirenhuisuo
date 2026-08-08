@@ -346,7 +346,17 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
       proposalStatus: 'assembled',
       proposalHistory: assembledHistory,
     } });
-    void initializeProjectContext({ ...project, teamId: team.id, members: effectiveMembers, proposalStatus: 'assembled', updatedAt: Date.now() });
+    void initializeProjectContext({
+      ...project,
+      status: 'clarifying',
+      teamId: team.id,
+      members: effectiveMembers,
+      requiredCapabilities: override?.requiredCapabilities?.filter(Boolean) ?? project.requiredCapabilities,
+      decisionReason: override?.decisionReason?.trim() || project.decisionReason,
+      proposalStatus: 'assembled',
+      proposalHistory: assembledHistory,
+      updatedAt: Date.now(),
+    });
     void appendProjectEvent(project.id, { type: 'team_assembled', projectId, teamId: team.id, proposalId: project.proposalId, proposalRevision: project.proposalRevision, memberIds });
     memberIds.forEach((id) => dispatch({ type: 'UPDATE_EMPLOYEE', id, partial: { currentTeamId: team.id } }));
     return effectiveMembers;
@@ -354,7 +364,15 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
   const startProjectExecution = (projectId: string, clarificationResponse: string) => {
     const prepared = prepareProjectExecution(getState(), projectId, clarificationResponse);
     if (!prepared) return;
+    const runningProject = {
+      ...prepared.project,
+      status: 'running' as const,
+      clarificationResponse: prepared.clarificationResponse,
+      brief: prepared.brief,
+      updatedAt: Date.now(),
+    };
     dispatch({ type: 'UPDATE_PROJECT', id: prepared.project.id, partial: { status: 'running', clarificationResponse: prepared.clarificationResponse, brief: prepared.brief } });
+    void initializeProjectContext(runningProject);
     void appendProjectEvent(prepared.project.id, { type: 'execution_started', projectId: prepared.project.id, teamId: prepared.team.id, clarificationResponse: prepared.clarificationResponse });
     dispatch({ type: 'APPEND_CHAT', teamId: prepared.team.id, msgs: [{
       id: `msg-project-start-${Date.now()}`,

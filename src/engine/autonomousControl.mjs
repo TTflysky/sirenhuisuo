@@ -286,7 +286,18 @@ export function deriveSituationModel(run = {}, goalSnapshot) {
     factKey: item.factKey || `${item.source}:${item.sourceId || item.id}`,
     evidenceIds: item.sourceId ? [item.sourceId] : [],
   }));
-  const factLedger = createFactLedger({ snapshot: run.factLedger || run.situationModel?.factLedger, observations: factObservations, now: Number(run.updatedAt) || Date.now() });
+  const existingFactLedger = run.factLedger || run.situationModel?.factLedger;
+  const observationWatermark = Math.max(
+    Number(existingFactLedger?.updatedAt) || 0,
+    ...(existingFactLedger?.factVersions || []).map((item) => Number(item.lastObservedAt || item.firstObservedAt) || 0),
+  );
+  const pendingFactObservations = existingFactLedger
+    ? factObservations.filter((item) => Number(item.at) > observationWatermark)
+    : factObservations;
+  const factLedgerNow = pendingFactObservations.length
+    ? Math.max(observationWatermark, Number(run.updatedAt) || Date.now())
+    : (Number(existingFactLedger?.updatedAt) || Number(run.updatedAt) || Date.now());
+  const factLedger = createFactLedger({ snapshot: existingFactLedger, observations: pendingFactObservations, now: factLedgerNow });
   const openConflicts = openFactConflicts(factLedger);
   return {
     situationVersion: SITUATION_VERSION,

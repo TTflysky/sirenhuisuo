@@ -112,9 +112,9 @@ export async function initializeProjectContext(project: Project): Promise<{ ok: 
     documentPath: existing.documentPath || project.documentPath || projectDocumentPath(project.id),
     createdAt: existing.createdAt || project.createdAt,
     updatedAt: Date.now(),
-    members: Array.isArray(existing.members) && existing.members.length ? existing.members : (project.members || []),
-    expectedOutputs: Array.isArray(existing.expectedOutputs) && existing.expectedOutputs.length ? existing.expectedOutputs : (project.expectedOutputs || []),
-    requiredCapabilities: Array.isArray(existing.requiredCapabilities) && existing.requiredCapabilities.length ? existing.requiredCapabilities : (project.requiredCapabilities || []),
+    members: Array.isArray(project.members) && project.members.length ? project.members : (existing.members || []),
+    expectedOutputs: Array.isArray(project.expectedOutputs) && project.expectedOutputs.length ? project.expectedOutputs : (existing.expectedOutputs || []),
+    requiredCapabilities: Array.isArray(project.requiredCapabilities) && project.requiredCapabilities.length ? project.requiredCapabilities : (existing.requiredCapabilities || []),
     status: project.status || existing.status || 'running',
   } as Project;
   const document = await api.fsWrite(merged.documentPath || projectDocumentPath(project.id), projectMarkdown(merged));

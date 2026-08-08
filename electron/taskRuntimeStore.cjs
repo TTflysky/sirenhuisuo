@@ -1,6 +1,8 @@
 const crypto = require('crypto');
+const nodeFs = require('fs');
 const fs = require('fs/promises');
 const path = require('path');
+const readline = require('readline');
 const { pathToFileURL } = require('url');
 
 const SCHEMA_VERSION = 3;
@@ -8,6 +10,7 @@ const LEDGER_VERSION = 1;
 const RECOVERY_POINT_VERSION = 1;
 const DEFAULT_MAX_RUNS = 120;
 const DEFAULT_MAX_RETURNED_EVENTS = 2000;
+const DEFAULT_MAX_ACTIVE_LEDGER_BYTES = 64 * 1024 * 1024;
 const DEFAULT_DEFERRED_CHECKPOINT_THRESHOLD_BYTES = 2 * 1024 * 1024;
 const DEFAULT_CHECKPOINT_DEBOUNCE_MS = 500;
 let autonomousControlPromise;
@@ -72,6 +75,15 @@ function equal(left, right) {
 
 function collectChanges(previous, next, basePath = []) {
   if (equal(previous, next)) return [];
+  if (Array.isArray(previous) && Array.isArray(next)) {
+    const appendOnly = previous.length <= next.length
+      && previous.every((item, index) => equal(item, next[index]));
+    if (appendOnly) {
+      const values = next.slice(previous.length).map(clone);
+      return values.length ? [{ op: 'append', path: basePath, values }] : [];
+    }
+    return [{ op: 'set', path: basePath, value: clone(next) }];
+  }
   if (!isObject(previous) || !isObject(next)) {
     return [{ op: 'set', path: basePath, value: clone(next) }];
   }
@@ -102,6 +114,10 @@ function applyChanges(value, changes) {
     }
     const key = change.path.at(-1);
     if (change.op === 'remove') delete target[key];
+    else if (change.op === 'append') {
+      if (!Array.isArray(target[key])) target[key] = [];
+      target[key].push(...clone(change.values || []));
+    }
     else if (change.op === 'set') target[key] = clone(change.value);
     else throw new Error(`未知变更操作：${change.op}`);
   }
@@ -190,6 +206,7 @@ function mergeWorkerAuthority(current, incoming, source) {
     if (!next.factLedger && current.factLedger) next.factLedger = clone(current.factLedger);
     if (!next.adaptivePlanGraph && current.adaptivePlanGraph) next.adaptivePlanGraph = clone(current.adaptivePlanGraph);
     if (!next.autonomousControl && current.autonomousControl) next.autonomousControl = clone(current.autonomousControl);
+    if (!next.unifiedHost && current.unifiedHost) next.unifiedHost = clone(current.unifiedHost);
   }
   if (source !== 'renderer' || !current?.worker) return next;
   if (current.worker.adapter === 'main-native-execution-adapter') {
@@ -312,7 +329,10 @@ function createTaskRuntimeStore(rootDir, options = {}) {
   const checkpointPath = path.join(rootDir, 'task-runs.json');
   const ledgerPath = path.join(rootDir, 'task-events.jsonl');
   const indexPath = path.join(rootDir, 'task-index.json');
+  const archiveDir = path.join(rootDir, 'task-event-archives');
   const recoveryDir = path.join(rootDir, 'task-recovery-points');
+  const maxActiveLedgerBytes = Number.isInteger(options.maxActiveLedgerBytes) && options.maxActiveLedgerBytes > 0
+    ? options.maxActiveLedgerBytes : DEFAULT_MAX_ACTIVE_LEDGER_BYTES;
   let writeQueue = Promise.resolve();
   let initialized = false;
   let initializationPromise;
@@ -339,6 +359,134 @@ function createTaskRuntimeStore(rootDir, options = {}) {
       if (error?.code === 'ENOENT') return { ok: true, exists: false, runs: [] };
       return { ok: false, exists: true, runs: [], error: `读取任务快照失败：${error?.message ?? String(error)}` };
     }
+  }
+
+  async function readVerifiedCheckpoint() {
+    try {
+      const parsed = JSON.parse(await fs.readFile(checkpointPath, 'utf8'));
+      if (!verifyEnvelope(parsed) || parsed.schemaVersion !== SCHEMA_VERSION || !Array.isArray(parsed.runs) || !parsed.runs.every(isTaskRun)) return undefined;
+      return parsed;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async function readLedgerBoundary() {
+    let handle;
+    try {
+      handle = await fs.open(ledgerPath, 'r');
+      const stat = await handle.stat();
+      if (!stat.size) return { size: 0 };
+      let headPosition = 0;
+      let head = '';
+      while (headPosition < stat.size && Buffer.byteLength(head, 'utf8') < 16 * 1024 * 1024) {
+        const length = Math.min(256 * 1024, stat.size - headPosition);
+        const buffer = Buffer.alloc(length);
+        await handle.read(buffer, 0, length, headPosition);
+        headPosition += length;
+        head += buffer.toString('utf8');
+        if (head.includes('\n')) break;
+      }
+      const firstLine = head.split(/\r?\n/u).find((line) => line.trim());
+
+      let position = stat.size;
+      let tail = '';
+      while (position > 0 && Buffer.byteLength(tail, 'utf8') < 16 * 1024 * 1024) {
+        const length = Math.min(256 * 1024, position);
+        position -= length;
+        const buffer = Buffer.alloc(length);
+        await handle.read(buffer, 0, length, position);
+        tail = buffer.toString('utf8') + tail;
+        const trimmed = tail.replace(/[\r\n]+$/u, '');
+        if (trimmed.includes('\n') || position === 0) {
+          const lastLine = trimmed.slice(trimmed.lastIndexOf('\n') + 1).trim();
+          let first;
+          let last;
+          try { if (firstLine) first = JSON.parse(firstLine); } catch {}
+          try { if (lastLine) last = JSON.parse(lastLine); } catch {}
+          return {
+            size: stat.size,
+            first,
+            last,
+          };
+        }
+      }
+      let first;
+      try { if (firstLine) first = JSON.parse(firstLine); } catch {}
+      return { size: stat.size, first };
+    } catch (error) {
+      if (error?.code === 'ENOENT') return { size: 0, missing: true };
+      return { size: 0, error };
+    } finally {
+      await handle?.close().catch(() => {});
+    }
+  }
+
+  async function archiveCoveredLedger(boundary, checkpoint) {
+    if (!boundary?.size) return undefined;
+    await fs.mkdir(archiveDir, { recursive: true });
+    const firstSequence = Number(boundary.first?.sequence) || 1;
+    const lastSequence = Number(checkpoint.lastSequence) || Number(boundary.last?.sequence) || firstSequence;
+    const archivePath = path.join(archiveDir, `task-events-${firstSequence}-${lastSequence}-${Date.now()}.jsonl`);
+    await fs.rename(ledgerPath, archivePath);
+    await fs.writeFile(ledgerPath, '', 'utf8');
+    events = [];
+    integrity = {
+      ...integrity,
+      rotated: true,
+      archivePath,
+      archivedThroughSequence: lastSequence,
+      activeEventCount: 0,
+    };
+    return archivePath;
+  }
+
+  async function replayOversizedLedgerTail(checkpoint, boundary) {
+    const state = new Map(checkpoint.runs.slice(-maxRuns).map((run) => [run.id, clone(run)]));
+    const tailEvents = [];
+    let nonEmptyLine = 0;
+    let previousSequence = Number(checkpoint.lastSequence) || 0;
+    let previousHash = String(checkpoint.lastHash || '');
+    const completeLedger = Number(boundary.first?.sequence) === 1;
+    const input = nodeFs.createReadStream(ledgerPath, { encoding: 'utf8' });
+    const reader = readline.createInterface({ input, crlfDelay: Infinity });
+    try {
+      for await (const line of reader) {
+        if (!line.trim()) continue;
+        nonEmptyLine += 1;
+        if (completeLedger && nonEmptyLine <= previousSequence) continue;
+        const event = JSON.parse(line);
+        if (!completeLedger && Number(event?.sequence) <= previousSequence) continue;
+        if (!event || event.eventVersion !== LEDGER_VERSION || event.sequence !== previousSequence + 1) throw new Error('快照后的事件版本或序号无效');
+        if (event.previousHash !== previousHash || event.hash !== eventHash(event)) throw new Error('快照后的事件哈希链无效');
+        applyEvent(state, event);
+        tailEvents.push(event);
+        if (tailEvents.length > maxReturnedEvents) tailEvents.shift();
+        previousSequence = event.sequence;
+        previousHash = event.hash;
+      }
+    } finally {
+      reader.close();
+      input.destroy();
+    }
+    if (boundary.last && (boundary.last.sequence !== previousSequence || boundary.last.hash !== previousHash)) {
+      throw new Error('任务账本尾部与流式恢复结果不一致');
+    }
+    projected = state;
+    events = tailEvents;
+    integrity = {
+      ok: true,
+      recovered: true,
+      snapshotValid: true,
+      indexValid: false,
+      lastSequence: previousSequence,
+      lastHash: previousHash,
+      eventCount: previousSequence,
+      activeEventCount: tailEvents.length,
+      replayedFromCheckpoint: checkpoint.lastSequence,
+    };
+    await writeCheckpoint();
+    await archiveCoveredLedger(boundary, { lastSequence: previousSequence });
   }
 
   async function recoverLedgerTail(validLines, invalidLines) {
@@ -408,6 +556,13 @@ function createTaskRuntimeStore(rootDir, options = {}) {
     integrity.indexValid = true;
   }
 
+  async function rotateLedgerIfNeeded() {
+    const boundary = await readLedgerBoundary();
+    if (boundary.error || boundary.size < maxActiveLedgerBytes || !boundary.last) return undefined;
+    if (boundary.last.sequence !== integrity.lastSequence || boundary.last.hash !== integrity.lastHash) return undefined;
+    return archiveCoveredLedger(boundary, { lastSequence: integrity.lastSequence });
+  }
+
   function deferCheckpoint() {
     if (checkpointTimer) clearTimeout(checkpointTimer);
     integrity.snapshotValid = false;
@@ -421,6 +576,12 @@ function createTaskRuntimeStore(rootDir, options = {}) {
   }
 
   async function persistCheckpoint() {
+    const boundary = await readLedgerBoundary();
+    if (!boundary.error && boundary.size >= maxActiveLedgerBytes) {
+      await writeCheckpoint();
+      await rotateLedgerIfNeeded();
+      return;
+    }
     const threshold = Number(options.deferredCheckpointThresholdBytes) || DEFAULT_DEFERRED_CHECKPOINT_THRESHOLD_BYTES;
     if (checkpointBytes >= threshold) {
       deferCheckpoint();
@@ -462,7 +623,8 @@ function createTaskRuntimeStore(rootDir, options = {}) {
       ok: true,
       lastSequence: nextEvents.at(-1).sequence,
       lastHash: nextEvents.at(-1).hash,
-      eventCount: events.length,
+      eventCount: nextEvents.at(-1).sequence,
+      activeEventCount: events.length,
     };
     await onEvents?.(nextEvents.map(clone));
   }
@@ -473,7 +635,10 @@ function createTaskRuntimeStore(rootDir, options = {}) {
     const now = Date.now();
     for (const current of [...projected.values()]) {
       const candidate = await reconcileTaskControl(current, now);
-      const changes = collectChanges(current, candidate);
+      const changes = collectChanges(current, candidate).filter((change) => {
+        const leaf = String(change.path?.at(-1) || '');
+        return leaf !== 'updatedAt' && leaf !== 'checkedAt';
+      });
       if (changes.length === 0) continue;
       const event = createEvent({
         type: 'task_changed', taskId: current.id, teamId: current.teamId,
@@ -491,6 +656,64 @@ function createTaskRuntimeStore(rootDir, options = {}) {
 
   async function initializeOnce() {
     await fs.mkdir(rootDir, { recursive: true });
+    const checkpoint = await readVerifiedCheckpoint();
+    const boundary = await readLedgerBoundary();
+    if (checkpoint && !boundary.error && boundary.size === 0) {
+      projected = new Map(checkpoint.runs.slice(-maxRuns).map((run) => [run.id, run]));
+      events = [];
+      integrity = {
+        ok: true,
+        recovered: false,
+        snapshotValid: true,
+        indexValid: true,
+        lastSequence: checkpoint.lastSequence,
+        lastHash: checkpoint.lastHash,
+        eventCount: checkpoint.lastSequence,
+        activeEventCount: 0,
+        archivedThroughSequence: checkpoint.lastSequence,
+      };
+      await migrateAutonomousProjection();
+      await validateCachedProjection();
+      await writeCheckpoint();
+      initialized = true;
+      return;
+    }
+    const checkpointCoversLedger = checkpoint && boundary.last
+      && boundary.last.sequence === checkpoint.lastSequence
+      && boundary.last.hash === checkpoint.lastHash;
+    const segmentedLedger = Number(boundary.first?.sequence) > 1;
+    if (checkpointCoversLedger && (boundary.size >= maxActiveLedgerBytes || segmentedLedger)) {
+      projected = new Map(checkpoint.runs.slice(-maxRuns).map((run) => [run.id, run]));
+      events = [];
+      integrity = {
+        ok: true,
+        recovered: true,
+        snapshotValid: true,
+        indexValid: true,
+        lastSequence: checkpoint.lastSequence,
+        lastHash: checkpoint.lastHash,
+        eventCount: checkpoint.lastSequence,
+        activeEventCount: 0,
+      };
+      await archiveCoveredLedger(boundary, checkpoint);
+      await migrateAutonomousProjection();
+      await validateCachedProjection();
+      await writeCheckpoint();
+      initialized = true;
+      return;
+    }
+    const checkpointHasLedgerTail = checkpoint && !boundary.error
+      && Number(boundary.last?.sequence) > Number(checkpoint.lastSequence);
+    const completeOversizedLedger = Number(boundary.first?.sequence) === 1 && boundary.size >= maxActiveLedgerBytes;
+    const contiguousSegmentedLedger = Number(boundary.first?.sequence) === Number(checkpoint?.lastSequence) + 1;
+    if (checkpointHasLedgerTail && (completeOversizedLedger || contiguousSegmentedLedger)) {
+      await replayOversizedLedgerTail(checkpoint, boundary);
+      await migrateAutonomousProjection();
+      await validateCachedProjection();
+      await writeCheckpoint();
+      initialized = true;
+      return;
+    }
     const ledger = await readLedger();
     let legacyForMigration;
     if (ledger.exists && ledger.events.length === 0) {
@@ -500,7 +723,12 @@ function createTaskRuntimeStore(rootDir, options = {}) {
       }
     }
     if (ledger.exists && !legacyForMigration) {
-      projected = ledger.projected;
+      // The checkpoint is the canonical materialized projection once it
+      // covers the verified ledger head. Replaying the original task snapshot
+      // here would discard normalized control state and migrate it again.
+      projected = checkpointCoversLedger
+        ? new Map(checkpoint.runs.slice(-maxRuns).map((run) => [run.id, run]))
+        : ledger.projected;
       events = ledger.events;
       integrity = {
         ok: true,
@@ -508,11 +736,12 @@ function createTaskRuntimeStore(rootDir, options = {}) {
         corruptPath: ledger.corruptPath,
         lastSequence: events.at(-1)?.sequence ?? 0,
         lastHash: events.at(-1)?.hash ?? '',
-        eventCount: events.length,
+        eventCount: events.at(-1)?.sequence ?? 0,
+        activeEventCount: events.length,
       };
       await migrateAutonomousProjection();
       await validateCachedProjection();
-      await persistCheckpoint();
+      await writeCheckpoint();
       initialized = true;
       return;
     }
@@ -730,7 +959,11 @@ function createTaskRuntimeStore(rootDir, options = {}) {
       : []);
     const operation = writeQueue.then(async () => {
       await initialize();
-      const mergedRuns = await Promise.all(nextRuns.map(async (run) => reconcileTaskControl(mergeWorkerAuthority(projected.get(run.id), run, metadata.source))));
+      const mergedRuns = await Promise.all(nextRuns.map(async (run) => {
+        const current = projected.get(run.id);
+        const merged = mergeWorkerAuthority(current, run, metadata.source);
+        return current && equal(current, merged) ? clone(current) : reconcileTaskControl(merged);
+      }));
       const nextMap = new Map(mergedRuns.map((run) => [run.id, run]));
       const nextProjection = new Map(projected);
       const appended = [];
@@ -869,7 +1102,7 @@ function createTaskRuntimeStore(rootDir, options = {}) {
     });
   }
 
-  return { checkpointPath, ledgerPath, indexPath, recoveryDir, filePath: checkpointPath, read, audit, rebuild, write, updateTask, removeTask, createRecoveryPoint, listRecoveryPoints, restoreRecoveryPoint };
+  return { checkpointPath, ledgerPath, indexPath, archiveDir, recoveryDir, filePath: checkpointPath, read, audit, rebuild, write, updateTask, removeTask, createRecoveryPoint, listRecoveryPoints, restoreRecoveryPoint };
 }
 
 module.exports = {
@@ -877,6 +1110,7 @@ module.exports = {
   LEDGER_VERSION,
   RECOVERY_POINT_VERSION,
   DEFAULT_MAX_RUNS,
+  DEFAULT_MAX_ACTIVE_LEDGER_BYTES,
   atomicWrite,
   createTaskRuntimeStore,
   collectChanges,

@@ -184,7 +184,24 @@ function createTaskWorker(options) {
   }
 
   async function executeCommand(command) {
-    const existing = await currentRun(command.taskId);
+    let existing;
+    try {
+      existing = await currentRun(command.taskId);
+    } catch (error) {
+      if (command.type === 'pause' || command.type === 'stop' || command.type === 'close') {
+        const status = command.type === 'pause' ? 'paused' : 'stopped';
+        return {
+          ok: true,
+          taskId: command.taskId,
+          commandId: command.commandId,
+          type: command.type,
+          status,
+          degraded: true,
+          warning: `任务账本暂时不可读，${command.type === 'pause' ? '暂停' : '停止'}信号已由独立控制通道接收：${error?.message ?? String(error)}`,
+        };
+      }
+      throw error;
+    }
     if (!existing) {
       if (command.type === 'close') return { ok: true, taskId: command.taskId, commandId: command.commandId, type: command.type, removed: true };
       throw new Error(`找不到任务：${command.taskId}`);
@@ -359,7 +376,8 @@ function createTaskWorker(options) {
       const result = await executeCommand(command);
       await appendRecord('command_completed', command, {
         ok: true, taskId: command.taskId, commandId: command.commandId, type: command.type,
-        status: result.run?.status, leaseId: result.run?.worker?.leaseId, removed: result.removed, idempotencyHit: result.idempotencyHit,
+        status: result.run?.status || result.status, leaseId: result.run?.worker?.leaseId, removed: result.removed,
+        idempotencyHit: result.idempotencyHit, degraded: result.degraded, warning: result.warning,
       });
       emit({ kind: 'command_completed', command, result });
       return result;

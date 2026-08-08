@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { atomicWrite, createTaskRuntimeStore, SCHEMA_VERSION, LEDGER_VERSION, eventHash, verifyEnvelope } = require('../electron/taskRuntimeStore.cjs');
+const { atomicWrite, createTaskRuntimeStore, collectChanges, applyChanges, SCHEMA_VERSION, LEDGER_VERSION, eventHash, verifyEnvelope } = require('../electron/taskRuntimeStore.cjs');
 
 function makeRun(id, overrides = {}) {
   return {
@@ -78,8 +78,13 @@ function assertValidChain(events) {
     assert.equal(changed.events[0].type, 'task_changed');
     assert.equal(changed.events[0].previousStatus, 'queued');
     assert.equal(changed.events[0].nextStatus, 'running');
-    assert.deepEqual(changed.events[0].domains, ['autonomousControl', 'recoveryContext', 'status', 'steps', 'updatedAt']);
+    for (const domain of ['adaptivePlanGraph', 'autonomousControl', 'recoveryContext', 'status', 'steps', 'unifiedHost', 'updatedAt']) {
+      assert.ok(changed.events[0].domains.includes(domain), `changed event must include ${domain}`);
+    }
     assert.ok(changed.events[0].payload.changes.every((change) => Array.isArray(change.path)));
+    const appendedArrayChanges = collectChanges({ messages: [{ id: 'one' }] }, { messages: [{ id: 'one' }, { id: 'two' }] });
+    assert.deepEqual(appendedArrayChanges, [{ op: 'append', path: ['messages'], values: [{ id: 'two' }] }]);
+    assert.deepEqual(applyChanges({ messages: [{ id: 'one' }] }, appendedArrayChanges), { messages: [{ id: 'one' }, { id: 'two' }] });
 
     const duplicate = await store.write([updatedOne, makeRun('two')]);
     assert.equal(duplicate.eventsAppended, 0);
@@ -175,6 +180,107 @@ function assertValidChain(events) {
       assert.equal(deferredCheckpoint.runs[0].status, 'running');
     } finally {
       await fs.rm(deferredRoot, { recursive: true, force: true });
+    }
+
+    const factLedgerRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'taiji-task-runtime-fact-ledger-'));
+    try {
+      const heavyEvidence = Array.from({ length: 200 }, (_, index) => ({
+        id: `evidence-${index}`,
+        ts: 1_000 + index,
+        summary: `事实版本 ${index}`,
+        factKey: 'bounded-history',
+        verified: true,
+      }));
+      const factStore = createTaskRuntimeStore(factLedgerRoot);
+      await factStore.write([makeRun('fact-ledger', {
+        status: 'completed',
+        updatedAt: 2_000,
+        steps: [{ id: 'fact-step', title: '验证事实账本', status: 'completed', completedAt: 2_000, evidence: heavyEvidence }],
+      })]);
+      const migratedFactStore = createTaskRuntimeStore(factLedgerRoot);
+      const afterMigration = await migratedFactStore.read();
+      const beforeFactRestart = afterMigration.integrity.lastSequence;
+      const restartedFactStore = createTaskRuntimeStore(factLedgerRoot);
+      const afterFactRestart = await restartedFactStore.read();
+      const stableFactStore = createTaskRuntimeStore(factLedgerRoot);
+      const stableFactRestart = await stableFactStore.read();
+      assert.ok(afterFactRestart.integrity.lastSequence >= beforeFactRestart);
+      assert.equal(stableFactRestart.integrity.lastSequence, afterFactRestart.integrity.lastSequence, 'restarting must not replay evicted fact history into new conflicts');
+      assert.equal(afterFactRestart.runs[0].factLedger.factVersions.length, 160);
+      assert.equal(afterFactRestart.runs[0].factLedger.conflicts.length, 80);
+    } finally {
+      await fs.rm(factLedgerRoot, { recursive: true, force: true });
+    }
+
+    const rotationRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'taiji-task-runtime-rotation-'));
+    try {
+      const beforeRotation = createTaskRuntimeStore(rotationRoot);
+      await beforeRotation.write([makeRun('rotated')]);
+      const rotatingStore = createTaskRuntimeStore(rotationRoot, { maxActiveLedgerBytes: 1 });
+      const rotated = await rotatingStore.read({ taskId: 'rotated' });
+      assert.equal(rotated.ok, true);
+      assert.equal(rotated.runs[0].id, 'rotated');
+      assert.equal(rotated.integrity.rotated, true);
+      assert.equal((await fs.readFile(rotatingStore.ledgerPath, 'utf8')), '');
+      assert.equal((await fs.readdir(rotatingStore.archiveDir)).length, 1);
+      const afterRestart = createTaskRuntimeStore(rotationRoot, { maxActiveLedgerBytes: 1 });
+      const recoveredFromCheckpoint = await afterRestart.read({ taskId: 'rotated' });
+      assert.equal(recoveredFromCheckpoint.runs[0].id, 'rotated');
+      const resumed = await afterRestart.updateTask('rotated', (run) => { run.status = 'running'; });
+      assert.equal(resumed.ok, true);
+      assert.equal(resumed.run.status, 'running');
+    } finally {
+      await fs.rm(rotationRoot, { recursive: true, force: true });
+    }
+
+    const laggingCheckpointRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'taiji-task-runtime-lagging-checkpoint-'));
+    try {
+      const liveStore = createTaskRuntimeStore(laggingCheckpointRoot);
+      await liveStore.write([makeRun('tail-replay')]);
+      const laggingCheckpoint = await fs.readFile(liveStore.filePath, 'utf8');
+      await liveStore.updateTask('tail-replay', (run) => { run.status = 'running'; });
+      await fs.writeFile(liveStore.filePath, laggingCheckpoint, 'utf8');
+
+      const recoveredStore = createTaskRuntimeStore(laggingCheckpointRoot, { maxActiveLedgerBytes: 1, deferredCheckpointThresholdBytes: 1 });
+      const recoveredTail = await recoveredStore.read({ taskId: 'tail-replay' });
+      assert.equal(recoveredTail.ok, true);
+      assert.equal(recoveredTail.runs[0].status, 'running');
+      assert.equal(recoveredTail.integrity.replayedFromCheckpoint, 1);
+      assert.equal(recoveredTail.integrity.archivedThroughSequence, 2);
+      assert.equal(recoveredTail.integrity.snapshotValid, true);
+      assert.equal(recoveredTail.integrity.indexValid, true);
+      assert.equal((await fs.readdir(recoveredStore.archiveDir)).length, 1);
+      assertValidChain(await readLedger(recoveredStore.ledgerPath));
+
+      const afterTailReplayRestart = createTaskRuntimeStore(laggingCheckpointRoot);
+      const durableTail = await afterTailReplayRestart.read({ taskId: 'tail-replay' });
+      assert.equal(durableTail.runs[0].status, 'running');
+    } finally {
+      await fs.rm(laggingCheckpointRoot, { recursive: true, force: true });
+    }
+
+    const segmentedTailRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'taiji-task-runtime-segmented-tail-'));
+    try {
+      const initialStore = createTaskRuntimeStore(segmentedTailRoot);
+      await initialStore.write([makeRun('segmented-tail')]);
+      const rotatingStore = createTaskRuntimeStore(segmentedTailRoot, { maxActiveLedgerBytes: 1 });
+      await rotatingStore.read();
+
+      const segmentedStore = createTaskRuntimeStore(segmentedTailRoot);
+      await segmentedStore.read();
+      const checkpointBeforeTail = await fs.readFile(segmentedStore.filePath, 'utf8');
+      await segmentedStore.updateTask('segmented-tail', (run) => { run.status = 'running'; });
+      await fs.writeFile(segmentedStore.filePath, checkpointBeforeTail, 'utf8');
+
+      const recoveredSegment = createTaskRuntimeStore(segmentedTailRoot);
+      const segmentedResult = await recoveredSegment.read({ taskId: 'segmented-tail' });
+      assert.equal(segmentedResult.runs[0].status, 'running');
+      assert.equal(segmentedResult.integrity.replayedFromCheckpoint, 1);
+      assert.equal(segmentedResult.integrity.archivedThroughSequence, 2);
+      assert.equal(segmentedResult.integrity.snapshotValid, true);
+      assert.equal((await fs.readdir(recoveredSegment.archiveDir)).length, 2);
+    } finally {
+      await fs.rm(segmentedTailRoot, { recursive: true, force: true });
     }
 
     await fs.writeFile(store.filePath, JSON.stringify({ schemaVersion: 2, runs: [makeRun('forged')] }), 'utf8');
