@@ -284,10 +284,14 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
     void appendProjectEvent(project.id, { type: 'proposal_superseded', projectId, previousProposalId: project.proposalId, proposalId: proposal.proposalId, proposalRevision: proposal.proposalRevision, reason: '老板修订了团队成员' });
     return members;
   };
-  const createProjectDraft = (input: { title: string; request: string; conversationId?: string; steps?: string[]; expectedOutputs?: string[]; requiredCapabilities?: string[]; decisionReason?: string }) => {
+  const createProjectDraft = (input: { title: string; request: string; conversationId?: string; steps?: string[]; expectedOutputs?: string[]; requiredCapabilities?: string[]; decisionReason?: string; deliverables?: Project['deliverables']; acceptanceCriteria?: string[]; constraints?: string[] }) => {
     const now = Date.now();
     const latestEmployees = employeePlanningPool(client.fetchInitial().employees);
-    const selectionRequest = [input.request, ...(input.requiredCapabilities ?? [])].filter(Boolean).join('\n所需能力：');
+    const requiredCapabilities = [...new Set([
+      ...(input.requiredCapabilities ?? []),
+      ...(input.deliverables ?? []).filter((deliverable) => deliverable.required !== false).flatMap((deliverable) => deliverable.requiredCapabilities ?? []),
+    ].filter(Boolean))];
+    const selectionRequest = [input.request, ...requiredCapabilities].filter(Boolean).join('\n所需能力：');
     const members = matchProjectMembers(latestEmployees, selectionRequest);
     const proposalId = newProposalId();
     const project: Project = {
@@ -297,9 +301,19 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
       conversationId: input.conversationId,
       steps: input.steps?.filter(Boolean) ?? [],
       expectedOutputs: input.expectedOutputs?.filter(Boolean) ?? [],
+      deliverables: input.deliverables,
+      acceptanceCriteria: input.acceptanceCriteria?.filter(Boolean),
+      constraints: input.constraints?.filter(Boolean),
       members,
-      brief: buildProfessionalProjectBrief({ request: input.request, members }),
-      requiredCapabilities: input.requiredCapabilities?.filter(Boolean),
+      brief: buildProfessionalProjectBrief({
+        request: input.request,
+        members,
+        deliverables: input.deliverables,
+        expectedOutputs: input.expectedOutputs,
+        acceptanceCriteria: input.acceptanceCriteria,
+        requiredCapabilities,
+      }),
+      requiredCapabilities,
       decisionReason: input.decisionReason?.trim(),
       proposalId,
       proposalRevision: 1,
@@ -383,7 +397,7 @@ export function createOfficeCommands({ getState, dispatch, startTaskRun }: Offic
     dispatch({ type: 'APPEND_CHAT', teamId: prepared.team.id, msgs: [{
       id: `msg-project-start-${Date.now()}`,
       authorId: 'assistant', roleId: 'custom',
-      content: '方向已确认，团队现在开始执行。会按“需求/架构 -> 设计/数据 -> 实现 -> 审查”的依赖顺序推进；没有轮到的成员会显示为等待前置步骤，不会假装同时开工。',
+      content: '方向已确认，团队现在按交付物依赖图开始执行。互不依赖的责任产物会有限并行；整合与验收等待前置证据，成员提交不会直接被当作项目完成。',
       mentions: prepared.memberIds, timestamp: Date.now(), kind: 'text',
     }] });
     setTimeout(() => { void startTaskRun(prepared.team.id, prepared.effectiveRequest, prepared.memberIds, undefined, undefined, [], undefined, undefined, prepared.brief); }, 0);

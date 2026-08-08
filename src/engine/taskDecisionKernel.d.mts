@@ -31,7 +31,7 @@ export interface TaskDecision {
   deliverableType: 'answer' | 'file' | 'connection' | 'operation' | 'decision' | 'mixed';
   acceptanceCriteria: string[];
   requiredConstraints: string[];
-  deliverables?: Array<{ label: string; format?: string; type?: 'answer' | 'file' | 'connection' | 'operation' | 'decision' | 'mixed'; category?: 'final' | 'working' | 'reference'; required?: boolean }>;
+  deliverables?: Array<{ id?: string; label: string; format?: string; type?: 'answer' | 'file' | 'connection' | 'operation' | 'decision' | 'mixed'; category?: 'final' | 'working' | 'reference'; required?: boolean; objective?: string; acceptanceCriteria?: string[]; requiredCapabilities?: string[]; dependsOn?: string[]; outputPath?: string; verification?: string[] }>;
   requiredCapabilities?: string[];
   riskLevel?: 'low' | 'normal' | 'high';
   teamPolicy?: { requiresTeam?: boolean; explicitMemberIds?: string[]; allowDynamicDelegation?: boolean };

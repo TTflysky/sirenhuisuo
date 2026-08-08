@@ -10,6 +10,7 @@ import { employeeModelSummary, isTeamControlRequest } from '../engine/teamContro
 import { classifyTeamMention } from '../engine/teamMentionRouting.mjs';
 import { getRegisteredTools } from '../engine/toolCatalog';
 import { buildTaskPlan, matchTeamMembers } from '../engine/taskMatcher';
+import { compileDeliverableTeamPlan } from '../engine/deliverableTeamPlanner';
 import { evaluateDiscussionTrigger } from '../engine/discussionTrigger';
 import * as client from '../data/hermesClient';
 
@@ -300,9 +301,26 @@ export function createTeamMessageCommands({
         { role: 'user', content },
       ], getRegisteredTools(), client.getAssistantModel());
       const mayDelegate = taskDecision.decision.mode === 'execute';
-      const selectionRequest = [taskRequest, ...(taskDecision.decision.requiredCapabilities ?? [])].filter(Boolean).join('\n所需能力：');
+      const deliverableCapabilities = (taskDecision.decision.deliverables ?? [])
+        .filter((deliverable) => deliverable.required !== false)
+        .flatMap((deliverable) => deliverable.requiredCapabilities ?? []);
+      const selectionRequest = [
+        taskRequest,
+        ...(taskDecision.decision.requiredCapabilities ?? []),
+        ...deliverableCapabilities,
+      ].filter(Boolean).join('\n所需能力：');
       const requestedMemberIds = mayDelegate ? matchTeamMembers(team, current.employees, selectionRequest, directMentions) : [];
-      const planned = requestedMemberIds.length > 0 ? buildTaskPlan(team, current.employees, taskRequest, requestedMemberIds) : [];
+      const deliverablePlan = requestedMemberIds.length > 0
+        ? compileDeliverableTeamPlan({
+          goal: taskRequest,
+          employees: current.employees,
+          memberIds: requestedMemberIds,
+          decision: taskDecision.decision,
+        })
+        : undefined;
+      const planned = deliverablePlan?.steps.length
+        ? deliverablePlan.steps
+        : requestedMemberIds.length > 0 ? buildTaskPlan(team, current.employees, taskRequest, requestedMemberIds) : [];
       if (planned.length > 0) {
         const planText = planned.map((step) => {
           const employee = current.employees.find((item) => item.id === step.employeeId);

@@ -40,6 +40,30 @@ function normalizeStrategy(value = {}, fallback = {}) {
   return { routeId, toolName, description, fingerprint };
 }
 
+function normalizeTaskContract(value = {}) {
+  const source = object(value);
+  if (!Object.keys(source).length) return undefined;
+  const output = object(source.output);
+  const budget = object(source.budget);
+  return {
+    contractVersion: Math.max(1, Number(source.contractVersion) || 1),
+    inputRefs: list(source.inputRefs, 40, 500),
+    output: {
+      type: text(output.type, 80) || 'answer',
+      path: text(output.path, 500) || undefined,
+      description: text(output.description, 1000),
+    },
+    completionConditions: list(source.completionConditions, 24, 800),
+    verification: list(source.verification, 24, 800),
+    budget: {
+      maxModelRounds: Math.max(1, Number(budget.maxModelRounds) || 8),
+      maxToolCalls: Math.max(1, Number(budget.maxToolCalls) || 24),
+      maxReworkAttempts: Math.max(0, Number(budget.maxReworkAttempts) || 0),
+    },
+    escalationConditions: list(source.escalationConditions, 24, 800),
+  };
+}
+
 function normalizeNode(input = {}, index = 0, revision = 1) {
   const id = text(input.id || input.nodeId || input.stepId, 180) || `node-${index + 1}`;
   const metadata = object(input.metadata);
@@ -54,6 +78,8 @@ function normalizeNode(input = {}, index = 0, revision = 1) {
     dependsOn: list(input.dependsOn || input.dependsOnStepIds, 40, 180),
     acceptanceCriteria: list(input.acceptanceCriteria || metadata.acceptanceCriteria, 24, 800),
     expectedEvidence: list(input.expectedEvidence || input.acceptanceCriteria || metadata.acceptanceCriteria, 24, 800),
+    outputPath: text(input.outputPath || metadata.outputPath, 500) || undefined,
+    taskContract: normalizeTaskContract(input.taskContract || metadata.taskContract),
     deliverableType: text(input.deliverableType || metadata.deliverableType, 80),
     approvalRequired: input.approvalRequired === true,
     riskLevel: ['low', 'normal', 'high'].includes(input.riskLevel) ? input.riskLevel : input.approvalRequired ? 'high' : 'normal',
@@ -266,6 +292,8 @@ function applyOperation(graph, operation, revision, affected) {
     if (changes.acceptanceCriteria) node.acceptanceCriteria = list(changes.acceptanceCriteria, 24, 800);
     if (changes.expectedEvidence) node.expectedEvidence = list(changes.expectedEvidence, 24, 800);
     if (changes.requiredCapabilities) node.requiredCapabilities = list(changes.requiredCapabilities, 24, 180);
+    if (changes.outputPath !== undefined) node.outputPath = text(changes.outputPath, 500) || undefined;
+    if (changes.taskContract !== undefined) node.taskContract = normalizeTaskContract(changes.taskContract);
     node.revisionUpdated = revision;
     affected.add(node.id);
     return;
@@ -433,6 +461,10 @@ export function projectGraphToTaskSteps(graph, existingSteps = []) {
       kind: ['review', 'revision'].includes(node.kind) ? node.kind : 'work',
       deliverableType: node.deliverableType || prior.deliverableType,
       acceptanceCriteria: [...node.acceptanceCriteria],
+      requiredCapabilities: [...node.requiredCapabilities],
+      expectedEvidence: [...node.expectedEvidence],
+      outputPath: node.outputPath,
+      taskContract: clone(node.taskContract),
       maxRetries: node.retryPolicy.maxRetries,
       order: index + 1,
       status: node.status === 'awaiting_user' ? 'paused' : node.status,

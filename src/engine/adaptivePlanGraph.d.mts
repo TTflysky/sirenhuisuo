@@ -2,6 +2,8 @@ export type AdaptivePlanNodeStatus = 'queued' | 'running' | 'paused' | 'awaiting
 export interface AdaptivePlanNode {
   id: string; title: string; objective: string; kind: string; ownerEmployeeId: string; ownerName: string;
   requiredCapabilities: string[]; dependsOn: string[]; acceptanceCriteria: string[]; expectedEvidence: string[];
+  outputPath?: string;
+  taskContract?: { contractVersion: number; inputRefs: string[]; output: { type: string; path?: string; description: string }; completionConditions: string[]; verification: string[]; budget: { maxModelRounds: number; maxToolCalls: number; maxReworkAttempts: number }; escalationConditions: string[] };
   deliverableType: string; approvalRequired: boolean; riskLevel: 'low' | 'normal' | 'high';
   retryPolicy: { maxRetries: number; backoffMs: number; maxBackoffMs: number };
   strategy: { routeId: string; toolName: string; description: string; fingerprint: string };

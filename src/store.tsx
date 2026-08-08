@@ -25,6 +25,7 @@ import { sendBus, onBus, BUS_CHANNELS } from './ipcBus';
 import { appendTaskRunContext, createTaskRun, hydrateTaskRunFromMainStore, hydrateTaskRunsFromMainStore, taskRunContextPrompt, updateTaskRun } from './data/taskRuns';
 import { buildTaskPlan } from './engine/taskMatcher';
 import { briefExecutionContext } from './engine/expertOrchestration';
+import { compileDeliverableTeamPlan, summarizeDeliverablePlan } from './engine/deliverableTeamPlanner';
 import { codingProjectToTaskSteps, compileCodingProject, createCodingProjectTaskDecision } from './engine/codingProject.mjs';
 import { buildSkillContextWithEvidence, matchSkills } from './data/skills';
 import { attachmentWorkspaceContext, copyAttachmentsToWorkspace, initializeTaskWorkspace } from './utils/attachments';
@@ -58,7 +59,7 @@ export interface StoreCtx {
   removeTeamMembers: (teamId: string, memberIds: string[]) => Employee[];
   addCatalogExperts: (expertIds: string[]) => Employee[];
   setProjectMembers: (projectId: string, memberIds: string[]) => ProjectMember[];
-  createProjectDraft: (input: { title: string; request: string; conversationId?: string; steps?: string[]; expectedOutputs?: string[]; requiredCapabilities?: string[]; decisionReason?: string }) => void;
+  createProjectDraft: (input: { title: string; request: string; conversationId?: string; steps?: string[]; expectedOutputs?: string[]; requiredCapabilities?: string[]; decisionReason?: string; deliverables?: Project['deliverables']; acceptanceCriteria?: string[]; constraints?: string[] }) => void;
   approveProject: (projectId: string, override?: { memberIds?: string[]; requiredCapabilities?: string[]; decisionReason?: string; proposalRevision?: number }) => ProjectMember[];
   startProjectExecution: (projectId: string, clarificationResponse: string) => void;
   rejectProject: (projectId: string, reason?: string) => void;
@@ -611,8 +612,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       ?? team.chatMessages.find((message) => message.id === sourceMessageId)?.conversationId
       ?? ensureActiveChatSession(`team:${teamId}`);
     let plan = buildTaskPlan(team, current.employees, request, employeeIds);
+    const deliverablePlan = compileDeliverableTeamPlan({
+      goal: request,
+      employees: current.employees,
+      memberIds: employeeIds,
+      decision: taskDecision,
+      brief: projectBrief,
+    });
+    if (deliverablePlan.steps.length) plan = deliverablePlan.steps;
     let codingProject: import('./engine/codingProject.mjs').CodingProject | undefined;
-    if (projectBrief) {
+    if (projectBrief && projectBrief.version < 2) {
       try {
         codingProject = compileCodingProject({
           goal: request,
@@ -704,6 +713,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         data: { projectBriefVersion: projectBrief.version, stages: projectBrief.stages.map((stage) => stage.id) },
       });
     }
+    appendTaskRunContext(run, {
+      type: 'decision', source: 'system', verified: true,
+      summary: summarizeDeliverablePlan(deliverablePlan),
+      data: {
+        plannerVersion: deliverablePlan.version,
+        deliverableIds: deliverablePlan.deliverableIds,
+        selectedMemberIds: deliverablePlan.selectedMemberIds,
+        capabilityGaps: deliverablePlan.capabilityGaps,
+        parallelGroups: deliverablePlan.parallelGroups,
+      },
+    });
     if (codingProject) {
       appendTaskRunContext(run, {
         type: 'decision', source: 'system', verified: true,

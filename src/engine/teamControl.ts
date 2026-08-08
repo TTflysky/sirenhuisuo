@@ -30,6 +30,13 @@ export function prepareProjectExecution(state: AppState, projectId: string, clar
     memberIds,
     effectiveRequest,
     clarificationResponse: clarificationResponse.trim(),
-    brief: buildProfessionalProjectBrief({ request: effectiveRequest, members: project.members }),
+    brief: buildProfessionalProjectBrief({
+      request: effectiveRequest,
+      members: project.members,
+      deliverables: project.deliverables,
+      expectedOutputs: project.expectedOutputs,
+      acceptanceCriteria: project.acceptanceCriteria,
+      requiredCapabilities: project.requiredCapabilities,
+    }),
   };
 }

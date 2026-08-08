@@ -634,8 +634,12 @@ export default function AssistantChat() {
       const continuity = resolveDispatchContinuity(enriched, recentDialogMessages);
       const dispatchRequest = continuity.request;
       const decision = taskDecisionCompilation!.decision;
+      const deliverableCapabilities = (decision.deliverables ?? [])
+        .filter((deliverable) => deliverable.required !== false)
+        .flatMap((deliverable) => deliverable.requiredCapabilities ?? []);
       const requiredCapabilities = [...new Set([
         ...(decision.requiredCapabilities ?? []),
+        ...deliverableCapabilities,
         ...continuity.requiredCapabilities,
       ])];
       const selectionRequest = [dispatchRequest, ...requiredCapabilities].filter(Boolean).join('\n所需能力：');
@@ -651,6 +655,9 @@ export default function AssistantChat() {
         conversationId: conversationIdRef.current,
         requiredCapabilities,
         decisionReason: decision.decisionReason,
+        deliverables: decision.deliverables,
+        acceptanceCriteria: decision.acceptanceCriteria,
+        constraints: decision.requiredConstraints,
       });
       const members = matchProjectMembers(employeePlanningPool(liveEmployees), selectionRequest)
         .map((member) => employeePlanningPool(liveEmployees).find((employee) => employee.id === member.employeeId))

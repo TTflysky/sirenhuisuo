@@ -57,6 +57,29 @@ function inferLegacyDeliverableType(input = {}, parent = {}) {
   return normalizeDeliverableType(parent.deliverableType || parent.contract?.deliverableType || parent.taskDecision?.deliverableType) || 'answer';
 }
 
+function normalizeTaskContract(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const output = value.output && typeof value.output === 'object' && !Array.isArray(value.output) ? value.output : {};
+  const budget = value.budget && typeof value.budget === 'object' && !Array.isArray(value.budget) ? value.budget : {};
+  return {
+    contractVersion: Math.max(1, Number(value.contractVersion) || 1),
+    inputRefs: list(value.inputRefs, []),
+    output: {
+      type: text(output.type, 80) || 'answer',
+      path: text(output.path, 500) || undefined,
+      description: text(output.description, 1000),
+    },
+    completionConditions: list(value.completionConditions, []),
+    verification: list(value.verification, []),
+    budget: {
+      maxModelRounds: Math.max(1, Number(budget.maxModelRounds) || 8),
+      maxToolCalls: Math.max(1, Number(budget.maxToolCalls) || 24),
+      maxReworkAttempts: Math.max(0, Number(budget.maxReworkAttempts) || 0),
+    },
+    escalationConditions: list(value.escalationConditions, []),
+  };
+}
+
 function normalizeStep(input, index) {
   const stepId = text(input?.stepId || input?.id, 160) || `step-${index + 1}`;
   const status = ['queued', 'running', 'paused', 'stopped', 'failed', 'completed'].includes(input?.status) ? input.status : 'queued';
@@ -74,6 +97,10 @@ function normalizeStep(input, index) {
     codingRole: text(input?.codingRole, 80) || undefined,
     reviewPoint: input?.reviewPoint === true,
     acceptanceCriteria: list(input?.acceptanceCriteria, []),
+    requiredCapabilities: list(input?.requiredCapabilities, []),
+    expectedEvidence: list(input?.expectedEvidence, []),
+    outputPath: text(input?.outputPath, 500) || undefined,
+    taskContract: normalizeTaskContract(input?.taskContract),
     maxRetries: Number.isInteger(input?.maxRetries) ? Math.max(0, Math.min(10, input.maxRetries)) : undefined,
     deliverableType: normalizeDeliverableType(input?.deliverableType),
     responsibilityTaskId: text(input?.responsibilityTaskId, 180) || undefined,
@@ -189,7 +216,7 @@ function synchronizeTaskFromAdaptiveGraph(task, adaptive) {
       stepId: node.id,
       type: node.kind === 'review' ? 'review' : node.ownerEmployeeId ? 'tool' : 'composite',
       connector: `task-step:${node.ownerEmployeeId || 'assistant'}`,
-      input: { assignment: node.objective, employeeId: node.ownerEmployeeId },
+      input: { assignment: node.objective, employeeId: node.ownerEmployeeId, taskContract: clone(node.taskContract) },
       expectedOutputSchema: prior.get(node.id)?.expectedOutputSchema || { type: 'object' },
       dependsOn: [...node.dependsOn],
       retryPolicy: clone(node.retryPolicy),
@@ -197,7 +224,16 @@ function synchronizeTaskFromAdaptiveGraph(task, adaptive) {
       sideEffect: node.kind !== 'review',
       compensateStepId: prior.get(node.id)?.compensateStepId || '',
       approvalRequired: node.approvalRequired,
-      metadata: { ...(prior.get(node.id)?.metadata || {}), adaptivePlanRevision: task.adaptivePlanGraph.revision, acceptanceCriteria: node.acceptanceCriteria, deliverableType: node.deliverableType },
+      metadata: {
+        ...(prior.get(node.id)?.metadata || {}),
+        adaptivePlanRevision: task.adaptivePlanGraph.revision,
+        acceptanceCriteria: node.acceptanceCriteria,
+        requiredCapabilities: node.requiredCapabilities,
+        expectedEvidence: node.expectedEvidence,
+        outputPath: node.outputPath,
+        taskContract: clone(node.taskContract),
+        deliverableType: node.deliverableType,
+      },
     }));
   }
   if (task.runner?.plan && task.plan) {
@@ -277,13 +313,23 @@ async function attachFormalPlan(task) {
       stepId: step.id,
       type: step.kind === 'review' ? 'review' : step.employeeId ? 'tool' : 'composite',
       connector: `task-step:${step.employeeId || 'assistant'}`,
-      input: { assignment: step.assignment, employeeId: step.employeeId },
+      input: { assignment: step.assignment, employeeId: step.employeeId, taskContract: clone(step.taskContract) },
       expectedOutputSchema: { type: 'object' },
       dependsOn: step.dependsOnStepIds,
       retryPolicy: { maxRetries: Number.isInteger(step.maxRetries) ? step.maxRetries : 3, backoffMs: 1000, maxBackoffMs: 30000 },
       idempotencyKey: `task-${task.id}-${step.id}`,
       sideEffect: step.kind !== 'review',
-      metadata: { taskServiceVersion: TASK_SERVICE_VERSION, deliverableType: step.deliverableType || contract.deliverableType, codingRole: step.codingRole, reviewPoint: step.reviewPoint === true, acceptanceCriteria: step.acceptanceCriteria || [] },
+      metadata: {
+        taskServiceVersion: TASK_SERVICE_VERSION,
+        deliverableType: step.deliverableType || contract.deliverableType,
+        codingRole: step.codingRole,
+        reviewPoint: step.reviewPoint === true,
+        acceptanceCriteria: step.acceptanceCriteria || [],
+        requiredCapabilities: step.requiredCapabilities || [],
+        expectedEvidence: step.expectedEvidence || [],
+        outputPath: step.outputPath,
+        taskContract: clone(step.taskContract),
+      },
     })),
   });
   const validation = planEngine.validatePlan(plan, { allowInlineApproval: true });
@@ -390,7 +436,19 @@ function createTaskService(store, options = {}) {
       teamId: input.teamId || parent?.teamId,
       conversationId: input.conversationId || parent?.conversationId,
       memberSnapshot: input.memberSnapshot || parent?.memberSnapshot,
-      steps: input.steps || [{ id: 'step-1', title: input.title || '员工子任务', assignment, employeeId: input.employeeId }],
+      steps: input.steps || [{
+        id: 'step-1',
+        title: input.title || '员工子任务',
+        assignment,
+        employeeId: input.employeeId,
+        acceptanceCriteria: input.acceptanceCriteria,
+        requiredCapabilities: input.requiredCapabilities,
+        expectedEvidence: input.expectedEvidence,
+        outputPath: input.outputPath,
+        maxRetries: input.maxRetries,
+        taskContract: input.taskContract,
+        deliverableType: input.deliverableType,
+      }],
       idempotencyKey: childIdempotencyKey,
     });
     if (result.task && !input.steps && normalizeDeliverableType(input.deliverableType || input.taskDecision?.deliverableType)) {

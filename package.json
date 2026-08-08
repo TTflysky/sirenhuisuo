@@ -1,7 +1,7 @@
 {
   "name": "taiji-office",
   "private": true,
-  "version": "5.9.1",
+  "version": "5.10.0",
   "description": "太极 AI 办公会所 - 面向 Windows 的多模型协作与可恢复任务执行平台",
   "author": "TTflysky",
   "license": "MIT",
@@ -86,6 +86,8 @@
     "verify:runtime-dashboard": "node scripts/verify-runtime-dashboard.cjs",
     "verify:runtime-observer-ui": "node scripts/verify-runtime-observer-ui.cjs",
     "verify:v59": "npm.cmd run verify:v59-runtime-telemetry && npm.cmd run verify:v58 && npm.cmd run lint && npm.cmd run build",
+    "verify:v510-deliverable-kernel": "node scripts/verify-v510-deliverable-team-kernel.mjs",
+    "verify:v510": "npm.cmd run verify:v510-deliverable-kernel && npm.cmd run verify:adaptive-plan && npm.cmd run verify:task-service && npm.cmd run verify:completion-gate && npm.cmd run lint && npm.cmd run build",
     "verify:learning-review": "node scripts/verify-learning-review.cjs",
     "verify:memory-ui": "node scripts/verify-memory-ui.mjs",
     "verify:skill-drafts": "node scripts/verify-skill-drafts.cjs",

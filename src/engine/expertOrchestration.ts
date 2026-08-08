@@ -1,41 +1,80 @@
 import { inferDeliverableType, type TurnDeliverableType } from './turnRuntime.mjs';
+import { inferCapabilityIds } from './capabilityGraph.mjs';
 import type { ProjectBrief, ProjectMember } from '../types';
 
-const IMPLEMENTATION_RE = /开发|实现|代码|客户端|网页|网站|系统|接口|集成|修复|优化/u;
-const DESIGN_RE = /设计|ui|ux|交互|产品|原型|体验/u;
-const RESEARCH_RE = /调研|研究|分析|方案|咨询|报告/u;
+type BriefDeliverable = {
+  id?: string;
+  label: string;
+  type?: string;
+  objective?: string;
+  acceptanceCriteria?: string[];
+  requiredCapabilities?: string[];
+  dependsOn?: string[];
+  outputPath?: string;
+  verification?: string[];
+};
 
 function compact(value: unknown, limit = 220): string {
   return String(value ?? '').replace(/\s+/gu, ' ').trim().slice(0, limit);
 }
 
-function stage(id: string, title: string, objective: string, deliverables: string[], acceptance: string, memberIds: string[]) {
-  return { id, title, objective, deliverables, acceptance, memberIds };
-}
-
 /** A stable planning artifact. Planning never substitutes for execution evidence. */
-export function buildProfessionalProjectBrief(input: { request: string; members: ProjectMember[] }): ProjectBrief {
+export function buildProfessionalProjectBrief(input: {
+  request: string;
+  members: ProjectMember[];
+  deliverables?: BriefDeliverable[];
+  expectedOutputs?: string[];
+  acceptanceCriteria?: string[];
+  requiredCapabilities?: string[];
+}): ProjectBrief {
   const request = compact(input.request, 4000);
   const memberIds = input.members.map((member) => member.employeeId).filter(Boolean);
   const deliverableType: TurnDeliverableType = inferDeliverableType(undefined, request);
-  const stages = [
-    stage('scope', '需求与范围', '澄清目标、边界、约束与完成标准。', ['项目简报', '关键假设与待确认项'], '需求可被后续专业角色引用，未确认项被明确标记。', memberIds.slice(0, 2)),
-  ];
-  if (DESIGN_RE.test(request) || IMPLEMENTATION_RE.test(request)) {
-    stages.push(stage('professional-plan', '专业方案', '由匹配专家形成产品、体验、技术或业务方案。', ['专业建议', '方案版本与取舍'], '建议与任务目标一致，能直接指导下一阶段。', memberIds));
-  }
-  if (IMPLEMENTATION_RE.test(request)) {
-    stages.push(stage('implementation', '实现与集成', '把已批准方案落实为可运行的变更、文件或连接。', ['真实产物', '运行或连接记录'], '产物已落盘或操作已真实执行，并保留证据。', memberIds));
-  } else if (RESEARCH_RE.test(request)) {
-    stages.push(stage('research', '调研与归纳', '核实外部或本地资料，形成可追溯结论。', ['结论摘要', '来源或本地证据'], '结论区分事实、判断和仍待验证内容。', memberIds));
-  }
-  stages.push(stage('review', '验收与交付', '按任务语义核对产物和证据，形成明确交接结论。', ['验收结论', '交付摘要'], deliverableType === 'answer' || deliverableType === 'decision' ? '结论完整、可理解且回应原目标。' : '存在与目标匹配的真实执行或产出证据。', memberIds));
+  const declared = input.deliverables?.filter((item) => item.label?.trim()) ?? [];
+  const fallbackOutputs = input.expectedOutputs?.filter(Boolean).length ? input.expectedOutputs.filter(Boolean) : ['与原始目标一致的可验证结果'];
+  const source: BriefDeliverable[] = declared.length
+    ? declared
+    : fallbackOutputs.map((label, index) => ({ id: `deliverable-${index + 1}`, label }));
+  const stages = source.map((item, index) => {
+    const id = compact(item.id || `deliverable-${index + 1}`, 120).replace(/[^a-zA-Z0-9._:-]+/gu, '-') || `deliverable-${index + 1}`;
+    const capabilities = item.requiredCapabilities?.filter(Boolean).length
+      ? item.requiredCapabilities.filter(Boolean)
+      : inferCapabilityIds(`${item.label} ${item.objective ?? ''}`, source.length === 1 ? input.requiredCapabilities : []);
+    return {
+      id,
+      title: compact(item.label, 220),
+      objective: compact(item.objective, 1200) || `独立完成并验证“${compact(item.label, 220)}”。`,
+      deliverables: [compact(item.label, 220)],
+      acceptance: item.acceptanceCriteria?.filter(Boolean).join('；') || input.acceptanceCriteria?.filter(Boolean).join('；') || '产出真实存在，经过回读或运行验证，并能直接用于最终交付。',
+      memberIds,
+      dependsOnStageIds: item.dependsOn?.filter(Boolean) ?? [],
+      requiredCapabilities: capabilities,
+      expectedEvidence: item.verification?.filter(Boolean) ?? [],
+      outputPath: compact(item.outputPath, 500) || undefined,
+      maxReworkAttempts: 2,
+      escalationConditions: ['连续返工仍未通过验证', '跨越外部发送、付费、删除或授权边界'],
+    };
+  });
+  stages.push({
+    id: 'integration',
+    title: '主代理整合与完成检查',
+    objective: '回读全部成员产物，完成集成和最终验证；成员提交不等于项目完成。',
+    deliverables: ['最终交付与证据摘要'],
+    acceptance: input.acceptanceCriteria?.filter(Boolean).join('；') || '全部必需交付物及核心验证证据通过，且最终结果回应原始目标。',
+    memberIds,
+    dependsOnStageIds: stages.map((item) => item.id),
+    requiredCapabilities: ['coordination'],
+    expectedEvidence: ['交付物回读记录', '最终构建、运行或一致性检查'],
+    outputPath: undefined,
+    maxReworkAttempts: 2,
+    escalationConditions: ['发现目标冲突或需要用户业务选择'],
+  });
   return {
-    version: 1,
+    version: 2,
     createdAt: Date.now(),
     goal: request,
     deliverableType,
-    summary: `章北海将先组织 ${memberIds.length} 位匹配专家完成专业方案，经你批准后进入可验证执行。`,
+    summary: `章北海将围绕 ${source.length} 个真实交付物建立最小责任团队；无依赖项有限并行，最终由主代理整合验收。`,
     assumptions: [],
     openQuestions: /(?:是否|还是|吗|？|\?)/u.test(request) ? ['任务中包含待确认选择；需要时将以明确问题提交给你。'] : [],
     stages,
@@ -48,6 +87,6 @@ export function briefExecutionContext(brief?: ProjectBrief): string {
     '## 已批准的项目简报',
     `目标：${compact(brief.goal, 2000)}`,
     `交付类型：${brief.deliverableType || 'answer'}`,
-    ...brief.stages.map((item, index) => `${index + 1}. ${item.title}：${item.objective}；交付 ${item.deliverables.join('、')}；验收 ${item.acceptance}`),
+    ...brief.stages.map((item, index) => `${index + 1}. ${item.title}：${item.objective}；交付 ${item.deliverables.join('、')}；验收 ${item.acceptance}${item.dependsOnStageIds?.length ? `；依赖 ${item.dependsOnStageIds.join('、')}` : '；无前置依赖'}`),
   ].join('\n');
 }

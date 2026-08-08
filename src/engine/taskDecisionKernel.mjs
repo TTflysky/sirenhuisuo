@@ -82,7 +82,8 @@ export const TASK_DECISION_TOOL = {
         deliverables: {
           type: 'array', maxItems: 12,
           items: { type: 'object', additionalProperties: false, required: ['label'], properties: {
-            label: { type: 'string' }, format: { type: 'string' }, type: { type: 'string', enum: ['answer', 'file', 'connection', 'operation', 'decision', 'mixed'] }, category: { type: 'string', enum: ['final', 'working', 'reference'] }, required: { type: 'boolean' },
+            id: { type: 'string' }, label: { type: 'string' }, format: { type: 'string' }, type: { type: 'string', enum: ['answer', 'file', 'connection', 'operation', 'decision', 'mixed'] }, category: { type: 'string', enum: ['final', 'working', 'reference'] }, required: { type: 'boolean' },
+            objective: { type: 'string' }, acceptanceCriteria: { type: 'array', maxItems: 8, items: { type: 'string' } }, requiredCapabilities: { type: 'array', maxItems: 8, items: { type: 'string' } }, dependsOn: { type: 'array', maxItems: 12, items: { type: 'string' } }, outputPath: { type: 'string' }, verification: { type: 'array', maxItems: 8, items: { type: 'string' } },
           } },
         },
         requiredCapabilities: { type: 'array', maxItems: 12, items: { type: 'string' } },
@@ -247,10 +248,20 @@ function normalizedDeliverables(candidate, route, deliverableType) {
     return [{ label: fixedLabels[route], format: deliverableType, type: deliverableType, category: 'final', required: true }];
   }
   if (!Array.isArray(candidate)) return undefined;
-  return candidate.slice(0, 12).map((item) => ({
-    ...item,
+  return candidate.slice(0, 12).map((item, index) => ({
+    id: clean(item?.id, 120) || `deliverable-${index + 1}`,
+    label: clean(item?.label, 240),
+    format: clean(item?.format, 80),
     type: ['answer', 'file', 'connection', 'operation', 'decision', 'mixed'].includes(item?.type) ? item.type : deliverableType,
-  }));
+    category: ['final', 'working', 'reference'].includes(item?.category) ? item.category : 'final',
+    required: item?.required !== false,
+    objective: clean(item?.objective, 1200),
+    acceptanceCriteria: Array.isArray(item?.acceptanceCriteria) ? item.acceptanceCriteria.map((value) => clean(value, 300)).filter(Boolean).slice(0, 8) : [],
+    requiredCapabilities: Array.isArray(item?.requiredCapabilities) ? item.requiredCapabilities.map((value) => clean(value, 120)).filter(Boolean).slice(0, 8) : [],
+    dependsOn: Array.isArray(item?.dependsOn) ? item.dependsOn.map((value) => clean(value, 120)).filter(Boolean).slice(0, 12) : [],
+    outputPath: clean(item?.outputPath, 500),
+    verification: Array.isArray(item?.verification) ? item.verification.map((value) => clean(value, 300)).filter(Boolean).slice(0, 8) : [],
+  })).filter((item) => item.label);
 }
 
 export function createFallbackTaskDecision(input = {}) {
@@ -469,6 +480,7 @@ export function buildTaskDecisionMessages(input = {}) {
 - 用户纠正“为什么不调用工具/不会搜索”时，要恢复最近尚未完成的真实目标，而不是把纠正句当作新目标。
 - 不得因为尚未检查就假定缺少 API、账号或文件。只有明确缺少且客户端无法自行取得的凭据、授权、批准或业务选择，needsUser 才能为 true。
 - acceptanceCriteria 描述最终可验收结果，不能把“调用了工具”“尝试了”当作完成。
+- 复杂执行任务先拆成真实交付物。每个 deliverable 写清 id、目标、验收、能力、依赖、输出路径和验证；互不依赖的交付物不要人为串行，整合交付必须依赖前置产物。
 - requiredConstraints 必须保留用户原话中的对象、地点、时间、指定工具和交付格式，不得为了缩短任务而删除条件。
 - primaryRoute 只选第一条最有效路线；Skill 是可选能力，不是所有任务的必经步骤。
 - deliverableType 必须按最终结果选择：普通回答 answer、真实文件 file、连接验证 connection、实际动作 operation、方案判断 decision，混合任务 mixed。不要把所有执行任务都标记成 file。

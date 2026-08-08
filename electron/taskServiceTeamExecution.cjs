@@ -44,6 +44,11 @@ function createTaskServiceTeamExecution({
             assignment: step.assignment,
             dependsOnStepIds: step.dependsOnStepIds,
             acceptanceCriteria: step.acceptanceCriteria,
+            requiredCapabilities: step.requiredCapabilities,
+            expectedEvidence: step.expectedEvidence,
+            outputPath: step.outputPath,
+            maxRetries: step.maxRetries,
+            taskContract: step.taskContract,
             deliverableType: step.deliverableType,
           })),
           idempotencyKey: `team-root:${rootTaskId}`,
@@ -102,6 +107,11 @@ function createTaskServiceTeamExecution({
             conversationId: root.conversationId,
             memberSnapshot: member ? [member] : root.memberSnapshot,
             acceptanceCriteria: step.acceptanceCriteria || root.acceptanceCriteria,
+            requiredCapabilities: step.requiredCapabilities,
+            expectedEvidence: step.expectedEvidence,
+            outputPath: step.outputPath,
+            maxRetries: step.maxRetries,
+            taskContract: step.taskContract,
             deliverableType: step.deliverableType || root.deliverableType,
             idempotencyKey: `team-step:${rootTaskId}:${step.id}`,
           });
@@ -131,6 +141,11 @@ function createTaskServiceTeamExecution({
             childStep.completedAt = step.completedAt;
             childStep.lastError = step.lastError;
             childStep.output = clone(step.output);
+            childStep.acceptanceCriteria = clone(step.acceptanceCriteria || childStep.acceptanceCriteria || []);
+            childStep.requiredCapabilities = clone(step.requiredCapabilities || childStep.requiredCapabilities || []);
+            childStep.expectedEvidence = clone(step.expectedEvidence || childStep.expectedEvidence || []);
+            childStep.outputPath = step.outputPath || childStep.outputPath;
+            childStep.taskContract = clone(step.taskContract || childStep.taskContract);
           }
           appendServiceEvent(task, 'team_step_bound', `Bound to team step ${step.id}`, { rootTaskId, stepId: step.id, employeeId: step.employeeId });
         }, 'Bind fixed team member responsibility');

@@ -117,6 +117,12 @@ export interface ProjectBriefStage {
   deliverables: string[];
   acceptance: string;
   memberIds: string[];
+  dependsOnStageIds?: string[];
+  requiredCapabilities?: string[];
+  expectedEvidence?: string[];
+  outputPath?: string;
+  maxReworkAttempts?: number;
+  escalationConditions?: string[];
 }
 
 export interface ProjectBrief {
@@ -138,6 +144,9 @@ export interface Project {
   conversationId?: string;
   steps: string[];
   expectedOutputs: string[];
+  deliverables?: Array<{ id?: string; label: string; format?: string; type?: 'answer' | 'file' | 'connection' | 'operation' | 'decision' | 'mixed'; category?: 'final' | 'working' | 'reference'; required?: boolean; objective?: string; acceptanceCriteria?: string[]; requiredCapabilities?: string[]; dependsOn?: string[]; outputPath?: string; verification?: string[] }>;
+  acceptanceCriteria?: string[];
+  constraints?: string[];
   members: ProjectMember[];
   /** 由模型任务决策内核识别，调度器据此覆盖核心能力。 */
   requiredCapabilities?: string[];
@@ -426,6 +435,20 @@ export interface TaskPlanStep {
   deliverableType?: 'answer' | 'file' | 'connection' | 'operation' | 'decision' | 'mixed';
   dependsOnStepIds: string[];
   revisionOfStepId?: string;
+  acceptanceCriteria?: string[];
+  requiredCapabilities?: string[];
+  expectedEvidence?: string[];
+  outputPath?: string;
+  maxRetries?: number;
+  taskContract?: {
+    contractVersion: number;
+    inputRefs: string[];
+    output: { type: string; path?: string; description: string };
+    completionConditions: string[];
+    verification: string[];
+    budget: { maxModelRounds: number; maxToolCalls: number; maxReworkAttempts: number };
+    escalationConditions: string[];
+  };
 }
 
 export interface TaskRunMemberSnapshot {
@@ -449,6 +472,12 @@ export interface TaskRunStep {
   deliverableType?: 'answer' | 'file' | 'connection' | 'operation' | 'decision' | 'mixed';
   dependsOnStepIds: string[];
   revisionOfStepId?: string;
+  acceptanceCriteria?: string[];
+  requiredCapabilities?: string[];
+  expectedEvidence?: string[];
+  outputPath?: string;
+  maxRetries?: number;
+  taskContract?: TaskPlanStep['taskContract'];
   compensationOnly?: boolean;
   /** 由运行中动态委派创建的子任务记录。 */
   delegationId?: string;
