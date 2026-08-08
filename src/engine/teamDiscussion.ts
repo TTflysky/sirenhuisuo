@@ -20,6 +20,7 @@ export interface DiscussionHandlers {
   onStepAdded?: (step: TaskPlanStep) => void;
   onReviewDecision?: (stepId: string, approved: boolean, reason?: string, responsibleEmployeeId?: string, responsibleStepId?: string, review?: ReviewSubmissionEvidence) => void;
   onRunFailed?: (error: string) => void;
+  onRunCheckpointed?: (reason: string) => void;
   onSteeringReply?: (emp: Employee, content: string, tokens?: number, contextUsage?: ContextUsage, stepId?: string) => void;
   onExecutionState?: (state: ExecutionControllerSnapshot, emp?: Employee, stepId?: string) => void;
   onTextDelta?: (emp: Employee, accumulated: string, stepId?: string) => void;
@@ -89,7 +90,7 @@ async function memberSpeak(
   executionRouteScope?: string,
   onTextDelta?: (accumulated: string) => void,
   onAutonomousDecision?: (toolName: string, toolArgs: string) => Promise<void> | void,
-): Promise<{ text: string; tokens?: number; contextUsage?: ContextUsage; failed?: boolean; producedFile?: boolean; reviewDecision?: ReviewSubmissionEvidence; executionState?: ExecutionControllerSnapshot }> {
+): Promise<{ text: string; tokens?: number; contextUsage?: ContextUsage; failed?: boolean; checkpointed?: boolean; producedFile?: boolean; reviewDecision?: ReviewSubmissionEvidence; executionState?: ExecutionControllerSnapshot }> {
   const effectiveModel = getEmployeeModel(emp);
   if (!resolveApiBase(effectiveModel)) {
     return { text: `⚠️ ${emp.name} 未配置可用模型，当前步骤没有执行。请在设置中为该成员或全局激活模型填写 API 地址和密钥后点击继续执行。`, failed: true };
@@ -189,7 +190,8 @@ async function memberSpeak(
       return { text: `⚠️ ${emp.name} 没有生成可交接文件，本步骤未完成。系统会保留上下文并要求补交实际产出。`, tokens: r.usage.totalTokens, contextUsage: r.contextUsage, failed: true, executionState: latestExecutionState };
     }
     const controllerBlocked = r.executionState.status === 'awaiting_user' || r.executionState.status === 'blocked' || r.executionState.status === 'stopped';
-    return { text: r.content, tokens: r.usage.totalTokens, contextUsage: r.contextUsage, producedFile, reviewDecision, failed: controllerBlocked, executionState: r.executionState };
+    const controllerCheckpointed = r.executionState.status === 'checkpointed';
+    return { text: r.content, tokens: r.usage.totalTokens, contextUsage: r.contextUsage, producedFile, reviewDecision, failed: controllerBlocked, checkpointed: controllerCheckpointed, executionState: r.executionState };
   } catch (e: any) {
     const raw = e?.message ?? '模型错误';
     const reason = e?.name === 'AbortError' || /aborted|signal is aborted/iu.test(raw)
@@ -406,6 +408,14 @@ export async function runTeamDiscussion(
         handlers.onMessage(emp, content, failureMentions, tokens, round, opts.triggerMessageId, step.id, contextUsage);
         handlers.onRunFailed?.(`${emp.name} 当前步骤未返回结果，任务已暂停：${content.slice(0, 600)}`);
         runFailed = true;
+        break;
+      }
+      if (r.checkpointed) {
+        const checkpointMentions = parseMentionIds(content, team, employees);
+        round += 1;
+        contextMessages.push({ id: `context-${Date.now()}-${round}`, authorId: emp.id, roleId: emp.role, content, mentions: checkpointMentions, timestamp: Date.now(), discussionRound: round });
+        handlers.onMessage(emp, content, checkpointMentions, tokens, round, opts.triggerMessageId, step.id, contextUsage);
+        handlers.onRunCheckpointed?.(`${emp.name} 当前执行周期已保存容量检查点：${content.slice(0, 600)}`);
         break;
       }
     }

@@ -225,12 +225,13 @@ export function createTeamDiscussionRuntime({
           updateRun((run) => {
             const step = run.steps.find((item) => item.id === stepId) ?? run.steps.find((item) => item.employeeId === emp.id && item.status === 'running');
             if (!step) return;
+            const controllerCheckpointed = latestExecutionState?.status === 'checkpointed';
             const controllerFailed = latestExecutionState?.status === 'awaiting_user'
               || latestExecutionState?.status === 'blocked'
               || latestExecutionState?.status === 'stopped';
             const awaitingReviewDecision = step.kind === 'review' && !controllerFailed;
-            step.status = controllerFailed ? 'failed' : awaitingReviewDecision ? 'running' : 'completed';
-            if (stepId && run.runner && !awaitingReviewDecision) {
+            step.status = controllerCheckpointed ? 'paused' : controllerFailed ? 'failed' : awaitingReviewDecision ? 'running' : 'completed';
+            if (stepId && run.runner && !awaitingReviewDecision && !controllerCheckpointed) {
               run.runner = recordTaskStepResult(run.runner, {
                 stepId,
                 success: !controllerFailed,
@@ -238,7 +239,17 @@ export function createTeamDiscussionRuntime({
                 error: controllerFailed ? content : undefined,
               });
             }
-            if (!awaitingReviewDecision) step.completedAt = Date.now();
+            if (!awaitingReviewDecision && !controllerCheckpointed) step.completedAt = Date.now();
+            if (controllerCheckpointed) {
+              run.status = 'paused';
+              run.phase = 'blocked';
+              run.handoff = {
+                ts: Date.now(),
+                completed: run.steps.filter((item) => item.status === 'completed').map((item) => item.title),
+                blocked: `${emp.name}：本轮达到容量检查点，已保存现有证据`,
+                nextAction: '从保存的检查点继续，不重复已经留下证据的步骤。',
+              };
+            }
             if (step.status === 'failed') {
               step.lastError = content;
               run.phase = 'blocked';
@@ -453,6 +464,24 @@ export function createTeamDiscussionRuntime({
             appendTaskRunContext(run, { type: 'blocked', source: 'system', summary: error.slice(0, 420), verified: false });
           });
           void reportAdapterCheckpoint({ kind: 'run_failed', summary: error.slice(0, 700) });
+        },
+        onRunCheckpointed(reason) {
+          updateRun((run) => {
+            run.status = 'paused'; run.phase = 'blocked'; run.lastError = undefined;
+            run.handoff = {
+              ts: Date.now(),
+              completed: run.steps.filter((step) => step.status === 'completed').map((step) => step.title),
+              blocked: reason.slice(0, 320),
+              nextAction: '任务现场已保存，不是失败；从恢复点继续时只处理未完成的验收项。',
+            };
+            if (run.recoveryContext) {
+              run.recoveryContext.summary = '任务达到容量检查点，现场已保存。';
+              run.recoveryContext.interruptionReason = reason.slice(0, 320);
+              run.recoveryContext.autoResume = false;
+              run.recoveryContext.budget.updatedAt = Date.now();
+            }
+            appendTaskRunContext(run, { type: 'checkpoint', source: 'system', summary: reason.slice(0, 420), verified: true });
+          });
         },
         onDone() {
           dispatch({ type: 'SET_PROGRESS', progress: null });

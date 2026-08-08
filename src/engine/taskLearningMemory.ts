@@ -2,7 +2,7 @@ const LS_TASK_LEARNINGS = 'hermes_office_task_learning_memory_v1';
 const LEGACY_TASK_LEARNINGS = 'taiji_task_learning_memory_v1';
 const MAX_TASK_LEARNINGS = 80;
 
-export type TaskLearningOutcome = 'completed' | 'blocked' | 'stopped';
+export type TaskLearningOutcome = 'completed' | 'checkpointed' | 'blocked' | 'stopped';
 
 export interface TaskLearning {
   id: string;
@@ -69,7 +69,7 @@ function normalizeLearning(value: Partial<TaskLearning>): TaskLearning | undefin
   return {
     id: String(value.id || `learning-${fingerprint(goal)}-${now}`),
     goal,
-    outcome: value.outcome === 'completed' || value.outcome === 'stopped' ? value.outcome : 'blocked',
+    outcome: value.outcome === 'completed' || value.outcome === 'checkpointed' || value.outcome === 'stopped' ? value.outcome : 'blocked',
     successfulTools: unique(value.successfulTools),
     failedTools: unique(value.failedTools),
     failureLabels: unique(value.failureLabels, 8),
@@ -120,7 +120,8 @@ export function buildTaskLearningContext(goal: string, limit = 5): string {
   return rankTaskLearnings(loadTaskLearnings(), goal).slice(0, limit).map((item) => {
     const route = item.successfulTools.length ? `可行路线：${item.successfulTools.join(' → ')}` : '尚无已验证可行路线';
     const avoid = item.failedTools.length ? `避免原样重复：${item.failedTools.join('、')}` : '';
-    return `- 相似目标：${item.goal}\n  结果：${item.outcome === 'completed' ? '已完成' : item.outcome === 'stopped' ? '已停止' : '受阻'}；${route}${avoid ? `；${avoid}` : ''}${item.lesson ? `；经验：${item.lesson}` : ''}`;
+    const outcome = item.outcome === 'completed' ? '已完成' : item.outcome === 'checkpointed' ? '已保存检查点' : item.outcome === 'stopped' ? '已停止' : '受阻';
+    return `- 相似目标：${item.goal}\n  结果：${outcome}；${route}${avoid ? `；${avoid}` : ''}${item.lesson ? `；经验：${item.lesson}` : ''}`;
   }).join('\n');
 }
 

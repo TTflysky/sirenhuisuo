@@ -5,7 +5,7 @@ import type { ExecutionControllerSnapshot } from '../engine/executionController.
 import type { TurnRuntimeState } from '../engine/turnRuntime.mjs';
 import type { TurnLifecycleState } from '../engine/turnLifecycle.mjs';
 import { buildResearchFallback, ensureResearchSourceLinks, isResearchDeliveryDeflection } from '../engine/agentGuardrails.mjs';
-import { recordExecutionUsage } from '../engine/executionController.mjs';
+import { buildExecutionHandoff, recordExecutionUsage } from '../engine/executionController.mjs';
 import { recordTaskLearning } from '../engine/taskLearningMemory';
 import { finalizeTurn as finalizeRuntimeTurn } from '../engine/turnRuntime.mjs';
 import { synchronizeTurnLifecycle } from '../engine/turnLifecycle.mjs';
@@ -62,6 +62,7 @@ export async function finalizeAgentLoopResult(
   let {
     finalContent, totalUsage, executionState, latestContextUsage, finalModel, turnRuntime, turnLifecycle,
   } = input;
+  const capacityCheckpointed = executionState.status === 'checkpointed' && Boolean(executionState.budgetStopReason);
   const {
     stopped, callLog, researchOnlyTask, requiredResearchSucceeded, requiredResearchOutput,
     originalUserText, executionBudgetReached, scene, label, modelConfig, extraSystemContext,
@@ -83,7 +84,7 @@ export async function finalizeAgentLoopResult(
     && /还没|没有完成|不能确认|未完成|失败|卡在|没有处理好/u.test(finalContent)
     && !/(?:下一步|你现在(?:需要|可以)|请(?:打开|点击|提供|登录|授权|检查|选择|回复|上传|填写|重新启动))/u.test(finalContent);
 
-  if (!stopped && callLog.length > 0 && (!finalContent || answerNeedsNextStep)) {
+  if (!capacityCheckpointed && !stopped && callLog.length > 0 && (!finalContent || answerNeedsNextStep)) {
     const successfulStages = [...new Set(callLog.filter((call) => call.success).map((call) => getToolStage(call.name)))].slice(-8);
     const failureEvidence = failuresBeforeSummary.slice(-6).map((call, index) =>
       `${index + 1}. 阶段：${getToolStage(call.name)}\n原因摘要：${humanizeExecutionError(call.result)}\n真实反馈：${call.result.slice(0, 700)}`
@@ -110,7 +111,9 @@ export async function finalizeAgentLoopResult(
   }
 
   if (!finalContent) {
-    if (stopped) {
+    if (capacityCheckpointed) {
+      finalContent = buildExecutionHandoff(executionState);
+    } else if (stopped) {
       finalContent = isInstallationTask
         ? '还没有安装好，任务已经停止。\n\n停止前完成的内容仍然保留。你可以重新发送安装要求，我会从没有完成的步骤继续；详细记录可以在下方“执行过程”中查看。'
         : '还没有完成，任务已经停止。\n\n停止前完成的内容仍然保留。需要时可以重新发送要求，从没有完成的步骤继续；详细记录可以在下方“执行过程”中查看。';
@@ -165,11 +168,13 @@ export async function finalizeAgentLoopResult(
     const successfulTools = [...new Set(callLog.filter((call) => call.success).map((call) => call.name))];
     const failedTools = [...new Set(callLog.filter((call) => !call.success).map((call) => call.name))];
     const failureLabels = [...new Set(executionState.failures.map((failure) => failure.label))];
-    const outcome = stopped || executionState.status === 'stopped' ? 'stopped' : executionState.status === 'completed' ? 'completed' : 'blocked';
+    const outcome = stopped || executionState.status === 'stopped' ? 'stopped' : executionState.status === 'completed' ? 'completed' : executionState.status === 'checkpointed' ? 'checkpointed' : 'blocked';
     const lesson = outcome === 'completed'
       ? `${taskDecision.primaryRoute} 路线形成了可验收结果${executionState.routeChanges > 0 ? `，期间切换了 ${executionState.routeChanges} 次路线` : ''}。`
       : failureLabels.length > 0
         ? `最后阻塞属于“${failureLabels.at(-1)}”；再次遇到相似目标时先检查该条件，并避免原样重复失败路线。`
+      : executionState.status === 'checkpointed'
+        ? '本轮达到容量检查点但没有把它当成业务失败；恢复后只从未满足的验收标准继续。'
         : '本次没有形成完整验收证据；再次执行时应从未满足的完成标准继续。';
     recordTaskLearning({ goal: originalUserText, outcome, successfulTools, failedTools, failureLabels, lesson });
   }

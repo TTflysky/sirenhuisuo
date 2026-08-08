@@ -64,6 +64,24 @@ function emptyUsage(now) {
   return { modelCalls: 0, toolCalls: 0, elapsedMs: 0, retries: 0, tokens: 0, lastUpdatedAt: now };
 }
 
+function addUsage(target, delta, now) {
+  const next = { ...emptyUsage(now), ...(target ?? {}) };
+  for (const key of ['modelCalls', 'toolCalls', 'elapsedMs', 'retries', 'tokens']) {
+    next[key] += Math.max(0, Number(delta?.[key]) || 0);
+  }
+  next.lastUpdatedAt = now;
+  return next;
+}
+
+function checkpointForBudget(state, exceeded, now = Date.now()) {
+  state.status = 'checkpointed';
+  state.phase = 'checkpoint';
+  state.budgetStopReason = exceeded.dimension;
+  state.decision = decision('checkpoint', `${exceeded.reason}。当前执行周期已保存为容量检查点，这不是任务失败；系统会先依据已有证据判断能否完成验收。`);
+  state.updatedAt = now;
+  return state;
+}
+
 function budgetExceeded(state, now = Date.now()) {
   const usage = state.usage ?? emptyUsage(now);
   const budgets = state.budgets ?? defaultBudgets({ maxAttempts: state.maxAttempts });
@@ -135,6 +153,7 @@ export function createExecutionController(options = {}) {
     maxRouteChanges: Number.isFinite(options.maxRouteChanges) ? options.maxRouteChanges : 6,
     budgets: defaultBudgets(options),
     usage: emptyUsage(now),
+    lifetimeUsage: emptyUsage(now),
     budgetStopReason: undefined,
     routeHistory: [],
     forbiddenRouteIds: [],
@@ -158,7 +177,11 @@ export function restoreExecutionController(snapshot, options = {}) {
   if (!snapshot || ![1, CONTROLLER_VERSION].includes(snapshot.version)) return createExecutionController(options);
   const restored = { ...createExecutionController(options), ...clone(snapshot), version: CONTROLLER_VERSION, status: 'running', phase: 'observe', updatedAt: Date.now() };
   restored.budgets = { ...defaultBudgets({ ...options, maxAttempts: restored.maxAttempts }), ...(snapshot.budgets ?? {}) };
-  restored.usage = { ...emptyUsage(Date.now()), ...(snapshot.usage ?? {}) };
+  const now = Date.now();
+  const resumedFromBudgetCheckpoint = snapshot.status === 'checkpointed' && Boolean(snapshot.budgetStopReason);
+  restored.usage = resumedFromBudgetCheckpoint ? emptyUsage(now) : { ...emptyUsage(now), ...(snapshot.usage ?? {}) };
+  restored.lifetimeUsage = { ...emptyUsage(now), ...(snapshot.lifetimeUsage ?? snapshot.usage ?? {}) };
+  if (resumedFromBudgetCheckpoint) restored.budgetStopReason = undefined;
   restored.resultFingerprints = Array.isArray(snapshot.resultFingerprints) ? snapshot.resultFingerprints : [];
   restored.checkpoints = Array.isArray(snapshot.checkpoints) ? snapshot.checkpoints : [];
   restored.unresolvedQuestions = Array.isArray(snapshot.unresolvedQuestions) ? snapshot.unresolvedQuestions : [];
@@ -179,7 +202,7 @@ export function restoreExecutionController(snapshot, options = {}) {
 export function canExecuteRoute(state, input = {}) {
   const routeId = hashRoute(input.routeKey ?? `${input.toolName ?? 'tool'}`);
   if (state.status === 'awaiting_user') return { allowed: false, routeId, reason: '当前缺少只有用户才能提供的凭据、授权或批准，不能继续假装执行。' };
-  if (state.status === 'blocked' || state.status === 'stopped' || state.status === 'completed') return { allowed: false, routeId, reason: '执行控制器已经停止当前任务路线。' };
+  if (state.status === 'blocked' || state.status === 'checkpointed' || state.status === 'stopped' || state.status === 'completed') return { allowed: false, routeId, reason: state.status === 'checkpointed' ? '当前执行周期已保存容量检查点，需要从恢复点开启新的预算周期。' : '执行控制器已经停止当前任务路线。' };
   const exceeded = budgetExceeded(state);
   if (exceeded) return { allowed: false, routeId, reason: `${exceeded.reason}，必须保存检查点并交接，不能继续消耗预算。` };
   const route = state.routeHistory.find((item) => item.id === routeId);
@@ -212,6 +235,11 @@ export function observeExecutionResult(snapshot, input = {}) {
   route.updatedAt = now;
   state.attemptCount += 1;
   state.usage = { ...emptyUsage(now), ...(state.usage ?? {}) };
+  state.lifetimeUsage = addUsage(state.lifetimeUsage ?? state.usage, {
+    modelCalls: input.toolName === 'model_request' ? 1 : 0,
+    toolCalls: input.toolName === 'model_request' ? 0 : 1,
+    tokens: input.tokenUsage,
+  }, now);
   if (input.toolName === 'model_request') state.usage.modelCalls += 1;
   else state.usage.toolCalls += 1;
   state.usage.elapsedMs = Math.max(state.usage.elapsedMs, now - state.createdAt);
@@ -343,19 +371,21 @@ export function summarizeRoutePerformance(snapshot, options = {}) {
 export function recordExecutionUsage(snapshot, delta = {}) {
   const state = clone(snapshot);
   const now = Date.now();
-  state.usage = { ...emptyUsage(now), ...(state.usage ?? {}) };
-  for (const key of ['modelCalls', 'toolCalls', 'elapsedMs', 'retries', 'tokens']) {
-    const amount = Math.max(0, Number(delta[key]) || 0);
-    state.usage[key] += amount;
-  }
+  const priorLifetimeUsage = state.lifetimeUsage;
+  state.usage = addUsage(state.usage, delta, now);
+  state.lifetimeUsage = priorLifetimeUsage ? addUsage(priorLifetimeUsage, delta, now) : addUsage(undefined, state.usage, now);
   state.usage.elapsedMs = Math.max(state.usage.elapsedMs, now - state.createdAt);
   state.usage.lastUpdatedAt = now;
   const exceeded = budgetExceeded(state, now);
   if (exceeded && state.status === 'running') {
-    state.status = 'blocked';
-    state.phase = 'blocked';
-    state.budgetStopReason = exceeded.dimension;
-    state.decision = decision('stop', `${exceeded.reason}。已保存最后检查点和已有证据。`);
+    if (exceeded.dimension === 'tokens') checkpointForBudget(state, exceeded, now);
+    else {
+      state.status = 'blocked';
+      state.phase = 'blocked';
+      state.budgetStopReason = exceeded.dimension;
+      state.decision = decision('stop', `${exceeded.reason}。已保存最后检查点和已有证据。`);
+      state.updatedAt = now;
+    }
   }
   state.updatedAt = now;
   return state;
@@ -371,6 +401,11 @@ export function evaluateExecutionConclusion(snapshot, input = {}) {
   }
   const unresolved = unresolvedFailures(state);
   if (unresolved.length > 0) {
+    if (state.status === 'checkpointed') {
+      state.decision = decision('checkpoint', `${state.decision.reason} 尚有未解决问题，恢复后只处理未完成部分。`);
+      state.updatedAt = now;
+      return state;
+    }
     const active = unresolved.at(-1);
     state.phase = 'recover';
     state.decision = decision(active.retryable ? 'retry' : 'switch_route', `还有未解决的问题：${active.label}。不能直接宣布任务完成。`, { failureClass: active.classification, routeId: active.routeId });
@@ -379,6 +414,11 @@ export function evaluateExecutionConclusion(snapshot, input = {}) {
   }
   const verifiedEvidence = state.evidence.filter((item) => item.verified);
   if (state.requiresEvidence && verifiedEvidence.length === 0) {
+    if (state.status === 'checkpointed') {
+      state.decision = decision('checkpoint', `${state.decision.reason} 当前还没有足够证据完成验收。`);
+      state.updatedAt = now;
+      return state;
+    }
     if (state.conclusionReviews <= 2) {
       state.phase = 'act';
       state.decision = decision('act', '当前只有文字结论，没有真实执行或验收证据，必须先采取可验证动作。');
@@ -391,10 +431,20 @@ export function evaluateExecutionConclusion(snapshot, input = {}) {
     return state;
   }
   if (!input.reviewed) {
+    if (state.status === 'checkpointed') {
+      state.decision = decision('checkpoint', `${state.decision.reason} 当前响应未形成最终验收结论。`);
+      state.updatedAt = now;
+      return state;
+    }
     state.phase = 'verify';
     state.decision = decision('verify', '回到最初目标，根据真实证据做一次独立验收。');
   } else if (input.acceptancePassed === false) {
     state.acceptanceIssues = Array.isArray(input.acceptanceIssues) ? input.acceptanceIssues.filter(Boolean).slice(0, 12) : ['现有结果没有覆盖原始目标'];
+    if (state.status === 'checkpointed') {
+      state.decision = decision('checkpoint', `容量检查点前的验收尚未通过：${state.acceptanceIssues.join('；')}。恢复后从这些缺口继续，不重做已验证步骤。`);
+      state.updatedAt = now;
+      return state;
+    }
     if (state.routeChanges < state.maxRouteChanges) {
       state.status = 'running';
       state.phase = 'recover';
@@ -426,6 +476,10 @@ export function applyExecutionSteering(snapshot, instruction) {
     state.activeFailureId = undefined;
     state.unresolvedQuestions = [];
   }
+  if (state.status === 'checkpointed' && state.budgetStopReason) {
+    state.usage = emptyUsage(Date.now());
+    state.budgetStopReason = undefined;
+  }
   state.status = 'running';
   state.phase = 'observe';
   state.decision = decision('act', '已吸收用户最新要求，先重新判断目标与现有证据，再选择下一步。');
@@ -434,8 +488,14 @@ export function applyExecutionSteering(snapshot, instruction) {
 }
 
 export function markExecutionBudgetReached(snapshot, dimension = 'toolCalls') {
-  const state = blockExecution(snapshot, '执行预算已达到安全上限，停止重复操作并保留全部证据。');
+  const state = clone(snapshot);
+  const labels = { modelCalls: '模型调用预算已达到安全上限', toolCalls: '工具调用预算已达到安全上限', elapsedMs: '连续执行时间已达到安全上限', retries: '恢复重试预算已达到安全上限', tokens: '上下文与输出累计预算已达到安全上限' };
+  if (dimension === 'tokens') return checkpointForBudget(state, { dimension, reason: labels[dimension] ?? '执行预算已达到安全上限' });
+  state.status = 'blocked';
+  state.phase = 'blocked';
   state.budgetStopReason = dimension;
+  state.decision = decision('stop', `${labels[dimension] ?? '执行预算已达到安全上限'}。已保存最后检查点和已有证据。`);
+  state.updatedAt = Date.now();
   return state;
 }
 
@@ -453,6 +513,7 @@ export function executionControllerGuidance(state) {
   if (current.kind === 'retry') return `## 执行控制器决定：保留上下文重试\n失败分类：${current.failureClass ?? '瞬时错误'}。只允许修正瞬时条件后重试一次；再次失败必须换路线。`;
   if (current.kind === 'switch_route') return `## 执行控制器决定：更换路线\n失败分类：${current.failureClass ?? '路线不适用'}。禁止重复刚才的工具与参数组合。重新检查假设，改用不同工具、不同数据来源、不同路径或不同实现方式，并在操作后重新验证。`;
   if (current.kind === 'await_user') return `## 执行控制器决定：等待必要的用户条件\n原因：${current.reason}。先说明已经完成和保留了什么，再只询问无法由客户端自行取得的凭据、授权、批准或业务选择；不要要求用户代替客户端执行验证。`;
+  if (current.kind === 'checkpoint') return `## 执行控制器决定：保存容量检查点\n${current.reason} 不得把预算或上下文容量描述成业务失败；恢复后只继续未满足的验收项。`;
   if (current.kind === 'verify') return '## 执行控制器决定：重新验收\n回到用户最初目标，逐项核对完成标准和真实证据。不能用最后一次操作成功代替整个目标完成。';
   if (current.kind === 'act') return `## 执行控制器决定：继续真实行动\n${current.reason} 不要再给计划或口头承诺，选择能产生文件、运行结果、连接结果或可核验资料的动作。`;
   if (current.kind === 'stop') return `## 执行控制器决定：停止重复路线\n${current.reason} 直接交接真实阻塞、已保留成果和唯一需要用户处理的条件，不得伪造完成。`;
@@ -466,6 +527,7 @@ export function executionControllerStatus(state) {
     retry: '已识别瞬时错误，正在保留上下文重试…',
     switch_route: '当前方法不适用，正在切换路线…',
     await_user: '已确认需要用户提供必要条件',
+    checkpoint: '已保存容量检查点，可从现有进度继续',
     verify: '正在对照最初目标重新验收…',
     complete: '已完成目标与证据验收',
     stop: '已停止无效重复并保留进度',
@@ -476,7 +538,11 @@ export function executionControllerStatus(state) {
 export function buildExecutionHandoff(state) {
   const verified = (state.evidence ?? []).filter((item) => item.verified);
   const active = (state.failures ?? []).filter((item) => !item.resolved).at(-1);
-  const status = state.status === 'completed' ? '整个目标已经完成并通过验收。' : '整个目标还没有完成。';
+  const status = state.status === 'completed'
+    ? '整个目标已经完成并通过验收。'
+    : state.status === 'checkpointed'
+      ? '任务没有被判定失败；本轮已保存容量检查点，整个目标尚待继续验收。'
+      : '整个目标还没有完成。';
   const completed = verified.length
     ? verified.slice(-5).map((item) => item.summary || `${item.toolName} 已留下可验证结果`).join('；')
     : '暂时没有可以确认的完成项';

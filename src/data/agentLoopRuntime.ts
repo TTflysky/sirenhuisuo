@@ -515,9 +515,11 @@ export function createRunAgentLoop(deps: AgentLoopDependencies) {
     totalUsage.completionTokens += r.usage.completionTokens;
     totalUsage.totalTokens += r.usage.totalTokens;
     publishExecutionState(recordExecutionUsage(executionState, { modelCalls: 1, tokens: r.usage.totalTokens }));
-    if (executionState.status === 'blocked' && executionState.budgetStopReason) {
+    if ((executionState.status === 'blocked' || executionState.status === 'checkpointed') && executionState.budgetStopReason) {
       executionBudgetReached = true;
-      break;
+      // A checkpoint may still be closed by the current response's evidence;
+      // never execute another tool after the budget boundary.
+      if (executionState.status === 'blocked') break;
     }
     latestContextUsage = r.contextUsage;
     if (!finalModel) finalModel = r.model;
@@ -532,6 +534,10 @@ export function createRunAgentLoop(deps: AgentLoopDependencies) {
     }
 
     if (r.toolCalls && r.toolCalls.length > 0) {
+      if (executionState.status === 'checkpointed') {
+        finalContent = '';
+        break;
+      }
       // 模型返回了工具调用：执行，结果加入对话继续
       const { executeAgentTool } = await import('../engine/toolExecutorBridge');
       let iterationHadFailure = false;

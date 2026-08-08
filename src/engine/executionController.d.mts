@@ -1,6 +1,6 @@
 export type ExecutionFailureClass = 'none' | 'approval' | 'authentication' | 'authorization' | 'rate_limit' | 'timeout' | 'network' | 'server' | 'permission' | 'dependency' | 'not_found' | 'invalid_input' | 'conflict' | 'duplicate' | 'unsupported' | 'business' | 'off_target' | 'unknown';
 export type NormalizedExecutionFailureClass = 'none' | 'network' | 'permission' | 'credential' | 'input' | 'resource_not_found' | 'protocol' | 'execution_environment' | 'timeout' | 'model_misjudgment' | 'evidence_insufficient' | 'user_decision';
-export type ExecutionDecisionKind = 'act' | 'continue' | 'retry' | 'switch_route' | 'await_user' | 'verify' | 'complete' | 'stop';
+export type ExecutionDecisionKind = 'act' | 'continue' | 'retry' | 'switch_route' | 'await_user' | 'checkpoint' | 'verify' | 'complete' | 'stop';
 export interface ExecutionDecision { kind: ExecutionDecisionKind; reason: string; at: number; failureClass?: ExecutionFailureClass; routeId?: string; requiresUser?: boolean }
 export interface ExecutionBudgets { modelCalls: number; toolCalls: number; elapsedMs: number; retries: number; tokens: number }
 export interface ExecutionUsage extends ExecutionBudgets { lastUpdatedAt: number }
@@ -8,11 +8,11 @@ export interface ExecutionEvidence { id?: string; ts: number; toolName: string; 
 export interface ExecutionCheckpoint { id: string; ts: number; phase: string; goal: string; latestInstruction: string; routeId: string; evidenceIds: string[]; unresolvedQuestions: string[] }
 export interface ExecutionControllerSnapshot {
   version: number; goal: string; acceptanceCriteria: string[]; acceptanceIssues: string[]; requiresEvidence: boolean;
-  status: 'running' | 'awaiting_user' | 'blocked' | 'completed' | 'stopped';
-  phase: 'observe' | 'act' | 'recover' | 'verify' | 'blocked' | 'complete';
+  status: 'running' | 'awaiting_user' | 'checkpointed' | 'blocked' | 'completed' | 'stopped';
+  phase: 'observe' | 'act' | 'recover' | 'checkpoint' | 'verify' | 'blocked' | 'complete';
   attemptCount: number; progressCount: number; consecutiveFailures: number; recoveryCycles: number; routeChanges: number;
   maxAttempts: number; maxSameRouteRetries: number; maxRouteChanges: number;
-  budgets: ExecutionBudgets; usage: ExecutionUsage; budgetStopReason?: keyof ExecutionBudgets;
+  budgets: ExecutionBudgets; usage: ExecutionUsage; lifetimeUsage?: ExecutionUsage; budgetStopReason?: keyof ExecutionBudgets;
   routeHistory: Array<{ id: string; toolName: string; strategySignature: string; routeDifference: string; attempts: number; failures: number; successes: number; successRate: number; failureRate: number; lastOutcome: string; resultFingerprints: string[]; lastSuccessAt?: number; lastFailureAt?: number; updatedAt: number }>;
   forbiddenRouteIds: string[]; resultFingerprints: string[];
   observations: Array<{ ts: number; toolName: string; routeId: string; success: boolean; resultFingerprint?: string; duplicate?: boolean }>;

@@ -85,6 +85,20 @@ budgeted = recordExecutionUsage(budgeted, { modelCalls: 1, tokens: 400 });
 assert.equal(budgeted.status, 'blocked');
 assert.equal(budgeted.budgetStopReason, 'modelCalls');
 
+let capacity = createExecutionController({ goal: '交付网页文件', maxTokens: 1000 });
+capacity = observeExecutionResult(capacity, { toolName: 'write_file', routeKey: 'write:page.html', success: true, result: '已写入 page.html', contributesEvidence: true });
+capacity = recordExecutionUsage(capacity, { modelCalls: 1, tokens: 1000 });
+assert.equal(capacity.status, 'checkpointed');
+assert.equal(capacity.decision.kind, 'checkpoint');
+assert.equal(capacity.budgetStopReason, 'tokens');
+assert.equal(canExecuteRoute(capacity, { toolName: 'run_command', routeKey: 'verify:page.html' }).allowed, false);
+capacity = evaluateExecutionConclusion(capacity, { content: '已回读文件并确认内容完整', reviewed: true, acceptancePassed: true });
+assert.equal(capacity.status, 'completed');
+const resumedCapacity = restoreExecutionController({ ...capacity, status: 'checkpointed', budgetStopReason: 'tokens' }, { goal: capacity.goal });
+assert.equal(resumedCapacity.status, 'running');
+assert.equal(resumedCapacity.usage.tokens, 0);
+assert.ok((resumedCapacity.lifetimeUsage?.tokens ?? 0) >= 1000);
+
 const legacySnapshot = { ...transient, version: 1 };
 delete legacySnapshot.budgets;
 delete legacySnapshot.usage;
@@ -107,4 +121,5 @@ console.log(JSON.stringify({
   modelAttemptsBeforeRouteChange: modelRetry.routeHistory[0].attempts,
   migratedVersion: migrated.version,
   independentBudgetStop: budgeted.budgetStopReason,
+  capacityCheckpoint: capacity.status,
 }, null, 2));
