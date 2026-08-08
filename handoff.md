@@ -2,7 +2,9 @@
 
 ## 本轮补记
 
-- 当前内核改造已提交到 `52c7c7d`（`refactor: split task service helpers for boundaries`），并推送到 `origin/main`。
+- 当前源码版本：`v5.10.3`；累计 Token 达到预算时进入可恢复容量检查点，不再直接判定业务失败。
+- 本轮已通过 V5.10 内核门禁、58 个测试文件和 195 项测试；完整自评见 `docs/TAIJI_V5_SELF_ASSESSMENT.md`。
+- 上一轮内核改造提交为 `52c7c7d`（`refactor: split task service helpers for boundaries`），并已推送到 `origin/main`。
 - 为通过模块边界门禁，`electron/taskService.cjs`、`electron/taskServiceContextQueries.cjs` 和 `electron/taskServiceEvidenceCommands.cjs` 的新增归一化/投影/证据记账逻辑已拆到独立辅助模块；最终 `npm.cmd run verify:v510`、`npm.cmd run lint`、`npm.cmd run verify:module-boundaries` 均通过。
 - GitHub Release `v5.10.2` 已确认存在，并补齐/更新三个资产：`taiji-office-setup-5.10.2.exe`、`.blockmap`、`latest.yml`；发布地址：<https://github.com/TTflysky/sirenhuisuo/releases/tag/v5.10.2>。
 - 这轮发布后，下一轮可以直接基于 `v5.10.2` 继续内核开发，不需要重复追查发布资产或边界门禁问题。
@@ -1481,7 +1483,7 @@ V5 的目标是把太极继续收拢为“目标驱动的自主智能体协作�
 
 ---
 
-# v5.10.2 内核改造发布补记（2026-08-08）
+# v5.10.3 Token 容量检查点修复交接（2026-08-08）
 ## 本轮结论
 
 - 当前内核改造已经切换到 v5.10.2 发布线，版本号、安装包命名和交接资料正在同步。
